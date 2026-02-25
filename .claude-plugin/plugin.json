@@ -1,0 +1,16 @@
+{
+  "name": "tts",
+  "description": "Text-to-speech for Claude Code: /voice, /say",
+  "version": "0.1.0",
+  "author": {
+    "name": "Punt Labs",
+    "email": "hello@punt-labs.com"
+  },
+  "mcpServers": {
+    "tts": {
+      "type": "stdio",
+      "command": "tts",
+      "args": ["serve"]
+    }
+  }
+}

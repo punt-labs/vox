@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_tts_tts__*",
+      "Bash(tts:*)"
+    ]
+  }
+}

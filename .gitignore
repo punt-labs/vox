@@ -21,5 +21,6 @@ htmlcov/
 uv.lock
 lancedb/
 .mcp.json
-.claude/
+.claude/*
+!.claude/settings.json
 .tts/
