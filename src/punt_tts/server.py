@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from punt_tts import __version__
 from punt_tts.core import TTSClient
+from punt_tts.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_tts.logging_config import configure_logging
 from punt_tts.output import default_output_dir
 from punt_tts.providers import get_provider
@@ -46,8 +47,15 @@ def _validate_voice_settings(
             raise ValueError(msg)
 
 
-def _resolve_output_dir(output_dir: str | None) -> Path:
-    """Resolve an output directory, using the default if not specified."""
+def _resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Path:
+    """Resolve an output directory, using the default if not specified.
+
+    When *ephemeral* is True, returns the ephemeral `.tts/` directory
+    in the current working directory and ignores *output_dir*.
+    """
+    if ephemeral:
+        clean_ephemeral()
+        return ephemeral_output_dir()
     if output_dir:
         return Path(output_dir)
     return default_output_dir()
@@ -130,6 +138,7 @@ def synthesize(
     auto_play: bool = True,
     output_path: str | None = None,
     output_dir: str | None = None,
+    ephemeral: bool = False,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
@@ -163,6 +172,8 @@ def synthesize(
             a file is auto-generated in output_dir.
         output_dir: Directory for output. Defaults to TTS_OUTPUT_DIR
             env var or ~/tts-output/.
+        ephemeral: If true, write to `.tts/` in cwd and clean up
+            previous ephemeral files. Ignores output_dir/output_path.
         stability: ElevenLabs voice stability (0.0-1.0). Ignored by
             other providers. Defaults to provider default.
         similarity: ElevenLabs voice similarity boost (0.0-1.0). Ignored
@@ -189,7 +200,7 @@ def synthesize(
         speaker_boost=speaker_boost,
     )
 
-    dir_path = _resolve_output_dir(output_dir)
+    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
     path = _resolve_output_path(
         output_path,
         dir_path,
@@ -216,6 +227,7 @@ def synthesize_batch(
     pause_ms: int = 500,
     auto_play: bool = True,
     output_dir: str | None = None,
+    ephemeral: bool = False,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
@@ -239,6 +251,8 @@ def synthesize_batch(
             synthesis. Defaults to true.
         output_dir: Directory for output files. Defaults to
             TTS_OUTPUT_DIR env var or ~/tts-output/.
+        ephemeral: If true, write to `.tts/` in cwd and clean up
+            previous ephemeral files. Ignores output_dir.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
@@ -266,7 +280,7 @@ def synthesize_batch(
     ]
     if not requests:
         return str([])
-    dir_path = _resolve_output_dir(output_dir)
+    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
 
     client = TTSClient(provider)
     results: list[SynthesisResult]
@@ -314,6 +328,7 @@ def synthesize_pair(
     auto_play: bool = True,
     output_path: str | None = None,
     output_dir: str | None = None,
+    ephemeral: bool = False,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
@@ -342,6 +357,8 @@ def synthesize_pair(
         output_path: Full path for the output file.
         output_dir: Directory for output. Defaults to
             TTS_OUTPUT_DIR env var or ~/tts-output/.
+        ephemeral: If true, write to `.tts/` in cwd and clean up
+            previous ephemeral files. Ignores output_dir/output_path.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
@@ -375,7 +392,7 @@ def synthesize_pair(
         speaker_boost=speaker_boost,
     )
 
-    dir_path = _resolve_output_dir(output_dir)
+    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
     path = _resolve_output_path(
         output_path,
         dir_path,
@@ -413,6 +430,7 @@ def synthesize_pair_batch(
     merge: bool = False,
     auto_play: bool = True,
     output_dir: str | None = None,
+    ephemeral: bool = False,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
@@ -440,6 +458,8 @@ def synthesize_pair_batch(
         auto_play: Play the audio after synthesis. Defaults to true.
         output_dir: Directory for output files. Defaults to
             TTS_OUTPUT_DIR env var or ~/tts-output/.
+        ephemeral: If true, write to `.tts/` in cwd and clean up
+            previous ephemeral files. Ignores output_dir.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
@@ -481,7 +501,7 @@ def synthesize_pair_batch(
     if not pair_requests:
         return str([])
 
-    dir_path = _resolve_output_dir(output_dir)
+    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
 
     client = TTSClient(provider)
     results: list[SynthesisResult]
