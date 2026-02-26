@@ -28,7 +28,16 @@ from punt_tts.types import (
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("tts")
+mcp = FastMCP(
+    "tts",
+    instructions=(
+        "TTS is a text-to-speech engine. Use these tools to speak text aloud, "
+        "generate audio files, and create language-learning pairs.\n\n"
+        "When a stop hook blocks with a ♪ phrase (e.g. '♪ Speaking my thoughts...'), "
+        "write 1-2 sentences summarizing what you completed, call the speak tool "
+        "with ephemeral=true, then stop. No other output."
+    ),
+)
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 
