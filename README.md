@@ -141,6 +141,8 @@ tts serve                                      # Start MCP server (stdio)
 - Claude Code plugin: marketplace install, MCP server, slash commands
 - CLI: synthesize, batch, pair, pair-batch, doctor
 - Ephemeral output mode (`.tts/` in cwd)
+- Two-channel display: `♪` panel summaries with voice/provider context
+- Natural notification phrasing: randomized phrases for permission and idle prompts
 
 ### Next
 

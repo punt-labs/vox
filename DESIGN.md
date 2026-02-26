@@ -31,7 +31,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 │  Stop hook (notify.sh):                                      │
 │    if notify=y and not stop_hook_active:                     │
 │      decision=block, reason="summarize + call TTS"           │
-│    → Claude generates 1-2 sentence summary + calls synth     │
+│    → Claude generates 1-2 sentence summary + calls speak     │
 │    → stop_hook_active=true on second fire → let stop         │
 │                                                              │
 │  Notification hook (notify-permission.sh):                   │
@@ -143,7 +143,7 @@ Permission dialog appears → Notification hook fires (async)
   → reads tts.local.md
   ├── notify=n → exit 0
   ├── speak=n → play chime audio file
-  └── speak=y → tts synthesize "Needs your approval" --ephemeral --auto-play
+  └── speak=y → pick random phrase → tts synthesize "$TEXT" -o $TMPDIR/notify.mp3
 ```
 
 ### Why Async + CLI (Not Model)
@@ -287,3 +287,68 @@ Hooks are declared in `hooks/hooks.json` and registered by the plugin system. Th
 - Stop hook (synchronous, returns JSON decision) has different logic than Notification hook (async, calls CLI)
 - Separate scripts keep each handler focused and testable
 - The permission and idle hooks share the same script (both announce a message)
+
+---
+
+## DES-007: MCP Tool Naming — Voice Domain Vocabulary
+
+**Date:** 2026-02-25
+**Status:** SETTLED
+**Topic:** MCP tool names visible in the UI panel
+
+### Design
+
+Renamed the four MCP tools from clinical/technical names to voice/audio-themed names:
+
+| Old (clinical) | New (on-brand) | Why |
+|----------------|---------------|-----|
+| `synthesize` | `speak` | The natural verb for giving voice to text |
+| `synthesize_batch` | `chorus` | Multiple texts at once, like a chorus |
+| `synthesize_pair` | `duet` | Two texts stitched together |
+| `synthesize_pair_batch` | `ensemble` | Multiple pairs, like an ensemble |
+
+CLI command names (`tts synthesize`, `tts batch`, etc.) and internal Python API are unchanged — only the MCP tool names visible in the UI.
+
+### Why This Matters
+
+MCP tool names appear in the tool-result panel every time a tool is called. "synthesize" reads like a chemistry lab; "speak" reads like what the plugin actually does. Follows the dungeon plugin pattern where `load`/`save`/`delete` became `recall`/`inscribe`/`obliterate`.
+
+---
+
+## DES-008: Two-Channel Display — Panel + Model Context
+
+**Date:** 2026-02-25
+**Status:** SETTLED
+**Topic:** How MCP tool results display in the Claude Code UI
+
+### Design
+
+The PostToolUse hook (`suppress-output.sh`) splits tool output into two channels:
+
+1. **`updatedMCPToolOutput`** — Compact panel line with `♪` prefix, voice, and provider:
+   - `♪ "Hello world" — matilda (elevenlabs)`
+   - `♪♪ 3 tracks — matilda (elevenlabs)`
+   - `♪ "Hello | Hallo" — matilda+hans (elevenlabs)`
+   - `♪♪ 5 pairs — matilda (elevenlabs)`
+
+2. **`additionalContext`** — Full JSON result for the model to reference paths, metadata, etc.
+
+Follows the two-channel display pattern from punt-kit/patterns/two-channel-display.md.
+
+### Why `♪`
+
+Biff uses `▶` as its visual glyph. `♪` (musical note) is the natural symbol for a voice/audio plugin — instantly recognizable, visually distinct from other plugins.
+
+---
+
+## DES-009: Notification Phrase Variation
+
+**Date:** 2026-02-25
+**Status:** SETTLED
+**Topic:** How permission/idle notifications avoid repetitive phrasing
+
+### Design
+
+The notification hook (`notify-permission.sh`) selects from a pool of 7 natural-sounding phrases per notification type using bash `$RANDOM`. Avoids the robotic repetition of hearing "Needs your approval" every time.
+
+Phrases are stored directly in the script (no external config). Selection uses a Bash 3.2-compatible `pick_random` function that takes array elements as positional arguments (no namerefs).

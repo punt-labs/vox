@@ -55,8 +55,8 @@ Module structure under `src/punt_tts/`:
 | `ephemeral.py` | Ephemeral output mode: `.tts/` in cwd, auto-cleanup |
 | `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, serve |
 | `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
-| `server.py` | FastMCP server — exposes same operations as MCP tools |
-| `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > Polly) |
+| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble` |
+| `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
 | `providers/elevenlabs.py` | `ElevenLabsProvider` — ElevenLabs synthesis, voice settings, voice resolution, health checks. Only file with elevenlabs |
@@ -79,7 +79,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_cli.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_cli.py`, `test_installer.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 
 ## Python Coding Standards
 
@@ -198,18 +198,22 @@ gh pr create --title "feat: description" --body "..."
 
 Every release follows this exact sequence. No steps skipped.
 
-1. **Bump version** in `pyproject.toml` and `src/punt_tts/__init__.py` (keep in sync)
+1. **Bump version** in `pyproject.toml`, `src/punt_tts/__init__.py`, and `.claude-plugin/plugin.json` (keep in sync)
 2. **Move `[Unreleased]`** entries in `CHANGELOG.md` to new version section with date
 3. **Run all quality gates** — ruff, mypy, pyright, pytest
 4. **Commit**: `chore: release vX.Y.Z`
 5. **Build**: `rm -rf dist/ && uv build && uvx twine check dist/*`
 6. **Upload to PyPI**: `uvx twine upload dist/*`
-7. **Tag**: `git tag vX.Y.Z`
-8. **Push**: `git push origin main vX.Y.Z`
-9. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
-10. **Verify**: `uv tool install --upgrade punt-tts && tts doctor`
+7. **Release plugin**: `bash scripts/release-plugin.sh` (swaps name + MCP server to prod)
+8. **Tag**: `git tag vX.Y.Z`
+9. **Restore dev**: `bash scripts/restore-dev-plugin.sh`
+10. **Push**: `git push origin main vX.Y.Z`
+11. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
+12. **Verify**: `uv tool install --force --refresh punt-tts==X.Y.Z && tts doctor`
+13. **Restore editable**: `uv tool install --force --editable .` (for local dev)
+14. **Marketplace**: bump version in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge
 
-A release is not complete until all 10 steps are done.
+A release is not complete until all 14 steps are done.
 
 ### Session Close Protocol
 
