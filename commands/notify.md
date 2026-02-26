@@ -1,5 +1,6 @@
 ---
 description: "Control task notifications (hear when tasks finish or need input)"
+argument-hint: "y | c | n"
 allowed-tools: ["Read", "Write", "Edit"]
 ---
 

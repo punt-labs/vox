@@ -1,5 +1,6 @@
 ---
 description: "Toggle spoken notifications vs chime-only"
+argument-hint: "y | n"
 allowed-tools: ["Read", "Write", "Edit"]
 ---
 

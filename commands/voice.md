@@ -1,5 +1,6 @@
 ---
 description: "Control text-to-speech voice mode"
+argument-hint: "on | off | status"
 allowed-tools: ["Read", "Write", "Edit"]
 ---
 
