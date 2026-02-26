@@ -5,7 +5,6 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
 TOOL_PATTERN="mcp__plugin_tts_tts__"
-DEV_TOOL_PATTERN="mcp__plugin_tts-dev_tts__"
 
 ACTIONS=()
 
@@ -30,18 +29,9 @@ fi
 if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
   CHANGED=false
 
-  # Allow prod tools
   if ! jq -e ".permissions.allow // [] | map(select(contains(\"$TOOL_PATTERN\"))) | length > 0" "$SETTINGS" >/dev/null 2>&1; then
     TMPFILE="$(mktemp)"
     jq '.permissions.allow = (.permissions.allow // []) + ["mcp__plugin_tts_tts__*"]' "$SETTINGS" > "$TMPFILE"
-    mv "$TMPFILE" "$SETTINGS"
-    CHANGED=true
-  fi
-
-  # Allow dev tools
-  if ! jq -e ".permissions.allow // [] | map(select(contains(\"$DEV_TOOL_PATTERN\"))) | length > 0" "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp)"
-    jq '.permissions.allow = (.permissions.allow // []) + ["mcp__plugin_tts-dev_tts__*"]' "$SETTINGS" > "$TMPFILE"
     mv "$TMPFILE" "$SETTINGS"
     CHANGED=true
   fi

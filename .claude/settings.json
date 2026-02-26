@@ -11,8 +11,7 @@
       "Bash(npx:*)",
       "Bash(uvx:*)",
       "Bash(python3:*)",
-      "Bash(tts-server:*)",
-      "mcp__plugin_tts-dev_tts__*"
+      "Bash(tts-server:*)"
     ]
   }
 }
