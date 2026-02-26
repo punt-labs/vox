@@ -39,16 +39,16 @@ if [[ "$SPEAK" == "n" ]]; then
   exit 0
 fi
 
-# Phrase pool — the reason shows verbatim in the UI, so keep it
-# purely playful. Claude infers what to do from plugin context.
+# Phrase pool — each phrase is playful for the user AND primes
+# Claude to speak a summary (every phrase implies vocalization).
 SUMMARY_PHRASES=(
-  "♪ Clearing my throat..."
-  "♪ Warming up the vocal cords..."
-  "♪ Taking a deep breath..."
-  "♪ Finding my words..."
-  "♪ Composing my thoughts..."
-  "♪ Preparing my closing remarks..."
-  "♪ One moment while I find my voice..."
+  "♪ Speaking my thoughts..."
+  "♪ Putting my thoughts into words..."
+  "♪ Summing it up aloud..."
+  "♪ Saying my piece..."
+  "♪ Voicing my closing remarks..."
+  "♪ Letting you hear how it went..."
+  "♪ Telling you what I did..."
 )
 
 # Pick a random element from positional arguments (Bash 3.2 compatible).
