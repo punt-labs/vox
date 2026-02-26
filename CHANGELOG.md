@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Config moved from global `~/.claude/tts.local.md` to per-project `.tts/config.md`; settings no longer leak across projects
+
+### Added
+
+- `argument-hint` frontmatter on `/notify`, `/speak`, `/say`, `/voice` commands for autocomplete-style picker hints
+
 ## [0.3.4] - 2026-02-26
 
 ### Fixed

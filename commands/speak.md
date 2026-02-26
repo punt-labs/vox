@@ -15,7 +15,7 @@ Toggle whether notifications use spoken words or an audio chime.
 
 ## Implementation
 
-Read the file `$HOME/.claude/tts.local.md` to check current state. The file has YAML frontmatter:
+Read the file `.tts/config.md` to check current state. The file has YAML frontmatter:
 
 ```yaml
 ---

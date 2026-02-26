@@ -2,13 +2,13 @@
 # Shared state reader for punt-tts hooks.
 #
 # All hooks source this file to read notification and speech state
-# from ~/.claude/tts.local.md (YAML frontmatter).
+# from .tts/config.md (per-project, YAML frontmatter).
 #
 # Usage:
 #   source "$(dirname "$0")/state.sh"
 #   if [[ "$(read_notify)" == "y" ]]; then ...
 
-TTS_STATE_FILE="$HOME/.claude/tts.local.md"
+TTS_STATE_FILE=".tts/config.md"
 
 # Read a YAML frontmatter field from the state file.
 # Returns empty string if file doesn't exist or field not found.
