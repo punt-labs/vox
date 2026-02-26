@@ -3,7 +3,7 @@
 #
 # When notifications are enabled (/notify y or /notify c), this hook
 # blocks Claude from stopping and asks it to generate a brief spoken
-# summary via the TTS synthesize tool.
+# summary via the TTS speak tool.
 #
 # Loop guard: stop_hook_active=true means Claude is already continuing
 # from a previous Stop hook. Let it stop to prevent infinite loops.
@@ -39,8 +39,10 @@ if [[ "$SPEAK" == "n" ]]; then
   exit 0
 fi
 
-# Voice mode: block the stop, ask Claude to summarize and speak
+# Voice mode: block the stop, ask Claude to summarize and speak.
+# The reason field shows in the UI AND instructs Claude — keep it
+# clean enough for both audiences.
 jq -n '{
   decision: "block",
-  reason: "The user has /notify enabled. You MUST: (1) Write a 1-2 sentence summary of what you just completed. (2) Call the TTS speak tool with that summary text, ephemeral=true, auto_play=true. (3) Do nothing else — no extra commentary, no questions. Just the summary and the tool call."
+  reason: "♪ Generating spoken summary — write 1-2 sentences summarizing what you completed, call the speak tool (ephemeral=true, auto_play=true), then stop. No other output."
 }'

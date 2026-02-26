@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -214,7 +215,7 @@ def speak(
         result = client.synthesize(request, path)
     if auto_play:
         _play_audio(result.path)
-    return str(result_to_dict(result))
+    return json.dumps(result_to_dict(result))
 
 
 @mcp.tool()
@@ -279,7 +280,7 @@ def chorus(
         for t in texts
     ]
     if not requests:
-        return str([])
+        return json.dumps([])
     dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
 
     client = TTSClient(provider)
@@ -312,7 +313,7 @@ def chorus(
     if auto_play:
         for r in results:
             _play_audio(r.path)
-    return str([result_to_dict(r) for r in results])
+    return json.dumps([result_to_dict(r) for r in results])
 
 
 @mcp.tool()
@@ -415,7 +416,7 @@ def duet(
         result = client.synthesize_pair(text1, req1, text2, req2, path, pause_ms)
     if auto_play:
         _play_audio(result.path)
-    return str(result_to_dict(result))
+    return json.dumps(result_to_dict(result))
 
 
 @mcp.tool()
@@ -499,7 +500,7 @@ def ensemble(
         for p in pairs
     ]
     if not pair_requests:
-        return str([])
+        return json.dumps([])
 
     dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
 
@@ -554,7 +555,7 @@ def ensemble(
     if auto_play:
         for r in results:
             _play_audio(r.path)
-    return str([result_to_dict(r) for r in results])
+    return json.dumps([result_to_dict(r) for r in results])
 
 
 def run_server() -> None:
