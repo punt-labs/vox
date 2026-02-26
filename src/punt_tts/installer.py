@@ -151,7 +151,11 @@ def _unregister_marketplace(
 
 
 def _install_plugin() -> StepResult:
-    """Install the tts plugin via ``claude plugin install``."""
+    """Install the tts plugin via ``claude plugin install``.
+
+    If the plugin is already installed, runs ``claude plugin update``
+    to pull the latest version.
+    """
     claude = shutil.which("claude")
     if not claude:
         return StepResult("Plugin", False, "claude CLI not found on PATH")
@@ -166,8 +170,24 @@ def _install_plugin() -> StepResult:
         return StepResult("Plugin", True, "installed")
     stderr = result.stderr.strip()
     if "already" in stderr.lower():
-        return StepResult("Plugin", True, "already installed")
+        return _update_plugin(claude)
     return StepResult("Plugin", False, f"claude plugin install failed: {stderr}")
+
+
+def _update_plugin(claude: str) -> StepResult:
+    """Update the tts plugin via ``claude plugin update``."""
+    result = subprocess.run(
+        [claude, "plugin", "update", PLUGIN_ID, "--scope", "user"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return StepResult("Plugin", True, "updated")
+    stderr = result.stderr.strip()
+    if "already" in stderr.lower() or "up to date" in stderr.lower():
+        return StepResult("Plugin", True, "already up to date")
+    return StepResult("Plugin", False, f"claude plugin update failed: {stderr}")
 
 
 def _uninstall_plugin() -> StepResult:

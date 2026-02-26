@@ -10,8 +10,9 @@ else
   BOLD='' GREEN='' YELLOW='' NC=''
 fi
 
-info() { printf '%b==>%b %s\n' "$BOLD" "$NC" "$1"; }
+info() { printf '%b▶%b %s\n' "$BOLD" "$NC" "$1"; }
 ok()   { printf '  %b✓%b %s\n' "$GREEN" "$NC" "$1"; }
+warn() { printf '  %b!%b %s\n' "$YELLOW" "$NC" "$1"; }
 fail() { printf '  %b✗%b %s\n' "$YELLOW" "$NC" "$1"; exit 1; }
 
 PACKAGE="punt-tts"
@@ -96,7 +97,7 @@ info "Setting up Claude Code plugin..."
 # Users without SSH keys need an HTTPS fallback.
 NEED_HTTPS_REWRITE=0
 if ! ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
-  printf '  ℹ SSH auth to GitHub unavailable, using HTTPS fallback\n'
+  warn "SSH auth to GitHub unavailable, using HTTPS fallback"
   git config --global url."https://github.com/".insteadOf "git@github.com:"
   NEED_HTTPS_REWRITE=1
 fi
