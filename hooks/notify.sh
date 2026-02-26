@@ -39,8 +39,8 @@ if [[ "$SPEAK" == "n" ]]; then
   exit 0
 fi
 
-# Phrase pool — the reason shows verbatim in the UI, so lead with
-# something playful. The tail carries the actual instruction for Claude.
+# Phrase pool — the reason shows verbatim in the UI, so keep it
+# purely playful. Claude infers what to do from plugin context.
 SUMMARY_PHRASES=(
   "♪ Clearing my throat..."
   "♪ Warming up the vocal cords..."
@@ -58,8 +58,7 @@ pick_random() {
   echo "$1"
 }
 
-FLAVOR=$(pick_random "${SUMMARY_PHRASES[@]}")
-REASON="${FLAVOR} Speak a brief completion summary (ephemeral)."
+REASON=$(pick_random "${SUMMARY_PHRASES[@]}")
 
 # Voice mode: block the stop, ask Claude to summarize and speak.
 jq -n --arg reason "$REASON" '{
