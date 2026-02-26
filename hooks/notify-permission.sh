@@ -47,13 +47,15 @@ esac
 
 # Voice mode: synthesize to temp file and play.
 # The CLI doesn't have --ephemeral/--auto-play, so we handle it here.
-OUTPUT=$(mktemp /tmp/tts_notify_XXXXXX.mp3)
+# macOS mktemp requires X's at the end of the template (no suffix allowed).
+TMPDIR=$(mktemp -d /tmp/tts_notify_XXXXXX)
+OUTPUT="$TMPDIR/notify.mp3"
 if command -v tts &>/dev/null; then
-  tts synthesize "$TEXT" -o "$OUTPUT" 2>/dev/null
+  tts synthesize "$TEXT" -o "$OUTPUT" >/dev/null 2>&1
   if [[ -f "$OUTPUT" && -s "$OUTPUT" ]]; then
     afplay "$OUTPUT" 2>/dev/null
   fi
-  rm -f "$OUTPUT"
 fi
+rm -rf "$TMPDIR"
 
 exit 0
