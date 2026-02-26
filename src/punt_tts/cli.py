@@ -65,9 +65,21 @@ def _print_results(results: list[SynthesisResult]) -> None:
 
 
 def _get_provider(ctx: click.Context) -> TTSProvider:
-    """Retrieve the TTSProvider from the Click context."""
-    obj = cast("dict[str, TTSProvider]", ctx.ensure_object(dict))  # pyright: ignore[reportUnknownMemberType]
-    return obj["provider"]
+    """Retrieve the TTSProvider from the Click context, initializing lazily.
+
+    The group callback stores provider_name and model but does NOT create
+    the provider — that way subcommands like ``install`` and ``serve``
+    never touch the provider layer.
+    """
+    obj = cast("dict[str, object]", ctx.ensure_object(dict))  # pyright: ignore[reportUnknownMemberType]
+    cached = obj.get("provider")
+    if cached is not None:
+        return cast("TTSProvider", cached)
+    provider_name = cast("str | None", obj.get("provider_name"))
+    model = cast("str | None", obj.get("model"))
+    provider = get_provider(provider_name, model=model)
+    obj["provider"] = provider
+    return provider
 
 
 def _resolve_voice_and_language(
@@ -161,7 +173,8 @@ def main(
     json_output_enabled = json_output
     _configure_logging(verbose)
     ctx.ensure_object(dict)
-    ctx.obj["provider"] = get_provider(provider_name, model=model)
+    ctx.obj["provider_name"] = provider_name
+    ctx.obj["model"] = model
 
 
 @main.command()
