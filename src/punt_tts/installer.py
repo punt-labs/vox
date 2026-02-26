@@ -177,7 +177,7 @@ def _install_plugin() -> StepResult:
 def _update_plugin(claude: str) -> StepResult:
     """Update the tts plugin via ``claude plugin update``."""
     result = subprocess.run(
-        [claude, "plugin", "update", PLUGIN_ID],
+        [claude, "plugin", "update", PLUGIN_ID, "--scope", "user"],
         capture_output=True,
         text=True,
         check=False,
