@@ -147,21 +147,58 @@ class TestInstallPlugin:
         assert plugin_step.passed
         assert "installed" in plugin_step.message
 
-    def test_already_installed(self, tmp_path: Path) -> None:
+    def test_already_installed_triggers_update(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
-            mock_run.return_value = MagicMock(
-                returncode=1, stderr="Plugin already installed"
-            )
+            # First call: install fails with "already installed"
+            # Second call: update succeeds
+            mock_run.side_effect = [
+                MagicMock(returncode=1, stderr="Plugin already installed"),
+                MagicMock(returncode=0, stderr=""),
+            ]
             result = install(marketplace_path=mp_path)
 
         plugin_step = result.steps[1]
         assert plugin_step.passed
-        assert "already" in plugin_step.message
+        assert plugin_step.message == "updated"
+
+    def test_already_installed_already_up_to_date(self, tmp_path: Path) -> None:
+        mp_path = tmp_path / "known_marketplaces.json"
+
+        with (
+            patch(f"{_MOD}.subprocess.run") as mock_run,
+            patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
+        ):
+            mock_run.side_effect = [
+                MagicMock(returncode=1, stderr="Plugin already installed"),
+                MagicMock(returncode=1, stderr="Already up to date"),
+            ]
+            result = install(marketplace_path=mp_path)
+
+        plugin_step = result.steps[1]
+        assert plugin_step.passed
+        assert "up to date" in plugin_step.message
+
+    def test_already_installed_update_fails(self, tmp_path: Path) -> None:
+        mp_path = tmp_path / "known_marketplaces.json"
+
+        with (
+            patch(f"{_MOD}.subprocess.run") as mock_run,
+            patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
+        ):
+            mock_run.side_effect = [
+                MagicMock(returncode=1, stderr="Plugin already installed"),
+                MagicMock(returncode=1, stderr="network error"),
+            ]
+            result = install(marketplace_path=mp_path)
+
+        plugin_step = result.steps[1]
+        assert not plugin_step.passed
+        assert "update failed" in plugin_step.message
 
     def test_claude_not_found(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
