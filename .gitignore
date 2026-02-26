@@ -23,3 +23,4 @@ lancedb/
 .claude/*
 !.claude/settings.json
 .tts/
+research/
