@@ -9,7 +9,7 @@ Control TTS voice mode for this session.
 
 ## Usage
 
-- `/voice-dev on` — Enable voice mode (synthesize text responses as audio)
+- `/voice-dev on` — Enable voice mode (speak text responses as audio)
 - `/voice-dev off` — Disable voice mode
 - `/voice-dev status` — Show current voice mode state
 

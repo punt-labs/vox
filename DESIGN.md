@@ -48,7 +48,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 ┌─────────▼────────────────────────────────────▼───────────────┐
 │                    punt-tts Engine                            │
 │                                                              │
-│  MCP Server (synthesize, batch, pair, pair-batch)            │
+│  MCP Server (speak, chorus, duet, ensemble)                  │
 │  CLI (tts synthesize "text" --ephemeral --auto-play)         │
 │  Providers: ElevenLabs > OpenAI > Polly (auto-detect)        │
 │                                                              │
@@ -88,7 +88,7 @@ Claude finishes → Stop hook fires → reads tts.local.md
   ├── stop_hook_active=true → exit 0 (prevent infinite loop)
   └── notify=y|c → return { decision: "block", reason: "..." }
         → Claude generates 1-2 sentence summary
-        → Claude calls TTS synthesize tool (ephemeral, auto_play)
+        → Claude calls TTS speak tool (ephemeral, auto_play)
         → Claude stops → Stop hook fires again
         → stop_hook_active=true → exit 0 (done)
 ```
@@ -96,7 +96,7 @@ Claude finishes → Stop hook fires → reads tts.local.md
 **The `reason` field is the prompt.** It tells Claude:
 
 - Summarize what you just did in 1-2 sentences
-- Call the TTS synthesize tool with ephemeral=true, auto_play=true
+- Call the TTS speak tool with ephemeral=true, auto_play=true
 - Do not add any other commentary
 
 ### Why This Design
@@ -232,7 +232,7 @@ Played via `afplay` (macOS) directly from the hook script.
 `/recap` is a slash command (skill prompt) that instructs the model to:
 
 1. Summarize the key points of its last response in 2-3 sentences
-2. Call the TTS synthesize tool with the summary (ephemeral, auto_play)
+2. Call the TTS speak tool with the summary (ephemeral, auto_play)
 3. Show the summary text in the conversation
 
 ### Why Skill Prompt (Not Hook)
