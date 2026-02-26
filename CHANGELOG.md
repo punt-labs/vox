@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-02-26
+
 ### Fixed
 
 - Plugin name is now `tts` on main (was `tts-dev`); marketplace installs show `plugin:tts:tts` instead of `plugin:tts-dev:tts`
 - MCP server command is now `tts serve` (was `uv run tts serve`); works on machines without `uv`
+- Install script handles SSH auth failure with HTTPS fallback ([#8](https://github.com/punt-labs/tts/issues/8))
 
 ### Removed
 
