@@ -53,7 +53,8 @@ Module structure under `src/punt_tts/`:
 | `output.py` | Output path resolution: `TTS_OUTPUT_DIR` env var, `~/tts-output` fallback |
 | `logging_config.py` | Rotating file logging to `~/.punt-tts/logs/tts.log` |
 | `ephemeral.py` | Ephemeral output mode: `.tts/` in cwd, auto-cleanup |
-| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, serve |
+| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, serve |
+| `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
 | `server.py` | FastMCP server — exposes same operations as MCP tools |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
