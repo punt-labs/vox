@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-02-25
+
+### Added
+
+- MCP server `instructions` field primes stop hook behavior at session start (prior-context delivery pattern from biff)
+
+### Changed
+
+- Stop hook phrases now imply the action naturally ("Speaking my thoughts...", "Saying my piece...") — playful for the user, instructive for the model
+
 ## [0.3.2] - 2026-02-25
 
 ### Changed
