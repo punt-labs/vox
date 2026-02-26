@@ -858,10 +858,10 @@ class TestInstallDesktopCommand:
         assert audio_dir.is_dir()
 
     @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_polly_ignoring_openai_key(
+    def test_install_defaults_openai_when_key_set(
         self, mock_get_provider: MagicMock, tmp_path: Path
     ) -> None:
-        """OPENAI_API_KEY in env does NOT auto-select openai; polly is default."""
+        """OPENAI_API_KEY in env auto-selects openai (ElevenLabs > OpenAI > Polly)."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -877,12 +877,12 @@ class TestInstallDesktopCommand:
             )
 
         assert result.exit_code == 0
-        assert "Provider: polly" in result.output
+        assert "Provider: openai" in result.output
 
         data = json.loads(config_path.read_text())
         env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "polly"
-        assert "OPENAI_API_KEY" not in env
+        assert env["TTS_PROVIDER"] == "openai"
+        assert env["OPENAI_API_KEY"] == "sk-test-key"
 
     @patch(f"{_CLI}.get_provider")
     def test_install_explicit_openai_with_key(

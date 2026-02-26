@@ -69,15 +69,16 @@ PROVIDER_REGISTRY["elevenlabs"] = _register_elevenlabs
 def auto_detect_provider() -> str:
     """Detect the provider from environment.
 
-    Checks TTS_PROVIDER env var first.
-    Falls back to elevenlabs if ELEVENLABS_API_KEY is set.
-    Otherwise defaults to polly.
+    Checks TTS_PROVIDER env var first, then probes for API keys:
+    ElevenLabs > OpenAI > Polly.
     """
     env = os.environ.get("TTS_PROVIDER")
     if env:
         return env.lower()
     if os.environ.get("ELEVENLABS_API_KEY"):
         return "elevenlabs"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
     return "polly"
 
 

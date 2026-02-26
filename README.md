@@ -1,14 +1,14 @@
 # punt-tts
 
-Voice for your AI coding assistant.
+> Voice for your AI coding assistant.
 
-When Claude Code finishes a task, hits an error, or needs your approval — you hear it. No need to watch the terminal. Keep working; your agent will tell you what happened.
+[![License](https://img.shields.io/github/license/punt-labs/tts)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/tts/test.yml?label=CI)](https://github.com/punt-labs/tts/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/punt-tts)](https://pypi.org/project/punt-tts/)
 
-## Why
+When Claude Code finishes a task, hits an error, or needs your approval --- you hear it. No need to watch the terminal. Keep working; your agent will tell you what happened.
 
-AI coding agents run for minutes at a time. You switch to a browser, a doc, another file. When the agent finishes — or gets stuck waiting for permission — you don't know until you check. Time burns silently.
-
-punt-tts adds a voice layer to Claude Code. Notifications when tasks complete. Spoken summaries on demand. Audio that works while your eyes are somewhere else.
+**Platforms:** macOS
 
 ## Quick Start
 
@@ -24,6 +24,17 @@ Restart Claude Code, then:
 ```
 
 <details>
+<summary>Manual install (if you already have uv)</summary>
+
+```bash
+uv tool install punt-tts
+tts install
+tts doctor
+```
+
+</details>
+
+<details>
 <summary>Verify before running</summary>
 
 ```bash
@@ -35,72 +46,69 @@ sh install.sh
 
 </details>
 
-<details>
-<summary>Manual installation</summary>
+## Features
 
-```bash
-uv tool install punt-tts
-tts install
-tts doctor
+- **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
+- **Three providers** --- ElevenLabs (natural voice), OpenAI (low latency), AWS Polly (cost-effective)
+- **Opt-in only** --- no audio until you enable it, no surprises
+- **Voice or chime** --- `/speak n` switches to audio tones, no TTS API calls
+- **Graceful absence** --- if punt-tts isn't installed, Claude Code works exactly as before
+- **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
+
+## What It Looks Like
+
+### Enable notifications
+
+```text
+> /notify y
+
+Notifications: enabled (voice)
+You will hear spoken summaries when tasks complete and chimes when Claude needs input.
 ```
 
-</details>
+### Get a recap
+
+```text
+> /recap
+
+Speaking: "I refactored the authentication module into three files, added
+comprehensive tests for the token refresh flow, and fixed a race condition
+in the session middleware. All 47 tests pass."
+```
+
+### Switch to chime-only
+
+```text
+> /speak n
+
+Speak: off (chime only)
+Notifications will use audio tones instead of voice.
+```
 
 ## Commands
 
-### /notify — Task notifications
-
-Control when punt-tts speaks. Audio fires on two events: **task done** and **needs input** (permission prompts, questions).
-
-| Command | Behavior |
-|---------|----------|
+| Command | Purpose |
+|---------|---------|
 | `/notify y` | Speak on task completion and permission prompts |
-| `/notify c` | Continuous — also speak milestone updates during long tasks |
+| `/notify c` | Continuous --- also speak milestone updates during long tasks |
 | `/notify n` | Off |
-
-Default when enabled: spoken summaries. Pair with `/speak n` for chime-only.
-
-### /speak — Words or chimes
-
-Toggle whether notifications use spoken language or just an audio tone.
-
-| Command | Behavior |
-|---------|----------|
-| `/speak y` | Notifications are spoken (default) |
-| `/speak n` | Notifications are a chime — no words |
-
-### /recap — Voice summary on demand
-
-After Claude produces a wall of text — a multi-file refactor, test results, an architecture analysis — type `/recap`. Claude extracts the key points and speaks a 30-second summary while you scan the diff.
-
-`/recap` is explicit and one-shot. The agent never speaks autonomously unless `/notify` is enabled.
-
-## Design Principles
-
-- **Voice supplements text, never replaces it.** Every word spoken is also in the terminal.
-- **Opt-in only.** No audio until you enable it. No surprises.
-- **Zero configuration.** If `tts doctor` passes, everything works. No audio device setup, no voice selection wizard.
-- **Graceful absence.** If punt-tts isn't installed, Claude Code works exactly as before.
+| `/speak y` | Notifications are spoken (default when /notify is on) |
+| `/speak n` | Notifications are a chime --- no words |
+| `/recap` | Spoken summary of Claude's last response |
+| `/say "text"` | Speak arbitrary text aloud |
+| `/voice on` \| `/voice off` | Enable/disable voice mode |
 
 ## Providers
 
-punt-tts supports three TTS backends. It auto-detects the best available provider.
+punt-tts auto-detects the best available provider.
 
 | Provider | API Key | Default Voice | Best For |
 |----------|---------|---------------|----------|
 | ElevenLabs | `ELEVENLABS_API_KEY` | matilda | Long-form summaries, natural voice |
 | OpenAI | `OPENAI_API_KEY` | nova | Fast notifications, low latency |
-| AWS Polly | AWS credentials | joanna | Cost-effective, reliable |
+| AWS Polly | AWS credentials | joanna | Cost-effective, no API key needed |
 
 Auto-detection order: ElevenLabs > OpenAI > Polly.
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TTS_PROVIDER` | Force a specific provider | auto-detect |
-| `TTS_MODEL` | Model override | provider default |
-| `TTS_OUTPUT_DIR` | Output directory | `~/tts-output` |
 
 ## CLI
 
@@ -110,19 +118,52 @@ punt-tts is also a standalone TTS tool, independent of Claude Code.
 tts synthesize "Hello world"                  # Synthesize with default provider
 tts synthesize "Hello" --provider elevenlabs  # Use specific provider
 tts doctor                                     # Check setup
-tts install                                    # Register MCP server with Claude Code
+tts install                                    # Install Claude Code plugin (marketplace)
+tts uninstall                                  # Remove plugin and clean up
+tts install-desktop                            # Register MCP server with Claude Desktop
 tts serve                                      # Start MCP server (stdio)
 ```
 
-## Library
+## Environment Variables
 
-punt-tts is a Python library first. Use it programmatically:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TTS_PROVIDER` | Force a specific provider | auto-detect |
+| `TTS_MODEL` | Model override | provider default |
+| `TTS_OUTPUT_DIR` | Output directory | `~/tts-output` |
 
-```python
-from punt_tts import TTSClient
+## Roadmap
 
-client = TTSClient()
-result = client.synthesize("Hello world", output_path)
+### Shipped
+
+- Notification layer: `/notify`, `/speak`, `/recap`, Stop + Notification hooks
+- Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI
+- Claude Code plugin: marketplace install, MCP server, slash commands
+- CLI: synthesize, batch, pair, pair-batch, doctor
+- Ephemeral output mode (`.tts/` in cwd)
+
+### Next
+
+| Phase | What Ships |
+|-------|-----------|
+| **Screen reader** | macOS VoiceOver and `say` fallback when no API key is configured |
+| **Streaming** | Real-time audio streaming for long summaries |
+| **Voice selection** | `/voice pick` command with preview and persistence |
+
+## Documentation
+
+[Design Log](DESIGN.md) |
+[Changelog](CHANGELOG.md)
+
+## Development
+
+```bash
+uv sync --all-extras                           # Install dependencies
+uv run ruff check src/ tests/                  # Lint
+uv run ruff format --check src/ tests/         # Format
+uv run mypy src/ tests/                        # Type check (mypy)
+uv run pyright src/ tests/                     # Type check (pyright)
+uv run pytest tests/ -v                        # Test
 ```
 
 ## License
