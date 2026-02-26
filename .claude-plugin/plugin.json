@@ -1,7 +1,7 @@
 {
   "name": "tts-dev",
   "description": "Text-to-speech for Claude Code: /voice, /say, /notify, /speak, /recap",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "Punt Labs",
     "email": "hello@punt-labs.com"
