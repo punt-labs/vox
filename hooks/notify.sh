@@ -42,5 +42,5 @@ fi
 # Voice mode: block the stop, ask Claude to summarize and speak
 jq -n '{
   decision: "block",
-  reason: "The user has /notify enabled. You MUST: (1) Write a 1-2 sentence summary of what you just completed. (2) Call the TTS synthesize tool with that summary text, ephemeral=true, auto_play=true. (3) Do nothing else — no extra commentary, no questions. Just the summary and the tool call."
+  reason: "The user has /notify enabled. You MUST: (1) Write a 1-2 sentence summary of what you just completed. (2) Call the TTS speak tool with that summary text, ephemeral=true, auto_play=true. (3) Do nothing else — no extra commentary, no questions. Just the summary and the tool call."
 }'

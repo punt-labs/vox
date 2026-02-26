@@ -130,7 +130,7 @@ def _play_audio(path: Path) -> None:
 
 
 @mcp.tool()
-def synthesize(
+def speak(
     text: str,
     voice: str | None = None,
     language: str | None = None,
@@ -144,7 +144,7 @@ def synthesize(
     style: float | None = None,
     speaker_boost: bool | None = None,
 ) -> str:
-    """Synthesize text to an MP3 audio file.
+    """Speak text aloud and save as MP3.
 
     Args:
         text: The text to convert to speech. With ElevenLabs eleven_v3,
@@ -218,7 +218,7 @@ def synthesize(
 
 
 @mcp.tool()
-def synthesize_batch(
+def chorus(
     texts: list[str],
     voice: str | None = None,
     language: str | None = None,
@@ -233,7 +233,7 @@ def synthesize_batch(
     style: float | None = None,
     speaker_boost: bool | None = None,
 ) -> str:
-    """Synthesize multiple texts to MP3 files.
+    """Speak multiple texts to MP3 files.
 
     Args:
         texts: List of texts to synthesize. With ElevenLabs eleven_v3,
@@ -316,7 +316,7 @@ def synthesize_batch(
 
 
 @mcp.tool()
-def synthesize_pair(
+def duet(
     text1: str,
     text2: str,
     voice1: str | None = None,
@@ -334,7 +334,7 @@ def synthesize_pair(
     style: float | None = None,
     speaker_boost: bool | None = None,
 ) -> str:
-    """Synthesize a pair of texts and stitch them into one MP3.
+    """Stitch a pair of texts into one MP3.
 
     Creates [text1 audio] [pause] [text2 audio]. Use for language
     learning pairs like "strong" (English) + "stark" (German).
@@ -419,7 +419,7 @@ def synthesize_pair(
 
 
 @mcp.tool()
-def synthesize_pair_batch(
+def ensemble(
     pairs: list[list[str]],
     voice1: str | None = None,
     voice2: str | None = None,
@@ -436,7 +436,7 @@ def synthesize_pair_batch(
     style: float | None = None,
     speaker_boost: bool | None = None,
 ) -> str:
-    """Synthesize multiple text pairs and stitch each into MP3 files.
+    """Stitch multiple text pairs into MP3 files.
 
     Each pair becomes [text1 audio] [pause] [text2 audio]. Use for
     vocabulary lists like [["strong","stark"], ["house","Haus"]].

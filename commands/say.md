@@ -1,11 +1,11 @@
 ---
 description: "Speak text aloud using TTS"
-allowed-tools: ["mcp__plugin_tts_tts__synthesize", "mcp__plugin_tts-dev_tts__synthesize"]
+allowed-tools: ["mcp__plugin_tts_tts__speak", "mcp__plugin_tts-dev_tts__speak"]
 ---
 
 # /say command
 
-Synthesize the provided text to speech and play it.
+Speak the provided text aloud.
 
 ## Usage
 
@@ -13,7 +13,7 @@ Synthesize the provided text to speech and play it.
 
 ## Implementation
 
-Call the `synthesize` MCP tool with:
+Call the `speak` MCP tool with:
 
 - `text`: the user's text argument
 - `ephemeral`: `true` (write to `.tts/` in cwd, auto-cleaned)
