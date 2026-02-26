@@ -23,11 +23,14 @@ SPEAK=$(read_speak)
 NOTIFICATION_TYPE=$(echo "$INPUT" | jq -r '.notification_type // "unknown"')
 MESSAGE=$(echo "$INPUT" | jq -r '.message // "Needs your attention"')
 
-# Chime mode: play attention chime
+# Chime mode: play attention chime.
+# nohup + disown detaches afplay from the hook's process group so
+# Claude Code can reap the hook without killing the audio.
 if [[ "$SPEAK" == "n" ]]; then
   CHIME="$SCRIPT_DIR/../assets/chime_prompt.mp3"
   if [[ -f "$CHIME" ]]; then
-    afplay "$CHIME" &
+    nohup afplay "$CHIME" >/dev/null 2>&1 &
+    disown
   fi
   exit 0
 fi
