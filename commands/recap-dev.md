@@ -1,15 +1,15 @@
 ---
-description: "Spoken summary of what just happened"
-allowed-tools: ["mcp__plugin_tts_tts__speak", "mcp__plugin_tts-dev_tts__speak"]
+description: "Spoken summary of what just happened (dev)"
+allowed-tools: ["mcp__plugin_tts-dev_tts__speak"]
 ---
 
-# /recap command
+# /recap-dev command
 
 Speak a brief summary of the last response.
 
 ## Usage
 
-`/recap`
+`/recap-dev`
 
 ## Implementation
 
