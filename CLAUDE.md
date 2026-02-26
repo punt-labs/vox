@@ -202,16 +202,16 @@ Every release follows this exact sequence. No steps skipped.
 2. **Move `[Unreleased]`** entries in `CHANGELOG.md` to new version section with date
 3. **Run all quality gates** — ruff, mypy, pyright, pytest
 4. **Commit**: `chore: release vX.Y.Z`
-5. **Build**: `rm -rf dist/ && uv build && uvx twine check dist/*`
-6. **Upload to PyPI**: `uvx twine upload dist/*`
-7. **Tag**: `git tag vX.Y.Z`
-8. **Push**: `git push origin main vX.Y.Z`
+5. **Build locally**: `rm -rf dist/ && uv build && uvx twine check dist/*` (validation only — do NOT upload)
+6. **Tag**: `git tag vX.Y.Z`
+7. **Push**: `git push origin main vX.Y.Z` (triggers GH Actions release workflow)
+8. **Wait for GH Actions**: `gh run watch` — workflow builds, publishes to TestPyPI, verifies install, then publishes to PyPI
 9. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
 10. **Verify**: `uv tool install --force --refresh punt-tts==X.Y.Z && tts doctor`
 11. **Restore editable**: `uv tool install --force --editable .` (for local dev)
 12. **Marketplace**: bump version in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge
 
-A release is not complete until all 12 steps are done.
+A release is not complete until all 12 steps are done. PyPI publishing is owned by GH Actions — never upload manually.
 
 ### Session Close Protocol
 
