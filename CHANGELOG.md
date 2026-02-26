@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP tools now return valid JSON instead of Python repr (fixes panel display showing raw dict)
+- Stop hook reason is a clean single line instead of a wall of instructions
+
 ## [0.3.0] - 2026-02-25
 
 ### Changed
