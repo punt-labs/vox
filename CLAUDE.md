@@ -53,12 +53,31 @@ Module structure under `src/punt_tts/`:
 | `output.py` | Output path resolution: `TTS_OUTPUT_DIR` env var, `~/tts-output` fallback |
 | `logging_config.py` | Rotating file logging to `~/.punt-tts/logs/tts.log` |
 | `ephemeral.py` | Ephemeral output mode: `.tts/` in cwd, auto-cleanup |
-| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, serve |
+| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, serve |
+| `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
 | `server.py` | FastMCP server — exposes same operations as MCP tools |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
 | `providers/elevenlabs.py` | `ElevenLabsProvider` — ElevenLabs synthesis, voice settings, voice resolution, health checks. Only file with elevenlabs |
+
+Plugin structure (Claude Code hooks and commands):
+
+| Path | Responsibility |
+|------|---------------|
+| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse, Stop, Notification |
+| `hooks/state.sh` | Shared state reader for bash hooks (reads `~/.claude/tts.local.md`) |
+| `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern |
+| `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
+| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
+| `hooks/session-start.sh` | SessionStart hook: deploys commands, auto-allows MCP tools |
+| `commands/notify.md` | `/notify y\|c\|n` — toggle task notifications |
+| `commands/speak.md` | `/speak y\|n` — toggle voice vs chime |
+| `commands/recap.md` | `/recap` — on-demand spoken summary |
+| `commands/say.md` | `/say <text>` — speak text aloud |
+| `commands/voice.md` | `/voice on\|off\|status` — control voice mode |
+| `assets/chime_done.mp3` | Task-complete chime tone |
+| `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
 Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_cli.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 

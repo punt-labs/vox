@@ -720,7 +720,62 @@ def doctor(ctx: click.Context) -> None:
 
 
 # ---------------------------------------------------------------------------
-# install
+# install / uninstall (Claude Code marketplace)
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+def install() -> None:
+    """Install the Claude Code plugin via the punt-labs marketplace.
+
+    Registers the punt-labs marketplace (if missing), then installs
+    the tts plugin via ``claude plugin install``. The SessionStart hook
+    handles command deployment and permission auto-allow on first session.
+
+    Requires the ``claude`` CLI on PATH.
+    """
+    from punt_tts.installer import install as do_install
+
+    result = do_install()
+    for step in result.steps:
+        symbol = _PASS if step.passed else _FAIL
+        _emit(
+            {"step": step.name, "passed": step.passed, "message": step.message},
+            f"{symbol} {step.name}: {step.message}",
+        )
+
+    if result.installed:
+        _emit({"installed": True, "message": result.message}, result.message)
+    else:
+        raise click.ClickException(result.message)
+
+
+@main.command()
+def uninstall() -> None:
+    """Uninstall the Claude Code plugin and clean up all artifacts.
+
+    Removes the plugin, deployed commands, MCP tool permissions, and
+    the punt-labs marketplace registration (if no other punt-labs plugins
+    remain installed).
+    """
+    from punt_tts.installer import uninstall as do_uninstall
+
+    result = do_uninstall()
+    for step in result.steps:
+        symbol = _PASS if step.passed else _FAIL
+        _emit(
+            {"step": step.name, "passed": step.passed, "message": step.message},
+            f"{symbol} {step.name}: {step.message}",
+        )
+
+    if result.uninstalled:
+        _emit({"uninstalled": True, "message": result.message}, result.message)
+    else:
+        raise click.ClickException(result.message)
+
+
+# ---------------------------------------------------------------------------
+# install-desktop (Claude Desktop MCP server registration)
 # ---------------------------------------------------------------------------
 
 
@@ -763,7 +818,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     return env
 
 
-@main.command()
+@main.command("install-desktop")
 @click.option(
     "--output-dir",
     default=None,
@@ -781,7 +836,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     default=None,
     help="TTS provider (elevenlabs, polly, openai). Default: auto-detect.",
 )
-def install(
+def install_desktop(
     output_dir: Path | None, uvx_path: str | None, install_provider: str | None
 ) -> None:
     """Register the MCP server with Claude Desktop.

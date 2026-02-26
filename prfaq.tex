@@ -1,0 +1,855 @@
+\documentclass[11pt,letterpaper]{article}
+
+% ── Geometry ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+
+% ── Pagination ────────────────────────────────────────────────────────────────
+\usepackage[all]{nowidow}    % Require ≥2 lines on each side of a page break
+\brokenpenalty=10000         % No hyphenated words across page breaks
+\raggedbottom                % Allow uneven page bottoms rather than stretching
+
+% ── Fonts ─────────────────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage{newpxtext}     % Palatino-based serif (TeX Gyre Pagella)
+\usepackage{newpxmath}     % Matching math font
+
+% ── Colors ────────────────────────────────────────────────────────────────────
+\usepackage[dvipsnames]{xcolor}
+\definecolor{SectionBlue}{HTML}{1B3A5C}
+\definecolor{AccentGray}{HTML}{4A4A4A}
+\definecolor{QuoteBorder}{HTML}{8B9DAF}
+\definecolor{RiskRed}{HTML}{C0392B}
+\definecolor{RiskAmber}{HTML}{E67E22}
+\definecolor{RiskGreen}{HTML}{27AE60}
+\definecolor{BoxBg}{HTML}{F7F8FA}
+
+% ── Tables ────────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+% ── Boxes ─────────────────────────────────────────────────────────────────────
+\usepackage[framemethod=tikz]{mdframed}
+
+% ── Lists ─────────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{needspace}
+
+% ── Hyperlinks ────────────────────────────────────────────────────────────────
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=SectionBlue,
+  urlcolor=SectionBlue,
+  citecolor=SectionBlue,
+  pdfauthor={JM Freeman},
+  pdftitle={punt-tts --- PR/FAQ},
+  pdfsubject={Working Backwards --- Product Discovery},
+}
+
+% ── Bibliography ─────────────────────────────────────────────────────────────
+\usepackage[style=numeric,backend=biber,sorting=none]{biblatex}
+\addbibresource{prfaq.bib}
+
+% ── Section styling ───────────────────────────────────────────────────────────
+\usepackage{titlesec}
+\titleformat{\section}
+  {\needspace{6\baselineskip}\Large\bfseries\color{SectionBlue}}
+  {}
+  {0pt}
+  {}
+
+\titleformat{\subsection}
+  {\needspace{5\baselineskip}\large\bfseries\color{AccentGray}}
+  {}
+  {0pt}
+  {}
+
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{AccentGray}}
+  {}
+  {0pt}
+  {}
+\titlespacing*{\subsubsection}{0pt}{1em}{0.5em}[0pt]
+
+% ── Document stage ───────────────────────────────────────────────────────────
+\newcommand{\prfaqstage}[1]{\def\theprfaqstage{#1}}
+\prfaqstage{hypothesis}
+
+% ── Document version ─────────────────────────────────────────────────────────
+\newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
+\prfaqversion{1}{0}
+
+% ── Header/footer ────────────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\textcolor{AccentGray}{Stage: \theprfaqstage{} \enspace\textbar\enspace v\theprfaqmajor.\theprfaqminor}}
+\fancyhead[R]{\footnotesize\textcolor{AccentGray}{\thepage}}
+\renewcommand{\headrulewidth}{0pt}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% Custom environments
+% ══════════════════════════════════════════════════════════════════════════════
+
+% ── \prsection{title} — styled press release section header ──────────────────
+\newcommand{\prsection}[1]{%
+  \vspace{1em}%
+  {\large\bfseries\color{SectionBlue}#1}%
+  \vspace{0.3em}\par%
+}
+
+% ── customerquote — indented, italic customer quote ──────────────────────────
+\newmdenv[
+  topline=false,
+  bottomline=false,
+  rightline=false,
+  linewidth=3pt,
+  linecolor=QuoteBorder,
+  backgroundcolor=BoxBg,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=8pt,
+  innerbottommargin=8pt,
+  skipabove=\baselineskip,
+  skipbelow=\baselineskip,
+]{customerquote}
+
+% ── spokespersonquote — indented spokesperson quote ──────────────────────────
+\newmdenv[
+  topline=false,
+  bottomline=false,
+  rightline=false,
+  linewidth=3pt,
+  linecolor=SectionBlue,
+  backgroundcolor=BoxBg,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=8pt,
+  innerbottommargin=8pt,
+  skipabove=\baselineskip,
+  skipbelow=\baselineskip,
+]{spokespersonquote}
+
+% ── faqpair — numbered Q&A pair with bold question ─────────────────────────
+\newcounter{faqnum}
+\newenvironment{faqpair}[1]{%
+  \needspace{4\baselineskip}%
+  \vspace{0.5em}%
+  \refstepcounter{faqnum}%
+  \noindent\textbf{\color{SectionBlue}Q\thefaqnum: #1}\par\nopagebreak[4]%
+  \vspace{0.2em}%
+  \begin{adjustwidth}{1em}{0pt}%
+  \setlength{\parindent}{0pt}%
+}{%
+  \end{adjustwidth}%
+  \vspace{0.5em}%
+}
+% ── \faqref{faq:slug} — clickable "FAQ 3" reference ──────────────────────────
+\newcommand{\faqref}[1]{\hyperref[#1]{FAQ~\ref*{#1}}}
+
+% ── \featureitem — numbered, referenceable feature entry ──────────────────────
+\newcounter{featurenum}
+\newcommand{\featureitem}[2]{%
+  \refstepcounter{featurenum}%
+  \item[\textbf{\color{SectionBlue}F\thefeaturenum.}]%
+  \textbf{#1} --- #2%
+}
+\newcommand{\featureref}[1]{\hyperref[#1]{Feature~\ref*{#1}}}
+
+% ── adjustwidth (for faqpair indentation) ────────────────────────────────────
+\usepackage{changepage}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% Document
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{document}
+
+% ── Headline block ───────────────────────────────────────────────────────────
+\begin{center}
+  {\LARGE\bfseries\color{SectionBlue}
+    Free Plugin Adds Voice to AI Coding Agents ---\\
+    Developers Hear When Tasks Finish or Need Approval} \\[0.8em]
+  {\large\color{AccentGray}
+    punt-tts delivers spoken notifications and on-demand summaries through
+    ElevenLabs, OpenAI, and AWS Polly, so developers can multitask while
+    their agent works}
+\end{center}
+
+\vspace{0.5em}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% PRESS RELEASE
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section*{Press Release}
+
+SAN FRANCISCO --- September 2026 --- Today, punt-labs announced the general
+availability of punt-tts, a free, open-source plugin that gives AI coding
+agents a voice. When Claude Code finishes a task, hits an error, or gets stuck
+waiting for permission, the developer hears it --- through premium
+text-to-speech from ElevenLabs, OpenAI, or AWS Polly. Unlike existing
+notification scripts that rely on the operating system's built-in speech
+synthesizer, punt-tts delivers natural-sounding voice through a properly
+packaged Python library with a one-command install, zero configuration, and
+graceful absence when not installed
+(see \faqref{faq:competitors}).
+
+\prsection{Problem}
+
+Developers who use AI coding agents multitask. They start a refactor, switch
+to a document, answer a Slack thread. The agent keeps working --- for seconds,
+sometimes for thirty minutes or more on autonomous tasks
+\cite{anthropic2026longrunnagents}. When it finishes, or when it needs
+permission to proceed, the developer does not know until they check the
+terminal. On complex tasks, the agent stops to ask for clarification more than
+twice as often as the developer interrupts it
+\cite{anthropic2026agentautonomy}. While auto-approve rates are growing ---
+from 20\% for new users to over 40\% for experienced users --- the majority
+of sessions still involve at least one approval gate, and each unnoticed
+prompt is dead time: the agent waits, the developer works on something else,
+and neither makes progress on the original task.
+
+The cost is cumulative. Reactive interruptions cost over 23 minutes of
+recovery time on average \cite{mark2008interrupted}. Self-initiated checks
+--- glancing at the terminal to see if the agent is done --- are lower-cost
+than reactive interruptions, but each check still breaks the developer's
+current focus. Across a day of agentic work, these small breaks add up:
+51\% of professional developers now use AI tools daily
+\cite{stackoverflow2025survey}, and a growing fraction use autonomous agents
+that run for extended periods
+(see \faqref{faq:tam}).
+
+\prsection{Solution}
+
+punt-tts adds an audio layer to Claude Code through three slash commands.
+
+\texttt{/notify y} enables voice notifications for two events: task completion
+and permission prompts. When the agent finishes a multi-file refactor, the
+developer hears a spoken summary of what changed. When the agent needs
+approval to run a destructive command, the developer hears that too --- no
+more silent permission dialogs burning minutes of idle time. \texttt{/notify c}
+adds continuous mode: milestone updates during long-running tasks, so the
+developer hears progress without checking in.
+
+\texttt{/speak n} switches from voice to chime --- the same events fire, but
+the notification is an audio tone instead of words. For developers who want
+awareness without narration.
+
+\texttt{/recap} is on-demand: after a wall of terminal output, the developer
+types \texttt{/recap} and hears a 30-second spoken summary of what just
+happened. No scrolling, no parsing diffs. The agent extracts the key points
+and speaks them while the developer scans the code
+(see \faqref{faq:getting-started}).
+
+The plugin auto-detects the best available TTS provider --- ElevenLabs for
+natural voice quality, OpenAI for low latency, AWS Polly for cost efficiency
+--- and requires no voice selection or audio device configuration
+(see \faqref{faq:competitors}).
+
+\prsection{Customer Quote}
+
+\begin{customerquote}
+\textit{``I run Claude Code on a second monitor for refactoring work. Before
+punt-tts, I'd context-switch back every few minutes to check if it was done or
+stuck on a permission prompt. The worst was realizing it had been waiting for
+approval for twenty minutes while I was in a design review. Now I hear `task
+complete' or `needs your approval' and I know exactly when to switch back.
+Last Thursday I went through a full hour-long code review without once checking
+the terminal --- and I didn't miss a single prompt.''}
+
+\raggedleft --- \textbf{Marcus Chen}, Senior Software Engineer at a Series B
+startup
+\end{customerquote}
+
+\prsection{Getting Started}
+
+One command installs everything:
+
+{\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/main/install.sh | sh}}
+
+The script checks Python 3.13+, installs \texttt{uv} if missing, installs
+the CLI, registers the MCP server with Claude Code, and runs
+\texttt{tts doctor} to verify that at least one TTS provider is available.
+Restart Claude Code and type \texttt{/notify y}. From that moment, every
+task completion and permission prompt produces a spoken notification.
+
+There is no voice selection wizard, no audio device configuration, and no
+daemon to manage. If \texttt{tts doctor} passes, everything works. If punt-tts
+is not installed, Claude Code behaves exactly as before --- no error, no
+degradation.
+
+\prsection{Spokesperson Quote}
+
+\begin{spokespersonquote}
+``We built punt-tts because we kept walking away from the terminal and losing
+time. The agent finishes, or worse, it sits waiting for permission, and nobody
+knows. Voice solves this in a way that visual notifications cannot ---
+it reaches you when your eyes are on another screen. We chose premium TTS
+providers because the OS built-in voice is unpleasant enough that people turn
+it off, which defeats the purpose. If the notification sounds good, people
+leave it on. That is the entire design philosophy: voice that supplements text,
+never replaces it, and sounds good enough to keep.''
+
+\raggedleft --- \textbf{JM Freeman}, Creator of punt-tts
+\end{spokespersonquote}
+
+\prsection{Call to Action}
+
+punt-tts is available now at
+\url{https://github.com/punt-labs/tts}. It is free, open source (MIT license),
+and always will be. Install with one command:
+
+{\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/main/install.sh | sh}}
+
+Restart Claude Code and type \texttt{/notify y}.
+
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FREQUENTLY ASKED QUESTIONS
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section*{Frequently Asked Questions}
+
+% ── External FAQs (Customer-facing) ──────────────────────────────────────────
+
+\subsection*{External FAQs}
+
+\begin{faqpair}{What is punt-tts and who is it for?}\label{faq:what}
+  punt-tts is a voice notification layer for AI coding agents. It is for
+  developers who use Claude Code for autonomous tasks --- refactoring,
+  debugging, code generation --- and want to know when the agent finishes or
+  needs input without watching the terminal. If you multitask while your agent
+  works, punt-tts is for you.
+\end{faqpair}
+
+\begin{faqpair}{How is this different from agent-notify or AgentVibes?}\label{faq:competitors}
+  Two open-source tools already add notifications to coding agents.
+  agent-notify \cite{agentnotify2025} provides sound alerts and macOS
+  \texttt{say} voice using the operating system's built-in speech synthesizer.
+  AgentVibes \cite{agentvibes2025} is more capable: 914 voices via macOS
+  \texttt{say}, Piper TTS, and Soprano, plus background music and personality
+  styles. A third project (claude-code-voice-handler) used OpenAI TTS for
+  Claude Code notifications but appears to have been taken down, suggesting
+  maintenance risk is real in this space.
+
+  punt-tts differs in three ways:
+
+  \textbf{Voice quality.} Most existing tools use free, local TTS engines.
+  punt-tts uses ElevenLabs (consistently among the top-rated providers on the
+  HuggingFace TTS Arena \cite{cnbc2026elevenlabs}), OpenAI TTS, and AWS
+  Polly --- voices that sound natural enough to leave on.
+
+  \textbf{Packaging.} punt-tts is a PyPI package with a test suite, strict
+  type checking, an MCP server, and a documented API. It is installed with
+  \texttt{uv tool install} and configured with \texttt{tts install}. Existing
+  tools are GitHub repositories without distribution packaging.
+
+  \textbf{Separation of concerns.} punt-tts is a TTS engine that other tools
+  can build on. langlearn-tts (language learning audio) already uses punt-tts
+  as its speech backend. The MCP server exposes synthesis, batching, and pair
+  stitching as tools that any MCP client can call.
+
+  The tradeoff: punt-tts requires a TTS provider API key (ElevenLabs, OpenAI,
+  or AWS). Existing tools work with no API key using OS-level TTS at lower
+  voice quality.
+\end{faqpair}
+
+\begin{faqpair}{How do I get started?}\label{faq:getting-started}
+  One command:
+
+  {\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/main/install.sh | sh}}
+
+  The script installs the CLI, registers the MCP server with Claude Code, and
+  runs \texttt{tts doctor} to verify providers. Restart Claude Code. Type
+  \texttt{/notify y}. Notifications are now active. Type \texttt{/recap} after
+  any long output for a spoken summary.
+
+  For manual installation:
+  {\small\texttt{uv tool install punt-tts \&\& tts install \&\& tts doctor}}.
+\end{faqpair}
+
+\begin{faqpair}{How much does it cost?}\label{faq:cost}
+  punt-tts itself is free (MIT license). TTS provider API calls have costs:
+
+  \begin{itemize}[leftmargin=1.5em, nosep]
+    \item ElevenLabs: from \$5/month for 30{,}000 characters
+          \cite{texttolab2025pricing}
+    \item OpenAI TTS: \$15 per million characters (tts-1)
+          \cite{texttolab2025pricing}
+    \item AWS Polly: \$4.80 per million characters (Standard)
+          \cite{texttolab2025pricing}
+  \end{itemize}
+
+  A typical notification is 50--200 characters. At OpenAI's rate, 1{,}000
+  notifications cost approximately \$0.003. Even heavy daily use (50
+  notifications/day) runs under \$0.10/month. The dominant cost is the API
+  key setup, not the usage.
+\end{faqpair}
+
+\begin{faqpair}{What happens to my data?}\label{faq:data}
+  punt-tts sends the text of each notification to your chosen TTS provider for
+  synthesis. The provider receives the text, returns audio, and punt-tts plays
+  it locally. No data is stored by punt-tts beyond a local audio cache in
+  \texttt{\texttildelow/tts-output} (configurable). punt-tts has no telemetry,
+  no analytics, and no cloud service of its own.
+
+  The privacy implication: your TTS provider sees the text of your
+  notifications. For ElevenLabs and OpenAI, review their data retention
+  policies. For AWS Polly, standard AWS data handling applies. If this is
+  unacceptable, punt-tts is not the right tool --- the existing OS TTS
+  alternatives process text locally with no external API calls.
+\end{faqpair}
+
+\begin{faqpair}{Does this work with agents other than Claude Code?}
+  punt-tts is a standalone TTS engine distributed as a Python library and MCP
+  server. The Claude Code plugin (\texttt{/notify}, \texttt{/speak},
+  \texttt{/recap}) is specific to Claude Code's hooks system. The underlying
+  TTS engine can be called from any Python program or any MCP-compatible
+  client. Integration with Cursor, GitHub Copilot, or other agents would
+  require writing hooks for those tools' notification systems.
+\end{faqpair}
+
+\begin{faqpair}{Can I use my own voice or choose a specific voice?}
+  punt-tts auto-selects a default voice per provider (Matilda for ElevenLabs,
+  Nova for OpenAI, Joanna for Polly). The CLI accepts
+  \texttt{-{}-voice} flags for overriding the default. There is no voice
+  selection wizard or in-session voice picker --- the design philosophy is
+  zero configuration. If you want a specific voice, set it once via
+  environment variable or CLI flag.
+\end{faqpair}
+
+% ── Internal FAQs (Business-facing) ──────────────────────────────────────────
+
+\newpage
+\subsection*{Internal FAQs}
+
+\subsubsection*{Value \& Market}
+
+\begin{faqpair}{What is the total addressable market?}\label{faq:tam}
+  Bottoms-up estimate from three data points:
+
+  \textbf{AI coding agent users:} 31\% of professional developers use AI
+  agents \cite{stackoverflow2025survey}. GitHub Copilot alone has 20 million
+  cumulative users \cite{techcrunch2025copilot20m}. Cursor has over 1 million
+  users \cite{opsera2025cursor}. Claude Code is used by 41\% of AI agent users
+  \cite{stackoverflow2025survey}.
+
+  \textbf{Autonomous task runners:} Not all agent users run autonomous tasks.
+  Anthropic data shows the median Claude Code turn is approximately 45 seconds,
+  but the 99.9th percentile grew from under 25 minutes to over 45 minutes
+  between October 2025 and January 2026 \cite{anthropic2026agentautonomy}. The
+  growth is driven by user behavior --- granting more autonomy --- not just
+  model capability. Background tasks are explicitly recommended for work
+  exceeding 30 seconds \cite{venturebeat2025claudetasks}.
+
+  \textbf{Target segment:} Developers who run autonomous agent tasks and
+  multitask during execution. Applying the math: if roughly 28 million
+  professional developers exist globally, 31\% use agents (~8.7M), 41\%
+  of agent users use Claude Code (~3.6M), and 10--20\% run autonomous tasks
+  long enough to warrant notification, the target segment is 360{,}000 to
+  720{,}000 developers. This is the upper bound; actual reachable users via
+  PyPI are a fraction of this.
+
+  Because punt-tts is free, TAM is measured in adoption, not revenue. Success
+  means becoming the default voice layer that Claude Code users install
+  alongside the agent.
+\end{faqpair}
+
+\begin{faqpair}{What evidence do we have that developers want this?}\label{faq:evidence}
+  Three categories of evidence, all indirect. No primary customer data exists
+  yet (hypothesis stage).
+
+  \textbf{Behavioral:} Two open-source tools already exist to solve this
+  problem. agent-notify \cite{agentnotify2025} adds sound and voice
+  notifications to Claude Code, Cursor, and Codex. AgentVibes
+  \cite{agentvibes2025} adds voice, background music, and personality styles
+  to Claude Code. The existence of these tools --- built by independent
+  developers, not companies --- is evidence that the pain point is real enough
+  for people to build solutions.
+
+  \textbf{Structural:} Anthropic's own data confirms the structural
+  conditions. Agents ask for clarification more than twice as often as users
+  interrupt on complex tasks \cite{anthropic2026agentautonomy}. The hooks
+  system exposes \texttt{Notification} events with
+  \texttt{permission\_prompt} and \texttt{idle\_prompt} subtypes
+  \cite{claudecodehooks2026} --- Anthropic built the infrastructure for
+  exactly this kind of notification.
+
+  \textbf{Adjacent:} Research on audio notifications shows they maintain
+  workspace awareness without demanding visual attention
+  \cite{springer2016audiovisual}. IDC projects 80\% of enterprise apps will
+  embed AI copilots by end of 2026 \cite{couriernotificationfatigue2026},
+  increasing the notification volume that will compete for developer attention.
+  Voice occupies a different attentional channel than visual notifications.
+
+  \textbf{What is missing:} No user interviews. No usage data. No measurement
+  of how long permission prompts sit unnoticed. This is the most important
+  research gap
+  (see \faqref{faq:validation-plan}).
+\end{faqpair}
+
+\begin{faqpair}{Who are the competitors and why will we win?}\label{faq:competitive}
+  \textbf{agent-notify} \cite{agentnotify2025}: Open-source. Sound alerts,
+  macOS \texttt{say}, ntfy push notifications. Supports Claude Code, Cursor,
+  Codex. Strengths: no API key required, cross-agent support. Weakness: OS
+  TTS only, no packaging or test suite, single developer.
+
+  \textbf{AgentVibes} \cite{agentvibes2025}: Open-source Claude Code plugin.
+  macOS \texttt{say}, Piper TTS, Soprano neural TTS, Windows SAPI. 914 voices.
+  Background music, personality styles, verbosity levels. Strengths: most
+  feature-complete, creative UX (personalities, music). Weakness: no premium
+  TTS providers (no ElevenLabs, no OpenAI TTS), no PyPI packaging, no test
+  suite.
+
+  \textbf{OS notification center:} macOS/Linux system notifications. Always
+  available, no setup. Weakness: visual-only, competes with every other app's
+  notifications, easy to miss during focus work.
+
+  \textbf{Why punt-tts wins:} Voice quality. The macOS \texttt{say} voice is
+  recognizable and unpleasant enough that users turn it off. ElevenLabs
+  consistently ranks among the top TTS providers in blind listening tests and
+  has \$330M+ ARR \cite{cnbc2026elevenlabs}. If the notification sounds good,
+  people leave it on. This is the core bet: premium voice quality drives
+  sustained adoption where OS TTS does not.
+
+  \textbf{Honest assessment of risk:} If AgentVibes adds ElevenLabs support,
+  it becomes a strong competitor with a more creative feature set (music,
+  personalities). punt-tts's defense is engineering quality (packaged, tested,
+  typed, reusable as a library) and the separation of concerns (TTS engine
+  vs.\ plugin UX). The competitive moat is narrow.
+\end{faqpair}
+
+\begin{faqpair}{What is the user acquisition strategy?}
+  Three channels:
+
+  \textbf{PyPI discoverability:} Users searching for ``claude code voice'' or
+  ``tts mcp'' find punt-tts. The install script auto-configures MCP, reducing
+  setup to one command.
+
+  \textbf{Claude Code plugin marketplace:} When the marketplace launches,
+  punt-tts will be listed as a plugin. One-click install with
+  \texttt{/install punt-tts}.
+
+  \textbf{Word of mouth:} Voice notifications are inherently demonstrable.
+  When a developer's agent speaks ``task complete'' during a pairing session or
+  meeting, the person next to them asks what that was. This is the strongest
+  acquisition vector for an audio product.
+
+  No paid acquisition planned. The product is free; the audience is technical;
+  organic distribution is the appropriate channel.
+\end{faqpair}
+
+\begin{faqpair}{What is your next step to validate your vision?}\label{faq:validation-plan}
+  Ship the \texttt{/notify} command (Stop hook + permission-blocked
+  notification) and \texttt{/speak} toggle. Measure:
+
+  \begin{enumerate}[leftmargin=1.5em, nosep]
+    \item Do users who enable \texttt{/notify y} leave it on after one week?
+    \item Which event fires more often: task completion or permission prompt?
+    \item Do users toggle to \texttt{/speak n} (chime-only) or stay on spoken
+          notifications?
+  \end{enumerate}
+
+  If retention after one week is below 30\%, the value proposition is
+  wrong and we should stop. If permission-prompt notifications dominate,
+  that reframes the product from ``voice for your agent'' to ``never miss
+  a permission prompt again.'' Both outcomes inform whether to continue.
+
+  Target: 5 developers using punt-tts daily for 2 weeks. Collect
+  feedback via GitHub Discussions.
+\end{faqpair}
+
+\subsubsection*{Technical}
+
+\begin{faqpair}{What are the major technical risks?}\label{faq:tech-risks}
+  \textbf{Claude Code hooks stability (medium risk):} punt-tts depends on
+  Claude Code's hooks system --- specifically the \texttt{Stop} event and
+  \texttt{Notification} event with \texttt{permission\_prompt} subtype
+  \cite{claudecodehooks2026}. Hooks are documented first-party API, but
+  breaking changes could disable notifications. Mitigation: hooks are a
+  foundational feature of Claude Code's extensibility model, used by many
+  plugins. Breaking them would affect the entire plugin ecosystem.
+
+  \textbf{TTS provider latency (low risk):} Voice notifications must arrive
+  within 1--2 seconds of the triggering event to feel real-time. ElevenLabs
+  streaming API and OpenAI TTS both return first audio within 200--500ms.
+  AWS Polly is faster still. Mitigation: auto-detect the lowest-latency
+  available provider for notifications; reserve higher-quality providers for
+  \texttt{/recap} summaries where latency is less critical.
+
+  \textbf{Audio playback on headless/remote systems (medium risk):} Developers
+  using Claude Code via SSH or in cloud VMs have no local audio device.
+  punt-tts requires a local audio output. Mitigation: \texttt{tts doctor}
+  checks for audio playback capability at install time. Graceful absence: if
+  audio is unavailable, notifications fail silently rather than crashing.
+
+  The remaining unknowns are in application integration, not core technology.
+  The TTS engine (synthesis, batching, merging) is built and tested. The
+  hardest open question is how to generate concise spoken summaries from
+  Claude's output --- the Stop hook payload format and summary generation
+  strategy need experimentation (see \faqref{faq:timeline}).
+\end{faqpair}
+
+\begin{faqpair}{What dependencies exist on external systems?}
+  \textbf{Claude Code hooks:} Required for \texttt{/notify} to fire
+  automatically. Without hooks, punt-tts still works as a manual TTS tool
+  (\texttt{/recap}, CLI synthesis) but loses its primary value proposition.
+
+  \textbf{TTS provider APIs:} At least one of ElevenLabs, OpenAI, or AWS
+  Polly must be reachable. Auto-detection falls back through the chain.
+  If all providers are unavailable, \texttt{tts doctor} reports the failure
+  and no audio plays.
+
+  \textbf{pydub + ffmpeg:} Used for audio merging and format conversion.
+  ffmpeg is required at runtime. \texttt{tts doctor} checks for its presence.
+
+  \textbf{MCP protocol:} The plugin registers as an MCP server. MCP is
+  maintained by Anthropic and adopted by multiple clients. Low risk of
+  abandonment.
+
+  No runtime cloud dependencies exist beyond the TTS API calls themselves.
+  punt-tts has no backend service, no database, and no telemetry.
+\end{faqpair}
+
+\begin{faqpair}{What is the estimated development timeline?}\label{faq:timeline}
+  punt-tts is partially built. The TTS engine, CLI, MCP server, and provider
+  integrations are shipped and tested. The remaining work is the notification
+  layer:
+
+  \textbf{Phase 1 (1--2 weeks):} Stop hook integration. When Claude Code
+  finishes a task, punt-tts synthesizes and plays a spoken summary.
+  \texttt{/notify y|n} toggle. \texttt{/speak y|n} toggle (voice vs.\ chime).
+
+  \textbf{Phase 2 (1 week):} Permission-blocked notification. When the
+  agent waits for approval, punt-tts announces it. Uses the
+  \texttt{Notification} hook with \texttt{permission\_prompt} subtype.
+
+  \textbf{Phase 3 (1 week):} \texttt{/recap} command. Agent summarizes
+  the last response and speaks it via punt-tts. \texttt{/notify c}
+  continuous mode with milestone updates.
+
+  Total estimate: 3--4 weeks of development time. The uncertainty is in Phase
+  1 --- the Stop hook payload format and the best strategy for generating
+  spoken summaries from Claude's output need experimentation.
+\end{faqpair}
+
+\begin{faqpair}{What is the scaling story?}
+  punt-tts runs on the developer's machine. There is no server to scale.
+  Each notification is an independent TTS API call --- no state accumulates,
+  no queues build up.
+
+  At the TTS provider level: ElevenLabs handles concurrent requests across
+  millions of users (\$330M+ ARR, 41\% Fortune 500 adoption
+  \cite{cnbc2026elevenlabs}). OpenAI and AWS Polly are similarly robust.
+  punt-tts will never be a meaningful fraction of any provider's load.
+
+  The only local scaling concern is audio file accumulation in the output
+  directory. punt-tts includes an ephemeral mode (\texttt{.tts/} in cwd)
+  that auto-cleans on session end.
+\end{faqpair}
+
+\subsubsection*{Business}
+
+\begin{faqpair}{What is the revenue model?}
+  There is none. punt-tts is free, open-source software under the MIT license.
+  The project exists to solve a real problem in the Claude Code ecosystem and
+  to serve as the TTS engine for other punt-labs tools (langlearn-tts uses
+  punt-tts as its speech backend). Value is measured in adoption and ecosystem
+  contribution, not revenue.
+\end{faqpair}
+
+\begin{faqpair}{What does maintaining punt-tts cost?}
+  \textbf{Infrastructure:} Zero. punt-tts runs on the user's machine. GitHub
+  Actions CI is free for public repos.
+
+  \textbf{TTS API costs during development:} The test suite mocks all
+  providers, so CI incurs zero TTS costs. Manual integration testing against
+  live providers costs under \$0.10 per session. Negligible.
+
+  \textbf{Maintainer time:} The primary cost. Estimated at 2--5 hours per
+  week during active development (Phases 1--3), dropping to 1--2 hours per
+  week for maintenance (bug fixes, dependency updates, community triage).
+
+  \textbf{Opportunity cost:} Maintainer time spent on punt-tts is time not
+  spent on other punt-labs projects. If adoption metrics do not meet
+  thresholds after 3 months (see \faqref{faq:metrics}), maintenance mode is
+  the appropriate response --- fix bugs, accept PRs, but no new features.
+\end{faqpair}
+
+\begin{faqpair}{What are the key metrics for success?}\label{faq:metrics}
+  \begin{itemize}[leftmargin=1.5em, nosep]
+    \item \textbf{PyPI installs:} Monthly download count as adoption proxy.
+          Target: 500 monthly installs within 6 months of the notification
+          feature shipping.
+    \item \textbf{Notification retention:} Percentage of users who enable
+          \texttt{/notify y} and keep it enabled after one week. Target:
+          30\%+. Below this, the product is not sticky.
+    \item \textbf{Event distribution:} Ratio of task-completion to
+          permission-prompt notifications. Informs whether the product's
+          primary value is ``hear when done'' or ``never miss a prompt.''
+    \item \textbf{GitHub stars:} Community interest signal. Target: 200
+          stars within 6 months.
+    \item \textbf{Downstream dependents:} Other tools using punt-tts as a
+          library. Current: 1 (langlearn-tts). Target: 3+ within a year.
+  \end{itemize}
+
+  Decision threshold: if notification retention is below 30\% after the
+  initial user cohort, reconsider the product direction before investing in
+  Phase 3 features.
+\end{faqpair}
+
+\begin{faqpair}{Why now? What has changed?}
+  Three converging shifts:
+
+  \textbf{Autonomous agents are real.} Claude Code's 99.9th percentile task
+  duration grew from under 25 minutes to over 45 minutes in three months
+  \cite{anthropic2026agentautonomy}. Background tasks are a documented
+  workflow \cite{venturebeat2025claudetasks}. Agents now run long enough that
+  developers routinely leave them unattended.
+
+  \textbf{Hooks enable it.} Claude Code's hooks system exposes lifecycle
+  events --- \texttt{Stop}, \texttt{Notification}, \texttt{TaskCompleted}
+  --- as structured, documented API \cite{claudecodehooks2026}. Before hooks,
+  notification plugins required polling or terminal scraping. Hooks make
+  event-driven notifications clean and reliable.
+
+  \textbf{Premium TTS is accessible.} ElevenLabs, OpenAI, and Polly all offer
+  API-based synthesis at costs below \$0.01 per notification. Two years ago,
+  natural-sounding TTS required expensive enterprise contracts. Today it costs
+  less than a fraction of a cent per utterance
+  \cite{texttolab2025pricing}.
+\end{faqpair}
+
+\begin{faqpair}{What are we not building?}
+  Covered in the Feature Appendix (Won't Do section). The boundaries that
+  matter most:
+
+  \begin{itemize}[leftmargin=1.5em, nosep]
+    \item \textbf{Not voice input.} punt-tts speaks to the developer. It does
+          not listen. Voice commands for agents are a different product.
+    \item \textbf{Not a screen reader.} Accessibility narration of terminal
+          output requires fundamentally different architecture (continuous
+          reading, cursor tracking, ARIA-like semantics). punt-tts is
+          event-driven notifications, not continuous narration.
+    \item \textbf{Not entertainment.} No background music, no personality
+          styles, no ``agent character voices.'' AgentVibes does this well.
+          punt-tts is a tool, not a toy.
+  \end{itemize}
+\end{faqpair}
+
+\begin{faqpair}{What does failure look like?}\label{faq:failure}
+  Two plausible failure scenarios:
+
+  \textbf{People turn it off.} Voice notifications are intrusive. If the
+  default voice is too loud, too frequent, or too slow, users disable
+  \texttt{/notify} within hours and never re-enable. The notification
+  retention metric (see \faqref{faq:metrics}) is the canary: below 30\%
+  after one week means the UX is wrong.
+  \textit{Response:} \texttt{/speak n} (chime-only) is the escape valve.
+  If retention is low on voice but acceptable on chime, the product is
+  an audio notification tool, not a voice tool. Adjust positioning
+  accordingly.
+
+  \textbf{The pain point shrinks.} Anthropic's data shows auto-approve rates
+  growing from 20\% to 40\%+ as users gain experience
+  \cite{anthropic2026agentautonomy}. If the trend continues, permission
+  prompts become rare and the strongest use case
+  (``never miss a prompt'') weakens. At the same time, longer autonomous
+  runs make the task-completion notification more valuable.
+  \textit{Response:} Monitor the event distribution metric. If permission
+  prompts decline to less than 10\% of notifications, pivot messaging to
+  ``hear when your agent finishes'' and invest in \texttt{/recap} quality.
+\end{faqpair}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FOUR RISKS ASSESSMENT
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+\section*{Risk Assessment}
+
+\renewcommand{\arraystretch}{1.6}
+\begin{tabularx}{\textwidth}{@{} l l X @{}}
+\toprule
+\textbf{\color{SectionBlue}Risk} & \textbf{\color{SectionBlue}Rating} & \textbf{\color{SectionBlue}Assessment} \\
+\midrule
+Value      & \textcolor{RiskAmber}{\textbf{Medium}} &
+  Demand is proven by the existence of two competing tools. The bet is
+  that premium voice quality drives sustained adoption where OS TTS does not.
+  No primary user data yet. \\
+Usability  & \textcolor{RiskAmber}{\textbf{Medium}} &
+  One-command install and auto-detection of providers. But the prerequisite
+  --- a TTS provider API key --- requires account creation, payment setup,
+  and environment variable configuration. For developers without an existing
+  key, the real onboarding is 5--10 steps, not one. \\
+Feasibility & \textcolor{RiskGreen}{\textbf{Low}} &
+  The TTS engine is built. Remaining work is hooks integration and command
+  implementation. Open question: summary generation strategy for Stop hook
+  (see timeline FAQ). \\
+Viability  & \textcolor{RiskGreen}{\textbf{Low}} &
+  No revenue model to validate. Zero infrastructure cost. MIT license.
+  The only cost is maintainer time. \\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1.0}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FEATURE APPENDIX
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+\section*{Feature Appendix}
+
+Defines the scope boundary for punt-tts. Every feature is explicitly
+categorized to prevent scope creep and force prioritization decisions upfront.
+
+\subsection*{Must Do}
+
+Features essential for the product to deliver its core value: developers hear
+when their agent finishes or needs approval.
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. This is the minimum viable notification.}\label{feat:stop-hook}
+  \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. This is the highest time-saved-per-event feature.}\label{feat:permission}
+  \featureitem{\texttt{/notify} command}{Toggle notifications: \texttt{y} (task done + permission), \texttt{c} (continuous --- add milestone updates), \texttt{n} (off). Persists via plugin state file.}\label{feat:notify}
+  \featureitem{\texttt{/speak} command}{Toggle voice vs.\ chime: \texttt{y} (spoken words), \texttt{n} (audio tone only). Orthogonal to \texttt{/notify}.}\label{feat:speak}
+  \featureitem{Chime audio}{A short, pleasant audio tone for \texttt{/speak n} mode. Distinct tones for task-complete vs.\ needs-approval.}\label{feat:chime}
+  \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly. No manual configuration.}\label{feat:autodetect}
+\end{enumerate}
+
+\subsection*{Should Do}
+
+Features that meaningfully improve the product but are not required for the
+core notification use case.
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Useful after long output.}\label{feat:recap}
+  \featureitem{Continuous mode milestones}{In \texttt{/notify c} mode, speak progress updates during long-running tasks (e.g., ``completed 3 of 5 files''). Requires hooking into intermediate Claude output.}\label{feat:continuous}
+  \featureitem{Plugin marketplace submission}{List punt-tts in the Claude Code plugin marketplace for one-click install. Requires release workflow (prod/dev namespace separation already built).}\label{feat:marketplace}
+\end{enumerate}
+
+\subsection*{Won't Do}
+
+Features explicitly excluded. Each exclusion is a deliberate positioning
+choice.
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{Voice input}{Listening to the developer and converting speech to commands. Different product, different architecture (ASR, wake word detection, continuous listening). punt-tts speaks; it does not listen.}\label{feat:no-voice-input}
+  \featureitem{Screen reader / accessibility narrator}{Continuous reading of terminal output for visually impaired users. Requires cursor tracking, ARIA-like semantics, and fundamentally different event architecture. This is valuable but is a different product.}\label{feat:no-screenreader}
+  \featureitem{Background music / ambient audio}{AgentVibes does this. It is a creative feature, not a productivity feature. punt-tts is a tool.}\label{feat:no-music}
+  \featureitem{Agent personality voices}{Character voices, mood-based inflection, conversational tone. This optimizes for entertainment. punt-tts optimizes for information delivery.}\label{feat:no-personality}
+  \featureitem{Custom voice training}{Training a TTS model on the user's voice or a custom voice. ElevenLabs supports this, but exposing it adds configuration complexity that contradicts the zero-config design principle.}\label{feat:no-custom-voice}
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% REFERENCES
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+{\emergencystretch=1em
+\printbibliography[title={References}]
+}
+
+\end{document}

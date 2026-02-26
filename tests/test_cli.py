@@ -569,13 +569,121 @@ class TestDoctorCommand:
 
 
 # ---------------------------------------------------------------------------
-# install tests
+# install tests (marketplace)
+# ---------------------------------------------------------------------------
+
+
+class TestInstallCommand:
+    @patch(f"{_CLI}.get_provider")
+    def test_install_success(
+        self, mock_get_provider: MagicMock, tmp_path: Path
+    ) -> None:
+        from punt_tts.installer import InstallResult, StepResult
+
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_result = InstallResult(
+            installed=True,
+            message="Installed. Restart Claude Code to activate.",
+            steps=[
+                StepResult("Marketplace", True, "already registered"),
+                StepResult("Plugin", True, "installed"),
+            ],
+        )
+
+        runner = CliRunner()
+        with patch("punt_tts.installer.install", return_value=mock_result):
+            result = runner.invoke(main, ["install"])
+
+        assert result.exit_code == 0
+        assert "Marketplace: already registered" in result.output
+        assert "Plugin: installed" in result.output
+        assert "Restart Claude Code" in result.output
+
+    @patch(f"{_CLI}.get_provider")
+    def test_install_failure(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
+        from punt_tts.installer import InstallResult, StepResult
+
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_result = InstallResult(
+            installed=False,
+            message="Installation incomplete (see details above).",
+            steps=[
+                StepResult("Marketplace", True, "registered punt-labs"),
+                StepResult("Plugin", False, "claude CLI not found on PATH"),
+            ],
+        )
+
+        runner = CliRunner()
+        with patch("punt_tts.installer.install", return_value=mock_result):
+            result = runner.invoke(main, ["install"])
+
+        assert result.exit_code != 0
+        assert "Plugin: claude CLI not found" in result.output
+
+
+class TestUninstallCommand:
+    @patch(f"{_CLI}.get_provider")
+    def test_uninstall_success(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
+        from punt_tts.installer import StepResult, UninstallResult
+
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_result = UninstallResult(
+            uninstalled=True,
+            message="Uninstalled.",
+            steps=[
+                StepResult("Plugin", True, "uninstalled"),
+                StepResult("Commands", True, "removed 5"),
+                StepResult("Permissions", True, "removed"),
+                StepResult("Marketplace", True, "unregistered punt-labs"),
+            ],
+        )
+
+        runner = CliRunner()
+        with patch("punt_tts.installer.uninstall", return_value=mock_result):
+            result = runner.invoke(main, ["uninstall"])
+
+        assert result.exit_code == 0
+        assert "Plugin: uninstalled" in result.output
+        assert "Uninstalled." in result.output
+
+    @patch(f"{_CLI}.get_provider")
+    def test_uninstall_failure(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
+        from punt_tts.installer import StepResult, UninstallResult
+
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_result = UninstallResult(
+            uninstalled=False,
+            message="Uninstall incomplete (see details above).",
+            steps=[
+                StepResult("Plugin", False, "claude plugin uninstall failed: error"),
+                StepResult("Commands", True, "removed 0"),
+            ],
+        )
+
+        runner = CliRunner()
+        with patch("punt_tts.installer.uninstall", return_value=mock_result):
+            result = runner.invoke(main, ["uninstall"])
+
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# install-desktop tests (Claude Desktop MCP registration)
 # ---------------------------------------------------------------------------
 
 _UVX = "/usr/local/bin/uvx"
 
 
-class TestInstallCommand:
+class TestInstallDesktopCommand:
     @patch(f"{_CLI}.get_provider")
     def test_creates_config_from_scratch(
         self, mock_get_provider: MagicMock, tmp_path: Path
@@ -597,7 +705,7 @@ class TestInstallCommand:
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(audio_dir)],
+                ["install-desktop", "--output-dir", str(audio_dir)],
             )
 
         assert result.exit_code == 0
@@ -637,7 +745,7 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(tmp_path / "audio")],
+                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
         assert result.exit_code == 0
@@ -668,7 +776,7 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(tmp_path / "audio")],
+                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
         assert result.exit_code == 0
@@ -693,7 +801,7 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(tmp_path / "audio")],
+                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
         assert result.exit_code != 0
@@ -713,7 +821,7 @@ class TestInstallCommand:
             result = runner.invoke(
                 main,
                 [
-                    "install",
+                    "install-desktop",
                     "--output-dir",
                     str(tmp_path / "audio"),
                     "--uvx-path",
@@ -743,17 +851,17 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(audio_dir)],
+                ["install-desktop", "--output-dir", str(audio_dir)],
             )
 
         assert result.exit_code == 0
         assert audio_dir.is_dir()
 
     @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_polly_ignoring_openai_key(
+    def test_install_defaults_openai_when_key_set(
         self, mock_get_provider: MagicMock, tmp_path: Path
     ) -> None:
-        """OPENAI_API_KEY in env does NOT auto-select openai; polly is default."""
+        """OPENAI_API_KEY in env auto-selects openai (ElevenLabs > OpenAI > Polly)."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -764,15 +872,17 @@ class TestInstallCommand:
             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
         ):
             os.environ.pop("ELEVENLABS_API_KEY", None)
-            result = runner.invoke(main, ["install", "--output-dir", str(audio_dir)])
+            result = runner.invoke(
+                main, ["install-desktop", "--output-dir", str(audio_dir)]
+            )
 
         assert result.exit_code == 0
-        assert "Provider: polly" in result.output
+        assert "Provider: openai" in result.output
 
         data = json.loads(config_path.read_text())
         env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "polly"
-        assert "OPENAI_API_KEY" not in env
+        assert env["TTS_PROVIDER"] == "openai"
+        assert env["OPENAI_API_KEY"] == "sk-test-key"
 
     @patch(f"{_CLI}.get_provider")
     def test_install_explicit_openai_with_key(
@@ -790,7 +900,13 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(audio_dir), "--provider", "openai"],
+                [
+                    "install-desktop",
+                    "--output-dir",
+                    str(audio_dir),
+                    "--provider",
+                    "openai",
+                ],
             )
 
         assert result.exit_code == 0
@@ -816,7 +932,9 @@ class TestInstallCommand:
         ):
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
-            result = runner.invoke(main, ["install", "--output-dir", str(audio_dir)])
+            result = runner.invoke(
+                main, ["install-desktop", "--output-dir", str(audio_dir)]
+            )
 
         assert result.exit_code == 0
         assert "Provider: polly" in result.output
@@ -841,7 +959,13 @@ class TestInstallCommand:
         ):
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(audio_dir), "--provider", "polly"],
+                [
+                    "install-desktop",
+                    "--output-dir",
+                    str(audio_dir),
+                    "--provider",
+                    "polly",
+                ],
             )
 
         assert result.exit_code == 0
@@ -868,7 +992,13 @@ class TestInstallCommand:
             os.environ.pop("OPENAI_API_KEY", None)
             result = runner.invoke(
                 main,
-                ["install", "--output-dir", str(audio_dir), "--provider", "openai"],
+                [
+                    "install-desktop",
+                    "--output-dir",
+                    str(audio_dir),
+                    "--provider",
+                    "openai",
+                ],
             )
 
         assert result.exit_code != 0
@@ -891,7 +1021,7 @@ class TestInstallCommand:
             result = runner.invoke(
                 main,
                 [
-                    "install",
+                    "install-desktop",
                     "--output-dir",
                     str(audio_dir),
                     "--provider",
@@ -924,7 +1054,7 @@ class TestInstallCommand:
             result = runner.invoke(
                 main,
                 [
-                    "install",
+                    "install-desktop",
                     "--output-dir",
                     str(audio_dir),
                     "--provider",
@@ -949,7 +1079,9 @@ class TestInstallCommand:
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
             patch.dict(os.environ, {"ELEVENLABS_API_KEY": "sk_test_key"}, clear=False),
         ):
-            result = runner.invoke(main, ["install", "--output-dir", str(audio_dir)])
+            result = runner.invoke(
+                main, ["install-desktop", "--output-dir", str(audio_dir)]
+            )
 
         assert result.exit_code == 0
         assert "Provider: elevenlabs" in result.output

@@ -13,6 +13,8 @@ build/
 .coverage
 htmlcov/
 *.mp3
+!assets/chime_done.mp3
+!assets/chime_prompt.mp3
 *.wav
 *.ogg
 .venv/
@@ -23,3 +25,4 @@ lancedb/
 .claude/*
 !.claude/settings.json
 .tts/
+research/
