@@ -1,5 +1,5 @@
 {
-  "name": "tts",
+  "name": "tts-dev",
   "description": "Text-to-speech for Claude Code: /voice, /say",
   "version": "0.1.0",
   "author": {
