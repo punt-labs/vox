@@ -17,5 +17,5 @@ jobs:
         with:
           python-version: "3.13"
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: uv sync --all-extras
+      - run: uv sync --frozen --all-extras
       - run: uv run pytest

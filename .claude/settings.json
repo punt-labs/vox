@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "mcp__plugin_tts_tts__*",
-      "Bash(tts:*)"
+      "Bash(tts:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(bd:*)",
+      "Bash(punt:*)",
+      "Bash(uv:*)",
+      "Bash(npx:*)",
+      "Bash(uvx:*)",
+      "Bash(python3:*)",
+      "Bash(tts-server:*)",
+      "mcp__plugin_tts-dev_tts__*"
     ]
   }
 }
