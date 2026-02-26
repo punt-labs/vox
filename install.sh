@@ -101,16 +101,17 @@ if ! ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q "s
   NEED_HTTPS_REWRITE=1
 fi
 
-"$BINARY" install
-INSTALL_EXIT=$?
-
-# Clean up the HTTPS rewrite regardless of install outcome.
-if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
-  git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
+if ! "$BINARY" install; then
+  # Clean up HTTPS rewrite before exiting on failure.
+  if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
+    git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
+  fi
+  fail "Plugin install failed"
 fi
 
-if [ "$INSTALL_EXIT" -ne 0 ]; then
-  fail "Plugin install failed"
+# Clean up the HTTPS rewrite after successful install.
+if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
+  git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
 fi
 
 # --- Step 6: tts doctor ---
