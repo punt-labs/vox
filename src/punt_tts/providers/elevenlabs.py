@@ -308,7 +308,7 @@ class ElevenLabsProvider:
         if voice_settings is not None:
             kwargs["voice_settings"] = voice_settings
 
-        response: Any = self._client.text_to_speech.convert(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        response: Any = self._client.text_to_speech.stream(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",
