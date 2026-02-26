@@ -20,16 +20,6 @@ extract_meta() {
   PROVIDER=$(echo "$data" | jq -r '.provider // empty' 2>/dev/null)
 }
 
-# Truncate text to fit within 80 columns alongside prefix/suffix.
-truncate() {
-  local text="$1" max="$2"
-  if [[ ${#text} -gt $max ]]; then
-    echo "${text:0:$max}..."
-  else
-    echo "$text"
-  fi
-}
-
 emit() {
   local summary="$1" ctx="$2"
   jq -n --arg summary "$summary" --arg ctx "$ctx" '{
@@ -42,13 +32,11 @@ emit() {
 }
 
 if [[ "$TOOL_NAME" == "speak" ]]; then
-  TEXT=$(echo "$RESULT" | jq -r '.text // empty' 2>/dev/null || echo "$RESULT")
   extract_meta "$RESULT"
-  PREVIEW=$(truncate "$TEXT" 40)
   SUFFIX=""
   [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
   [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪ \"$PREVIEW\"$SUFFIX" "$RESULT"
+  emit "♪ spoken$SUFFIX" "$RESULT"
   exit 0
 fi
 
@@ -64,13 +52,11 @@ if [[ "$TOOL_NAME" == "chorus" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "duet" ]]; then
-  TEXT=$(echo "$RESULT" | jq -r '.text // empty' 2>/dev/null || echo "$RESULT")
   extract_meta "$RESULT"
-  PREVIEW=$(truncate "$TEXT" 40)
   SUFFIX=""
   [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
   [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪ \"$PREVIEW\"$SUFFIX" "$RESULT"
+  emit "♪ paired$SUFFIX" "$RESULT"
   exit 0
 fi
 
