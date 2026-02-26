@@ -32,13 +32,39 @@ if [[ "$SPEAK" == "n" ]]; then
   exit 0
 fi
 
+# Phrase pools — randomly selected so the voice doesn't repeat itself.
+PERMISSION_PHRASES=(
+  "Needs your approval."
+  "Quick approval needed."
+  "Need a green light here."
+  "Got a question for you."
+  "Your call on this one."
+  "Mind taking a look?"
+  "Waiting on your go-ahead."
+)
+
+IDLE_PHRASES=(
+  "Waiting for your input."
+  "Ready when you are."
+  "Over to you."
+  "Standing by."
+  "Your turn."
+  "What do you think?"
+  "Need your thoughts on this."
+)
+
+pick_random() {
+  local -n pool=$1
+  echo "${pool[$((RANDOM % ${#pool[@]}))]}"
+}
+
 # Voice mode: synthesize and play a short announcement
 case "$NOTIFICATION_TYPE" in
   permission_prompt)
-    TEXT="Needs your approval."
+    TEXT=$(pick_random PERMISSION_PHRASES)
     ;;
   idle_prompt)
-    TEXT="Waiting for your input."
+    TEXT=$(pick_random IDLE_PHRASES)
     ;;
   *)
     TEXT="Notification: ${MESSAGE:0:80}"
