@@ -33,5 +33,6 @@ Based on the argument:
 If the file doesn't exist, create it with defaults: `voice_enabled: false`, `notify: "n"`, `speak: "y"`.
 
 After changing state, confirm with a brief message:
+
 - `y`: "Spoken notifications enabled."
 - `n`: "Chime-only notifications. No words."

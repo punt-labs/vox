@@ -35,6 +35,7 @@ Based on the argument:
 If the file doesn't exist, create it with defaults: `voice_enabled: false`, `notify: "n"`, `speak: "y"`.
 
 After changing state, confirm with a brief message:
+
 - `y`: "Notifications on. You'll hear when tasks finish or need approval."
 - `c`: "Continuous notifications on. You'll hear task updates, completions, and approval requests."
 - `n`: "Notifications off."

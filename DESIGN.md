@@ -94,6 +94,7 @@ Claude finishes → Stop hook fires → reads tts.local.md
 ```
 
 **The `reason` field is the prompt.** It tells Claude:
+
 - Summarize what you just did in 1-2 sentences
 - Call the TTS synthesize tool with ephemeral=true, auto_play=true
 - Do not add any other commentary
@@ -116,6 +117,7 @@ Claude finishes → Stop hook fires → reads tts.local.md
 ### UX Concern: Extra Model Turn
 
 The user sees Claude generate one more message (the summary). This is acceptable because:
+
 1. The summary is brief (1-2 sentences)
 2. The audio plays while the user reads, not instead of reading
 3. The skill prompt instructs minimal output
@@ -205,6 +207,7 @@ This is fragile but adequate for flat key-value YAML. If the state file grows co
 `/speak y` = spoken words via TTS provider. `/speak n` = short audio tone (chime).
 
 Chime audio is a pre-generated MP3 file bundled in the package. Two distinct tones:
+
 - `chime_done.mp3` — task completed (pleasant, resolving)
 - `chime_prompt.mp3` — needs approval (attention-getting, rising)
 
@@ -227,6 +230,7 @@ Played via `afplay` (macOS) directly from the hook script.
 ### Design
 
 `/recap` is a slash command (skill prompt) that instructs the model to:
+
 1. Summarize the key points of its last response in 2-3 sentences
 2. Call the TTS synthesize tool with the summary (ephemeral, auto_play)
 3. Show the summary text in the conversation
