@@ -40,9 +40,9 @@ if [[ "$SPEAK" == "n" ]]; then
 fi
 
 # Voice mode: block the stop, ask Claude to summarize and speak.
-# The reason field shows in the UI AND instructs Claude — keep it
-# clean enough for both audiences.
+# The reason field shows verbatim in the UI — keep it status-line clean.
+# Claude infers what to do: speak tool, brief summary, ephemeral output.
 jq -n '{
   decision: "block",
-  reason: "♪ Generating spoken summary — write 1-2 sentences summarizing what you completed, call the speak tool (ephemeral=true, auto_play=true), then stop. No other output."
+  reason: "♪ Speak a brief completion summary (ephemeral)"
 }'
