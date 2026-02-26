@@ -91,7 +91,27 @@ ok "$BINARY $(command -v "$BINARY")"
 # --- Step 5: tts install (MCP server registration) ---
 
 info "Setting up Claude Code plugin..."
+
+# claude plugin install clones via SSH (git@github.com:...).
+# Users without SSH keys need an HTTPS fallback.
+NEED_HTTPS_REWRITE=0
+if ! ssh -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+  printf '  ℹ SSH auth to GitHub unavailable, using HTTPS fallback\n'
+  git config --global url."https://github.com/".insteadOf "git@github.com:"
+  NEED_HTTPS_REWRITE=1
+fi
+
 "$BINARY" install
+INSTALL_EXIT=$?
+
+# Clean up the HTTPS rewrite regardless of install outcome.
+if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
+  git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
+fi
+
+if [ "$INSTALL_EXIT" -ne 0 ]; then
+  fail "Plugin install failed"
+fi
 
 # --- Step 6: tts doctor ---
 
