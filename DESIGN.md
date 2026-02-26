@@ -58,15 +58,15 @@ This file is the authoritative record of design decisions, prior approaches, and
 ## State Management
 
 ```text
-~/.claude/tts.local.md
+.tts/config.md           # per-project, in project root
 ---
-voice_enabled: false     # /voice toggle (existing)
+voice_enabled: false     # /voice toggle
 notify: "n"              # /notify: y=on, c=continuous, n=off
 speak: "y"               # /speak: y=voice, n=chime
 ---
 ```
 
-All hooks and commands read this file for current state.
+All hooks and commands read this file for current state. The path is relative to the project root (cwd). See DES-012 for why this is per-project, not global.
 
 ---
 
@@ -159,15 +159,19 @@ The Notification hook runs outside the model's conversation. It cannot call MCP 
 
 ---
 
-## DES-003: State File — Extended tts.local.md
+## DES-003: State File — Extended Config
 
 **Date:** 2026-02-25
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-012
 **Topic:** Where notification and speech state is persisted
 
-### Design
+### Original Design (Superseded)
 
-Extend the existing `~/.claude/tts.local.md` (already used by `/voice`) with `notify` and `speak` fields:
+Originally used `~/.claude/tts.local.md` (global). Now uses `.tts/config.md` (per-project). See DES-012 for the migration rationale.
+
+### Current Design
+
+All TTS state in one file per project:
 
 ```yaml
 ---
@@ -176,13 +180,6 @@ notify: "n"
 speak: "y"
 ---
 ```
-
-### Why Single File
-
-- `/voice` already reads/writes this file
-- All TTS plugin state in one place
-- Hooks read one file, not multiple
-- YAML frontmatter is the established pattern (biff uses `.claude/biff.local.md`)
 
 ### Shell Parsing
 
@@ -352,3 +349,121 @@ Biff uses `▶` as its visual glyph. `♪` (musical note) is the natural symbol 
 The notification hook (`notify-permission.sh`) selects from a pool of 7 natural-sounding phrases per notification type using bash `$RANDOM`. Avoids the robotic repetition of hearing "Needs your approval" every time.
 
 Phrases are stored directly in the script (no external config). Selection uses a Bash 3.2-compatible `pick_random` function that takes array elements as positional arguments (no namerefs).
+
+---
+
+## DES-010: Plugin Install-or-Update — Never Leave Users on Old Versions
+
+**Date:** 2026-02-26
+**Status:** SETTLED
+**Topic:** How `tts install` handles already-installed plugins
+
+### Problem
+
+`claude plugin install tts@punt-labs` returns non-zero with "already installed" when the plugin exists. Our installer treated this as success and moved on. Users on old versions had **no update path** — they were stuck unless they manually ran `claude plugin uninstall` + `install`.
+
+This was invisible for a long time because the developer always has the latest (editable install). It only surfaced when a second machine ran the install script after a version bump.
+
+### Design
+
+Install follows an install-or-update pattern:
+
+```text
+claude plugin install tts@punt-labs
+  ├── exit 0              → installed (fresh)
+  ├── "already installed" → claude plugin update tts@punt-labs
+  │     ├── exit 0           → updated
+  │     ├── "up to date"     → already up to date (success)
+  │     └── other error      → fail with message
+  └── other error         → fail with message
+```
+
+### Key Details
+
+- `_install_plugin()` calls `_update_plugin()` on the "already installed" path — single responsibility per function
+- `_update_plugin()` handles three outcomes: updated, already current, error
+- `install.sh` does not need changes — it calls `tts install` which delegates to `installer.py`
+- The `claude plugin update` subcommand was discovered empirically via `claude plugin --help`; it is not documented in public Claude Code docs as of 2026-02-26
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Always uninstall then reinstall | Destructive; removes user's plugin state; slower |
+| Tell users to manually update | Poor UX; they won't know to do it |
+| Check version before install | No reliable way to query installed plugin version from CLI |
+
+---
+
+## DES-011: install.sh Under `set -eu` — Guard Expected Failures
+
+**Date:** 2026-02-26
+**Status:** SETTLED
+**Topic:** How install.sh handles commands that may fail
+
+### Problem
+
+`install.sh` uses `set -eu` for safety. A bare command that exits non-zero kills the entire script before any error message can print:
+
+```bash
+set -eu
+"$BINARY" install       # exits non-zero → script dies silently
+INSTALL_EXIT=$?          # never reached
+```
+
+This was discovered when a user ran `install.sh` from a directory with no git repo. `tts install` (which runs `claude plugin install` → git clone) failed, and the script exited silently after "Setting up Claude Code plugin..." with no error message.
+
+### Design
+
+Wrap expected-failure commands in `if !` guards:
+
+```bash
+if ! "$BINARY" install; then
+  fail "Plugin install failed"
+fi
+```
+
+The `if` construct exempts the command from `set -e` — a non-zero exit runs the else branch instead of killing the script. This is POSIX-standard behavior.
+
+### Rule
+
+**Any command in `install.sh` that might legitimately fail must use `if !` or `||` to handle the failure path.** Bare commands are only safe for operations that should always succeed (like `printf`).
+
+### Context
+
+The user ran `install.sh` from a non-git directory. The SSH fallback added an HTTPS git rewrite, but `tts install` still failed (possibly because `claude plugin install` needs a working git clone and the environment was unusual). The silent exit meant the user had to manually diagnose and run `tts install` themselves.
+
+---
+
+## DES-012: Per-Project Config — `.tts/config.md` Not Global
+
+**Date:** 2026-02-26
+**Status:** SETTLED
+**Topic:** Where TTS plugin state (notify, speak, voice) is stored
+
+### Problem
+
+The original state file was `~/.claude/tts.local.md` — a global path shared across all Claude Code sessions in all projects. Enabling `/notify y` in one project enabled it everywhere. This is wrong: notification preferences are per-project.
+
+### Design
+
+State file moved to `.tts/config.md` in the project root (cwd). Same YAML frontmatter format, same hook parsing — only the path changed.
+
+```bash
+# Before (global, leaked across projects)
+TTS_STATE_FILE="$HOME/.claude/tts.local.md"
+
+# After (per-project, isolated)
+TTS_STATE_FILE=".tts/config.md"
+```
+
+### Why This Works
+
+- `.tts/` is already in `.gitignore` (used for ephemeral audio output)
+- Hooks run in the project root, so relative paths resolve correctly
+- Follows the biff pattern: biff uses `.biff/` in the project root for per-project state
+- Each project gets independent `/notify`, `/speak`, `/voice` settings
+
+### Migration
+
+No migration needed. The old global file is simply ignored. Users who had settings in `~/.claude/tts.local.md` start fresh per-project, which is the correct behavior (opt-in per project, not inherited globally).
