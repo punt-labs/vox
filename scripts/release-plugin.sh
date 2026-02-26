@@ -55,6 +55,20 @@ for f in "${dev_files[@]}"; do
   echo "Removing: $(basename "$f")"
 done
 
-git -C "$REPO_ROOT" add "$PLUGIN_JSON"
+# Strip dev tool references from prod command allowed-tools.
+# Dev commands use "mcp__plugin_tts-dev_tts__*"; prod must only list
+# "mcp__plugin_tts_tts__*" so Claude doesn't invoke a missing plugin.
+echo "Stripping dev tool references from prod commands"
+for cmd_file in "$COMMANDS_DIR"/*.md; do
+  [[ "$(basename "$cmd_file")" == *-dev.md ]] && continue
+  if grep -q 'tts-dev' "$cmd_file"; then
+    # Remove dev tool entries from allowed-tools arrays
+    sed -i '' 's/, *"mcp__plugin_tts-dev_tts__[^"]*"//g' "$cmd_file"
+    sed -i '' 's/"mcp__plugin_tts-dev_tts__[^"]*", *//g' "$cmd_file"
+    echo "  Cleaned: $(basename "$cmd_file")"
+  fi
+done
+
+git -C "$REPO_ROOT" add "$PLUGIN_JSON" "$COMMANDS_DIR"
 git -C "$REPO_ROOT" rm "${dev_files[@]}"
 git -C "$REPO_ROOT" commit --no-verify -m "chore: prepare plugin for release [skip ci]"
