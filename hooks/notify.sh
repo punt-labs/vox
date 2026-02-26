@@ -39,10 +39,30 @@ if [[ "$SPEAK" == "n" ]]; then
   exit 0
 fi
 
+# Phrase pool — the reason shows verbatim in the UI, so lead with
+# something playful. The tail carries the actual instruction for Claude.
+SUMMARY_PHRASES=(
+  "♪ Clearing my throat..."
+  "♪ Warming up the vocal cords..."
+  "♪ Taking a deep breath..."
+  "♪ Finding my words..."
+  "♪ Composing my thoughts..."
+  "♪ Preparing my closing remarks..."
+  "♪ One moment while I find my voice..."
+)
+
+# Pick a random element from positional arguments (Bash 3.2 compatible).
+pick_random() {
+  local idx=$((RANDOM % $#))
+  shift "$idx"
+  echo "$1"
+}
+
+FLAVOR=$(pick_random "${SUMMARY_PHRASES[@]}")
+REASON="${FLAVOR} Speak a brief completion summary (ephemeral)."
+
 # Voice mode: block the stop, ask Claude to summarize and speak.
-# The reason field shows verbatim in the UI — keep it status-line clean.
-# Claude infers what to do: speak tool, brief summary, ephemeral output.
-jq -n '{
+jq -n --arg reason "$REASON" '{
   decision: "block",
-  reason: "♪ Speak a brief completion summary (ephemeral)"
+  reason: $reason
 }'
