@@ -53,18 +53,20 @@ IDLE_PHRASES=(
   "Need your thoughts on this."
 )
 
+# Pick a random element from positional arguments (Bash 3.2 compatible).
 pick_random() {
-  local -n pool=$1
-  echo "${pool[$((RANDOM % ${#pool[@]}))]}"
+  local idx=$((RANDOM % $#))
+  shift "$idx"
+  echo "$1"
 }
 
 # Voice mode: synthesize and play a short announcement
 case "$NOTIFICATION_TYPE" in
   permission_prompt)
-    TEXT=$(pick_random PERMISSION_PHRASES)
+    TEXT=$(pick_random "${PERMISSION_PHRASES[@]}")
     ;;
   idle_prompt)
-    TEXT=$(pick_random IDLE_PHRASES)
+    TEXT=$(pick_random "${IDLE_PHRASES[@]}")
     ;;
   *)
     TEXT="Notification: ${MESSAGE:0:80}"
