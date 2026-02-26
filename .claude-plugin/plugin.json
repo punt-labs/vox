@@ -1,5 +1,5 @@
 {
-  "name": "tts",
+  "name": "tts-dev",
   "description": "Text-to-speech for Claude Code: /voice, /say, /notify, /speak, /recap",
   "version": "0.3.2",
   "author": {
@@ -9,10 +9,8 @@
   "mcpServers": {
     "tts": {
       "type": "stdio",
-      "command": "tts",
-      "args": [
-        "serve"
-      ]
+      "command": "uv",
+      "args": ["run", "tts", "serve"]
     }
   }
 }

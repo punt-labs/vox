@@ -1,15 +1,15 @@
 ---
-description: "Speak text aloud using TTS"
-allowed-tools: ["mcp__plugin_tts_tts__speak", "mcp__plugin_tts-dev_tts__speak"]
+description: "Speak text aloud using TTS (dev)"
+allowed-tools: ["mcp__plugin_tts-dev_tts__speak"]
 ---
 
-# /say command
+# /say-dev command
 
 Speak the provided text aloud.
 
 ## Usage
 
-`/say <text>`
+`/say-dev <text>`
 
 ## Implementation
 
