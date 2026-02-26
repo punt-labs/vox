@@ -60,6 +60,24 @@ Module structure under `src/punt_tts/`:
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
 | `providers/elevenlabs.py` | `ElevenLabsProvider` — ElevenLabs synthesis, voice settings, voice resolution, health checks. Only file with elevenlabs |
 
+Plugin structure (Claude Code hooks and commands):
+
+| Path | Responsibility |
+|------|---------------|
+| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse, Stop, Notification |
+| `hooks/state.sh` | Shared state reader for bash hooks (reads `~/.claude/tts.local.md`) |
+| `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern |
+| `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
+| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
+| `hooks/session-start.sh` | SessionStart hook: deploys commands, auto-allows MCP tools |
+| `commands/notify.md` | `/notify y\|c\|n` — toggle task notifications |
+| `commands/speak.md` | `/speak y\|n` — toggle voice vs chime |
+| `commands/recap.md` | `/recap` — on-demand spoken summary |
+| `commands/say.md` | `/say <text>` — speak text aloud |
+| `commands/voice.md` | `/voice on\|off\|status` — control voice mode |
+| `assets/chime_done.mp3` | Task-complete chime tone |
+| `assets/chime_prompt.mp3` | Needs-approval chime tone |
+
 Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_cli.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 
 ## Python Coding Standards

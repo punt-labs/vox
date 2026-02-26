@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Shared state reader for punt-tts hooks.
+#
+# All hooks source this file to read notification and speech state
+# from ~/.claude/tts.local.md (YAML frontmatter).
+#
+# Usage:
+#   source "$(dirname "$0")/state.sh"
+#   if [[ "$(read_notify)" == "y" ]]; then ...
+
+TTS_STATE_FILE="$HOME/.claude/tts.local.md"
+
+# Read a YAML frontmatter field from the state file.
+# Returns empty string if file doesn't exist or field not found.
+_read_field() {
+  local field="$1"
+  if [[ ! -f "$TTS_STATE_FILE" ]]; then
+    echo ""
+    return
+  fi
+  # Match: field: "value" or field: value (with optional quotes)
+  grep "^${field}:" "$TTS_STATE_FILE" 2>/dev/null \
+    | head -1 \
+    | sed 's/^[^:]*: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/'
+}
+
+# Read notify state: y, c, or n (default: n)
+read_notify() {
+  local val
+  val=$(_read_field "notify")
+  case "$val" in
+    y|c|n) echo "$val" ;;
+    *)     echo "n" ;;
+  esac
+}
+
+# Read speak state: y or n (default: y)
+read_speak() {
+  local val
+  val=$(_read_field "speak")
+  case "$val" in
+    y|n) echo "$val" ;;
+    *)   echo "y" ;;
+  esac
+}
