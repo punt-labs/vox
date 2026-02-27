@@ -56,7 +56,7 @@ Module structure under `src/punt_tts/`:
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
 | `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, play, serve |
 | `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
-| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble`. Reads `.tts/config.md` for session vibe (ElevenLabs expressive tag injection). |
+| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble`, `set_config`. Reads/writes `.tts/config.md` for session vibe and plugin config. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
@@ -66,18 +66,19 @@ Plugin structure (Claude Code hooks and commands):
 
 | Path | Responsibility |
 |------|---------------|
-| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse, Stop, Notification |
-| `hooks/state.sh` | Shared state reader and audio helpers for bash hooks (`enqueue_audio`, `play_audio_blocking`) |
-| `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern |
+| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (tts tools + Bash), Stop, Notification |
+| `hooks/state.sh` | Shared state reader and audio helpers for bash hooks (`enqueue_audio`, `play_audio_blocking`, `read_vibe_mode`, `read_vibe_signals`) |
+| `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern; includes auto-vibe signal data in block reason |
+| `hooks/signal.sh` | PostToolUse hook (Bash): fast-gated signal accumulator for auto-vibe — appends `tests-pass`, `lint-fail`, etc. to `vibe_signals` |
 | `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
-| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
+| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel (includes `set_config` vibe-shift display) |
 | `hooks/session-start.sh` | SessionStart hook: deploys commands, auto-allows MCP tools |
-| `commands/notify.md` | `/notify y\|c\|n` — toggle task notifications |
-| `commands/speak.md` | `/speak y\|n` — toggle voice vs chime |
+| `commands/notify.md` | `/notify y\|n` — toggle task notifications (uses `set_config` MCP tool) |
+| `commands/speak.md` | `/speak y\|n` — toggle voice vs chime (uses `set_config` MCP tool) |
 | `commands/recap.md` | `/recap` — on-demand spoken summary |
 | `commands/say.md` | `/say <text>` — speak text aloud |
-| `commands/voice.md` | `/voice on\|off\|status` — control voice mode |
-| `commands/vibe.md` | `/vibe <tag>\|off` — session mood via ElevenLabs expressive tags |
+| `commands/voice.md` | `/voice on\|off\|status` — control voice mode (uses `set_config` MCP tool) |
+| `commands/vibe.md` | `/vibe <mood>\|auto\|off` — session mood with auto-detection (uses `set_config` MCP tool) |
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
