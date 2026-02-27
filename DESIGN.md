@@ -606,9 +606,11 @@ The plugin technically works — MCP server starts, audio plays — but the UX i
 3. No test installs from the marketplace after release — verification step 10 tests PyPI (`tts doctor`), not the plugin
 4. Biff has the same dev/prod pattern but its HEAD happened to have the prod name at install time (no release had been cut since adding the pattern)
 
-### Fix
+### Fix (Two Parts)
 
-Pin every marketplace entry to its release tag via `source.ref`:
+**Part 1: Pin `source.ref` in marketplace.json.**
+
+Every marketplace entry must specify the release tag:
 
 ```json
 {
@@ -624,9 +626,33 @@ Pin every marketplace entry to its release tag via `source.ref`:
 
 This is required for any project where HEAD of main may diverge from the release tag — which is every project using dev/prod namespace isolation, and arguably every project where post-release commits exist.
 
+**Part 2: Refresh the marketplace clone before plugin install.**
+
+Pinning `source.ref` in the remote marketplace.json only helps when the local clone has the pin. Existing users whose marketplace clone predates the pin see the old marketplace.json without `source.ref` — and `claude plugin install` resolves HEAD again.
+
+The installer must `git pull` the marketplace clone before running `claude plugin install`:
+
+```python
+def _refresh_marketplace() -> StepResult:
+    if not MARKETPLACE_CLONE.is_dir():
+        return StepResult("Marketplace refresh", True, "not yet cloned")
+    git = shutil.which("git")
+    if not git:
+        return StepResult("Marketplace refresh", False, "git not found")
+    result = subprocess.run(
+        [git, "-C", str(MARKETPLACE_CLONE), "pull", "--ff-only"],
+        capture_output=True, text=True, check=False,
+    )
+    ...
+```
+
+New users (no clone yet) skip this — `claude plugin install` clones fresh with the current marketplace.json. Existing users get the latest `source.ref` pins before install.
+
 ### Rule
 
 **Every marketplace entry MUST have `source.ref` pinned to the release tag.** The release workflow step 12 (marketplace bump) must update both `version` and `ref`. This is now documented in CLAUDE.md.
+
+**Every installer MUST refresh the marketplace clone before `claude plugin install`.** The `_refresh_marketplace()` step runs `git pull --ff-only` on `~/.claude/plugins/marketplaces/punt-labs/` so existing users pick up ref pins from newer marketplace.json versions.
 
 ### Alternatives Considered
 
@@ -636,6 +662,7 @@ This is required for any project where HEAD of main may diverge from the release
 | Tag HEAD instead of the prepare commit | Tag would include dev artifacts; marketplace clones the tag and gets `tts-dev` anyway |
 | File a Claude Code bug to resolve `version` → tag | Correct long-term fix, but we can't control Claude Code's release timeline; `ref` is the available mechanism now |
 | Keep main always prod-ready, dev on branches | Every feature branch would need manual plugin.json swap; error-prone, defeats the automation |
+| Only pin `source.ref`, skip refresh | Existing users with stale clones never see the pin — install still resolves HEAD |
 
 ### Discovery Chain
 
@@ -644,3 +671,5 @@ This is required for any project where HEAD of main may diverge from the release
 3. Compared to v0.4.0 tag: commit `c977c8c` (prepare commit), `name: "tts"`
 4. Confirmed: marketplace installed HEAD, not tag
 5. Added `source.ref: "v0.4.0"` to marketplace, nuked cache, reinstalled → `name: "tts"`, correct commit
+6. Discovered stale clone problem: existing users whose clone predates the ref pin still get HEAD
+7. Added `_refresh_marketplace()` to installer — pulls latest marketplace.json before install
