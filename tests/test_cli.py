@@ -464,6 +464,8 @@ class TestDoctorCommand:
         uvx_found: bool = True,
         config_exists: bool = False,
         config_data: dict[str, object] | None = None,
+        system_platform: str = "Darwin",
+        espeak_found: str | None = None,
     ) -> Result:
         """Invoke doctor with controlled mocks."""
         provider = _make_mock_provider()
@@ -475,6 +477,8 @@ class TestDoctorCommand:
                 return "/opt/homebrew/bin/ffmpeg"
             if name == "uvx" and uvx_found:
                 return "/usr/local/bin/uvx"
+            if name in ("espeak-ng", "espeak") and espeak_found == name:
+                return f"/usr/bin/{name}"
             return None
 
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -491,6 +495,7 @@ class TestDoctorCommand:
                 f"{_CLI}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
+            patch(f"{_CLI}.platform.system", return_value=system_platform),
         ):
             result = runner.invoke(main, ["doctor"])
 
@@ -566,6 +571,37 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path)
         assert "passed" in result.output
         assert "failed" in result.output
+
+    def test_linux_no_keys_no_espeak_warns(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ELEVENLABS_API_KEY", None)
+            os.environ.pop("OPENAI_API_KEY", None)
+            result = self._run_doctor(
+                tmp_path, system_platform="Linux", espeak_found=None
+            )
+        # espeak check is optional — doctor passes but shows the warning
+        assert result.exit_code == 0
+        assert "espeak-ng/espeak: not found" in result.output
+        assert "sudo apt-get install espeak-ng" in result.output
+
+    def test_linux_no_keys_espeak_ng_found(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ELEVENLABS_API_KEY", None)
+            os.environ.pop("OPENAI_API_KEY", None)
+            result = self._run_doctor(
+                tmp_path, system_platform="Linux", espeak_found="espeak-ng"
+            )
+        assert result.exit_code == 0
+        assert "✓ espeak-ng: /usr/bin/espeak-ng" in result.output
+
+    def test_linux_with_api_key_no_espeak_check(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}, clear=False):
+            result = self._run_doctor(tmp_path, system_platform="Linux")
+        assert "espeak-ng:" not in result.output
+
+    def test_macos_no_espeak_check(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, system_platform="Darwin")
+        assert "espeak-ng:" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -644,14 +680,20 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                f"{_CLI}.shutil.which",
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
+                    _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
+                ),
+            ),
             patch(
                 f"{_CLI}._claude_desktop_config_path",
                 return_value=config_path,
             ),
+            patch("punt_tts.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
-            # Ensure no API keys are set so polly is auto-detected
+            # Ensure no API keys are set; on macOS, say is auto-detected
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
@@ -671,7 +713,7 @@ class TestInstallDesktopCommand:
             "tts-server",
         ]
         assert server["env"]["TTS_OUTPUT_DIR"] == str(audio_dir)
-        assert server["env"]["TTS_PROVIDER"] == "polly"
+        assert server["env"]["TTS_PROVIDER"] == "say"
 
     @patch(f"{_CLI}.get_provider")
     def test_preserves_other_servers(
@@ -869,7 +911,7 @@ class TestInstallDesktopCommand:
         assert env["OPENAI_API_KEY"] == "sk-test-key"
 
     @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_polly(
+    def test_install_defaults_say_on_macos(
         self, mock_get_provider: MagicMock, tmp_path: Path
     ) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -877,8 +919,14 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                f"{_CLI}.shutil.which",
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
+                    _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
+                ),
+            ),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
+            patch("punt_tts.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
             os.environ.pop("OPENAI_API_KEY", None)
@@ -888,11 +936,11 @@ class TestInstallDesktopCommand:
             )
 
         assert result.exit_code == 0
-        assert "Provider: polly" in result.output
+        assert "Provider: say" in result.output
 
         data = json.loads(config_path.read_text())
         env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "polly"
+        assert env["TTS_PROVIDER"] == "say"
         assert "OPENAI_API_KEY" not in env
 
     @patch(f"{_CLI}.get_provider")

@@ -73,6 +73,19 @@ else
   ok "uv installed"
 fi
 
+# --- Step 2b: System TTS (Linux only) ---
+if [ "$(uname -s)" = "Linux" ]; then
+  info "Checking system TTS..."
+  if command -v espeak-ng >/dev/null 2>&1; then
+    ok "espeak-ng found (offline fallback)"
+  elif command -v espeak >/dev/null 2>&1; then
+    ok "espeak found (offline fallback)"
+  else
+    warn "espeak-ng not found — install for offline TTS: sudo apt-get install espeak-ng"
+    warn "Without it, you'll need a cloud TTS provider (e.g. API key for ElevenLabs/OpenAI or AWS credentials for Polly)"
+  fi
+fi
+
 # --- Step 3: Install tts CLI ---
 
 info "Installing $PACKAGE..."

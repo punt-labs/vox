@@ -6,15 +6,17 @@ import io
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydub import AudioSegment
 
 from punt_tts.core import TTSClient
 from punt_tts.providers.elevenlabs import ElevenLabsProvider
+from punt_tts.providers.espeak import EspeakProvider, EspeakVoiceConfig
 from punt_tts.providers.openai import OpenAIProvider
 from punt_tts.providers.polly import PollyProvider, VoiceConfig
+from punt_tts.providers.say import SayProvider, SayVoiceConfig
 
 # Test voice configs — constructed directly, no API call needed.
 JOANNA = VoiceConfig(voice_id="Joanna", language_code="en-US", engine="neural")
@@ -198,3 +200,96 @@ def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[rep
 def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
     """Create an ElevenLabsProvider with a mocked client."""
     return ElevenLabsProvider(client=mock_elevenlabs_client)
+
+
+# ---------------------------------------------------------------------------
+# macOS Say provider fixtures
+# ---------------------------------------------------------------------------
+
+# Test voice configs for say provider.
+FRED = SayVoiceConfig(name="Fred", locale="en_US")
+SAMANTHA = SayVoiceConfig(name="Samantha", locale="en_US")
+ANNA_SAY = SayVoiceConfig(name="Anna", locale="de_DE")
+
+
+@pytest.fixture(autouse=True)
+def _populate_say_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Pre-populate the say voice cache so resolve_voice() never shells out."""
+    import punt_tts.providers.say as say_mod
+
+    saved_voices = dict(say_mod.VOICES)
+    saved_loaded = say_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
+
+    say_mod.VOICES.update(
+        {
+            "fred": FRED,
+            "samantha": SAMANTHA,
+            "anna": ANNA_SAY,
+        }
+    )
+    say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+
+    yield
+
+    say_mod.VOICES.clear()
+    say_mod.VOICES.update(saved_voices)
+    say_mod._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def say_provider() -> SayProvider:
+    """Create a SayProvider with platform and say command mocked."""
+    with (
+        patch("punt_tts.providers.say.platform") as mock_platform,
+        patch("punt_tts.providers.say.shutil") as mock_shutil,
+    ):
+        mock_platform.system.return_value = "Darwin"
+        mock_shutil.which.return_value = "/usr/bin/say"
+        return SayProvider()
+
+
+# ---------------------------------------------------------------------------
+# espeak-ng provider fixtures
+# ---------------------------------------------------------------------------
+
+# Test voice configs for espeak provider.
+ENGLISH_ESPEAK = EspeakVoiceConfig(name="english", language="en")
+GERMAN_ESPEAK = EspeakVoiceConfig(name="german", language="de")
+FRENCH_ESPEAK = EspeakVoiceConfig(name="french", language="fr")
+
+
+@pytest.fixture(autouse=True)
+def _populate_espeak_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Pre-populate the espeak voice cache so resolve_voice() never shells out."""
+    import punt_tts.providers.espeak as espeak_mod
+
+    saved_voices = dict(espeak_mod.VOICES)
+    saved_loaded = espeak_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
+
+    espeak_mod.VOICES.update(
+        {
+            "english": ENGLISH_ESPEAK,
+            "en": ENGLISH_ESPEAK,
+            "german": GERMAN_ESPEAK,
+            "de": GERMAN_ESPEAK,
+            "french": FRENCH_ESPEAK,
+            "fr": FRENCH_ESPEAK,
+        }
+    )
+    espeak_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+
+    yield
+
+    espeak_mod.VOICES.clear()
+    espeak_mod.VOICES.update(saved_voices)
+    espeak_mod._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def espeak_provider() -> EspeakProvider:
+    """Create an EspeakProvider with espeak-ng binary mocked."""
+    with patch(
+        "punt_tts.providers.espeak._find_espeak_binary",
+        return_value="/usr/bin/espeak-ng",
+    ):
+        return EspeakProvider()

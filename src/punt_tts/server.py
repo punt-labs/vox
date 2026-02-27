@@ -275,7 +275,8 @@ def speak(
             punctuation (ellipsis for pauses, ! for emphasis) for best
             results. Tags only work with ElevenLabs eleven_v3 model.
         voice: Voice name. Default: provider's default voice (currently
-            matilda for ElevenLabs, joanna for Polly, nova for OpenAI).
+            matilda for ElevenLabs, joanna for Polly, nova for OpenAI,
+            fred for Say, en for eSpeak).
             If language is provided without voice, a suitable default
             voice for that language is selected automatically.
         language: ISO 639-1 language code (e.g. 'de', 'ko', 'fr').
@@ -362,7 +363,9 @@ def chorus(
             embed audio tags like [tired], [excited], [whisper] in text.
         voice: Voice name for all texts. Default: provider's default voice
             (currently matilda for ElevenLabs, joanna for Polly, nova for
-            OpenAI). If language is provided without voice, auto-selects.
+            OpenAI, fred for Say, en for eSpeak). If language is provided
+            without voice,
+            auto-selects.
         language: ISO 639-1 language code (e.g. 'de', 'ko').
         rate: Speech rate as percentage. Defaults to 90.
         merge: If true, produce one merged file instead of separate
