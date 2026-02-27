@@ -61,9 +61,16 @@ fi
 if grep -q "^vibe_signals:" "$TTS_STATE_FILE" 2>/dev/null; then
   sed -i '' "s|^vibe_signals:.*|vibe_signals: \"${NEW}\"|" "$TTS_STATE_FILE"
 else
-  sed -i '' "/^---$/a\\
-vibe_signals: \"${NEW}\"
-" "$TTS_STATE_FILE"
+  # Insert before the LAST --- only (not the opening fence).
+  # Use awk: print all lines, but when we see the last --- replace it
+  # with the new field + ---.
+  awk -v field="vibe_signals: \"${NEW}\"" '
+    { lines[NR] = $0; if ($0 == "---") last = NR }
+    END { for (i=1; i<=NR; i++) {
+      if (i == last) print field
+      print lines[i]
+    }}
+  ' "$TTS_STATE_FILE" > "${TTS_STATE_FILE}.tmp" && mv "${TTS_STATE_FILE}.tmp" "$TTS_STATE_FILE"
 fi
 
 exit 0

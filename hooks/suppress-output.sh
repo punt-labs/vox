@@ -14,7 +14,14 @@ source "$SCRIPT_DIR/state.sh"
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
-RESULT=$(echo "$INPUT" | jq -r '.tool_response' | jq -r '.result // .')
+RESULT=$(echo "$INPUT" | jq -r '
+  def unpack: if type == "string" then (fromjson? // .) else . end;
+  if (.tool_response | type) == "array" then
+    (.tool_response[0].text // "" | unpack)
+  else
+    (.tool_response | unpack)
+  end
+')
 
 # Extract voice name from single-result JSON.
 # Falls back to "the voice" when missing or empty.
