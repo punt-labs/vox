@@ -66,6 +66,21 @@ pick_random() {
   echo "$1"
 }
 
+# Infer possessive pronoun for a voice name.
+# Human names get gendered pronouns; abstract/unknown names get "their".
+voice_pronoun() {
+  local name
+  name=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+  case "$name" in
+    matilda|joanna|jessica|rachel|emily|aria|lily|charlotte|alice|domi|elli|freya|gigi|serena|glinda|mimi|nicole)
+      echo "her" ;;
+    adam|josh|sam|matthew|daniel|james|clyde|ethan|fin|harry|liam|patrick|thomas|michael|george|callum)
+      echo "his" ;;
+    *)
+      echo "their" ;;
+  esac
+}
+
 # Play audio via flock-serialized queue (non-blocking, fire-and-forget).
 # Uses `tts play` which acquires LOCK_EX before running afplay.
 enqueue_audio() {
