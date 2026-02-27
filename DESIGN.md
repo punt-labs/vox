@@ -520,4 +520,6 @@ Bash hooks call `tts play <path>` (thin CLI wrapper). The MCP server calls `enqu
 
 ### Platform Scope
 
-`fcntl` is macOS/Unix only. This is acceptable because `afplay` is macOS-only — the entire playback path is already platform-specific.
+`fcntl.flock` is POSIX (macOS + Linux). The audio player is resolved at
+runtime: `afplay` (macOS native) → `ffplay` (cross-platform, from ffmpeg).
+ffmpeg is already a project dependency (pydub uses it for audio processing).

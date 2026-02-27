@@ -1,12 +1,14 @@
 """Serialized audio playback via flock.
 
 Every playback invocation acquires LOCK_EX on a shared lock file,
-runs afplay synchronously, then releases. Concurrent callers block
-on the lock and play in turn — no audio is killed, no daemon needed.
+runs the platform audio player synchronously, then releases.
+Concurrent callers block on the lock and play in turn — no audio
+is killed, no daemon needed.
 
 The lock auto-releases on process exit (even crashes).
 
-fcntl is macOS/Unix only — acceptable since afplay is macOS-only.
+Player resolution: afplay (macOS) → ffplay (cross-platform, from ffmpeg).
+fcntl.flock is POSIX (macOS + Linux).
 """
 
 from __future__ import annotations
@@ -22,26 +24,48 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 LOCK_FILE = Path.home() / ".punt-tts" / "playback.lock"
-AFPLAY_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
+PLAYBACK_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
 _PENDING_DIR = LOCK_FILE.parent / "pending"
 
 
+def resolve_player() -> list[str]:
+    """Return the command prefix for the platform audio player.
+
+    Tries afplay (macOS native), then ffplay (cross-platform via ffmpeg).
+    Raises FileNotFoundError if neither is available.
+    """
+    if shutil.which("afplay"):
+        return ["afplay"]
+    if shutil.which("ffplay"):
+        return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+    msg = (
+        "No audio player found — install ffmpeg (provides ffplay)"
+        " or use macOS (provides afplay)"
+    )
+    raise FileNotFoundError(msg)
+
+
 def play_audio(path: Path) -> None:
-    """Acquire flock, play via afplay, release. Blocking."""
+    """Acquire flock, play audio, release. Blocking."""
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         logger.debug("Acquired playback lock, playing %s", path)
         try:
-            subprocess.run(
-                ["afplay", str(path)],
-                check=False,
-                timeout=AFPLAY_TIMEOUT,
-            )
+            cmd = resolve_player()
         except FileNotFoundError:
-            logger.warning("afplay not found — auto-play requires macOS")
+            logger.warning("No audio player found (need afplay or ffplay)")
+            return
+        try:
+            subprocess.run(
+                [*cmd, str(path)],
+                check=False,
+                timeout=PLAYBACK_TIMEOUT,
+            )
         except subprocess.TimeoutExpired:
-            logger.warning("afplay timed out after %ds for %s", AFPLAY_TIMEOUT, path)
+            logger.warning(
+                "Playback timed out after %ds for %s", PLAYBACK_TIMEOUT, path
+            )
 
 
 def enqueue(path: Path) -> None:
