@@ -18,6 +18,7 @@ from pathlib import Path
 # Well-known paths ----------------------------------------------------------
 
 MARKETPLACE_PATH = Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
+MARKETPLACE_CLONE = Path.home() / ".claude" / "plugins" / "marketplaces" / "punt-labs"
 COMMANDS_DIR = Path.home() / ".claude" / "commands"
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 PLUGIN_ID = "tts@punt-labs"
@@ -95,9 +96,7 @@ def _register_marketplace(
 
     marketplaces[MARKETPLACE_KEY] = {
         "source": {"source": "github", "repo": "punt-labs/claude-plugins"},
-        "installLocation": str(
-            Path.home() / ".claude" / "plugins" / "marketplaces" / "punt-labs"
-        ),
+        "installLocation": str(MARKETPLACE_CLONE),
         "autoUpdate": True,
     }
 
@@ -107,6 +106,32 @@ def _register_marketplace(
         return StepResult("Marketplace", True, "registered punt-labs")
     except OSError as exc:
         return StepResult("Marketplace", False, f"write failed: {exc}")
+
+
+def _refresh_marketplace() -> StepResult:
+    """Pull the latest marketplace data from the remote.
+
+    Ensures the local clone has up-to-date ``source.ref`` pins so
+    ``claude plugin install`` checks out the correct tag.
+    """
+    if not MARKETPLACE_CLONE.is_dir():
+        return StepResult("Marketplace refresh", True, "not yet cloned (fresh install)")
+
+    git = shutil.which("git")
+    if not git:
+        return StepResult("Marketplace refresh", False, "git not found on PATH")
+
+    result = subprocess.run(
+        [git, "-C", str(MARKETPLACE_CLONE), "pull", "--ff-only"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return StepResult("Marketplace refresh", True, "updated")
+    return StepResult(
+        "Marketplace refresh", False, f"git pull failed: {result.stderr.strip()}"
+    )
 
 
 def _unregister_marketplace(
@@ -288,13 +313,15 @@ def install(
 
     Steps:
     1. Register punt-labs marketplace (if missing)
-    2. Install plugin via ``claude plugin install``
+    2. Refresh marketplace clone (pull latest ref pins)
+    3. Install plugin via ``claude plugin install``
 
     The SessionStart hook handles command deployment and permission
     auto-allow on first session.
     """
     steps = [
         _register_marketplace(marketplace_path),
+        _refresh_marketplace(),
         _install_plugin(),
     ]
 

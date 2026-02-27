@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Installer now refreshes marketplace clone before plugin install, ensuring existing users get the correct `source.ref` pins
+
 ## [0.4.0] - 2026-02-27
 
 ### Added
