@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PLUGIN_JSON="${REPO_ROOT}/.claude-plugin/plugin.json"
 
 # Preflight: abort if repo has uncommitted changes
-if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -uno)" ]]; then
   echo "Error: repository has uncommitted changes. Commit or stash before running $(basename "$0")." >&2
   exit 1
 fi
