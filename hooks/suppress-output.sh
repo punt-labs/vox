@@ -84,6 +84,25 @@ if [[ "$TOOL_NAME" == "ensemble" ]]; then
   exit 0
 fi
 
+if [[ "$TOOL_NAME" == "set_config" ]]; then
+  KEY=$(echo "$RESULT" | jq -r '.key // empty' 2>/dev/null)
+  VALUE=$(echo "$RESULT" | jq -r '.value // empty' 2>/dev/null)
+  if [[ "$KEY" == "vibe_tags" ]]; then
+    if [[ -z "$VALUE" ]]; then
+      MSG="♪ vibe cleared"
+    else
+      MSG="♪ vibe shifted to ${VALUE}"
+    fi
+  elif [[ "$KEY" == "vibe_signals" ]]; then
+    # Signal clearing is silent — no panel noise
+    exit 0
+  else
+    MSG="♪ ${KEY} → ${VALUE}"
+  fi
+  emit "$MSG" "$RESULT"
+  exit 0
+fi
+
 # Fallback: full output in panel
 jq -n --arg r "$RESULT" '{
   hookSpecificOutput: {

@@ -53,6 +53,25 @@ SUMMARY_PHRASES=(
 
 REASON=$(pick_random "${SUMMARY_PHRASES[@]}")
 
+# When vibe is active, append signal data so Claude can update
+# vibe_tags via set_config before speaking.
+VIBE_MODE=$(read_vibe_mode)
+if [[ "$VIBE_MODE" == "auto" || "$VIBE_MODE" == "manual" ]]; then
+  VIBE_BLOCK="
+vibe_mode: ${VIBE_MODE}"
+  MANUAL_VIBE=$(_read_field "vibe")
+  if [[ -n "$MANUAL_VIBE" ]]; then
+    VIBE_BLOCK="${VIBE_BLOCK}
+manual_vibe: ${MANUAL_VIBE}"
+  fi
+  VIBE_SIGNALS=$(read_vibe_signals)
+  if [[ -n "$VIBE_SIGNALS" ]]; then
+    VIBE_BLOCK="${VIBE_BLOCK}
+signals: ${VIBE_SIGNALS}"
+  fi
+  REASON="${REASON}${VIBE_BLOCK}"
+fi
+
 # Voice mode: block the stop, ask Claude to summarize and speak.
 jq -n --arg reason "$REASON" '{
   decision: "block",
