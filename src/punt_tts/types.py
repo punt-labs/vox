@@ -40,6 +40,7 @@ class AudioProviderId(StrEnum):
     polly = "polly"
     openai = "openai"
     say = "say"
+    espeak = "espeak"
 
 
 @dataclass(frozen=True)

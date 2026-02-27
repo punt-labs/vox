@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - macOS `say` command fallback provider: zero-config, offline TTS when no API keys are configured. Uses Fred voice (the iconic 1984 Mac voice) to nudge users toward configuring a real provider
-- Auto-detection now falls back to `say` on macOS instead of `polly` when no API keys are set. Non-macOS behavior unchanged (still falls to `polly`)
-- `--provider say` flag for explicit use of macOS system voices
+- Linux `espeak-ng` fallback provider: zero-config, offline TTS using espeak-ng speech synthesizer. Auto-detected when espeak-ng is installed and no API keys are set
+- Auto-detection now falls back to system TTS on both platforms: `say` on macOS, `espeak` on Linux (when installed). Final fallback remains `polly`
+- `--provider say` and `--provider espeak` flags for explicit use of system voices
 
 ## [0.6.1] - 2026-02-27
 

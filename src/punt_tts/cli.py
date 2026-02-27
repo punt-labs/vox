@@ -33,10 +33,11 @@ _PROVIDER_DISPLAY = {
     "polly": "Polly",
     "openai": "OpenAI",
     "say": "Say",
+    "espeak": "eSpeak",
 }
 _VOICE_DEFAULTS = ", ".join(
     f"{DEFAULT_VOICES[k]} ({_PROVIDER_DISPLAY[k]})"
-    for k in ("elevenlabs", "polly", "openai", "say")
+    for k in ("elevenlabs", "polly", "openai", "say", "espeak")
 )
 
 json_output_enabled = False
@@ -157,7 +158,7 @@ def _voice_settings_options[F: Callable[..., object]](fn: F) -> F:
     "provider_name",
     default=None,
     envvar="TTS_PROVIDER",
-    help="TTS provider (elevenlabs, polly, openai, say). Default: auto-detect.",
+    help="TTS provider (elevenlabs, polly, openai, say, espeak). Default: auto-detect.",
 )
 @click.option(
     "--model",
@@ -842,7 +843,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     "--provider",
     "install_provider",
     default=None,
-    help="TTS provider (elevenlabs, polly, openai, say). Default: auto-detect.",
+    help="TTS provider (elevenlabs, polly, openai, say, espeak). Default: auto-detect.",
 )
 def install_desktop(
     output_dir: Path | None, uvx_path: str | None, install_provider: str | None

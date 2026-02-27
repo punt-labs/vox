@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,7 @@ DEFAULT_VOICES: dict[str, str] = {
     "polly": "joanna",
     "openai": "nova",
     "say": "fred",
+    "espeak": "en",
 }
 
 
@@ -69,18 +71,26 @@ def _register_say(**kwargs: str | None) -> TTSProvider:
     return SayProvider()
 
 
+def _register_espeak(**kwargs: str | None) -> TTSProvider:
+    from punt_tts.providers.espeak import EspeakProvider
+
+    return EspeakProvider()
+
+
 PROVIDER_REGISTRY["polly"] = _register_polly
 PROVIDER_REGISTRY["openai"] = _register_openai
 PROVIDER_REGISTRY["elevenlabs"] = _register_elevenlabs
 PROVIDER_REGISTRY["say"] = _register_say
+PROVIDER_REGISTRY["espeak"] = _register_espeak
 
 
 def auto_detect_provider() -> str:
     """Detect the provider from environment.
 
     Checks TTS_PROVIDER env var first, then probes for API keys:
-    ElevenLabs > OpenAI > Polly. On macOS with no API keys,
-    falls back to say (zero-config offline).
+    ElevenLabs > OpenAI > system fallback. On macOS, falls back to
+    say; on Linux, falls back to espeak-ng if installed. Final
+    fallback is polly (requires AWS credentials).
     """
     env = os.environ.get("TTS_PROVIDER")
     if env:
@@ -91,6 +101,8 @@ def auto_detect_provider() -> str:
         return "openai"
     if platform.system() == "Darwin":
         return "say"
+    if shutil.which("espeak-ng") or shutil.which("espeak"):
+        return "espeak"
     return "polly"
 
 
