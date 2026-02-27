@@ -36,7 +36,9 @@ SPEAK=$(read_speak)
 if [[ "$SPEAK" == "n" ]]; then
   CHIME="$SCRIPT_DIR/../assets/chime_done.mp3"
   if [[ -f "$CHIME" ]]; then
+    kill_previous_playback
     nohup afplay "$CHIME" >/dev/null 2>&1 &
+    record_playback_pid $!
     disown
   fi
   exit 0
