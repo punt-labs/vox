@@ -560,12 +560,12 @@ class TestDoctorCommand:
             "mcpServers": {"tts": {"command": "uvx"}},
         }
         result = self._run_doctor(tmp_path, config_exists=True, config_data=config_data)
-        assert "✓ MCP server: registered" in result.output
+        assert "✓ Claude Desktop MCP: registered" in result.output
 
     def test_server_not_registered(self, tmp_path: Path) -> None:
         config_data: dict[str, object] = {"mcpServers": {}}
         result = self._run_doctor(tmp_path, config_exists=True, config_data=config_data)
-        assert "○ MCP server: not registered" in result.output
+        assert "○ Claude Desktop MCP: not registered" in result.output
 
     def test_summary_counts(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)

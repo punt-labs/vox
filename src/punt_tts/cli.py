@@ -699,26 +699,26 @@ def doctor(ctx: click.Context) -> None:
             if "tts" in servers:
                 _check(
                     _PASS,
-                    "MCP server: registered",
+                    "Claude Desktop MCP: registered",
                     required=False,
                 )
             else:
                 _check(
                     _OPTIONAL,
-                    "MCP server: not registered (run 'tts install')",
+                    "Claude Desktop MCP: not registered (run 'tts install-desktop')",
                     required=False,
                 )
         except (json.JSONDecodeError, OSError):
             _check(
                 _OPTIONAL,
-                "MCP server: could not read config",
+                "Claude Desktop MCP: could not read config",
                 required=False,
             )
     else:
         _check(_OPTIONAL, "Claude Desktop config: not found", required=False)
         _check(
             _OPTIONAL,
-            "MCP server: not registered (run 'tts install')",
+            "Claude Desktop MCP: not registered (run 'tts install-desktop')",
             required=False,
         )
 
