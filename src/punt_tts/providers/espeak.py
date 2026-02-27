@@ -165,7 +165,7 @@ class EspeakProvider:
         if binary is None:
             msg = (
                 "espeak-ng or espeak not found on PATH. "
-                "Install with: apt install espeak-ng"
+                "Install with: sudo apt-get install espeak-ng"
             )
             raise ValueError(msg)
         self._binary: str = binary

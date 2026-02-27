@@ -124,7 +124,7 @@ class SayProvider:
         if platform.system() != "Darwin":
             msg = (
                 "SayProvider requires macOS. "
-                "Use --provider elevenlabs/openai/polly on this platform."
+                "Use --provider espeak/elevenlabs/openai/polly on this platform."
             )
             raise ValueError(msg)
         if shutil.which("say") is None:

@@ -101,7 +101,9 @@ def auto_detect_provider() -> str:
         return "openai"
     if platform.system() == "Darwin" and shutil.which("say"):
         return "say"
-    if shutil.which("espeak-ng") or shutil.which("espeak"):
+    if platform.system() == "Linux" and (
+        shutil.which("espeak-ng") or shutil.which("espeak")
+    ):
         return "espeak"
     return "polly"
 
