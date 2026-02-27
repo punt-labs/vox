@@ -199,12 +199,11 @@ git checkout -b feat/thing-two main
 # Session end: /exit cleans up the worktree
 ```
 
-**After creating a PR, always wait for Copilot review before merging:**
+**After creating a PR, block until CI and Copilot finish.** Do not proceed to merge or start other work until these commands complete. `--watch` blocks the shell until all checks resolve — this is intentional.
 
 ```bash
-gh pr checks <number> --watch          # Wait for CI + Copilot to complete
-gh pr view <number> --comments         # Read Copilot feedback
-# Address any feedback, push fixes if needed
+gh pr checks <number> --watch          # BLOCKING: polls until all checks pass or fail
+gh pr view <number> --comments         # Read Copilot feedback — address before merging
 ```
 
 **Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). `gh pr merge` tries to checkout main locally, which fails inside a worktree. After merging, pull main to stay ready for the next PR.
