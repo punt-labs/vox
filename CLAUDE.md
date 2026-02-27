@@ -226,6 +226,7 @@ claude --plugin-dir .                   # Load dev plugin as tts-dev alongside p
 Dev commands (`/tts-dev:say-dev`, `/tts-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_tts-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
 
 Release scripts swap the name before tagging:
+
 - `bash scripts/release-plugin.sh` — swap `tts-dev` → `tts`, remove `*-dev.md`
 - `bash scripts/restore-dev-plugin.sh` — restore dev state after tagging
 
