@@ -62,17 +62,11 @@ Use the `set_config` MCP tool for all writes. Read `.tts/config.md` for
 status queries.
 
 - **`/vibe <mood>`**: Interpret the mood, choose tags, then call:
-  1. `set_config(key="vibe", value="<mood text>")`
-  2. `set_config(key="vibe_tags", value="<your tags>")`
-  3. `set_config(key="vibe_mode", value="manual")`
-- **`/vibe auto`**: Clear stale manual state, then set mode:
-  1. `set_config(key="vibe_tags", value="")`
-  2. `set_config(key="vibe", value="")`
-  3. `set_config(key="vibe_mode", value="auto")`
-- **`/vibe off`**: Call set_config three times:
-  1. `set_config(key="vibe_tags", value="")`
-  2. `set_config(key="vibe", value="")`
-  3. `set_config(key="vibe_mode", value="off")`
+  `set_config(updates={"vibe": "<mood text>", "vibe_tags": "<your tags>", "vibe_mode": "manual"})`
+- **`/vibe auto`**: Clear stale manual state and set mode:
+  `set_config(updates={"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})`
+- **`/vibe off`**: Clear all vibe state:
+  `set_config(updates={"vibe_tags": "", "vibe": "", "vibe_mode": "off"})`
 - **`/vibe` (no argument)**: Read `.tts/config.md` and report current
   `vibe_mode`, `vibe`, and `vibe_tags`
 
