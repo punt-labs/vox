@@ -15,7 +15,7 @@ When Claude Code finishes a task, hits an error, or needs your approval --- you 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/2d8922f/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -40,7 +40,7 @@ tts doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/2d8922f/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh
