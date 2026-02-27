@@ -135,7 +135,7 @@ class TestElevenLabsProviderSynthesize:
 
         provider.synthesize(request, out)
 
-        call_kwargs = mock_elevenlabs_client.text_to_speech.convert.call_args.kwargs
+        call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
         assert call_kwargs["model_id"] == "eleven_turbo_v2_5"
 
     def test_synthesize_with_voice_settings(
@@ -157,7 +157,7 @@ class TestElevenLabsProviderSynthesize:
 
         elevenlabs_provider.synthesize(request, out)
 
-        call_kwargs = mock_elevenlabs_client.text_to_speech.convert.call_args.kwargs
+        call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
         assert "voice_settings" in call_kwargs
         vs = call_kwargs["voice_settings"]
         assert vs.stability == 0.5
@@ -176,7 +176,7 @@ class TestElevenLabsProviderSynthesize:
 
         elevenlabs_provider.synthesize(request, out)
 
-        call_kwargs = mock_elevenlabs_client.text_to_speech.convert.call_args.kwargs
+        call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
         assert "voice_settings" not in call_kwargs
 
     def test_synthesize_chunked_text(
@@ -197,7 +197,7 @@ class TestElevenLabsProviderSynthesize:
 
         assert result.path == out
         assert out.exists()
-        assert mock_elevenlabs_client.text_to_speech.convert.call_count > 1
+        assert mock_elevenlabs_client.text_to_speech.stream.call_count > 1
 
 
 class TestElevenLabsProviderCheckHealth:

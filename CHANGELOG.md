@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- ElevenLabs provider now uses streaming API (`text_to_speech.stream()`) for lower time-to-first-audio
+
 ### Fixed
 
 - Installer now runs `claude plugin update` when plugin is already installed; previously users stayed stuck on old versions
