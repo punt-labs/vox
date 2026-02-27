@@ -54,6 +54,20 @@ class TestCleanEphemeral:
         assert keep.exists()
         assert not (eph / "old.mp3").exists()
 
+    def test_preserves_non_mp3_files(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        eph = tmp_path / ".tts"
+        eph.mkdir()
+        config = eph / "config.md"
+        config.write_text("---\nnotify: y\n---\n")
+        (eph / "old.mp3").write_text("audio")
+
+        deleted = clean_ephemeral()
+
+        assert deleted == 1
+        assert config.exists()
+        assert not (eph / "old.mp3").exists()
+
     def test_no_directory_returns_zero(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
         assert clean_ephemeral() == 0

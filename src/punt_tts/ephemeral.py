@@ -41,7 +41,7 @@ def clean_ephemeral(*, keep: Path | None = None) -> int:
 
     deleted = 0
     for child in eph_dir.iterdir():
-        if child.is_file() and child != keep:
+        if child.is_file() and child != keep and child.suffix == ".mp3":
             child.unlink()
             deleted += 1
 
