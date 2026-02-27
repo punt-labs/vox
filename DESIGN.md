@@ -567,3 +567,80 @@ The session-start hook detects dev mode by checking plugin.json for `"tts-dev"`:
 ### Key Invariant
 
 The installed `tts` binary always runs working-tree code (via editable install). This means hooks, MCP server, and CLI all exercise the current source without `uv run`.
+
+---
+
+## DES-015: Marketplace Installs from HEAD, Not Tags
+
+**Date:** 2026-02-27
+**Status:** SETTLED
+**Topic:** Why the v0.4.0 production install was broken and the systemic fix
+
+### Root Cause
+
+Claude Code marketplace installs clone HEAD of the default branch, not the version tag. When a marketplace entry has no `source.ref` field, `claude plugin install` resolves the `version` field for display only — the git clone targets HEAD.
+
+This is invisible when HEAD and the tag are the same commit. It becomes a breaking defect when they diverge — which is exactly what dev/prod namespace isolation does. The release workflow pushes three commits in sequence:
+
+```text
+main:  ... → [release] → [prepare: name=tts] → [restore: name=tts-dev]
+                              ↑ tag v0.4.0           ↑ HEAD
+```
+
+The tag points to the prepare commit (`name: "tts"`). HEAD points to the restore commit (`name: "tts-dev"`). The marketplace installs HEAD — so every user gets the dev plugin.
+
+### Consequences of Installing the Dev Plugin
+
+1. Plugin loads as `tts-dev`, not `tts`
+2. Session-start hook detects `DEV_MODE=true`, skips command deployment
+3. No top-level `/notify`, `/say`, `/speak`, `/recap`, `/voice` commands
+4. User sees only namespaced commands: `/tts-dev:notify`, `/tts-dev:say`, etc.
+5. Tool permission auto-allow writes the dev pattern (`mcp__plugin_tts-dev_vox__*`)
+
+The plugin technically works — MCP server starts, audio plays — but the UX is wrong. The user has no idea they're running a dev build.
+
+### Why This Wasn't Caught
+
+1. The developer uses an editable install + `--plugin-dir .`, so the dev name is expected
+2. The release script round-trip test verified the scripts work, not the installed artifact
+3. No test installs from the marketplace after release — verification step 10 tests PyPI (`tts doctor`), not the plugin
+4. Biff has the same dev/prod pattern but its HEAD happened to have the prod name at install time (no release had been cut since adding the pattern)
+
+### Fix
+
+Pin every marketplace entry to its release tag via `source.ref`:
+
+```json
+{
+  "name": "tts",
+  "source": {
+    "source": "github",
+    "repo": "punt-labs/tts",
+    "ref": "v0.4.0"
+  },
+  "version": "0.4.0"
+}
+```
+
+This is required for any project where HEAD of main may diverge from the release tag — which is every project using dev/prod namespace isolation, and arguably every project where post-release commits exist.
+
+### Rule
+
+**Every marketplace entry MUST have `source.ref` pinned to the release tag.** The release workflow step 12 (marketplace bump) must update both `version` and `ref`. This is now documented in CLAUDE.md.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Don't push restore commit to main | Breaks the dev workflow — developer's working tree would have prod name, defeating namespace isolation |
+| Tag HEAD instead of the prepare commit | Tag would include dev artifacts; marketplace clones the tag and gets `tts-dev` anyway |
+| File a Claude Code bug to resolve `version` → tag | Correct long-term fix, but we can't control Claude Code's release timeline; `ref` is the available mechanism now |
+| Keep main always prod-ready, dev on branches | Every feature branch would need manual plugin.json swap; error-prone, defeats the automation |
+
+### Discovery Chain
+
+1. User installed v0.4.0, saw `/tts-dev:notify` instead of `/notify`
+2. Checked installed plugin cache: `name: "tts-dev"`, commit `06c2ec7` (restore commit)
+3. Compared to v0.4.0 tag: commit `c977c8c` (prepare commit), `name: "tts"`
+4. Confirmed: marketplace installed HEAD, not tag
+5. Added `source.ref: "v0.4.0"` to marketplace, nuked cache, reinstalled → `name: "tts"`, correct commit

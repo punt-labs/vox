@@ -210,7 +210,7 @@ Every release follows this exact sequence. No steps skipped.
 9. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
 10. **Verify**: `uv tool install --force --refresh punt-tts==X.Y.Z && tts doctor`
 11. **Restore editable**: `uv tool install --force --editable .` (for local dev)
-12. **Marketplace**: bump version in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge
+12. **Marketplace**: bump both `version` and `source.ref` in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge (ref MUST point to tag — see DES-015)
 
 A release is not complete until all 12 steps are done. PyPI publishing is owned by GH Actions — never upload manually.
 
