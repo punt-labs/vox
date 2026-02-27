@@ -575,102 +575,53 @@ class TestDoctorCommand:
 
 class TestInstallCommand:
     @patch(f"{_CLI}.get_provider")
-    def test_install_success(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
-        from punt_tts.installer import InstallResult, StepResult
-
+    def test_install_success(self, mock_get_provider: MagicMock) -> None:
         mock_get_provider.return_value = _make_mock_provider()
-        mock_result = InstallResult(
-            installed=True,
-            message="Installed. Restart Claude Code to activate.",
-            steps=[
-                StepResult("Marketplace", True, "already registered"),
-                StepResult("Plugin", True, "installed"),
-            ],
-        )
 
         runner = CliRunner()
-        with patch("punt_tts.installer.install", return_value=mock_result):
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
             result = runner.invoke(main, ["install"])
 
         assert result.exit_code == 0
-        assert "Marketplace: already registered" in result.output
-        assert "Plugin: installed" in result.output
         assert "Restart Claude Code" in result.output
 
     @patch(f"{_CLI}.get_provider")
-    def test_install_failure(
-        self,
-        mock_get_provider: MagicMock,
-    ) -> None:
-        from punt_tts.installer import InstallResult, StepResult
-
+    def test_install_no_claude(self, mock_get_provider: MagicMock) -> None:
         mock_get_provider.return_value = _make_mock_provider()
-        mock_result = InstallResult(
-            installed=False,
-            message="Installation incomplete (see details above).",
-            steps=[
-                StepResult("Marketplace", True, "registered punt-labs"),
-                StepResult("Plugin", False, "claude CLI not found on PATH"),
-            ],
-        )
 
         runner = CliRunner()
-        with patch("punt_tts.installer.install", return_value=mock_result):
+        with patch("shutil.which", return_value=None):
             result = runner.invoke(main, ["install"])
 
         assert result.exit_code != 0
-        assert "Plugin: claude CLI not found" in result.output
 
 
 class TestUninstallCommand:
     @patch(f"{_CLI}.get_provider")
-    def test_uninstall_success(
-        self,
-        mock_get_provider: MagicMock,
-    ) -> None:
-        from punt_tts.installer import StepResult, UninstallResult
-
+    def test_uninstall_success(self, mock_get_provider: MagicMock) -> None:
         mock_get_provider.return_value = _make_mock_provider()
-        mock_result = UninstallResult(
-            uninstalled=True,
-            message="Uninstalled.",
-            steps=[
-                StepResult("Plugin", True, "uninstalled"),
-                StepResult("Commands", True, "removed 5"),
-                StepResult("Permissions", True, "removed"),
-                StepResult("Marketplace", True, "unregistered punt-labs"),
-            ],
-        )
 
         runner = CliRunner()
-        with patch("punt_tts.installer.uninstall", return_value=mock_result):
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
             result = runner.invoke(main, ["uninstall"])
 
         assert result.exit_code == 0
-        assert "Plugin: uninstalled" in result.output
         assert "Uninstalled." in result.output
 
     @patch(f"{_CLI}.get_provider")
-    def test_uninstall_failure(
-        self,
-        mock_get_provider: MagicMock,
-    ) -> None:
-        from punt_tts.installer import StepResult, UninstallResult
-
+    def test_uninstall_no_claude(self, mock_get_provider: MagicMock) -> None:
         mock_get_provider.return_value = _make_mock_provider()
-        mock_result = UninstallResult(
-            uninstalled=False,
-            message="Uninstall incomplete (see details above).",
-            steps=[
-                StepResult("Plugin", False, "claude plugin uninstall failed: error"),
-                StepResult("Commands", True, "removed 0"),
-            ],
-        )
 
         runner = CliRunner()
-        with patch("punt_tts.installer.uninstall", return_value=mock_result):
+        with patch("shutil.which", return_value=None):
             result = runner.invoke(main, ["uninstall"])
 
         assert result.exit_code != 0

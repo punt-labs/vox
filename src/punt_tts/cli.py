@@ -736,55 +736,45 @@ def doctor(ctx: click.Context) -> None:
 # install / uninstall (Claude Code marketplace)
 # ---------------------------------------------------------------------------
 
+_PLUGIN_ID = "tts@punt-labs"
+
 
 @main.command()
 def install() -> None:
-    """Install the Claude Code plugin via the punt-labs marketplace.
+    """Install the Claude Code plugin via the punt-labs marketplace."""
+    import shutil
+    import subprocess
 
-    Registers the punt-labs marketplace (if missing), then installs
-    the tts plugin via ``claude plugin install``. The SessionStart hook
-    handles command deployment and permission auto-allow on first session.
+    claude = shutil.which("claude")
+    if not claude:
+        raise click.ClickException("claude CLI not found on PATH")
 
-    Requires the ``claude`` CLI on PATH.
-    """
-    from punt_tts.installer import install as do_install
-
-    result = do_install()
-    for step in result.steps:
-        symbol = _PASS if step.passed else _FAIL
-        _emit(
-            {"step": step.name, "passed": step.passed, "message": step.message},
-            f"{symbol} {step.name}: {step.message}",
-        )
-
-    if result.installed:
-        _emit({"installed": True, "message": result.message}, result.message)
-    else:
-        raise click.ClickException(result.message)
+    result = subprocess.run(
+        [claude, "plugin", "install", _PLUGIN_ID, "--scope", "user"],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise click.ClickException("plugin install failed")
+    _emit({"installed": True}, "Installed. Restart Claude Code to activate.")
 
 
 @main.command()
 def uninstall() -> None:
-    """Uninstall the Claude Code plugin and clean up all artifacts.
+    """Uninstall the Claude Code plugin."""
+    import shutil
+    import subprocess
 
-    Removes the plugin, deployed commands, MCP tool permissions, and
-    the punt-labs marketplace registration (if no other punt-labs plugins
-    remain installed).
-    """
-    from punt_tts.installer import uninstall as do_uninstall
+    claude = shutil.which("claude")
+    if not claude:
+        raise click.ClickException("claude CLI not found on PATH")
 
-    result = do_uninstall()
-    for step in result.steps:
-        symbol = _PASS if step.passed else _FAIL
-        _emit(
-            {"step": step.name, "passed": step.passed, "message": step.message},
-            f"{symbol} {step.name}: {step.message}",
-        )
-
-    if result.uninstalled:
-        _emit({"uninstalled": True, "message": result.message}, result.message)
-    else:
-        raise click.ClickException(result.message)
+    result = subprocess.run(
+        [claude, "plugin", "uninstall", _PLUGIN_ID, "--scope", "user"],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise click.ClickException("plugin uninstall failed")
+    _emit({"uninstalled": True}, "Uninstalled.")
 
 
 # ---------------------------------------------------------------------------
