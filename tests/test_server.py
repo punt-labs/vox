@@ -135,6 +135,17 @@ class TestWriteConfigField:
         assert nested.exists()
         assert 'notify: "y"' in nested.read_text()
 
+    def test_malformed_file_warns_and_overwrites(
+        self, _patch_config: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _patch_config.write_text("no frontmatter at all\n")
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="punt_tts.server"):
+            _write_config_field("notify", "y")
+        assert 'notify: "y"' in _patch_config.read_text()
+        assert "Malformed config" in caplog.text
+
 
 class TestSetConfig:
     """Tests for the set_config MCP tool."""

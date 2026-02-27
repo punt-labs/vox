@@ -26,7 +26,7 @@ SIGNAL=""
 
 if echo "$OUTPUT" | grep -qiE 'passed|tests? ok|✓.*passed'; then
   SIGNAL="tests-pass"
-elif echo "$OUTPUT" | grep -qiE 'FAILED|AssertionError|ERRORS?$'; then
+elif echo "$OUTPUT" | grep -qiE 'FAILED|AssertionError|ERRORS?\b'; then
   SIGNAL="tests-fail"
 elif echo "$OUTPUT" | grep -qiE 'Found [0-9]+ error'; then
   SIGNAL="lint-fail"

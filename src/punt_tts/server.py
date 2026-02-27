@@ -180,6 +180,7 @@ def _write_config_field(key: str, value: str) -> None:
     elif _CLOSING_FENCE_RE.search(text):
         text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
     else:
+        logger.warning("Malformed config (no closing ---): %s", _CONFIG_PATH)
         text = f"---\n{replacement}\n---\n"
 
     _CONFIG_PATH.write_text(text)
