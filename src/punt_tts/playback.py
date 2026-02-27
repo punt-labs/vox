@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import fcntl
 import logging
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 LOCK_FILE = Path.home() / ".punt-tts" / "playback.lock"
 AFPLAY_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
+_PENDING_DIR = LOCK_FILE.parent / "pending"
 
 
 def play_audio(path: Path) -> None:
@@ -42,17 +45,44 @@ def play_audio(path: Path) -> None:
 
 
 def enqueue(path: Path) -> None:
-    """Spawn detached subprocess that calls play_audio. Non-blocking."""
+    """Spawn detached subprocess that plays audio. Non-blocking.
+
+    Copies the file to ``~/.punt-tts/pending/`` first so the original
+    can be safely deleted (e.g., by ephemeral cleanup) before the
+    subprocess acquires the flock and opens the file.
+    """
+    _PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    pending = _PENDING_DIR / f"{os.getpid()}_{path.name}"
+    try:
+        shutil.copy2(path, pending)
+    except OSError:
+        logger.warning("Failed to copy %s for playback", path)
+        return
     try:
         subprocess.Popen(
-            [sys.executable, "-m", "punt_tts.playback", str(path)],
+            [sys.executable, "-m", "punt_tts.playback", str(pending)],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except OSError:
-        logger.warning("Failed to spawn playback subprocess for %s", path)
+        logger.exception("Failed to spawn playback subprocess for %s", path)
+        pending.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
-    play_audio(Path(sys.argv[1]))
+    from punt_tts.logging_config import configure_logging
+
+    configure_logging(stderr_level="WARNING")
+
+    if len(sys.argv) < 2:
+        logger.error("Usage: python -m punt_tts.playback <audio_file>")
+        sys.exit(1)
+
+    audio_path = Path(sys.argv[1])
+    try:
+        play_audio(audio_path)
+    finally:
+        # Clean up pending copies after playback completes.
+        if audio_path.parent == _PENDING_DIR:
+            audio_path.unlink(missing_ok=True)
