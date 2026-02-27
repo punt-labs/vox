@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-02-27
+
 ### Fixed
 
 - Stop hook no longer leaks `vibe_mode` debug data in user-visible hook error display; vibe data now read from `.tts/config.md` via Read tool ([#26](https://github.com/punt-labs/tts/pull/26))
