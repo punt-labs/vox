@@ -211,7 +211,8 @@ gh pr view <number> --comments         # Read Copilot feedback
 
 ```bash
 # mcp__github__merge_pull_request(owner="punt-labs", repo="tts", pullNumber=N, merge_method="squash")
-git checkout main && git pull          # Ready for next branch
+git fetch origin main && git checkout origin/main  # Detached HEAD (worktree can't checkout main branch)
+git checkout -b feat/next-thing                     # New branch from latest main
 ```
 
 **Worktree cleanup.** Never remove a worktree from inside it — the session cwd becomes invalid and unrecoverable. Let `/exit` handle cleanup. It prompts to keep or remove the worktree on session end.
