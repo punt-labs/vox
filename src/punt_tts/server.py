@@ -29,7 +29,7 @@ from punt_tts.types import (
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "tts",
+    "vox",
     instructions=(
         "TTS is a text-to-speech engine. Use these tools to speak text aloud, "
         "generate audio files, and create language-learning pairs.\n\n"

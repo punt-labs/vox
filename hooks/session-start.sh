@@ -4,7 +4,7 @@ set -euo pipefail
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
-TOOL_PATTERN="mcp__plugin_tts_tts__"
+TOOL_PATTERN="mcp__plugin_tts_vox__"
 
 ACTIONS=()
 
@@ -29,9 +29,17 @@ fi
 if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
   CHANGED=false
 
+  # Remove legacy mcp__plugin_tts_tts__* pattern from pre-vox rename
+  if jq -e '.permissions.allow // [] | map(select(contains("mcp__plugin_tts_tts__"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
+    TMPFILE="$(mktemp)"
+    jq '.permissions.allow = [.permissions.allow[] | select(contains("mcp__plugin_tts_tts__") | not)]' "$SETTINGS" > "$TMPFILE"
+    mv "$TMPFILE" "$SETTINGS"
+    CHANGED=true
+  fi
+
   if ! jq -e ".permissions.allow // [] | map(select(contains(\"$TOOL_PATTERN\"))) | length > 0" "$SETTINGS" >/dev/null 2>&1; then
     TMPFILE="$(mktemp)"
-    jq '.permissions.allow = (.permissions.allow // []) + ["mcp__plugin_tts_tts__*"]' "$SETTINGS" > "$TMPFILE"
+    jq '.permissions.allow = (.permissions.allow // []) + ["mcp__plugin_tts_vox__*"]' "$SETTINGS" > "$TMPFILE"
     mv "$TMPFILE" "$SETTINGS"
     CHANGED=true
   fi

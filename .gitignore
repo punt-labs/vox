@@ -26,3 +26,4 @@ lancedb/
 !.claude/settings.json
 .tts/
 research/
+.biff.local

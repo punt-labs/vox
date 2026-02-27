@@ -1,7 +1,7 @@
 ---
 description: "Speak text aloud using TTS"
 argument-hint: "<text>"
-allowed-tools: ["mcp__plugin_tts_tts__speak"]
+allowed-tools: ["mcp__plugin_tts_vox__speak"]
 ---
 
 # /say command
