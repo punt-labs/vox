@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -108,6 +109,29 @@ def _resolve_voice_and_language(
     return voice, language
 
 
+_VIBE_TAGS_RE = re.compile(r'^vibe_tags:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_CONFIG_PATH = Path(".tts/config.md")
+
+
+def _read_vibe_tags() -> str | None:
+    """Read expressive tags from .tts/config.md, or None if unset."""
+    if not _CONFIG_PATH.exists():
+        return None
+    text = _CONFIG_PATH.read_text()
+    match = _VIBE_TAGS_RE.search(text)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return None
+
+
+def _apply_vibe(text: str) -> str:
+    """Prepend session vibe tags to text if configured."""
+    tags = _read_vibe_tags()
+    if tags:
+        return f"{tags} {text}"
+    return text
+
+
 def _cached_result(
     provider: TTSProvider, request: SynthesisRequest, output_path: Path
 ) -> SynthesisResult:
@@ -181,6 +205,7 @@ def speak(
         JSON string with path, text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
+    text = _apply_vibe(text)
     provider = get_provider()
     voice, language = _resolve_voice_and_language(provider, voice, language)
     request = SynthesisRequest(
