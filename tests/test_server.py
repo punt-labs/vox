@@ -65,31 +65,33 @@ class TestApplyVibe:
 
     def test_prepends_tags(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
-        result = _apply_vibe("Hello world")
+        result = _apply_vibe("Hello world", expressive_tags=True)
         assert result == "[excited] Hello world"
 
     def test_multiple_tags(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[frustrated] [sighs]"\n---\n')
-        result = _apply_vibe("Hello world")
+        result = _apply_vibe("Hello world", expressive_tags=True)
         assert result == "[frustrated] [sighs] Hello world"
 
     def test_skips_prepend_when_text_starts_with_tag(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe("[calm] Already tagged")
+        result = _apply_vibe("[calm] Already tagged", expressive_tags=True)
         assert result == "[calm] Already tagged"
 
     def test_skips_prepend_when_text_starts_with_different_tag(
         self, _patch_config: Path
     ) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe("[excited] Different tag")
+        result = _apply_vibe("[excited] Different tag", expressive_tags=True)
         assert result == "[excited] Different tag"
 
     def test_skips_prepend_when_tag_contains_punctuation(
         self, _patch_config: Path
     ) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe("[dramatic tone] Something important")
+        result = _apply_vibe(
+            "[dramatic tone] Something important", expressive_tags=True
+        )
         assert result == "[dramatic tone] Something important"
 
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
@@ -97,7 +99,12 @@ class TestApplyVibe:
 
         missing = tmp_path / "missing.md"
         monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
-        assert _apply_vibe("Hello world") == "Hello world"
+        assert _apply_vibe("Hello world", expressive_tags=True) == "Hello world"
+
+    def test_skips_tags_when_not_supported(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
+        result = _apply_vibe("Hello world", expressive_tags=False)
+        assert result == "Hello world"
 
 
 class TestWriteConfigField:

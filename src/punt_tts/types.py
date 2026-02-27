@@ -196,6 +196,11 @@ class TTSProvider(AudioProvider, Protocol):
         """Default voice name for this provider."""
         ...
 
+    @property
+    def supports_expressive_tags(self) -> bool:
+        """Whether this provider interprets [bracketed] tags as performance cues."""
+        ...
+
     def synthesize(self, request: AudioRequest, output_path: Path) -> AudioResult:
         """Synthesize text to an audio file.
 

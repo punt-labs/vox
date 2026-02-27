@@ -65,6 +65,10 @@ class OpenAIProvider:
     def default_voice(self) -> str:
         return "nova"
 
+    @property
+    def supports_expressive_tags(self) -> bool:
+        return False
+
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
         output_path = resolve_output_path(request)
         return self.synthesize(request, output_path)

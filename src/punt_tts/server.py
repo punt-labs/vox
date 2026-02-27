@@ -133,12 +133,18 @@ def _read_vibe_tags() -> str | None:
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 
 
-def _apply_vibe(text: str) -> str:
-    """Prepend session vibe tags to text if configured.
+def _apply_vibe(text: str, *, expressive_tags: bool) -> str:
+    """Prepend session vibe tags to text if the provider supports them.
+
+    Only providers whose ``supports_expressive_tags`` is True interpret
+    bracketed tags as performance cues. Other providers would speak
+    them as literal words.
 
     Skips prepending when the text already starts with an expression
     tag (e.g. ``[calm]``) to avoid doubling.
     """
+    if not expressive_tags:
+        return text
     tags = _read_vibe_tags()
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"
@@ -318,7 +324,7 @@ def speak(
         f"{voice}_{text[:20].replace(' ', '_')}.mp3",
     )
 
-    text = _apply_vibe(text)
+    text = _apply_vibe(text, expressive_tags=provider.supports_expressive_tags)
     request = SynthesisRequest(
         text=text,
         voice=voice,
@@ -388,8 +394,9 @@ def chorus(
         text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
-    texts = [_apply_vibe(t) for t in texts]
     provider = get_provider()
+    expressive = provider.supports_expressive_tags
+    texts = [_apply_vibe(t, expressive_tags=expressive) for t in texts]
     voice, language = _resolve_voice_and_language(provider, voice, language)
     requests = [
         SynthesisRequest(
