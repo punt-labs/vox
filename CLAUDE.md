@@ -190,6 +190,19 @@ gh pr view <number> --comments         # Read Copilot feedback
 gh pr merge <number> --squash --delete-branch  # Only after review is clean
 ```
 
+**Worktree cleanup (after merge).** Always clean up worktrees after the PR is merged. Order matters — `cd` out before removing, or the shell's cwd becomes invalid and unrecoverable.
+
+```bash
+# 1. Merge the PR (from inside the worktree is fine)
+gh pr merge <number> --squash --delete-branch
+# 2. cd to the main repo BEFORE removing the worktree
+cd /path/to/main/repo
+# 3. Remove the worktree
+git worktree remove .claude/worktrees/<name>
+# 4. Prune any stale worktree references
+git worktree prune
+```
+
 | Prefix | Use |
 |--------|-----|
 | `feat/` | New features |
