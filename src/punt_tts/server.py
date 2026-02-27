@@ -109,26 +109,26 @@ def _resolve_voice_and_language(
     return voice, language
 
 
-_VIBE_RE = re.compile(r'^vibe:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_VIBE_TAGS_RE = re.compile(r'^vibe_tags:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _CONFIG_PATH = Path(".tts/config.md")
 
 
-def _read_vibe() -> str | None:
-    """Read the vibe tag from .tts/config.md, or None if unset."""
+def _read_vibe_tags() -> str | None:
+    """Read expressive tags from .tts/config.md, or None if unset."""
     if not _CONFIG_PATH.exists():
         return None
     text = _CONFIG_PATH.read_text()
-    match = _VIBE_RE.search(text)
+    match = _VIBE_TAGS_RE.search(text)
     if match and match.group(1).strip():
         return match.group(1).strip()
     return None
 
 
 def _apply_vibe(text: str) -> str:
-    """Prepend the session vibe tag to text if one is configured."""
-    vibe = _read_vibe()
-    if vibe:
-        return f"[{vibe}] {text}"
+    """Prepend session vibe tags to text if configured."""
+    tags = _read_vibe_tags()
+    if tags:
+        return f"{tags} {text}"
     return text
 
 
