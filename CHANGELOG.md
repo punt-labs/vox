@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Audio collision: TTS now kills previous playback before starting new audio, preventing overlapping utterances across sessions and hooks
+
 ### Changed
 
 - MCP server key renamed from `tts` to `vox`; tools now appear as `plugin:tts:vox` (was `plugin:tts:tts`)

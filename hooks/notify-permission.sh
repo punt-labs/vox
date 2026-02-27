@@ -29,7 +29,9 @@ MESSAGE=$(echo "$INPUT" | jq -r '.message // "Needs your attention"')
 if [[ "$SPEAK" == "n" ]]; then
   CHIME="$SCRIPT_DIR/../assets/chime_prompt.mp3"
   if [[ -f "$CHIME" ]]; then
+    kill_previous_playback
     nohup afplay "$CHIME" >/dev/null 2>&1 &
+    record_playback_pid $!
     disown
   fi
   exit 0
@@ -84,7 +86,9 @@ OUTPUT="$TMPDIR/notify.mp3"
 if command -v tts &>/dev/null; then
   tts synthesize "$TEXT" -o "$OUTPUT" >/dev/null 2>&1
   if [[ -f "$OUTPUT" && -s "$OUTPUT" ]]; then
-    afplay "$OUTPUT" 2>/dev/null
+    kill_previous_playback
+    afplay "$OUTPUT" 2>/dev/null &
+    record_playback_pid $!
   fi
 fi
 rm -rf "$TMPDIR"

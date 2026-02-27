@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -123,18 +125,41 @@ def _cached_result(
     )
 
 
+_PLAYBACK_PID_FILE = Path.home() / ".punt-tts" / "playback.pid"
+
+
+def _kill_previous_playback() -> None:
+    """Kill a previously playing afplay process, if any."""
+    try:
+        pid = int(_PLAYBACK_PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+    except (FileNotFoundError, ValueError, ProcessLookupError, OSError):
+        pass
+
+
+def _record_playback_pid(pid: int) -> None:
+    """Record the PID of the current afplay process."""
+    try:
+        _PLAYBACK_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PLAYBACK_PID_FILE.write_text(str(pid))
+    except OSError:
+        pass
+
+
 def _play_audio(path: Path) -> None:
     """Play an audio file using macOS afplay (non-blocking).
 
-    Logs a warning and returns silently if afplay is not available
-    (e.g. on Linux or Windows).
+    Kills any previously playing audio first to prevent overlapping
+    utterances. Logs a warning if afplay is not available.
     """
+    _kill_previous_playback()
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["afplay", str(path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        _record_playback_pid(proc.pid)
     except FileNotFoundError:
         logger.warning("afplay not found — auto-play requires macOS")
 
