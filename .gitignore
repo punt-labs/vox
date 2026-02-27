@@ -28,3 +28,13 @@ lancedb/
 .tts/
 research/
 .biff.local
+.entire/
+
+# LaTeX auxiliary files (prfaq.pdf is tracked, build artifacts are not)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.log
+*.out
+*.run.xml
