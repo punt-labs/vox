@@ -120,15 +120,24 @@ if ! ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=
   NEED_HTTPS_REWRITE=1
 fi
 
-# --- Step 6: Install plugin ---
+# --- Step 6: Install or upgrade plugin ---
 
 info "Installing $PLUGIN_NAME plugin..."
 
-if ! claude plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}"; then
-  cleanup_https_rewrite
-  fail "Failed to install $PLUGIN_NAME"
+if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+  ok "$PLUGIN_NAME already installed — checking for updates"
+  if ! claude plugin update "${PLUGIN_NAME}@${MARKETPLACE_NAME}" --scope user; then
+    cleanup_https_rewrite
+    fail "Failed to update $PLUGIN_NAME"
+  fi
+  ok "$PLUGIN_NAME plugin updated"
+else
+  if ! claude plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}"; then
+    cleanup_https_rewrite
+    fail "Failed to install $PLUGIN_NAME"
+  fi
+  ok "$PLUGIN_NAME plugin installed"
 fi
-ok "$PLUGIN_NAME plugin installed"
 
 cleanup_https_rewrite
 
