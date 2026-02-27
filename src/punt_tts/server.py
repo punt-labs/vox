@@ -35,8 +35,15 @@ mcp = FastMCP(
         "TTS is a text-to-speech engine. Use these tools to speak text aloud, "
         "generate audio files, and create language-learning pairs.\n\n"
         "When a stop hook blocks with a ♪ phrase (e.g. '♪ Speaking my thoughts...'), "
-        "write 1-2 sentences summarizing what you completed, call the speak tool "
-        "with ephemeral=true, then stop. No other output."
+        "first read the block reason for vibe data. If vibe_mode is 'manual', "
+        "use the manual_vibe field as your primary mood hint. If vibe_mode is "
+        "'auto' and signals are present, interpret those signals to pick mood. "
+        "Then call set_config to set vibe_tags reflecting the session mood — "
+        "e.g. '[weary]' after a long debug, '[excited]' after a release, "
+        "'[focused]' for normal work. After setting tags, call set_config with "
+        "key='vibe_signals', value='' to clear consumed signals. "
+        "Then write 1-2 sentences summarizing what you completed, call the speak "
+        "tool with ephemeral=true, then stop. No other output."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
@@ -130,6 +137,56 @@ def _apply_vibe(text: str) -> str:
     if tags:
         return f"{tags} {text}"
     return text
+
+
+ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "notify",
+        "speak",
+        "voice_enabled",
+        "vibe",
+        "vibe_tags",
+        "vibe_mode",
+        "vibe_signals",
+    }
+)
+
+_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
+
+
+def _write_config_field(key: str, value: str) -> None:
+    """Write a single YAML frontmatter field to .tts/config.md.
+
+    Updates the field in-place if present, or inserts it before the
+    closing ``---`` if absent. Creates the file with minimal frontmatter
+    if it does not exist.
+    """
+    if key not in ALLOWED_CONFIG_KEYS:
+        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+        raise ValueError(msg)
+
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    replacement = f'{key}: "{value}"'
+
+    if not _CONFIG_PATH.exists():
+        _CONFIG_PATH.write_text(f"---\n{replacement}\n---\n")
+        return
+
+    text = _CONFIG_PATH.read_text()
+    field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
+
+    if field_re.search(text):
+        text = field_re.sub(replacement, text)
+    elif _CLOSING_FENCE_RE.search(text):
+        text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
+    else:
+        logger.warning("Malformed config (no closing ---): %s", _CONFIG_PATH)
+        text = f"---\n{replacement}\n---\n"
+
+    _CONFIG_PATH.write_text(text)
+    logger.info("Config: set %s = %r in %s", key, value, _CONFIG_PATH)
 
 
 def _cached_result(
@@ -576,6 +633,33 @@ def ensemble(
         for r in results:
             _enqueue_audio(r.path)
     return json.dumps([result_to_dict(r) for r in results])
+
+
+@mcp.tool()
+def set_config(key: str, value: str) -> str:
+    """Write a configuration field to .tts/config.md.
+
+    Updates plugin state that controls TTS behavior. Use this instead
+    of Read/Write/Edit file tools when changing plugin configuration.
+
+    Args:
+        key: The config field to set. One of: notify, speak,
+            voice_enabled, vibe, vibe_tags, vibe_mode, vibe_signals.
+            - notify: "y" or "n" — task completion notifications
+            - speak: "y" or "n" — spoken vs chime notifications
+            - voice_enabled: "true" or "false" — voice mode
+            - vibe: Human-readable mood description (e.g. "3am debugging")
+            - vibe_tags: ElevenLabs expressive tags (e.g. "[tired] [slow]")
+            - vibe_mode: "auto", "manual", or "off" — vibe detection mode
+            - vibe_signals: Accumulated session signals (usually cleared
+              by passing empty string after reading)
+        value: The value to write. Use empty string to clear a field.
+
+    Returns:
+        JSON string with key and value fields confirming the write.
+    """
+    _write_config_field(key, value)
+    return json.dumps({"key": key, "value": value})
 
 
 def run_server() -> None:

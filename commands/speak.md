@@ -1,7 +1,7 @@
 ---
 description: "Toggle spoken notifications vs chime-only"
 argument-hint: "y | n"
-allowed-tools: ["Read", "Write", "Edit"]
+allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
 ---
 
 # /speak command
@@ -15,23 +15,12 @@ Toggle whether notifications use spoken words or an audio chime.
 
 ## Implementation
 
-Read the file `.tts/config.md` to check current state. The file has YAML frontmatter:
+Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
+status queries.
 
-```yaml
----
-voice_enabled: false
-notify: "n"
-speak: "y"
----
-```
-
-Based on the argument:
-
-- **y**: Write the file with `speak: "y"` (preserve other fields)
-- **n**: Write the file with `speak: "n"` (preserve other fields)
-- **no argument**: Read the file and report current state
-
-If the file doesn't exist, create it with defaults: `voice_enabled: false`, `notify: "n"`, `speak: "y"`.
+- **y**: `set_config(key="speak", value="y")`
+- **n**: `set_config(key="speak", value="n")`
+- **no argument**: Read `.tts/config.md` and report current state
 
 After changing state, confirm with a brief message:
 

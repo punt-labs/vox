@@ -1,7 +1,7 @@
 ---
 description: "Set session mood for TTS voice"
-argument-hint: "<mood>"
-allowed-tools: ["Read", "Write", "Edit"]
+argument-hint: "<mood> | auto | off"
+allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
 ---
 
 # /vibe command
@@ -11,11 +11,22 @@ translate it into ElevenLabs expressive tags.
 
 ## Usage
 
-- `/vibe banging my head against the wall`
-- `/vibe just shipped a release`
-- `/vibe 3am and still debugging`
-- `/vibe off` — Clear the vibe (normal voice)
-- `/vibe` — Show current vibe
+- `/vibe banging my head against the wall` — set manual vibe
+- `/vibe auto` — return to automatic vibe detection (default)
+- `/vibe off` — disable vibe entirely
+- `/vibe` — show current vibe and mode
+
+## Modes
+
+**auto** (default): Vibe tags update automatically at each task
+completion based on session signals (test results, lint, git ops).
+You interpret the signals and pick appropriate tags during stop-hook
+continuations.
+
+**manual**: User-specified mood overrides auto-detection. The manual
+mood takes priority when choosing tags at stop time.
+
+**off**: No vibe tags applied. Voice is neutral.
 
 ## Your role: voice director
 
@@ -26,39 +37,43 @@ judgment.
 ElevenLabs eleven_v3 expressive tags are bracketed text that color delivery
 for ~4-5 words. The model understands:
 
-- Emotions: `[frustrated]`, `[excited]`, `[melancholy]`, `[smug]`
+- Emotions: `[frustrated]`, `[excited]`, `[melancholy]`, `[smug]`, `[weary]`
 - Actions: `[sighs]`, `[laughs]`, `[whispers]`, `[yawns]`
 - Directions: `[dramatic tone]`, `[slow]`, `[rushed]`
 - Scenes: `[announcing a winner]`, `[telling a secret]`
 
 Examples of your translation:
 
-| Mood | Tags you'd write |
-|------|-----------------|
+| Mood / Signals | Tags you'd write |
+|----------------|-----------------|
 | `banging my head against the wall` | `[frustrated] [sighs]` |
 | `just shipped a release` | `[excited]` |
 | `3am and still debugging` | `[tired] [slow]` |
 | `presenting to the board` | `[confident] [dramatic tone]` |
-| `whisper` | `[whispers]` |
+| tests-fail, tests-fail, cmd-fail | `[frustrated] [sighs]` |
+| tests-pass, tests-pass, git-push-ok | `[excited]` |
+| tests-pass after tests-fail | `[relieved]` |
 
 Keep it to 1-3 tags. Fewer is better — let the mood breathe.
 
 ## Implementation
 
-Read `.tts/config.md` to check current state. The file has YAML frontmatter:
+Use the `set_config` MCP tool for all writes. Read `.tts/config.md` for
+status queries.
 
-```yaml
----
-voice_enabled: true
-notify: "y"
-speak: "y"
-vibe: "banging my head against the wall"
-vibe_tags: "[frustrated] [sighs]"
----
-```
+- **`/vibe <mood>`**: Interpret the mood, choose tags, then call:
+  1. `set_config(key="vibe", value="<mood text>")`
+  2. `set_config(key="vibe_tags", value="<your tags>")`
+  3. `set_config(key="vibe_mode", value="manual")`
+- **`/vibe auto`**: Clear stale manual state, then set mode:
+  1. `set_config(key="vibe_tags", value="")`
+  2. `set_config(key="vibe", value="")`
+  3. `set_config(key="vibe_mode", value="auto")`
+- **`/vibe off`**: Call set_config three times:
+  1. `set_config(key="vibe_tags", value="")`
+  2. `set_config(key="vibe", value="")`
+  3. `set_config(key="vibe_mode", value="off")`
+- **`/vibe` (no argument)**: Read `.tts/config.md` and report current
+  `vibe_mode`, `vibe`, and `vibe_tags`
 
-- **`<mood>`**: Interpret the mood, choose tags, write both `vibe` and `vibe_tags`
-- **off**: Set both `vibe` and `vibe_tags` to empty string
-- **no argument**: Read and report the current vibe and its tags
-
-After changing, confirm: `Vibe: <mood> → <tags>` or `Vibe cleared.`
+After changing, confirm: `Vibe: <mood> → <tags> [mode]` or `Vibe off.`

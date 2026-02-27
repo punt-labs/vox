@@ -44,6 +44,21 @@ read_speak() {
   esac
 }
 
+# Read vibe_mode: auto, manual, or off (default: auto)
+read_vibe_mode() {
+  local val
+  val=$(_read_field "vibe_mode")
+  case "$val" in
+    auto|manual|off) echo "$val" ;;
+    *)               echo "auto" ;;
+  esac
+}
+
+# Read vibe_signals accumulator string (raw, may be empty).
+read_vibe_signals() {
+  _read_field "vibe_signals"
+}
+
 # Pick a random element from positional arguments (Bash 3.2 compatible).
 pick_random() {
   local idx=$((RANDOM % $#))

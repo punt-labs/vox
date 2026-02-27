@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/vibe` command: set a session mood for TTS speech (e.g. `/vibe dramatic`, `/vibe whisper`). Prepends an ElevenLabs expressive tag to all `speak` utterances automatically.
+- `/vibe` command with three modes: `auto` (default — detects session mood from signals), `manual` (`/vibe <mood>` — user-specified), and `off`
+- Auto-vibe: PostToolUse hook on Bash accumulates session signals (test pass/fail, lint, git ops) and stop-hook continuation passes them to Claude for expressive tag selection
+- `set_config` MCP tool: writes plugin config fields atomically, replacing Read/Write/Edit file-tool pattern for all config mutations
+- Panel display for vibe shifts: `♪ vibe shifted to [weary]` on config writes
 
 ### Changed
 
+- `/vibe`, `/notify`, `/speak`, `/voice` commands now use `set_config` MCP tool instead of Read/Write/Edit file tools
 - Panel output personifies the voice: `♪ matilda has spoken` instead of `♪ spoken — matilda (elevenlabs)`. Provider name dropped from display. Phrase pool adds variety.
 
 ## [0.5.0] - 2026-02-27

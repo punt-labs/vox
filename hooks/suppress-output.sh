@@ -9,12 +9,20 @@
 # malformed input rather than failing the tool call.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=hooks/state.sh
 source "$SCRIPT_DIR/state.sh"
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
-RESULT=$(echo "$INPUT" | jq -r '.tool_response' | jq -r '.result // .')
+RESULT=$(echo "$INPUT" | jq -r '
+  def unpack: if type == "string" then (fromjson? // .) else . end;
+  if (.tool_response | type) == "array" then
+    (.tool_response[0].text // "" | unpack)
+  else
+    (.tool_response | unpack)
+  end
+')
 
 # Extract voice name from single-result JSON.
 # Falls back to "the voice" when missing or empty.
@@ -81,6 +89,25 @@ if [[ "$TOOL_NAME" == "ensemble" ]]; then
     "♪♪ ${VOICE} delivered ${COUNT} duets"
   )
   emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "set_config" ]]; then
+  KEY=$(echo "$RESULT" | jq -r '.key // empty' 2>/dev/null)
+  VALUE=$(echo "$RESULT" | jq -r '.value // empty' 2>/dev/null)
+  if [[ "$KEY" == "vibe_tags" ]]; then
+    if [[ -z "$VALUE" ]]; then
+      MSG="♪ vibe cleared"
+    else
+      MSG="♪ vibe shifted to ${VALUE}"
+    fi
+  elif [[ "$KEY" == "vibe_signals" ]]; then
+    # Signal clearing is silent — no panel noise
+    exit 0
+  else
+    MSG="♪ ${KEY} → ${VALUE}"
+  fi
+  emit "$MSG" "$RESULT"
   exit 0
 fi
 
