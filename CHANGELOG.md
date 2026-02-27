@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-27
+
 ### Added
 
 - `/vibe` command with three modes: `auto` (default — detects session mood from signals), `manual` (`/vibe <mood>` — user-specified), and `off`
 - Auto-vibe: PostToolUse hook on Bash accumulates session signals (test pass/fail, lint, git ops) and stop-hook continuation passes them to Claude for expressive tag selection
 - `set_config` MCP tool: writes plugin config fields atomically, replacing Read/Write/Edit file-tool pattern for all config mutations
 - Panel display for vibe shifts: `♪ vibe shifted to [weary]` on config writes
+- Shell linting with shellcheck in quality gates and CI
 
 ### Changed
 
