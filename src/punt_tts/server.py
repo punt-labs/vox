@@ -146,13 +146,16 @@ def _record_playback_pid(pid: int) -> None:
         pass
 
 
-def _play_audio(path: Path) -> None:
+def _play_audio(path: Path, *, kill_previous: bool = True) -> None:
     """Play an audio file using macOS afplay (non-blocking).
 
-    Kills any previously playing audio first to prevent overlapping
-    utterances. Logs a warning if afplay is not available.
+    When *kill_previous* is True (the default), kills any previously
+    playing audio first to prevent overlapping utterances. Set to False
+    for batch playback where multiple files should play concurrently.
+    Logs a warning if afplay is not available.
     """
-    _kill_previous_playback()
+    if kill_previous:
+        _kill_previous_playback()
     try:
         proc = subprocess.Popen(
             ["afplay", str(path)],
@@ -345,8 +348,8 @@ def chorus(
             else:
                 results.append(client.synthesize(req, out_path))
     if auto_play:
-        for r in results:
-            _play_audio(r.path)
+        for i, r in enumerate(results):
+            _play_audio(r.path, kill_previous=(i == 0))
     return json.dumps([result_to_dict(r) for r in results])
 
 
@@ -587,8 +590,8 @@ def ensemble(
                     )
                 )
     if auto_play:
-        for r in results:
-            _play_audio(r.path)
+        for i, r in enumerate(results):
+            _play_audio(r.path, kill_previous=(i == 0))
     return json.dumps([result_to_dict(r) for r in results])
 
 

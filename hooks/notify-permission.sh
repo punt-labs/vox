@@ -89,6 +89,7 @@ if command -v tts &>/dev/null; then
     kill_previous_playback
     afplay "$OUTPUT" 2>/dev/null &
     record_playback_pid $!
+    wait $!
   fi
 fi
 rm -rf "$TMPDIR"
