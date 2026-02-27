@@ -8,16 +8,20 @@
 # No `set -euo pipefail` — hooks must degrade gracefully on
 # malformed input rather than failing the tool call.
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/state.sh"
+
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
 RESULT=$(echo "$INPUT" | jq -r '.tool_response' | jq -r '.result // .')
 
-# Extract common fields from single-result JSON.
-extract_meta() {
+# Extract voice name from single-result JSON.
+# Falls back to "the voice" when missing or empty.
+extract_voice() {
   local data="$1"
   VOICE=$(echo "$data" | jq -r '.voice // empty' 2>/dev/null)
-  PROVIDER=$(echo "$data" | jq -r '.provider // empty' 2>/dev/null)
+  [[ -z "$VOICE" ]] && VOICE="the voice"
 }
 
 emit() {
@@ -32,42 +36,51 @@ emit() {
 }
 
 if [[ "$TOOL_NAME" == "speak" ]]; then
-  extract_meta "$RESULT"
-  SUFFIX=""
-  [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
-  [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪ spoken$SUFFIX" "$RESULT"
+  extract_voice "$RESULT"
+  PHRASES=(
+    "♪ ${VOICE} has spoken"
+    "♪ ${VOICE} said the piece"
+    "♪ ${VOICE} delivered"
+    "♪ heard from ${VOICE}"
+  )
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "chorus" ]]; then
   COUNT=$(echo "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
   FIRST=$(echo "$RESULT" | jq -r '.[0]' 2>/dev/null)
-  extract_meta "$FIRST"
-  SUFFIX=""
-  [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
-  [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪♪ $COUNT tracks$SUFFIX" "$RESULT"
+  extract_voice "$FIRST"
+  PHRASES=(
+    "♪♪ ${VOICE} sang ${COUNT} tracks"
+    "♪♪ ${COUNT} tracks from ${VOICE}"
+    "♪♪ ${VOICE} performed ${COUNT} pieces"
+  )
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "duet" ]]; then
-  extract_meta "$RESULT"
-  SUFFIX=""
-  [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
-  [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪ paired$SUFFIX" "$RESULT"
+  extract_voice "$RESULT"
+  PHRASES=(
+    "♪ ${VOICE} paired them up"
+    "♪ ${VOICE} stitched a duet"
+    "♪ a duet from ${VOICE}"
+  )
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "ensemble" ]]; then
   COUNT=$(echo "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
   FIRST=$(echo "$RESULT" | jq -r '.[0]' 2>/dev/null)
-  extract_meta "$FIRST"
-  SUFFIX=""
-  [[ -n "$VOICE" ]] && SUFFIX=" — $VOICE"
-  [[ -n "$PROVIDER" ]] && SUFFIX="$SUFFIX ($PROVIDER)"
-  emit "♪♪ $COUNT pairs$SUFFIX" "$RESULT"
+  extract_voice "$FIRST"
+  PHRASES=(
+    "♪♪ ${VOICE} performed ${COUNT} pairs"
+    "♪♪ ${COUNT} pairs from ${VOICE}"
+    "♪♪ ${VOICE} delivered ${COUNT} duets"
+  )
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 

@@ -51,13 +51,6 @@ SUMMARY_PHRASES=(
   "♪ Telling you what I did..."
 )
 
-# Pick a random element from positional arguments (Bash 3.2 compatible).
-pick_random() {
-  local idx=$((RANDOM % $#))
-  shift "$idx"
-  echo "$1"
-}
-
 REASON=$(pick_random "${SUMMARY_PHRASES[@]}")
 
 # Voice mode: block the stop, ask Claude to summarize and speak.

@@ -44,6 +44,13 @@ read_speak() {
   esac
 }
 
+# Pick a random element from positional arguments (Bash 3.2 compatible).
+pick_random() {
+  local idx=$((RANDOM % $#))
+  shift "$idx"
+  echo "$1"
+}
+
 # Play audio via flock-serialized queue (non-blocking, fire-and-forget).
 # Uses `tts play` which acquires LOCK_EX before running afplay.
 enqueue_audio() {
