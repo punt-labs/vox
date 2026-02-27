@@ -169,11 +169,25 @@ Update `CHANGELOG.md` with every user-visible change. Follow [Keep a Changelog](
 
 All code changes go on feature branches. Never commit directly to main.
 
+**Use worktrees by default.** Before creating a branch, check `/who` for other active sessions. If other sessions are active, use a worktree to avoid interfering with their working tree. If no other sessions are active, a regular branch is fine.
+
 ```bash
+# Default: worktree (safe when other sessions are active)
+# Use the EnterWorktree tool, then work normally inside the worktree
+
+# Alternative: regular branch (only when /who shows no other sessions)
 git checkout -b feat/short-description main
 # ... work, commit, push ...
 gh pr create --title "feat: description" --body "..."
-# merge via PR, then delete branch
+```
+
+**After creating a PR, always wait for Copilot review before merging:**
+
+```bash
+gh pr checks <number> --watch          # Wait for CI + Copilot to complete
+gh pr view <number> --comments         # Read Copilot feedback
+# Address any feedback, push fixes if needed
+gh pr merge <number> --squash --delete-branch  # Only after review is clean
 ```
 
 | Prefix | Use |
