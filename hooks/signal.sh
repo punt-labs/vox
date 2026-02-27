@@ -8,6 +8,7 @@
 # No `set -euo pipefail` — hooks must degrade gracefully.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=hooks/state.sh
 source "$SCRIPT_DIR/state.sh"
 
 # Fast gate: no config = not a TTS-enabled project

@@ -21,4 +21,4 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy src/ tests/
       - run: uv run pyright src/ tests/
-      - run: shellcheck hooks/*.sh scripts/*.sh install.sh
+      - run: shellcheck -x hooks/*.sh scripts/*.sh install.sh

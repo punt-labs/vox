@@ -9,6 +9,7 @@
 # malformed input rather than failing the tool call.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=hooks/state.sh
 source "$SCRIPT_DIR/state.sh"
 
 INPUT=$(cat)

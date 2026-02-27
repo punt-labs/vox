@@ -33,7 +33,7 @@ uv run ruff format --check src/ tests/ # Format check
 uv run mypy src/ tests/               # Type check (strict)
 uv run pyright src/ tests/            # Type check (strict)
 uv run pytest tests/ -v               # All tests pass
-shellcheck hooks/*.sh scripts/*.sh install.sh  # Shell lint
+shellcheck -x hooks/*.sh scripts/*.sh install.sh  # Shell lint
 ```
 
 Build validation:
