@@ -7,7 +7,7 @@
     "email": "hello@punt-labs.com"
   },
   "mcpServers": {
-    "tts": {
+    "vox": {
       "type": "stdio",
       "command": "tts",
       "args": ["serve"]

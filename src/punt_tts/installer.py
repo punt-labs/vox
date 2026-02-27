@@ -22,8 +22,15 @@ COMMANDS_DIR = Path.home() / ".claude" / "commands"
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 PLUGIN_ID = "tts@punt-labs"
 MARKETPLACE_KEY = "punt-labs"
-TOOL_PERMISSION_PROD = "mcp__plugin_tts_tts__*"
-TOOL_PERMISSION_DEV = "mcp__plugin_tts-dev_tts__*"
+TOOL_PERMISSION_PROD = "mcp__plugin_tts_vox__*"
+TOOL_PERMISSION_DEV = "mcp__plugin_tts-dev_vox__*"
+
+# Legacy patterns from before the tts→vox server key rename (v0.3.6 and earlier).
+# Kept so _remove_permissions() can clean up stale entries on uninstall.
+_LEGACY_PERMISSIONS = (
+    "mcp__plugin_tts_tts__*",
+    "mcp__plugin_tts-dev_tts__*",
+)
 
 # Command files deployed by the SessionStart hook
 TTS_COMMANDS = (
@@ -226,7 +233,7 @@ def _remove_commands(commands_dir: Path | None = None) -> StepResult:
 
 
 def _remove_permissions(settings_path: Path | None = None) -> StepResult:
-    """Remove ``mcp__plugin_tts_tts__*`` from permissions.allow."""
+    """Remove ``mcp__plugin_tts_vox__*`` from permissions.allow."""
     path = settings_path or SETTINGS_PATH
     if not path.exists():
         return StepResult("Permissions", True, "no settings file")
@@ -246,7 +253,7 @@ def _remove_permissions(settings_path: Path | None = None) -> StepResult:
         return StepResult("Permissions", True, "not present")
 
     changed = False
-    for perm in (TOOL_PERMISSION_PROD, TOOL_PERMISSION_DEV):
+    for perm in (TOOL_PERMISSION_PROD, TOOL_PERMISSION_DEV, *_LEGACY_PERMISSIONS):
         if perm in allow:
             allow.remove(perm)  # pyright: ignore[reportUnknownMemberType]
             changed = True

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- MCP server key renamed from `tts` to `vox`; tools now appear as `plugin:tts:vox` (was `plugin:tts:tts`)
+- Installer and session-start hook clean up legacy `mcp__plugin_tts_tts__*` permission entries from pre-rename installs
+
 ## [0.3.6] - 2026-02-26
 
 ### Changed
