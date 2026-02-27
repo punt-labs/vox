@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dev/prod namespace isolation for plugin testing (`claude --plugin-dir .`)
 - Audio playback serialized via `flock` — concurrent utterances queue instead of overlapping or being killed
 - `tts play <file>` CLI command for flock-serialized audio playback (used by hooks)
 - Cross-platform audio player: `afplay` (macOS) with `ffplay` (Linux/cross-platform) fallback

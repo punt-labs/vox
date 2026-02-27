@@ -214,6 +214,22 @@ Every release follows this exact sequence. No steps skipped.
 
 A release is not complete until all 12 steps are done. PyPI publishing is owned by GH Actions — never upload manually.
 
+### Dev Plugin Testing
+
+The plugin uses dev/prod namespace isolation. The working tree has `"name": "tts-dev"` in plugin.json, so it can run alongside the installed production plugin.
+
+```bash
+uv tool install --force --editable .   # Editable install (tts binary = working tree)
+claude --plugin-dir .                   # Load dev plugin as tts-dev alongside prod tts
+```
+
+Dev commands (`/tts-dev:say-dev`, `/tts-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_tts-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
+
+Release scripts swap the name before tagging:
+
+- `bash scripts/release-plugin.sh` — swap `tts-dev` → `tts`, remove `*-dev.md`
+- `bash scripts/restore-dev-plugin.sh` — restore dev state after tagging
+
 ### Session Close Protocol
 
 Before ending any session:

@@ -523,3 +523,47 @@ Bash hooks call `tts play <path>` (thin CLI wrapper). The MCP server calls `enqu
 `fcntl.flock` is POSIX (macOS + Linux). The audio player is resolved at
 runtime: `afplay` (macOS native) → `ffplay` (cross-platform, from ffmpeg).
 ffmpeg is already a project dependency (pydub uses it for audio processing).
+
+---
+
+## DES-014: Dev/Prod Namespace Isolation
+
+**Date:** 2026-02-26
+**Status:** SETTLED
+**Topic:** How the plugin can be tested from the working tree alongside the installed production plugin
+
+### Problem
+
+`claude --plugin-dir .` loads the working tree as a plugin, but it collides with the installed production `tts` plugin if both use the same name. Developers cannot test plugin changes (hooks, commands, MCP tools) without uninstalling the production plugin first.
+
+### Design
+
+The working tree uses `"name": "tts-dev"` in `.claude-plugin/plugin.json`. Claude Code treats `tts` and `tts-dev` as separate plugins:
+
+- **Prod tools**: `mcp__plugin_tts_vox__speak` (from installed plugin)
+- **Dev tools**: `mcp__plugin_tts-dev_vox__speak` (from `--plugin-dir .`)
+
+Dev commands (`say-dev.md`, `recap-dev.md`) in `.claude/commands/` reference dev-namespaced tools. Prod commands in `commands/` are unchanged.
+
+The MCP server uses the installed `tts` binary as its command. With editable installs (`uv tool install --force --editable .`), the installed binary runs working-tree code — no `uv run` needed.
+
+Release scripts (`scripts/release-plugin.sh`) swap `tts-dev` → `tts` and remove `*-dev.md` files before tagging. `scripts/restore-dev-plugin.sh` reverses this after tagging.
+
+### Session-Start Hook Dispatch
+
+The session-start hook detects dev mode by checking plugin.json for `"tts-dev"`:
+
+- **Dev mode**: skip command deployment (prod plugin deploys top-level commands), auto-allow `mcp__plugin_tts-dev_vox__*`
+- **Prod mode**: deploy commands to `~/.claude/commands/`, auto-allow `mcp__plugin_tts_vox__*`
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| `uv run` in plugin.json/hooks | Unacceptable production dependency — users may not have `uv` installed |
+| Single namespace, uninstall prod to test | Destroys the production plugin; cannot test both simultaneously |
+| Separate repo for dev plugin | Duplicates code; impossible to keep in sync |
+
+### Key Invariant
+
+The installed `tts` binary always runs working-tree code (via editable install). This means hooks, MCP server, and CLI all exercise the current source without `uv run`.

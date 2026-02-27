@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/github/license/punt-labs/tts)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/tts/test.yml?label=CI)](https://github.com/punt-labs/tts/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/punt-tts)](https://pypi.org/project/punt-tts/)
+[![Python](https://img.shields.io/pypi/pyversions/punt-tts)](https://pypi.org/project/punt-tts/)
 
 When Claude Code finishes a task, hits an error, or needs your approval --- you hear it. No need to watch the terminal. Keep working; your assistant will tell you what happened.
 
@@ -144,6 +145,9 @@ tts serve                                      # Start MCP server (stdio)
 - Two-channel display: `♪` panel summaries with voice/provider context
 - Playful stop hook phrases: randomized vocalization-themed messages ("Speaking my thoughts...", "Saying my piece...")
 - Natural notification phrasing: randomized phrases for permission and idle prompts
+- Audio playback serialization via `flock` --- concurrent utterances queue instead of overlapping
+- ElevenLabs streaming API for lower time-to-first-audio
+- Dev/prod namespace isolation for plugin testing (`claude --plugin-dir .`)
 
 ### Coming Soon
 
@@ -151,9 +155,7 @@ tts serve                                      # Start MCP server (stdio)
 |---------|-------------|
 | **`/mood`** | Set an emotional tone for the session --- `[dramatic]`, `[whisper]`, `[excited]`, `[tired]`. ElevenLabs audio tags embedded in every utterance. Auto-adapts to time of day: softer and sleepier for late-night coding sessions. |
 | **Per-session voices** | Each Claude Code session gets its own voice from a pool --- no more five matildas talking at once. `/voice` to audition and pick. |
-| **Audio collision prevention** | Shared lock so multiple sessions don't talk over each other. Same-session dedup to prevent double-fire. |
 | **Screen reader** | macOS VoiceOver and `say` fallback when no API key is configured |
-| **Streaming** | Real-time audio streaming for long summaries |
 
 ## Documentation
 
