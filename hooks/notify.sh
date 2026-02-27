@@ -30,14 +30,11 @@ fi
 
 SPEAK=$(read_speak)
 
-# Chime mode: play audio tone directly, let Claude stop.
-# nohup + disown detaches afplay from the hook's process group so
-# Claude Code can reap the hook without killing the audio.
+# Chime mode: play audio tone via flock-serialized queue, let Claude stop.
 if [[ "$SPEAK" == "n" ]]; then
   CHIME="$SCRIPT_DIR/../assets/chime_done.mp3"
   if [[ -f "$CHIME" ]]; then
-    nohup afplay "$CHIME" >/dev/null 2>&1 &
-    disown
+    enqueue_audio "$CHIME"
   fi
   exit 0
 fi

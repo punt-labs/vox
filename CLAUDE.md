@@ -53,7 +53,8 @@ Module structure under `src/punt_tts/`:
 | `output.py` | Output path resolution: `TTS_OUTPUT_DIR` env var, `~/tts-output` fallback |
 | `logging_config.py` | Rotating file logging to `~/.punt-tts/logs/tts.log` |
 | `ephemeral.py` | Ephemeral output mode: `.tts/` in cwd, auto-cleanup |
-| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, serve |
+| `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
+| `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, play, serve |
 | `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
 | `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble` |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
@@ -66,7 +67,7 @@ Plugin structure (Claude Code hooks and commands):
 | Path | Responsibility |
 |------|---------------|
 | `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse, Stop, Notification |
-| `hooks/state.sh` | Shared state reader for bash hooks (reads `~/.claude/tts.local.md`) |
+| `hooks/state.sh` | Shared state reader and audio helpers for bash hooks (`enqueue_audio`, `play_audio_blocking`) |
 | `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern |
 | `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
 | `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
@@ -79,7 +80,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_cli.py`, `test_installer.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_installer.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 
 ## Python Coding Standards
 

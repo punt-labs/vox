@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -14,6 +13,7 @@ from punt_tts.core import TTSClient
 from punt_tts.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_tts.logging_config import configure_logging
 from punt_tts.output import default_output_dir
+from punt_tts.playback import enqueue as _enqueue_audio
 from punt_tts.providers import get_provider
 from punt_tts.types import (
     AudioProviderId,
@@ -123,22 +123,6 @@ def _cached_result(
     )
 
 
-def _play_audio(path: Path) -> None:
-    """Play an audio file using macOS afplay (non-blocking).
-
-    Logs a warning and returns silently if afplay is not available
-    (e.g. on Linux or Windows).
-    """
-    try:
-        subprocess.Popen(
-            ["afplay", str(path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        logger.warning("afplay not found — auto-play requires macOS")
-
-
 @mcp.tool()
 def speak(
     text: str,
@@ -223,7 +207,7 @@ def speak(
     else:
         result = client.synthesize(request, path)
     if auto_play:
-        _play_audio(result.path)
+        _enqueue_audio(result.path)
     return json.dumps(result_to_dict(result))
 
 
@@ -321,7 +305,7 @@ def chorus(
                 results.append(client.synthesize(req, out_path))
     if auto_play:
         for r in results:
-            _play_audio(r.path)
+            _enqueue_audio(r.path)
     return json.dumps([result_to_dict(r) for r in results])
 
 
@@ -424,7 +408,7 @@ def duet(
     else:
         result = client.synthesize_pair(text1, req1, text2, req2, path, pause_ms)
     if auto_play:
-        _play_audio(result.path)
+        _enqueue_audio(result.path)
     return json.dumps(result_to_dict(result))
 
 
@@ -563,7 +547,7 @@ def ensemble(
                 )
     if auto_play:
         for r in results:
-            _play_audio(r.path)
+            _enqueue_audio(r.path)
     return json.dumps([result_to_dict(r) for r in results])
 
 

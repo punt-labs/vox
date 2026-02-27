@@ -919,6 +919,20 @@ def install_desktop(
 
 
 # ---------------------------------------------------------------------------
+# play
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.argument("audio_file", type=click.Path(exists=True, path_type=Path))
+def play(audio_file: Path) -> None:
+    """Play an audio file with serialized flock-based queuing."""
+    from punt_tts.playback import play_audio
+
+    play_audio(audio_file)
+
+
+# ---------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------
 

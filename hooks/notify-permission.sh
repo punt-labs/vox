@@ -23,14 +23,11 @@ SPEAK=$(read_speak)
 NOTIFICATION_TYPE=$(echo "$INPUT" | jq -r '.notification_type // "unknown"')
 MESSAGE=$(echo "$INPUT" | jq -r '.message // "Needs your attention"')
 
-# Chime mode: play attention chime.
-# nohup + disown detaches afplay from the hook's process group so
-# Claude Code can reap the hook without killing the audio.
+# Chime mode: play attention chime via flock-serialized queue.
 if [[ "$SPEAK" == "n" ]]; then
   CHIME="$SCRIPT_DIR/../assets/chime_prompt.mp3"
   if [[ -f "$CHIME" ]]; then
-    nohup afplay "$CHIME" >/dev/null 2>&1 &
-    disown
+    enqueue_audio "$CHIME"
   fi
   exit 0
 fi
@@ -76,15 +73,14 @@ case "$NOTIFICATION_TYPE" in
     ;;
 esac
 
-# Voice mode: synthesize to temp file and play.
-# The CLI doesn't have --ephemeral/--auto-play, so we handle it here.
+# Voice mode: synthesize to temp file and play via flock queue.
 # macOS mktemp requires X's at the end of the template (no suffix allowed).
 TMPDIR=$(mktemp -d /tmp/tts_notify_XXXXXX)
 OUTPUT="$TMPDIR/notify.mp3"
 if command -v tts &>/dev/null; then
   tts synthesize "$TEXT" -o "$OUTPUT" >/dev/null 2>&1
   if [[ -f "$OUTPUT" && -s "$OUTPUT" ]]; then
-    afplay "$OUTPUT" 2>/dev/null
+    play_audio_blocking "$OUTPUT"
   fi
 fi
 rm -rf "$TMPDIR"

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Audio playback serialized via `flock` — concurrent utterances queue instead of overlapping or being killed
+- `tts play <file>` CLI command for flock-serialized audio playback (used by hooks)
+
 ### Changed
 
 - MCP server key renamed from `tts` to `vox`; tools now appear as `plugin:tts:vox` (was `plugin:tts:tts`)

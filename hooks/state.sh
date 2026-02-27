@@ -43,3 +43,20 @@ read_speak() {
     *)   echo "y" ;;
   esac
 }
+
+# Play audio via flock-serialized queue (non-blocking, fire-and-forget).
+# Uses `tts play` which acquires LOCK_EX before running afplay.
+enqueue_audio() {
+  if command -v tts &>/dev/null; then
+    nohup tts play "$1" >/dev/null 2>&1 &
+    disown
+  fi
+}
+
+# Play audio via flock-serialized queue (blocking, waits for completion).
+# Use when cleanup must happen after playback finishes.
+play_audio_blocking() {
+  if command -v tts &>/dev/null; then
+    tts play "$1" 2>/dev/null
+  fi
+}
