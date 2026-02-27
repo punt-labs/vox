@@ -496,6 +496,7 @@ Process B:     [blocked]  ──────────────────
 ```
 
 Two entry points in `playback.py`:
+
 - `play_audio(path)` — blocking: flock → afplay → release
 - `enqueue(path)` — non-blocking: spawn detached subprocess that calls `play_audio`
 
