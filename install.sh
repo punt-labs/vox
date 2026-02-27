@@ -126,7 +126,7 @@ info "Installing $PLUGIN_NAME plugin..."
 
 if claude plugin list 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
   ok "$PLUGIN_NAME already installed — checking for updates"
-  if ! claude plugin update "$PLUGIN_NAME"; then
+  if ! claude plugin update "${PLUGIN_NAME}@${MARKETPLACE_NAME}"; then
     cleanup_https_rewrite
     fail "Failed to update $PLUGIN_NAME"
   fi
