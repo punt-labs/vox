@@ -109,20 +109,17 @@ def _register_marketplace(
 
 
 def _refresh_marketplace() -> StepResult:
-    """Pull the latest marketplace data from the remote.
+    """Refresh the marketplace clone via ``claude plugin marketplace update``.
 
     Ensures the local clone has up-to-date ``source.ref`` pins so
     ``claude plugin install`` checks out the correct tag.
     """
-    if not MARKETPLACE_CLONE.is_dir():
-        return StepResult("Marketplace refresh", True, "not yet cloned (fresh install)")
-
-    git = shutil.which("git")
-    if not git:
-        return StepResult("Marketplace refresh", False, "git not found on PATH")
+    claude = shutil.which("claude")
+    if not claude:
+        return StepResult("Marketplace refresh", False, "claude CLI not found on PATH")
 
     result = subprocess.run(
-        [git, "-C", str(MARKETPLACE_CLONE), "pull", "--ff-only"],
+        [claude, "plugin", "marketplace", "update", MARKETPLACE_KEY],
         capture_output=True,
         text=True,
         check=False,
@@ -130,7 +127,9 @@ def _refresh_marketplace() -> StepResult:
     if result.returncode == 0:
         return StepResult("Marketplace refresh", True, "updated")
     return StepResult(
-        "Marketplace refresh", False, f"git pull failed: {result.stderr.strip()}"
+        "Marketplace refresh",
+        False,
+        f"marketplace update failed: {result.stderr.strip()}",
     )
 
 

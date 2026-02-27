@@ -26,10 +26,7 @@ class TestRegisterMarketplace:
     def test_creates_file_when_missing(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             result = install(marketplace_path=mp_path)
 
         assert mp_path.exists()
@@ -45,10 +42,7 @@ class TestRegisterMarketplace:
         mp_path = tmp_path / "known_marketplaces.json"
         mp_path.write_text(json.dumps({MARKETPLACE_KEY: {"existing": True}}))
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             result = install(marketplace_path=mp_path)
 
         marketplace_step = result.steps[0]
@@ -59,10 +53,7 @@ class TestRegisterMarketplace:
         mp_path = tmp_path / "known_marketplaces.json"
         mp_path.write_text(json.dumps({"other-market": {"source": "test"}}))
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             install(marketplace_path=mp_path)
 
         data = json.loads(mp_path.read_text())
@@ -147,24 +138,10 @@ class TestUnregisterMarketplace:
 
 
 class TestRefreshMarketplace:
-    def test_skips_when_not_cloned(self, tmp_path: Path) -> None:
+    def test_succeeds(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
-
-        with patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"):
-            result = install(marketplace_path=mp_path)
-
-        refresh_step = result.steps[1]
-        assert refresh_step.name == "Marketplace refresh"
-        assert refresh_step.passed
-        assert "fresh install" in refresh_step.message
-
-    def test_pulls_when_clone_exists(self, tmp_path: Path) -> None:
-        mp_path = tmp_path / "known_marketplaces.json"
-        clone_dir = tmp_path / "marketplace_clone"
-        clone_dir.mkdir()
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", clone_dir),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
@@ -172,42 +149,33 @@ class TestRefreshMarketplace:
             result = install(marketplace_path=mp_path)
 
         refresh_step = result.steps[1]
+        assert refresh_step.name == "Marketplace refresh"
         assert refresh_step.passed
         assert "updated" in refresh_step.message
 
-    def test_fails_when_git_missing(self, tmp_path: Path) -> None:
+    def test_fails_when_claude_missing(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
-        clone_dir = tmp_path / "marketplace_clone"
-        clone_dir.mkdir()
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", clone_dir),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             result = install(marketplace_path=mp_path)
 
         refresh_step = result.steps[1]
         assert not refresh_step.passed
-        assert "git not found" in refresh_step.message
+        assert "claude CLI not found" in refresh_step.message
 
-    def test_fails_when_pull_fails(self, tmp_path: Path) -> None:
+    def test_fails_when_update_fails(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
-        clone_dir = tmp_path / "marketplace_clone"
-        clone_dir.mkdir()
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", clone_dir),
             patch(f"{_MOD}.subprocess.run") as mock_run,
-            patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/git"),
+            patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
-            mock_run.return_value = MagicMock(
-                returncode=1, stderr="fatal: not a git repository"
-            )
+            mock_run.return_value = MagicMock(returncode=1, stderr="network error")
             result = install(marketplace_path=mp_path)
 
         refresh_step = result.steps[1]
         assert not refresh_step.passed
-        assert "git pull failed" in refresh_step.message
+        assert "marketplace update failed" in refresh_step.message
 
 
 class TestInstallPlugin:
@@ -215,7 +183,6 @@ class TestInstallPlugin:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
@@ -231,13 +198,14 @@ class TestInstallPlugin:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
             # First call: install fails with "already installed"
             # Second call: update succeeds
+            # Call 1: marketplace refresh, Call 2: install (fails), Call 3: update
             mock_run.side_effect = [
+                MagicMock(returncode=0),
                 MagicMock(returncode=1, stderr="Plugin already installed"),
                 MagicMock(returncode=0, stderr=""),
             ]
@@ -251,11 +219,11 @@ class TestInstallPlugin:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
             mock_run.side_effect = [
+                MagicMock(returncode=0),
                 MagicMock(returncode=1, stderr="Plugin already installed"),
                 MagicMock(returncode=1, stderr="Already up to date"),
             ]
@@ -269,11 +237,11 @@ class TestInstallPlugin:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
             mock_run.side_effect = [
+                MagicMock(returncode=0),
                 MagicMock(returncode=1, stderr="Plugin already installed"),
                 MagicMock(returncode=1, stderr="network error"),
             ]
@@ -286,10 +254,7 @@ class TestInstallPlugin:
     def test_claude_not_found(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             result = install(marketplace_path=mp_path)
 
         plugin_step = result.steps[2]
@@ -407,7 +372,6 @@ class TestInstallResult:
         mp_path = tmp_path / "known_marketplaces.json"
 
         with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
             patch(f"{_MOD}.subprocess.run") as mock_run,
             patch(f"{_MOD}.shutil.which", return_value="/usr/local/bin/claude"),
         ):
@@ -421,16 +385,14 @@ class TestInstallResult:
     def test_partial_failure(self, tmp_path: Path) -> None:
         mp_path = tmp_path / "known_marketplaces.json"
 
-        with (
-            patch(f"{_MOD}.MARKETPLACE_CLONE", tmp_path / "nonexistent"),
-            patch(f"{_MOD}.shutil.which", return_value=None),
-        ):
+        with patch(f"{_MOD}.shutil.which", return_value=None):
             result = install(marketplace_path=mp_path)
 
         assert not result.installed
-        # Marketplace should pass, refresh should pass (no clone), plugin should fail
+        # Marketplace registration passes (file write, no CLI needed)
+        # Refresh and plugin install both fail (no claude CLI)
         assert result.steps[0].passed
-        assert result.steps[1].passed
+        assert not result.steps[1].passed
         assert not result.steps[2].passed
 
 
