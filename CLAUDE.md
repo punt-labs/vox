@@ -56,7 +56,7 @@ Module structure under `src/punt_tts/`:
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
 | `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, play, serve |
 | `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
-| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble` |
+| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble`. Reads `.tts/config.md` for session vibe (ElevenLabs expressive tag injection). |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
@@ -77,10 +77,11 @@ Plugin structure (Claude Code hooks and commands):
 | `commands/recap.md` | `/recap` — on-demand spoken summary |
 | `commands/say.md` | `/say <text>` — speak text aloud |
 | `commands/voice.md` | `/voice on\|off\|status` — control voice mode |
+| `commands/vibe.md` | `/vibe <tag>\|off` — session mood via ElevenLabs expressive tags |
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_installer.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 
 ## Python Coding Standards
 

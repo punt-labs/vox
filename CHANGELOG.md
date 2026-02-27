@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/vibe` command: set a session mood for TTS speech (e.g. `/vibe dramatic`, `/vibe whisper`). Prepends an ElevenLabs expressive tag to all `speak` utterances automatically.
+
 ### Changed
 
 - Panel output personifies the voice: `♪ matilda has spoken` instead of `♪ spoken — matilda (elevenlabs)`. Provider name dropped from display. Phrase pool adds variety.
