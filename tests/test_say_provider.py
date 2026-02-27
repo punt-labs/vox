@@ -419,7 +419,7 @@ class TestAutoDetectSayFallback:
             patch("punt_tts.providers.platform") as mock_platform,
             patch(
                 "punt_tts.providers.shutil.which",
-                side_effect=lambda name: (
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
                     "/usr/bin/espeak-ng" if name == "espeak-ng" else None
                 ),
             ),
