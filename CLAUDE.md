@@ -181,6 +181,24 @@ git checkout -b feat/short-description main
 gh pr create --title "feat: description" --body "..."
 ```
 
+**One worktree per agent, many PRs within it.** A worktree is an isolated working directory for the session. Branch freely inside it — each PR gets its own branch, not its own worktree.
+
+```bash
+# Session start: enter worktree once
+# EnterWorktree tool creates it
+
+# PR 1
+git checkout -b fix/thing-one main
+# ... work, commit, push, PR, merge ...
+
+# PR 2
+git checkout main && git pull
+git checkout -b feat/thing-two main
+# ... work, commit, push, PR, merge ...
+
+# Session end: /exit cleans up the worktree
+```
+
 **After creating a PR, always wait for Copilot review before merging:**
 
 ```bash
@@ -190,18 +208,7 @@ gh pr view <number> --comments         # Read Copilot feedback
 gh pr merge <number> --squash --delete-branch  # Only after review is clean
 ```
 
-**Worktree cleanup (after merge).** Always clean up worktrees after the PR is merged. Order matters — `cd` out before removing, or the shell's cwd becomes invalid and unrecoverable.
-
-```bash
-# 1. Merge the PR (from inside the worktree is fine)
-gh pr merge <number> --squash --delete-branch
-# 2. cd to the main repo BEFORE removing the worktree
-cd /path/to/main/repo
-# 3. Remove the worktree
-git worktree remove .claude/worktrees/<name>
-# 4. Prune any stale worktree references
-git worktree prune
-```
+**Worktree cleanup.** Never remove a worktree from inside it — the session cwd becomes invalid and unrecoverable. Let `/exit` handle cleanup. It prompts to keep or remove the worktree on session end.
 
 | Prefix | Use |
 |--------|-----|
