@@ -39,12 +39,10 @@ mcp = FastMCP(
         "vibe_mode, and vibe_signals fields. If vibe_mode is 'manual', treat "
         "vibe as your primary mood hint. If vibe_mode is 'auto' and "
         "vibe_signals is non-empty, interpret those signals to pick mood. Then "
-        "call set_config to set vibe_tags reflecting the session mood — e.g. "
-        "'[weary]' after a long debug, '[excited]' after a release, '[focused]' "
-        "for normal work. After setting tags, call set_config with "
-        "key='vibe_signals', value='' to clear consumed signals. Then write 1-2 "
-        "sentences summarizing what you completed, call the speak tool with "
-        "ephemeral=true, then stop. No other output."
+        'call set_config with updates={"vibe_tags": "<tags>", '
+        '"vibe_signals": ""} to set tags and clear consumed signals in one '
+        "call. Then write 1-2 sentences summarizing what you completed, call "
+        "the speak tool with ephemeral=true, then stop. No other output."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
@@ -195,6 +193,45 @@ def _write_config_field(key: str, value: str) -> None:
 
     _CONFIG_PATH.write_text(text)
     logger.info("Config: set %s = %r in %s", key, value, _CONFIG_PATH)
+
+
+def _write_config_fields(updates: dict[str, str]) -> None:
+    """Write multiple YAML frontmatter fields to .tts/config.md atomically.
+
+    Reads the file once, applies all updates, writes once.  All keys are
+    validated before any write occurs so a single bad key aborts the
+    entire batch.
+    """
+    for key in updates:
+        if key not in ALLOWED_CONFIG_KEYS:
+            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+            raise ValueError(msg)
+
+    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if not _CONFIG_PATH.exists():
+        lines = [f'{k}: "{v}"' for k, v in updates.items()]
+        _CONFIG_PATH.write_text("---\n" + "\n".join(lines) + "\n---\n")
+        return
+
+    text = _CONFIG_PATH.read_text()
+    for key, value in updates.items():
+        replacement = f'{key}: "{value}"'
+        field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
+        if field_re.search(text):
+            text = field_re.sub(replacement, text)
+        elif _CLOSING_FENCE_RE.search(text):
+            text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
+        else:
+            logger.warning("Malformed config (no closing ---): %s", _CONFIG_PATH)
+            lines = [f'{k}: "{v}"' for k, v in updates.items()]
+            text = "---\n" + "\n".join(lines) + "\n---\n"
+            break
+
+    _CONFIG_PATH.write_text(text)
+    for key, value in updates.items():
+        logger.info("Config: set %s = %r in %s", key, value, _CONFIG_PATH)
 
 
 def _cached_result(
@@ -644,11 +681,23 @@ def ensemble(
 
 
 @mcp.tool()
-def set_config(key: str, value: str) -> str:
-    """Write a configuration field to .tts/config.md.
+def set_config(
+    key: str = "",
+    value: str = "",
+    updates: dict[str, str] | None = None,
+) -> str:
+    """Write configuration field(s) to .tts/config.md.
 
     Updates plugin state that controls TTS behavior. Use this instead
     of Read/Write/Edit file tools when changing plugin configuration.
+
+    Supports two modes:
+
+    **Single field** (backward compatible): pass ``key`` and ``value``.
+
+    **Batch** (preferred for multi-field updates): pass ``updates``
+    dict. All fields are written atomically in one file operation.
+    When ``updates`` is provided, ``key`` and ``value`` are ignored.
 
     Args:
         key: The config field to set. One of: notify, speak,
@@ -662,10 +711,19 @@ def set_config(key: str, value: str) -> str:
             - vibe_signals: Accumulated session signals (usually cleared
               by passing empty string after reading)
         value: The value to write. Use empty string to clear a field.
+        updates: Dict of key-value pairs to write atomically. When
+            provided, key and value are ignored. All keys must be
+            valid config fields. Example:
+            ``{"vibe": "happy", "vibe_tags": "[cheerful]",
+            "vibe_mode": "manual"}``
 
     Returns:
-        JSON string with key and value fields confirming the write.
+        JSON string. Single mode: ``{"key": k, "value": v}``.
+        Batch mode: ``{"updates": {k: v, ...}}``.
     """
+    if updates is not None:
+        _write_config_fields(updates)
+        return json.dumps({"updates": updates})
     _write_config_field(key, value)
     return json.dumps({"key": key, "value": value})
 

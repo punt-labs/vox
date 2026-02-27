@@ -95,6 +95,24 @@ if [[ "$TOOL_NAME" == "ensemble" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "set_config" ]]; then
+  # Batch mode: updates dict present
+  UPDATES=$(echo "$RESULT" | jq -r '.updates // empty' 2>/dev/null)
+  if [[ -n "$UPDATES" ]]; then
+    VIBE_TAGS=$(echo "$UPDATES" | jq -r '.vibe_tags // empty' 2>/dev/null)
+    if [[ -n "$VIBE_TAGS" ]]; then
+      MSG="♪ vibe shifted to ${VIBE_TAGS}"
+    elif echo "$UPDATES" | jq -e 'has("vibe_tags")' >/dev/null 2>&1; then
+      # vibe_tags present but empty → cleared
+      MSG="♪ vibe cleared"
+    else
+      COUNT=$(echo "$UPDATES" | jq 'length' 2>/dev/null || echo "?")
+      MSG="♪ config: ${COUNT} fields updated"
+    fi
+    emit "$MSG" "$RESULT"
+    exit 0
+  fi
+
+  # Single mode: key/value
   KEY=$(echo "$RESULT" | jq -r '.key // empty' 2>/dev/null)
   VALUE=$(echo "$RESULT" | jq -r '.value // empty' 2>/dev/null)
   if [[ "$KEY" == "vibe_tags" ]]; then

@@ -12,6 +12,7 @@ from punt_tts.server import (
     _apply_vibe,  # pyright: ignore[reportPrivateUsage]
     _read_vibe_tags,  # pyright: ignore[reportPrivateUsage]
     _write_config_field,  # pyright: ignore[reportPrivateUsage]
+    _write_config_fields,  # pyright: ignore[reportPrivateUsage]
     set_config,
 )
 
@@ -203,3 +204,121 @@ class TestSetConfig:
         _patch_config.write_text("---\n---\n")
         set_config(key="vibe_signals", value="tests-pass@14:00")
         assert 'vibe_signals: "tests-pass@14:00"' in _patch_config.read_text()
+
+
+class TestWriteConfigFields:
+    """Tests for _write_config_fields batch helper."""
+
+    def test_writes_multiple_fields(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nnotify: "y"\n---\n')
+        updates = {
+            "vibe": "happy",
+            "vibe_tags": "[cheerful]",
+            "vibe_mode": "manual",
+        }
+        _write_config_fields(updates)
+        text = _patch_config.read_text()
+        assert 'vibe: "happy"' in text
+        assert 'vibe_tags: "[cheerful]"' in text
+        assert 'vibe_mode: "manual"' in text
+        assert 'notify: "y"' in text
+
+    def test_updates_existing_fields(self, _patch_config: Path) -> None:
+        _patch_config.write_text(
+            '---\nvibe: "old"\nvibe_tags: "[old]"\nvibe_mode: "off"\n---\n'
+        )
+        updates = {
+            "vibe": "new",
+            "vibe_tags": "[new]",
+            "vibe_mode": "manual",
+        }
+        _write_config_fields(updates)
+        text = _patch_config.read_text()
+        assert 'vibe: "new"' in text
+        assert 'vibe_tags: "[new]"' in text
+        assert 'vibe_mode: "manual"' in text
+        assert "old" not in text
+
+    def test_creates_file_when_missing(self, _patch_config: Path) -> None:
+        _write_config_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
+        text = _patch_config.read_text()
+        assert text.startswith("---\n")
+        assert 'vibe: "happy"' in text
+        assert 'vibe_tags: "[cheerful]"' in text
+        assert text.rstrip().endswith("---")
+
+    def test_rejects_invalid_key(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        with pytest.raises(ValueError, match="Unknown config key"):
+            _write_config_fields({"vibe": "ok", "bad_key": "fail"})
+        # File unchanged — validation before write
+        assert _patch_config.read_text() == "---\n---\n"
+
+    def test_atomic_single_read_write(
+        self, _patch_config: Path, monkeypatch: Any
+    ) -> None:
+        """Verify batch performs one read and one write."""
+        import punt_tts.server as srv
+
+        _patch_config.write_text("---\n---\n")
+        read_count = 0
+        write_count = 0
+        orig_read = Path.read_text
+        orig_write = Path.write_text
+
+        def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
+            nonlocal read_count
+            if self == srv._CONFIG_PATH:  # pyright: ignore[reportPrivateUsage]
+                read_count += 1
+            return orig_read(self, *args, **kwargs)
+
+        def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
+            nonlocal write_count
+            if self == srv._CONFIG_PATH:  # pyright: ignore[reportPrivateUsage]
+                write_count += 1
+            return orig_write(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", counting_read)
+        monkeypatch.setattr(Path, "write_text", counting_write)
+        _write_config_fields({"vibe": "a", "vibe_tags": "[b]", "vibe_mode": "manual"})
+        assert read_count == 1
+        assert write_count == 1
+
+
+class TestSetConfigBatch:
+    """Tests for set_config batch mode via updates parameter."""
+
+    def test_batch_returns_updates_dict(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(
+            set_config(updates={"vibe": "happy", "vibe_tags": "[cheerful]"})
+        )
+        assert result == {"updates": {"vibe": "happy", "vibe_tags": "[cheerful]"}}
+
+    def test_batch_writes_to_file(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        set_config(updates={"notify": "n", "speak": "n"})
+        text = _patch_config.read_text()
+        assert 'notify: "n"' in text
+        assert 'speak: "n"' in text
+
+    def test_batch_rejects_invalid_key(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        with pytest.raises(ValueError, match="Unknown config key"):
+            set_config(updates={"vibe": "ok", "invalid": "bad"})
+
+    def test_batch_ignores_key_value(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(
+            set_config(key="notify", value="y", updates={"vibe": "happy"})
+        )
+        # updates takes precedence; key/value ignored
+        assert "updates" in result
+        assert result["updates"] == {"vibe": "happy"}
+        text = _patch_config.read_text()
+        assert "notify" not in text
+
+    def test_single_mode_unchanged(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(set_config(key="notify", value="y"))
+        assert result == {"key": "notify", "value": "y"}
