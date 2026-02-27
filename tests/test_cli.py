@@ -464,6 +464,8 @@ class TestDoctorCommand:
         uvx_found: bool = True,
         config_exists: bool = False,
         config_data: dict[str, object] | None = None,
+        system_platform: str = "Darwin",
+        espeak_found: str | None = None,
     ) -> Result:
         """Invoke doctor with controlled mocks."""
         provider = _make_mock_provider()
@@ -475,6 +477,8 @@ class TestDoctorCommand:
                 return "/opt/homebrew/bin/ffmpeg"
             if name == "uvx" and uvx_found:
                 return "/usr/local/bin/uvx"
+            if name in ("espeak-ng", "espeak") and espeak_found == name:
+                return f"/usr/bin/{name}"
             return None
 
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -491,6 +495,7 @@ class TestDoctorCommand:
                 f"{_CLI}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
+            patch(f"{_CLI}.platform.system", return_value=system_platform),
         ):
             result = runner.invoke(main, ["doctor"])
 
@@ -566,6 +571,36 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path)
         assert "passed" in result.output
         assert "failed" in result.output
+
+    def test_linux_no_keys_no_espeak_fails(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ELEVENLABS_API_KEY", None)
+            os.environ.pop("OPENAI_API_KEY", None)
+            result = self._run_doctor(
+                tmp_path, system_platform="Linux", espeak_found=None
+            )
+        assert result.exit_code == 1
+        assert "✗ espeak-ng: not found" in result.output
+        assert "sudo apt-get install espeak-ng" in result.output
+
+    def test_linux_no_keys_espeak_ng_found(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ELEVENLABS_API_KEY", None)
+            os.environ.pop("OPENAI_API_KEY", None)
+            result = self._run_doctor(
+                tmp_path, system_platform="Linux", espeak_found="espeak-ng"
+            )
+        assert result.exit_code == 0
+        assert "✓ espeak-ng: /usr/bin/espeak-ng" in result.output
+
+    def test_linux_with_api_key_no_espeak_check(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}, clear=False):
+            result = self._run_doctor(tmp_path, system_platform="Linux")
+        assert "espeak-ng:" not in result.output
+
+    def test_macos_no_espeak_check(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, system_platform="Darwin")
+        assert "espeak-ng:" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +684,7 @@ class TestInstallDesktopCommand:
                 f"{_CLI}._claude_desktop_config_path",
                 return_value=config_path,
             ),
+            patch("punt_tts.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
             # Ensure no API keys are set; on macOS, say is auto-detected
@@ -879,6 +915,7 @@ class TestInstallDesktopCommand:
         with (
             patch(f"{_CLI}.shutil.which", return_value=_UVX),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
+            patch("punt_tts.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
             os.environ.pop("OPENAI_API_KEY", None)

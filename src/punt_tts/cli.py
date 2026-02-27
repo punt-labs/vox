@@ -664,6 +664,20 @@ def doctor(ctx: click.Context) -> None:
         symbol = _PASS if check.passed else _FAIL
         _check(symbol, check.message, required=check.required)
 
+    # System TTS fallback (Linux without API keys)
+    if platform.system() == "Linux" and not any(
+        os.environ.get(k) for k in ("ELEVENLABS_API_KEY", "OPENAI_API_KEY")
+    ):
+        espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+        if espeak:
+            _check(_PASS, f"espeak-ng: {espeak} (offline fallback)")
+        else:
+            _check(
+                _FAIL,
+                "espeak-ng: not found — install for offline TTS:"
+                " sudo apt-get install espeak-ng",
+            )
+
     # uvx (optional)
     uvx = shutil.which("uvx")
     if uvx:

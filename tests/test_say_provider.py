@@ -284,8 +284,8 @@ class TestSayProviderCheckHealth:
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
             provider = SayProvider()
+            checks = provider.check_health()
 
-        checks = provider.check_health()
         assert len(checks) == 1
         assert checks[0].passed
         assert "/usr/bin/say" in checks[0].message
