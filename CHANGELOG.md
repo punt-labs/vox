@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Vibe tags (`[excited]`, `[weary]`, etc.) are now only prepended when the provider supports expressive tags (ElevenLabs). Other providers (Polly, OpenAI, say, espeak) no longer speak bracketed tag text literally ([#39](https://github.com/punt-labs/tts/pull/39))
 - Speak hook output now uses gendered pronouns: "matilda said her piece" instead of "matilda said the piece" ([#31](https://github.com/punt-labs/tts/pull/31))
+- `install.sh` now uses uninstall+install instead of `claude plugin update` which did not reliably pick up new versions
+- `tts doctor` MCP check now says "Claude Desktop MCP" (not "MCP server") and suggests the correct command (`tts install-desktop`)
 
 ## [0.7.0] - 2026-02-27
 
