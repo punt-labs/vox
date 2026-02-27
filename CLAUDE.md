@@ -205,7 +205,13 @@ git checkout -b feat/thing-two main
 gh pr checks <number> --watch          # Wait for CI + Copilot to complete
 gh pr view <number> --comments         # Read Copilot feedback
 # Address any feedback, push fixes if needed
-gh pr merge <number> --squash --delete-branch  # Only after review is clean
+```
+
+**Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). `gh pr merge` tries to checkout main locally, which fails inside a worktree. After merging, pull main to stay ready for the next PR.
+
+```bash
+# mcp__github__merge_pull_request(owner="punt-labs", repo="tts", pullNumber=N, merge_method="squash")
+git checkout main && git pull          # Ready for next branch
 ```
 
 **Worktree cleanup.** Never remove a worktree from inside it — the session cwd becomes invalid and unrecoverable. Let `/exit` handle cleanup. It prompts to keep or remove the worktree on session end.
