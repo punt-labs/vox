@@ -467,3 +467,59 @@ TTS_STATE_FILE=".tts/config.md"
 ### Migration
 
 No migration needed. The old global file is simply ignored. Users who had settings in `~/.claude/tts.local.md` start fresh per-project, which is the correct behavior (opt-in per project, not inherited globally).
+
+---
+
+## DES-013: Serialized Audio Playback via flock
+
+**Date:** 2026-02-26
+**Status:** SETTLED
+**Topic:** How concurrent audio playback from MCP tools, Stop hook, and Notification hook is coordinated
+
+### Problem
+
+Three independent audio playback paths can fire simultaneously:
+
+1. **MCP tools** — `speak`/`chorus`/`duet`/`ensemble` in `server.py` play audio after synthesis
+2. **Stop hook** — `notify.sh` plays `chime_done.mp3` on task completion
+3. **Notification hook** — `notify-permission.sh` plays chime or synthesized speech
+
+When multiple paths fire at once, audio overlaps (cacophony). PR #17 attempted PID-based kill-previous — it prevented overlap but silenced the interrupted speaker.
+
+### Design
+
+Every playback invocation acquires `LOCK_EX` on `~/.punt-tts/playback.lock`, runs `afplay` synchronously, then releases. Concurrent callers block on the lock and play in turn.
+
+```text
+Process A: flock(LOCK_EX) → afplay file1.mp3 → release
+Process B:     [blocked]  ──────────────────→ flock(LOCK_EX) → afplay file2.mp3 → release
+```
+
+Two entry points in `playback.py`:
+
+- `play_audio(path)` — blocking: flock → afplay → release
+- `enqueue(path)` — non-blocking: spawn detached subprocess that calls `play_audio`
+
+Bash hooks call `tts play <path>` (thin CLI wrapper). The MCP server calls `enqueue()` directly.
+
+### Why fcntl.flock
+
+- Zero infrastructure — no daemon, no message queue, no PID tracking
+- Cross-process serialization — works across MCP server, hook scripts, CLI
+- Self-cleaning — lock auto-releases on process exit, even crashes
+- No audio killed — every utterance succeeds, just queued
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| PID-based kill-previous (PR #17) | Silences the interrupted speaker — user wants all utterances to succeed |
+| Daemon with Unix socket | Operational complexity, lifecycle management, crash recovery |
+| Named pipe (FIFO) | Requires a reader process; same daemon problem |
+| No coordination (status quo) | Audio overlap is cacophonous |
+
+### Platform Scope
+
+`fcntl.flock` is POSIX (macOS + Linux). The audio player is resolved at
+runtime: `afplay` (macOS native) → `ffplay` (cross-platform, from ffmpeg).
+ffmpeg is already a project dependency (pydub uses it for audio processing).
