@@ -99,7 +99,7 @@ def auto_detect_provider() -> str:
         return "elevenlabs"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
-    if platform.system() == "Darwin":
+    if platform.system() == "Darwin" and shutil.which("say"):
         return "say"
     if shutil.which("espeak-ng") or shutil.which("espeak"):
         return "espeak"

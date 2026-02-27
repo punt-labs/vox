@@ -104,13 +104,29 @@ def _load_voices_from_system() -> None:
         _voices_loaded = True
         return
 
-    for line in result.stdout.splitlines()[1:]:  # skip header
-        parts = line.split()
-        if len(parts) < 4:
+    lines = result.stdout.splitlines()
+    if not lines:
+        _voices_loaded = True
+        return
+
+    # Parse column positions from header to handle variable-width
+    # Age/Gender field (may contain "M" or "40 M" with MBROLA voices).
+    header = lines[0]
+    lang_col = header.find("Language")
+    voice_col = header.find("VoiceName")
+    if lang_col < 0 or voice_col < 0:
+        _voices_loaded = True
+        return
+
+    for line in lines[1:]:
+        if len(line) <= voice_col:
             continue
-        # parts: [priority, language, gender_or_age, voice_name, ...]
-        lang = parts[1]
-        voice_name = parts[3]
+        lang_part = line[lang_col:voice_col].split()
+        voice_part = line[voice_col:].split()
+        if not lang_part or not voice_part:
+            continue
+        lang = lang_part[0]
+        voice_name = voice_part[0]
         key = voice_name.lower()
         # Extract ISO 639-1 from language code (e.g. "en-gb" -> "en")
         iso = lang.split("-")[0]
@@ -147,7 +163,10 @@ class EspeakProvider:
     def __init__(self) -> None:
         binary = _find_espeak_binary()
         if binary is None:
-            msg = "espeak-ng not found on PATH. Install with: apt install espeak-ng"
+            msg = (
+                "espeak-ng or espeak not found on PATH. "
+                "Install with: apt install espeak-ng"
+            )
             raise ValueError(msg)
         self._binary: str = binary
 
@@ -255,13 +274,14 @@ class EspeakProvider:
 
         binary = _find_espeak_binary()
         if binary:
-            checks.append(HealthCheck(passed=True, message=f"espeak-ng: {binary}"))
+            binary_name = Path(binary).name
+            checks.append(HealthCheck(passed=True, message=f"{binary_name}: {binary}"))
         else:
             checks.append(
                 HealthCheck(
                     passed=False,
                     message=(
-                        "espeak-ng: not found on PATH "
+                        "espeak-ng/espeak: not found on PATH "
                         "(install with: apt install espeak-ng)"
                     ),
                 )

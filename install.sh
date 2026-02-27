@@ -82,7 +82,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     ok "espeak found (offline fallback)"
   else
     warn "espeak-ng not found — install for offline TTS: sudo apt-get install espeak-ng"
-    warn "Without it, an API key (ElevenLabs/OpenAI) is required"
+    warn "Without it, you'll need a cloud TTS provider (e.g. API key for ElevenLabs/OpenAI or AWS credentials for Polly)"
   fi
 fi
 

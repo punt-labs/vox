@@ -670,12 +670,14 @@ def doctor(ctx: click.Context) -> None:
     ):
         espeak = shutil.which("espeak-ng") or shutil.which("espeak")
         if espeak:
-            _check(_PASS, f"espeak-ng: {espeak} (offline fallback)")
+            espeak_name = Path(espeak).name
+            _check(_PASS, f"{espeak_name}: {espeak} (offline fallback)")
         else:
             _check(
                 _FAIL,
-                "espeak-ng: not found — install for offline TTS:"
+                "espeak-ng/espeak: not found — install for offline TTS:"
                 " sudo apt-get install espeak-ng",
+                required=False,
             )
 
     # uvx (optional)
@@ -828,14 +830,15 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
         if not key:
             raise click.ClickException(
                 "ELEVENLABS_API_KEY is not set."
-                " Export it or use --provider polly/openai/say."
+                " Export it or use --provider polly/openai/say/espeak."
             )
         env["ELEVENLABS_API_KEY"] = key
     elif provider == "openai":
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
             raise click.ClickException(
-                "OPENAI_API_KEY is not set. Export it or use --provider polly/say."
+                "OPENAI_API_KEY is not set."
+                " Export it or use --provider polly/say/espeak."
             )
         env["OPENAI_API_KEY"] = key
     return env
