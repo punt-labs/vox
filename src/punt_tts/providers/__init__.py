@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ DEFAULT_VOICES: dict[str, str] = {
     "elevenlabs": "matilda",
     "polly": "joanna",
     "openai": "nova",
+    "say": "fred",
 }
 
 
@@ -61,16 +63,24 @@ def _register_elevenlabs(**kwargs: str | None) -> TTSProvider:
     return ElevenLabsProvider(model=model)
 
 
+def _register_say(**kwargs: str | None) -> TTSProvider:
+    from punt_tts.providers.say import SayProvider
+
+    return SayProvider()
+
+
 PROVIDER_REGISTRY["polly"] = _register_polly
 PROVIDER_REGISTRY["openai"] = _register_openai
 PROVIDER_REGISTRY["elevenlabs"] = _register_elevenlabs
+PROVIDER_REGISTRY["say"] = _register_say
 
 
 def auto_detect_provider() -> str:
     """Detect the provider from environment.
 
     Checks TTS_PROVIDER env var first, then probes for API keys:
-    ElevenLabs > OpenAI > Polly.
+    ElevenLabs > OpenAI > Polly. On macOS with no API keys,
+    falls back to say (zero-config offline).
     """
     env = os.environ.get("TTS_PROVIDER")
     if env:
@@ -79,6 +89,8 @@ def auto_detect_provider() -> str:
         return "elevenlabs"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
+    if platform.system() == "Darwin":
+        return "say"
     return "polly"
 
 

@@ -651,7 +651,7 @@ class TestInstallDesktopCommand:
             ),
             patch.dict(os.environ, {}, clear=False),
         ):
-            # Ensure no API keys are set so polly is auto-detected
+            # Ensure no API keys are set; on macOS, say is auto-detected
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
@@ -671,7 +671,7 @@ class TestInstallDesktopCommand:
             "tts-server",
         ]
         assert server["env"]["TTS_OUTPUT_DIR"] == str(audio_dir)
-        assert server["env"]["TTS_PROVIDER"] == "polly"
+        assert server["env"]["TTS_PROVIDER"] == "say"
 
     @patch(f"{_CLI}.get_provider")
     def test_preserves_other_servers(
@@ -869,7 +869,7 @@ class TestInstallDesktopCommand:
         assert env["OPENAI_API_KEY"] == "sk-test-key"
 
     @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_polly(
+    def test_install_defaults_say_on_macos(
         self, mock_get_provider: MagicMock, tmp_path: Path
     ) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -888,11 +888,11 @@ class TestInstallDesktopCommand:
             )
 
         assert result.exit_code == 0
-        assert "Provider: polly" in result.output
+        assert "Provider: say" in result.output
 
         data = json.loads(config_path.read_text())
         env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "polly"
+        assert env["TTS_PROVIDER"] == "say"
         assert "OPENAI_API_KEY" not in env
 
     @patch(f"{_CLI}.get_provider")

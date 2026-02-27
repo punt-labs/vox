@@ -28,10 +28,15 @@ from punt_tts.types import (
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_DISPLAY = {"elevenlabs": "ElevenLabs", "polly": "Polly", "openai": "OpenAI"}
+_PROVIDER_DISPLAY = {
+    "elevenlabs": "ElevenLabs",
+    "polly": "Polly",
+    "openai": "OpenAI",
+    "say": "Say",
+}
 _VOICE_DEFAULTS = ", ".join(
     f"{DEFAULT_VOICES[k]} ({_PROVIDER_DISPLAY[k]})"
-    for k in ("elevenlabs", "polly", "openai")
+    for k in ("elevenlabs", "polly", "openai", "say")
 )
 
 json_output_enabled = False
@@ -152,7 +157,7 @@ def _voice_settings_options[F: Callable[..., object]](fn: F) -> F:
     "provider_name",
     default=None,
     envvar="TTS_PROVIDER",
-    help="TTS provider (elevenlabs, polly, openai). Default: auto-detect.",
+    help="TTS provider (elevenlabs, polly, openai, say). Default: auto-detect.",
 )
 @click.option(
     "--model",
@@ -808,14 +813,14 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
         if not key:
             raise click.ClickException(
                 "ELEVENLABS_API_KEY is not set."
-                " Export it or use --provider polly/openai."
+                " Export it or use --provider polly/openai/say."
             )
         env["ELEVENLABS_API_KEY"] = key
     elif provider == "openai":
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
             raise click.ClickException(
-                "OPENAI_API_KEY is not set. Export it or use --provider polly."
+                "OPENAI_API_KEY is not set. Export it or use --provider polly/say."
             )
         env["OPENAI_API_KEY"] = key
     return env
@@ -837,7 +842,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     "--provider",
     "install_provider",
     default=None,
-    help="TTS provider (elevenlabs, polly, openai). Default: auto-detect.",
+    help="TTS provider (elevenlabs, polly, openai, say). Default: auto-detect.",
 )
 def install_desktop(
     output_dir: Path | None, uvx_path: str | None, install_provider: str | None
