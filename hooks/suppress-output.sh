@@ -8,15 +8,20 @@
 # No `set -euo pipefail` — hooks must degrade gracefully on
 # malformed input rather than failing the tool call.
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/state.sh"
+
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
 RESULT=$(echo "$INPUT" | jq -r '.tool_response' | jq -r '.result // .')
 
 # Extract voice name from single-result JSON.
+# Falls back to "the voice" when missing or empty.
 extract_voice() {
   local data="$1"
   VOICE=$(echo "$data" | jq -r '.voice // empty' 2>/dev/null)
+  [[ -z "$VOICE" ]] && VOICE="the voice"
 }
 
 emit() {
@@ -28,13 +33,6 @@ emit() {
       additionalContext: $ctx
     }
   }'
-}
-
-# Pick a random element from positional arguments (Bash 3.2 compatible).
-pick_random() {
-  local idx=$((RANDOM % $#))
-  shift "$idx"
-  echo "$1"
 }
 
 if [[ "$TOOL_NAME" == "speak" ]]; then

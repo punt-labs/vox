@@ -53,13 +53,6 @@ IDLE_PHRASES=(
   "Need your thoughts on this."
 )
 
-# Pick a random element from positional arguments (Bash 3.2 compatible).
-pick_random() {
-  local idx=$((RANDOM % $#))
-  shift "$idx"
-  echo "$1"
-}
-
 # Voice mode: synthesize and play a short announcement
 case "$NOTIFICATION_TYPE" in
   permission_prompt)
