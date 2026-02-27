@@ -286,9 +286,9 @@ class TestSayProviderCheckHealth:
             provider = SayProvider()
             checks = provider.check_health()
 
-        assert len(checks) == 1
-        assert checks[0].passed
-        assert "/usr/bin/say" in checks[0].message
+            assert len(checks) == 1
+            assert checks[0].passed
+            assert "/usr/bin/say" in checks[0].message
 
     def test_non_darwin(self) -> None:
         with (
@@ -386,6 +386,12 @@ class TestAutoDetectSayFallback:
                 clear=True,
             ),
             patch("punt_tts.providers.platform") as mock_platform,
+            patch(
+                "punt_tts.providers.shutil.which",
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
+                    "/usr/bin/say" if name == "say" else None
+                ),
+            ),
         ):
             mock_platform.system.return_value = "Darwin"
             from punt_tts.providers import auto_detect_provider

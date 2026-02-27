@@ -572,15 +572,16 @@ class TestDoctorCommand:
         assert "passed" in result.output
         assert "failed" in result.output
 
-    def test_linux_no_keys_no_espeak_fails(self, tmp_path: Path) -> None:
+    def test_linux_no_keys_no_espeak_warns(self, tmp_path: Path) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ELEVENLABS_API_KEY", None)
             os.environ.pop("OPENAI_API_KEY", None)
             result = self._run_doctor(
                 tmp_path, system_platform="Linux", espeak_found=None
             )
-        assert result.exit_code == 1
-        assert "✗ espeak-ng: not found" in result.output
+        # espeak check is optional — doctor passes but shows the warning
+        assert result.exit_code == 0
+        assert "espeak-ng/espeak: not found" in result.output
         assert "sudo apt-get install espeak-ng" in result.output
 
     def test_linux_no_keys_espeak_ng_found(self, tmp_path: Path) -> None:
@@ -679,7 +680,12 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                f"{_CLI}.shutil.which",
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
+                    _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
+                ),
+            ),
             patch(
                 f"{_CLI}._claude_desktop_config_path",
                 return_value=config_path,
@@ -913,7 +919,12 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                f"{_CLI}.shutil.which",
+                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
+                    _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
+                ),
+            ),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
             patch("punt_tts.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),

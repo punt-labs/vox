@@ -45,7 +45,7 @@ class TestEspeakProviderGuard:
                 "punt_tts.providers.espeak._find_espeak_binary",
                 return_value=None,
             ),
-            pytest.raises(ValueError, match="espeak-ng not found"),
+            pytest.raises(ValueError, match="espeak-ng or espeak not found"),
         ):
             EspeakProvider()
 
