@@ -51,7 +51,8 @@ sh install.sh
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
-- **Three providers** --- ElevenLabs (natural voice), OpenAI (low latency), AWS Polly (cost-effective)
+- **Session vibe** --- `/vibe` sets the mood for all speech. Auto-mode reads session signals (test results, lint, git ops) and adapts the voice. Manual mode lets you set it yourself. ElevenLabs expressive tags (`[weary]`, `[excited]`, `[sighs]`) color every utterance.
+- **Three providers** --- ElevenLabs (natural voice + expressive tags), OpenAI (low latency), AWS Polly (cost-effective)
 - **Opt-in only** --- no audio until you enable it, no surprises
 - **Voice or chime** --- `/speak n` switches to audio tones, no TTS API calls
 - **Graceful absence** --- if punt-tts isn't installed, Claude Code works exactly as before
@@ -78,6 +79,16 @@ comprehensive tests for the token refresh flow, and fixed a race condition
 in the session middleware. All 47 tests pass."
 ```
 
+### Set the vibe
+
+```text
+> /vibe banging my head against the wall
+
+Vibe: banging my head against the wall → [frustrated] [sighs] [manual]
+```
+
+Auto-mode (default) reads session signals and adapts automatically --- after a string of test failures the voice sounds `[weary]`, after a successful release it sounds `[excited]`.
+
 ### Switch to chime-only
 
 ```text
@@ -98,6 +109,9 @@ Notifications will use audio tones instead of voice.
 | `/speak n` | Notifications are a chime --- no words |
 | `/recap` | Spoken summary of Claude's last response |
 | `/say "text"` | Speak arbitrary text aloud |
+| `/vibe <mood>` | Set session mood --- voice adapts to match |
+| `/vibe auto` | Auto-detect mood from session signals (default) |
+| `/vibe off` | Disable vibe --- neutral voice |
 | `/voice on` \| `/voice off` | Enable/disable voice mode |
 
 ## Providers
@@ -106,7 +120,7 @@ punt-tts auto-detects the best available provider.
 
 | Provider | API Key | Default Voice | Best For |
 |----------|---------|---------------|----------|
-| ElevenLabs | `ELEVENLABS_API_KEY` | matilda | Long-form summaries, natural voice |
+| ElevenLabs | `ELEVENLABS_API_KEY` | matilda | Natural voice, expressive tags via `/vibe` |
 | OpenAI | `OPENAI_API_KEY` | nova | Fast notifications, low latency |
 | AWS Polly | AWS credentials | joanna | Cost-effective, no API key needed |
 
@@ -149,12 +163,14 @@ tts serve                                      # Start MCP server (stdio)
 - Audio playback serialization via `flock` --- concurrent utterances queue instead of overlapping
 - ElevenLabs streaming API for lower time-to-first-audio
 - Dev/prod namespace isolation for plugin testing (`claude --plugin-dir .`)
+- `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
+- Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
+- `set_config` MCP tool for atomic config mutations (replaces file-tool pattern)
 
 ### Coming Soon
 
 | Feature | What It Does |
 |---------|-------------|
-| **`/mood`** | Set an emotional tone for the session --- `[dramatic]`, `[whisper]`, `[excited]`, `[tired]`. ElevenLabs audio tags embedded in every utterance. Auto-adapts to time of day: softer and sleepier for late-night coding sessions. |
 | **Per-session voices** | Each Claude Code session gets its own voice from a pool --- no more five matildas talking at once. `/voice` to audition and pick. |
 | **Screen reader** | macOS VoiceOver and `say` fallback when no API key is configured |
 
