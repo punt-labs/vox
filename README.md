@@ -10,7 +10,7 @@
 
 When Claude Code finishes a task, hits an error, or needs your approval --- you hear it. No need to watch the terminal. Keep working; your assistant will tell you what happened.
 
-**Platforms:** macOS
+**Platforms:** macOS, Linux
 
 ## Quick Start
 
@@ -52,7 +52,7 @@ sh install.sh
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
 - **Session vibe** --- `/vibe` sets the mood for all speech. Auto-mode reads session signals (test results, lint, git ops) and adapts the voice. Manual mode lets you set it yourself. ElevenLabs expressive tags (`[weary]`, `[excited]`, `[sighs]`) color every utterance.
-- **Three providers** --- ElevenLabs (natural voice + expressive tags), OpenAI (low latency), AWS Polly (cost-effective)
+- **Five providers** --- ElevenLabs, OpenAI, AWS Polly, macOS `say`, and Linux `espeak-ng`. The full experience (natural voice, expressive tags, `/vibe`) requires ElevenLabs.
 - **Opt-in only** --- no audio until you enable it, no surprises
 - **Voice or chime** --- `/speak n` switches to audio tones, no TTS API calls
 - **Graceful absence** --- if punt-tts isn't installed, Claude Code works exactly as before
@@ -116,15 +116,17 @@ Notifications will use audio tones instead of voice.
 
 ## Providers
 
-punt-tts auto-detects the best available provider.
+The full experience --- natural voice with expressive tags that respond to `/vibe` --- requires ElevenLabs. The other providers are fallbacks for environments where ElevenLabs isn't available.
 
 | Provider | API Key | Default Voice | Best For |
 |----------|---------|---------------|----------|
-| ElevenLabs | `ELEVENLABS_API_KEY` | matilda | Natural voice, expressive tags via `/vibe` |
-| OpenAI | `OPENAI_API_KEY` | nova | Fast notifications, low latency |
-| AWS Polly | AWS credentials | joanna | Cost-effective, no API key needed |
+| **ElevenLabs** | `ELEVENLABS_API_KEY` | matilda | **Recommended.** Natural voice, expressive tags via `/vibe` |
+| OpenAI | `OPENAI_API_KEY` | nova | Fallback. Fast notifications, low latency |
+| AWS Polly | AWS credentials | joanna | Fallback. Cost-effective, no API key needed |
+| macOS say | — | fred | Fallback. Zero-config on macOS, offline |
+| espeak-ng | — | en | Fallback. Zero-config on Linux, offline |
 
-Auto-detection order: ElevenLabs > OpenAI > Polly.
+Auto-detection order: ElevenLabs > OpenAI > say (macOS) / espeak (Linux) > Polly.
 
 ## CLI
 
@@ -166,13 +168,13 @@ tts serve                                      # Start MCP server (stdio)
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
 - `set_config` MCP tool for atomic config mutations (replaces file-tool pattern)
+- System fallback providers: macOS `say` and Linux `espeak-ng` for zero-config offline speech
 
 ### Coming Soon
 
 | Feature | What It Does |
 |---------|-------------|
 | **Per-session voices** | Each Claude Code session gets its own voice from a pool --- no more five matildas talking at once. `/voice` to audition and pick. |
-| **Screen reader** | macOS VoiceOver and `say` fallback when no API key is configured |
 
 ## Documentation
 
