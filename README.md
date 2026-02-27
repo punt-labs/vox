@@ -6,6 +6,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/tts/test.yml?label=CI)](https://github.com/punt-labs/tts/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/punt-tts)](https://pypi.org/project/punt-tts/)
 [![Python](https://img.shields.io/pypi/pyversions/punt-tts)](https://pypi.org/project/punt-tts/)
+[![Working Backwards](https://img.shields.io/badge/Working_Backwards-hypothesis-lightgrey)](./prfaq.pdf)
 
 When Claude Code finishes a task, hits an error, or needs your approval --- you hear it. No need to watch the terminal. Keep working; your assistant will tell you what happened.
 
