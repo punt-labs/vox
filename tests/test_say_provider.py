@@ -393,7 +393,7 @@ class TestAutoDetectSayFallback:
             result = auto_detect_provider()
             assert result == "say"
 
-    def test_linux_no_keys_returns_polly(self) -> None:
+    def test_linux_no_keys_no_espeak_returns_polly(self) -> None:
         with (
             patch.dict(
                 "os.environ",
@@ -401,12 +401,34 @@ class TestAutoDetectSayFallback:
                 clear=True,
             ),
             patch("punt_tts.providers.platform") as mock_platform,
+            patch("punt_tts.providers.shutil.which", return_value=None),
         ):
             mock_platform.system.return_value = "Linux"
             from punt_tts.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "polly"
+
+    def test_linux_no_keys_with_espeak_returns_espeak(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ),
+            patch("punt_tts.providers.platform") as mock_platform,
+            patch(
+                "punt_tts.providers.shutil.which",
+                side_effect=lambda name: (
+                    "/usr/bin/espeak-ng" if name == "espeak-ng" else None
+                ),
+            ),
+        ):
+            mock_platform.system.return_value = "Linux"
+            from punt_tts.providers import auto_detect_provider
+
+            result = auto_detect_provider()
+            assert result == "espeak"
 
     def test_explicit_provider_overrides(self) -> None:
         with patch.dict(
