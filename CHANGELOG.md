@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-02-26
+
 ### Changed
 
 - ElevenLabs provider now uses streaming API (`text_to_speech.stream()`) for lower time-to-first-audio
@@ -14,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Installer now runs `claude plugin update` when plugin is already installed; previously users stayed stuck on old versions
+- Chime playback detached from hook process group (`nohup + disown`) so audio survives hook exit
+- `--scope user` added to `claude plugin update` command (Bugbot catch)
 
 ## [0.3.5] - 2026-02-26
 
