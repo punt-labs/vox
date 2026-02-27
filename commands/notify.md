@@ -1,7 +1,7 @@
 ---
 description: "Control task notifications (hear when tasks finish or need input)"
 argument-hint: "y | n"
-allowed-tools: ["Read", "Write", "Edit"]
+allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
 ---
 
 # /notify command
@@ -15,23 +15,12 @@ Toggle audio notifications for Claude Code events.
 
 ## Implementation
 
-Read the file `.tts/config.md` to check current state. The file has YAML frontmatter:
+Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
+status queries.
 
-```yaml
----
-voice_enabled: false
-notify: "n"
-speak: "y"
----
-```
-
-Based on the argument:
-
-- **y**: Write the file with `notify: "y"` (preserve other fields)
-- **n**: Write the file with `notify: "n"` (preserve other fields)
-- **no argument**: Read the file and report current state
-
-If the file doesn't exist, create it with defaults: `voice_enabled: false`, `notify: "n"`, `speak: "y"`.
+- **y**: `set_config(key="notify", value="y")`
+- **n**: `set_config(key="notify", value="n")`
+- **no argument**: Read `.tts/config.md` and report current state
 
 After changing state, confirm with a brief message:
 
