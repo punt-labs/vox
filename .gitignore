@@ -24,6 +24,7 @@ lancedb/
 .mcp.json
 .claude/*
 !.claude/settings.json
+!.claude/commands/
 .tts/
 research/
 .biff.local
