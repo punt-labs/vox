@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-02-27
+
 ### Added
 
 - Batch `set_config` mode: pass `updates` dict to write multiple config fields in a single atomic read-write ([#33](https://github.com/punt-labs/tts/pull/33))
