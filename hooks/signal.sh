@@ -60,17 +60,22 @@ fi
 # Write via sed: update existing field or insert before closing ---
 # macOS sed -i requires '' extension argument.
 if grep -q "^vibe_signals:" "$TTS_STATE_FILE" 2>/dev/null; then
-  sed -i '' "s|^vibe_signals:.*|vibe_signals: \"${NEW}\"|" "$TTS_STATE_FILE"
+  sed "s|^vibe_signals:.*|vibe_signals: \"${NEW}\"|" "$TTS_STATE_FILE" \
+    > "${TTS_STATE_FILE}.tmp" && mv "${TTS_STATE_FILE}.tmp" "$TTS_STATE_FILE"
 else
   # Insert before the LAST --- only (not the opening fence).
-  # Use awk: print all lines, but when we see the last --- replace it
-  # with the new field + ---.
   awk -v field="vibe_signals: \"${NEW}\"" '
     { lines[NR] = $0; if ($0 == "---") last = NR }
-    END { for (i=1; i<=NR; i++) {
-      if (i == last) print field
-      print lines[i]
-    }}
+    END {
+      if (last > 1) {
+        for (i=1; i<=NR; i++) {
+          if (i == last) print field
+          print lines[i]
+        }
+      } else {
+        for (i=1; i<=NR; i++) print lines[i]
+      }
+    }
   ' "$TTS_STATE_FILE" > "${TTS_STATE_FILE}.tmp" && mv "${TTS_STATE_FILE}.tmp" "$TTS_STATE_FILE"
 fi
 

@@ -65,7 +65,10 @@ status queries.
   1. `set_config(key="vibe", value="<mood text>")`
   2. `set_config(key="vibe_tags", value="<your tags>")`
   3. `set_config(key="vibe_mode", value="manual")`
-- **`/vibe auto`**: `set_config(key="vibe_mode", value="auto")`
+- **`/vibe auto`**: Clear stale manual state, then set mode:
+  1. `set_config(key="vibe_tags", value="")`
+  2. `set_config(key="vibe", value="")`
+  3. `set_config(key="vibe_mode", value="auto")`
 - **`/vibe off`**: Call set_config three times:
   1. `set_config(key="vibe_tags", value="")`
   2. `set_config(key="vibe", value="")`

@@ -98,6 +98,13 @@ class TestWriteConfigField:
         assert 'vibe_tags: "[excited]"' in text
         assert "[tired]" not in text
 
+    def test_updates_unquoted_field(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\nvibe_tags: [whispers]\n---\n")
+        _write_config_field("vibe_tags", "[excited]")
+        text = _patch_config.read_text()
+        assert 'vibe_tags: "[excited]"' in text
+        assert "[whispers]" not in text
+
     def test_inserts_new_field_before_closing_fence(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nnotify: "y"\n---\n')
         _write_config_field("vibe_tags", "[excited]")
