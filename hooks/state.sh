@@ -9,24 +9,6 @@
 #   if [[ "$(read_notify)" == "y" ]]; then ...
 
 TTS_STATE_FILE=".tts/config.md"
-PLAYBACK_PID_FILE="$HOME/.punt-tts/playback.pid"
-
-# Kill a previously playing afplay process, if any.
-kill_previous_playback() {
-  if [[ -f "$PLAYBACK_PID_FILE" ]]; then
-    local old_pid
-    old_pid=$(cat "$PLAYBACK_PID_FILE" 2>/dev/null)
-    if [[ -n "$old_pid" ]]; then
-      kill "$old_pid" 2>/dev/null || true
-    fi
-  fi
-}
-
-# Record the PID of the current afplay process.
-record_playback_pid() {
-  mkdir -p "$(dirname "$PLAYBACK_PID_FILE")"
-  echo "$1" > "$PLAYBACK_PID_FILE"
-}
 
 # Read a YAML frontmatter field from the state file.
 # Returns empty string if file doesn't exist or field not found.
