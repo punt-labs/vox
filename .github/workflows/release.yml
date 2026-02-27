@@ -66,7 +66,7 @@ jobs:
           WAIT_SECONDS=60
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "Attempt $attempt/$MAX_ATTEMPTS: installing punt-tts==$VERSION from TestPyPI..."
-            if uv pip install --system \
+            if uv pip install --system --refresh \
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
               --index-strategy unsafe-best-match \
