@@ -22,6 +22,7 @@ RESULT=$(echo "$INPUT" | jq -r '
   else
     (.tool_response | unpack)
   end
+  | if type == "object" and has("result") then (.result | unpack) else . end
 ')
 
 # Extract voice name from single-result JSON.
