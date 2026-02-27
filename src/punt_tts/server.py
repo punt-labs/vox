@@ -196,11 +196,11 @@ def _write_config_field(key: str, value: str) -> None:
 
 
 def _write_config_fields(updates: dict[str, str]) -> None:
-    """Write multiple YAML frontmatter fields to .tts/config.md atomically.
+    """Write multiple YAML frontmatter fields in a single read-write cycle.
 
-    Reads the file once, applies all updates, writes once.  All keys are
-    validated before any write occurs so a single bad key aborts the
-    entire batch.
+    Reads the file once, applies all regex substitutions, writes once.
+    All keys are validated before any I/O so a single bad key aborts
+    the entire batch.
     """
     for key in updates:
         if key not in ALLOWED_CONFIG_KEYS:
@@ -682,8 +682,8 @@ def ensemble(
 
 @mcp.tool()
 def set_config(
-    key: str = "",
-    value: str = "",
+    key: str | None = None,
+    value: str | None = None,
     updates: dict[str, str] | None = None,
 ) -> str:
     """Write configuration field(s) to .tts/config.md.
@@ -696,7 +696,7 @@ def set_config(
     **Single field** (backward compatible): pass ``key`` and ``value``.
 
     **Batch** (preferred for multi-field updates): pass ``updates``
-    dict. All fields are written atomically in one file operation.
+    dict. All fields are written in a single read-write cycle.
     When ``updates`` is provided, ``key`` and ``value`` are ignored.
 
     Args:
@@ -711,7 +711,7 @@ def set_config(
             - vibe_signals: Accumulated session signals (usually cleared
               by passing empty string after reading)
         value: The value to write. Use empty string to clear a field.
-        updates: Dict of key-value pairs to write atomically. When
+        updates: Dict of key-value pairs to write in one pass. When
             provided, key and value are ignored. All keys must be
             valid config fields. Example:
             ``{"vibe": "happy", "vibe_tags": "[cheerful]",
@@ -724,6 +724,9 @@ def set_config(
     if updates is not None:
         _write_config_fields(updates)
         return json.dumps({"updates": updates})
+    if key is None or value is None:
+        msg = "Single mode requires both key and value"
+        raise ValueError(msg)
     _write_config_field(key, value)
     return json.dumps({"key": key, "value": value})
 

@@ -322,3 +322,12 @@ class TestSetConfigBatch:
         _patch_config.write_text("---\n---\n")
         result = json.loads(set_config(key="notify", value="y"))
         assert result == {"key": "notify", "value": "y"}
+
+    def test_rejects_missing_key_or_value(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        with pytest.raises(ValueError, match="requires both"):
+            set_config(key="notify")
+        with pytest.raises(ValueError, match="requires both"):
+            set_config(value="y")
+        with pytest.raises(ValueError, match="requires both"):
+            set_config()
