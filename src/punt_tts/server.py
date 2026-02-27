@@ -132,7 +132,7 @@ def _read_vibe_tags() -> str | None:
     return None
 
 
-_LEADING_TAG_RE = re.compile(r"^\[[\w\s]+\]")
+_LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 
 
 def _apply_vibe(text: str) -> str:

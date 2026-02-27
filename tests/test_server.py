@@ -84,6 +84,13 @@ class TestApplyVibe:
         result = _apply_vibe("[excited] Different tag")
         assert result == "[excited] Different tag"
 
+    def test_skips_prepend_when_tag_contains_punctuation(
+        self, _patch_config: Path
+    ) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = _apply_vibe("[dramatic tone] Something important")
+        assert result == "[dramatic tone] Something important"
+
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
         import punt_tts.server as srv
 
