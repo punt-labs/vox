@@ -72,6 +72,18 @@ class TestApplyVibe:
         result = _apply_vibe("Hello world")
         assert result == "[frustrated] [sighs] Hello world"
 
+    def test_skips_prepend_when_text_starts_with_tag(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = _apply_vibe("[calm] Already tagged")
+        assert result == "[calm] Already tagged"
+
+    def test_skips_prepend_when_text_starts_with_different_tag(
+        self, _patch_config: Path
+    ) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = _apply_vibe("[excited] Different tag")
+        assert result == "[excited] Different tag"
+
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
         import punt_tts.server as srv
 

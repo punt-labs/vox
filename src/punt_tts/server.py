@@ -132,10 +132,17 @@ def _read_vibe_tags() -> str | None:
     return None
 
 
+_LEADING_TAG_RE = re.compile(r"^\[[\w\s]+\]")
+
+
 def _apply_vibe(text: str) -> str:
-    """Prepend session vibe tags to text if configured."""
+    """Prepend session vibe tags to text if configured.
+
+    Skips prepending when the text already starts with an expression
+    tag (e.g. ``[calm]``) to avoid doubling.
+    """
     tags = _read_vibe_tags()
-    if tags:
+    if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"
     return text
 
