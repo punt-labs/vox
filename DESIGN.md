@@ -541,7 +541,7 @@ ffmpeg is already a project dependency (pydub uses it for audio processing).
 The working tree uses `"name": "tts-dev"` in `.claude-plugin/plugin.json`. Claude Code treats `tts` and `tts-dev` as separate plugins:
 
 - **Prod tools**: `mcp__plugin_tts_vox__speak` (from installed plugin)
-- **Dev tools**: `mcp__plugin_tts_dev_vox__speak` (from `--plugin-dir .`)
+- **Dev tools**: `mcp__plugin_tts-dev_vox__speak` (from `--plugin-dir .`)
 
 Dev commands (`say-dev.md`, `recap-dev.md`) in `.claude/commands/` reference dev-namespaced tools. Prod commands in `commands/` are unchanged.
 
@@ -553,7 +553,7 @@ Release scripts (`scripts/release-plugin.sh`) swap `tts-dev` → `tts` and remov
 
 The session-start hook detects dev mode by checking plugin.json for `"tts-dev"`:
 
-- **Dev mode**: skip command deployment (prod plugin deploys top-level commands), auto-allow `mcp__plugin_tts_dev_vox__*`
+- **Dev mode**: skip command deployment (prod plugin deploys top-level commands), auto-allow `mcp__plugin_tts-dev_vox__*`
 - **Prod mode**: deploy commands to `~/.claude/commands/`, auto-allow `mcp__plugin_tts_vox__*`
 
 ### Alternatives Considered

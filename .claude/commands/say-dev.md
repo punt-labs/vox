@@ -1,7 +1,7 @@
 ---
 description: "[DEV] Speak text aloud using TTS"
 argument-hint: "<text>"
-allowed-tools: ["mcp__plugin_tts_dev_vox__speak"]
+allowed-tools: ["mcp__plugin_tts-dev_vox__speak"]
 ---
 
 # /say-dev command
@@ -14,7 +14,7 @@ Speak the provided text aloud (dev plugin).
 
 ## Implementation
 
-Call the `mcp__plugin_tts_dev_vox__speak` MCP tool with:
+Call the `mcp__plugin_tts-dev_vox__speak` MCP tool with:
 
 - `text`: the user's text argument
 - `ephemeral`: `true` (write to `.tts/` in cwd, auto-cleaned)

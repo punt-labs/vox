@@ -1,6 +1,6 @@
 ---
 description: "[DEV] Spoken summary of what just happened"
-allowed-tools: ["mcp__plugin_tts_dev_vox__speak"]
+allowed-tools: ["mcp__plugin_tts-dev_vox__speak"]
 ---
 
 # /recap-dev command
@@ -16,7 +16,7 @@ Speak a brief summary of the last response (dev plugin).
 1. Look at your most recent response (before this command) — the one the user wants summarized.
 2. Extract the 2-3 most important points: what changed, what was done, any key findings.
 3. Write the summary as clear, concise spoken text (30 seconds when spoken, roughly 60-80 words).
-4. Call the `mcp__plugin_tts_dev_vox__speak` MCP tool with:
+4. Call the `mcp__plugin_tts-dev_vox__speak` MCP tool with:
    - `text`: your summary
    - `ephemeral`: `true`
    - `auto_play`: `true`

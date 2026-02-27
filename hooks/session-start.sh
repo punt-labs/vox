@@ -13,8 +13,8 @@ if grep -q '"tts-dev"' "$PLUGIN_JSON" 2>/dev/null; then
 fi
 
 if [[ "$DEV_MODE" == "true" ]]; then
-  TOOL_PATTERN="mcp__plugin_tts_dev_vox__"
-  TOOL_GLOB="mcp__plugin_tts_dev_vox__*"
+  TOOL_PATTERN="mcp__plugin_tts-dev_vox__"
+  TOOL_GLOB="mcp__plugin_tts-dev_vox__*"
 else
   TOOL_PATTERN="mcp__plugin_tts_vox__"
   TOOL_GLOB="mcp__plugin_tts_vox__*"

@@ -223,7 +223,7 @@ uv tool install --force --editable .   # Editable install (tts binary = working 
 claude --plugin-dir .                   # Load dev plugin as tts-dev alongside prod tts
 ```
 
-Dev commands (`/tts-dev:say-dev`, `/tts-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_tts_dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
+Dev commands (`/tts-dev:say-dev`, `/tts-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_tts-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
 
 Release scripts swap the name before tagging:
 - `bash scripts/release-plugin.sh` — swap `tts-dev` → `tts`, remove `*-dev.md`
