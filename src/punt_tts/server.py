@@ -205,9 +205,17 @@ def speak(
         JSON string with path, text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
-    text = _apply_vibe(text)
     provider = get_provider()
     voice, language = _resolve_voice_and_language(provider, voice, language)
+
+    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
+    path = _resolve_output_path(
+        output_path,
+        dir_path,
+        f"{voice}_{text[:20].replace(' ', '_')}.mp3",
+    )
+
+    text = _apply_vibe(text)
     request = SynthesisRequest(
         text=text,
         voice=voice,
@@ -217,13 +225,6 @@ def speak(
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-    )
-
-    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
-    path = _resolve_output_path(
-        output_path,
-        dir_path,
-        f"{voice}_{text[:20].replace(' ', '_')}.mp3",
     )
 
     client = TTSClient(provider)
@@ -282,6 +283,7 @@ def chorus(
         text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
+    texts = [_apply_vibe(t) for t in texts]
     provider = get_provider()
     voice, language = _resolve_voice_and_language(provider, voice, language)
     requests = [
