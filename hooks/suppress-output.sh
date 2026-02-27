@@ -46,9 +46,10 @@ emit() {
 
 if [[ "$TOOL_NAME" == "speak" ]]; then
   extract_voice "$RESULT"
+  PRONOUN=$(voice_pronoun "$VOICE")
   PHRASES=(
     "♪ ${VOICE} has spoken"
-    "♪ ${VOICE} said the piece"
+    "♪ ${VOICE} said ${PRONOUN} piece"
     "♪ ${VOICE} delivered"
     "♪ heard from ${VOICE}"
   )
