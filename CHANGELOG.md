@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-02-28
+
+### Fixed
+
+- eSpeak provider now passes language codes (e.g. `en-us`) to `espeak-ng -v` instead of display names (e.g. `English_(America)`) which espeak-ng rejects
+- Installer uses `doctor || true` so diagnostic failures don't abort the install script under `set -eu`
+
 ## [0.8.0] - 2026-02-28
 
 ### Added
