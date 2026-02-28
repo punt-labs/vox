@@ -16,6 +16,7 @@ from punt_tts.types import (
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    VoiceNotFoundError,
 )
 
 if TYPE_CHECKING:
@@ -363,7 +364,4 @@ class PollyProvider:
         if key in VOICES:
             return VOICES[key]
 
-        from punt_tts.providers import format_voice_hint
-
-        hint = format_voice_hint(sorted(VOICES))
-        raise ValueError(f"Unknown voice '{name}'. Available: {hint}")
+        raise VoiceNotFoundError(name, sorted(VOICES))

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_tts.providers.elevenlabs import ElevenLabsProvider
-from punt_tts.types import SynthesisRequest
+from punt_tts.types import SynthesisRequest, VoiceNotFoundError
 
 
 class TestElevenLabsProviderName:
@@ -89,8 +89,11 @@ class TestElevenLabsProviderResolveVoice:
     def test_resolve_unknown_raises(
         self, elevenlabs_provider: ElevenLabsProvider
     ) -> None:
-        with pytest.raises(ValueError, match="Unknown voice 'nonexistent'"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             elevenlabs_provider.resolve_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
+        assert isinstance(exc_info.value.available, list)
+        assert len(exc_info.value.available) > 0
 
 
 class TestElevenLabsProviderSynthesize:

@@ -12,7 +12,7 @@ from punt_tts.core import (
     split_text,
 )
 from punt_tts.providers.openai import OpenAIProvider
-from punt_tts.types import SynthesisRequest
+from punt_tts.types import SynthesisRequest, VoiceNotFoundError
 
 
 class TestSplitText:
@@ -128,13 +128,17 @@ class TestOpenAIProviderResolveVoice:
 
     def test_resolve_unknown_raises(self) -> None:
         provider = OpenAIProvider(client=MagicMock())
-        with pytest.raises(ValueError, match="Unknown voice 'nonexistent'"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
+        assert isinstance(exc_info.value.available, list)
+        assert len(exc_info.value.available) > 0
 
     def test_error_lists_available(self) -> None:
         provider = OpenAIProvider(client=MagicMock())
-        with pytest.raises(ValueError, match="alloy"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("bad")
+        assert "alloy" in exc_info.value.available
 
 
 class TestOpenAIProviderSynthesize:

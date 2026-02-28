@@ -13,12 +13,16 @@ from punt_tts.server import (
     _apply_vibe,  # pyright: ignore[reportPrivateUsage]
     _read_session_voice,  # pyright: ignore[reportPrivateUsage]
     _read_vibe_tags,  # pyright: ignore[reportPrivateUsage]
+    _voice_not_found_message,  # pyright: ignore[reportPrivateUsage]
     _write_config_field,  # pyright: ignore[reportPrivateUsage]
     _write_config_fields,  # pyright: ignore[reportPrivateUsage]
+    chorus,
+    duet,
+    ensemble,
     set_config,
     speak,
 )
-from punt_tts.types import AudioProviderId
+from punt_tts.types import AudioProviderId, VoiceNotFoundError
 
 
 @pytest.fixture()
@@ -451,3 +455,112 @@ class TestSpeakVibeTags:
         text = _patch_config.read_text()
         assert 'vibe_tags: "[old]"' in text
         assert 'vibe_signals: "test@1"' in text
+
+
+class TestVoiceNotFoundMessage:
+    """Tests for _voice_not_found_message formatter."""
+
+    def test_includes_voice_name(self) -> None:
+        exc = VoiceNotFoundError("bob", ["matilda", "aria", "charlie"])
+        msg = _voice_not_found_message(exc)
+        assert msg.startswith("bob ")
+
+    def test_includes_suggestions(self) -> None:
+        exc = VoiceNotFoundError("bob", ["matilda", "aria", "charlie"])
+        msg = _voice_not_found_message(exc)
+        assert "How about " in msg
+
+    def test_single_available_voice(self) -> None:
+        exc = VoiceNotFoundError("bob", ["matilda"])
+        msg = _voice_not_found_message(exc)
+        assert "matilda" in msg
+
+    def test_empty_available_voices(self) -> None:
+        exc = VoiceNotFoundError("bob", [])
+        msg = _voice_not_found_message(exc)
+        assert "bob " in msg
+        assert "How about ?" in msg
+
+
+def _mock_provider_raising(voice_name: str, available: list[str]) -> MagicMock:
+    """Create a mock provider whose resolve_voice raises VoiceNotFoundError."""
+    provider = MagicMock()
+    provider.name = "elevenlabs"
+    provider.default_voice = "matilda"
+    provider.supports_expressive_tags = True
+    provider.resolve_voice.side_effect = VoiceNotFoundError(voice_name, available)
+    provider.infer_language_from_voice.return_value = None
+    return provider
+
+
+class TestSpeakVoiceNotFound:
+    """Tests for speak tool returning friendly error on bad voice."""
+
+    def test_returns_friendly_error(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvoice: "bob"\n---\n')
+        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            result = json.loads(speak(text="Hello", auto_play=False))
+
+        assert "error" in result
+        assert "bob " in result["error"]
+
+
+class TestChorusVoiceNotFound:
+    """Tests for chorus tool returning friendly error on bad voice."""
+
+    def test_returns_friendly_error(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvoice: "bob"\n---\n')
+        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            result = json.loads(chorus(texts=["Hello", "World"], auto_play=False))
+
+        assert "error" in result
+        assert "bob " in result["error"]
+
+
+class TestDuetVoiceNotFound:
+    """Tests for duet tool returning friendly error on bad voice."""
+
+    def test_voice1_not_found(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvoice: "bob"\n---\n')
+        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            result = json.loads(duet(text1="Hello", text2="Hallo", auto_play=False))
+
+        assert "error" in result
+        assert "bob " in result["error"]
+
+
+class TestEnsembleVoiceNotFound:
+    """Tests for ensemble tool returning friendly error on bad voice."""
+
+    def test_voice1_not_found(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvoice: "bob"\n---\n')
+        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            result = json.loads(
+                ensemble(
+                    pairs=[["Hello", "Hallo"]],
+                    auto_play=False,
+                )
+            )
+
+        assert "error" in result
+        assert "bob " in result["error"]

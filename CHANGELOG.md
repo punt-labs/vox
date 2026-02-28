@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-session voice selection: `/voice <name>` sets a default voice for all speak/chorus/duet/ensemble calls. Stored in `.tts/config.md` as `voice` field. Use `/voice clear` to revert to provider default.
 - Session event watcher: daemon thread in MCP server tails the session transcript and announces milestones (tests passed, lint clean, code pushed) in real-time when `notify=c`. Uses pattern matching on bash tool output, per-signal throttle, and voice/chime modes.
 - `vibe_tags` parameter on `speak` and `chorus` tools: applies expressive tags and clears `vibe_signals` in one step, replacing the separate `set_config` call in the stop-hook flow.
+- Friendly voice-not-found errors: when a voice can't be resolved, providers raise `VoiceNotFoundError` with structured data. MCP tool handlers catch it and return a playful message (e.g. "bob stepped out for a coffee. How about matilda, aria, charlie?") instead of a raw traceback.
+
+### Changed
+
+- macOS Say provider default voice changed from Fred to Samantha.
 
 ## [0.7.1] - 2026-02-27
 

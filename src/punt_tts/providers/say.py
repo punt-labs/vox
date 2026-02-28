@@ -18,6 +18,7 @@ from punt_tts.types import (
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    VoiceNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ _VOICE_LINE_RE = re.compile(r"^(.+?)\s{2,}(\w{2}_\w{2})\s+#")
 # Default voice per language (ISO 639-1 → lowercase macOS voice name).
 _DEFAULT_VOICES: dict[str, str] = {
     "de": "anna",
-    "en": "fred",
+    "en": "samantha",
     "es": "monica",
     "fr": "amelie",
     "it": "alice",
@@ -137,7 +138,7 @@ class SayProvider:
 
     @property
     def default_voice(self) -> str:
-        return "fred"
+        return "samantha"
 
     @property
     def supports_expressive_tags(self) -> bool:
@@ -298,7 +299,4 @@ class SayProvider:
         if key in VOICES:
             return VOICES[key]
 
-        from punt_tts.providers import format_voice_hint
-
-        hint = format_voice_hint(sorted(VOICES))
-        raise ValueError(f"Unknown voice '{name}'. Available: {hint}")
+        raise VoiceNotFoundError(name, sorted(VOICES))

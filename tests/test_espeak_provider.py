@@ -14,7 +14,7 @@ from punt_tts.providers.espeak import (
     EspeakVoiceConfig,
     _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import AudioProviderId, SynthesisRequest
+from punt_tts.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
 
 
 class TestEspeakVoiceConfig:
@@ -85,8 +85,10 @@ class TestEspeakProviderResolveVoice:
         espeak_mod.VOICES.clear()
         espeak_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(ValueError, match="Unknown voice 'nonexistent'"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             espeak_provider.resolve_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
+        assert isinstance(exc_info.value.available, list)
 
     def test_matching_language(self, espeak_provider: EspeakProvider) -> None:
         result = espeak_provider.resolve_voice("english", language="en")

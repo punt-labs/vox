@@ -15,7 +15,7 @@ from punt_tts.providers.say import (
     _locale_to_iso,  # pyright: ignore[reportPrivateUsage]
     _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import AudioProviderId, SynthesisRequest
+from punt_tts.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
 
 
 class TestSayVoiceConfig:
@@ -89,7 +89,7 @@ class TestSayProviderName:
         assert say_provider.name == "say"
 
     def test_default_voice(self, say_provider: SayProvider) -> None:
-        assert say_provider.default_voice == "fred"
+        assert say_provider.default_voice == "samantha"
 
 
 class TestSayProviderResolveVoice:
@@ -111,8 +111,10 @@ class TestSayProviderResolveVoice:
         say_mod.VOICES.clear()
         say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(ValueError, match="Unknown voice 'nonexistent'"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             say_provider.resolve_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
+        assert isinstance(exc_info.value.available, list)
 
     def test_matching_language(self, say_provider: SayProvider) -> None:
         result = say_provider.resolve_voice("fred", language="en")
@@ -333,7 +335,7 @@ class TestSayProviderCheckHealth:
 
 class TestSayProviderGetDefaultVoice:
     def test_english(self, say_provider: SayProvider) -> None:
-        assert say_provider.get_default_voice("en") == "fred"
+        assert say_provider.get_default_voice("en") == "samantha"
 
     def test_german(self, say_provider: SayProvider) -> None:
         assert say_provider.get_default_voice("de") == "anna"
@@ -343,7 +345,7 @@ class TestSayProviderGetDefaultVoice:
             say_provider.get_default_voice("xx")
 
     def test_case_insensitive(self, say_provider: SayProvider) -> None:
-        assert say_provider.get_default_voice("EN") == "fred"
+        assert say_provider.get_default_voice("EN") == "samantha"
 
 
 class TestSayProviderListVoices:

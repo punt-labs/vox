@@ -24,7 +24,7 @@ DEFAULT_VOICES: dict[str, str] = {
     "elevenlabs": "matilda",
     "polly": "joanna",
     "openai": "nova",
-    "say": "fred",
+    "say": "samantha",
     "espeak": "en",
 }
 

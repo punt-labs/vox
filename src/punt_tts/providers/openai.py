@@ -18,6 +18,7 @@ from punt_tts.types import (
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    VoiceNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -188,10 +189,7 @@ class OpenAIProvider:
         key = name.lower()
         if key in VOICES:
             return VOICES[key]
-        from punt_tts.providers import format_voice_hint
-
-        hint = format_voice_hint(sorted(VOICES))
-        raise ValueError(f"Unknown voice '{name}'. Available: {hint}")
+        raise VoiceNotFoundError(name, sorted(VOICES))
 
     @staticmethod
     def _rate_to_speed(rate: int) -> float:

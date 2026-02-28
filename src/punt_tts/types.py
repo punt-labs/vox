@@ -23,10 +23,20 @@ __all__ = [
     "SynthesisRequest",
     "SynthesisResult",
     "TTSProvider",
+    "VoiceNotFoundError",
     "generate_filename",
     "result_to_dict",
     "validate_language",
 ]
+
+
+class VoiceNotFoundError(ValueError):
+    """Raised when a voice name cannot be resolved by a provider."""
+
+    def __init__(self, name: str, available: list[str]) -> None:
+        self.voice_name = name
+        self.available = available
+        super().__init__(name)
 
 
 def _metadata() -> dict[str, str]:

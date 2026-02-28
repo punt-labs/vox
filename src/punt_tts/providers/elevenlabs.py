@@ -18,6 +18,7 @@ from punt_tts.types import (
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    VoiceNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,12 +262,8 @@ class ElevenLabsProvider:
         if key in VOICES:
             return VOICES[key]
 
-        from punt_tts.providers import format_voice_hint
-
-        # Show only short names (without descriptions) in the hint.
         short_names = sorted(k for k in VOICES if " - " not in k)
-        hint = format_voice_hint(short_names)
-        raise ValueError(f"Unknown voice '{name}'. Available: {hint}")
+        raise VoiceNotFoundError(name, short_names)
 
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]
         """Build VoiceSettings from request fields, or None for defaults."""

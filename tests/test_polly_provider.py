@@ -15,7 +15,7 @@ from punt_tts.providers.polly import (
     _best_engine,  # pyright: ignore[reportPrivateUsage]
     _infer_iso_from_bcp47,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import SynthesisRequest
+from punt_tts.types import SynthesisRequest, VoiceNotFoundError
 
 
 def _make_describe_voices_response(
@@ -118,8 +118,10 @@ class TestPollyProviderResolveVoice:
         mock_client.describe_voices.return_value = _make_describe_voices_response([])
 
         provider = PollyProvider(boto_client=mock_client)
-        with pytest.raises(ValueError, match="Unknown voice 'nonexistent'"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
+        assert isinstance(exc_info.value.available, list)
 
     @patch("punt_tts.providers.polly.boto3")
     def test_caches_api_results(self, mock_boto3: MagicMock) -> None:
@@ -377,8 +379,9 @@ class TestPollyProviderInferLanguage:
         mock_client.describe_voices.return_value = _make_describe_voices_response([])
 
         provider = PollyProvider(boto_client=mock_client)
-        with pytest.raises(ValueError, match="Unknown voice"):
+        with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.infer_language_from_voice("nonexistent")
+        assert exc_info.value.voice_name == "nonexistent"
 
 
 class TestPollyProviderSynthesizeLanguage:

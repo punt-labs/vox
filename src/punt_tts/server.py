@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from punt_tts.types import (
     SynthesisRequest,
     SynthesisResult,
     TTSProvider,
+    VoiceNotFoundError,
     generate_filename,
     result_to_dict,
     validate_language,
@@ -61,6 +63,21 @@ def _validate_voice_settings(
         if value is not None and not 0.0 <= value <= 1.0:
             msg = f"{name} must be between 0.0 and 1.0, got {value}"
             raise ValueError(msg)
+
+
+_VOICE_EXCUSES = [
+    "is temporarily indisposed",
+    "is grabbing something to eat",
+    "stepped out for a coffee",
+    "is in the bathroom",
+]
+
+
+def _voice_not_found_message(exc: VoiceNotFoundError) -> str:
+    """Build a friendly, brand-appropriate message for an unknown voice."""
+    excuse = random.choice(_VOICE_EXCUSES)
+    suggestions = random.sample(exc.available, min(3, len(exc.available)))
+    return f"{exc.voice_name} {excuse}. How about {', '.join(suggestions)}?"
 
 
 def _resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Path:
@@ -300,7 +317,7 @@ def speak(
             results. Tags only work with ElevenLabs eleven_v3 model.
         voice: Voice name. Default: provider's default voice (currently
             matilda for ElevenLabs, joanna for Polly, nova for OpenAI,
-            fred for Say, en for eSpeak).
+            samantha for Say, en for eSpeak).
             If language is provided without voice, a suitable default
             voice for that language is selected automatically.
         language: ISO 639-1 language code (e.g. 'de', 'ko', 'fr').
@@ -340,7 +357,10 @@ def speak(
     if vibe_tags is not None:
         _write_config_fields({"vibe_tags": vibe_tags, "vibe_signals": ""})
     provider = get_provider()
-    voice, language = _resolve_voice_and_language(provider, voice, language)
+    try:
+        voice, language = _resolve_voice_and_language(provider, voice, language)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
 
     dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
     path = _resolve_output_path(
@@ -428,7 +448,10 @@ def chorus(
     provider = get_provider()
     expressive = provider.supports_expressive_tags
     texts = [_apply_vibe(t, expressive_tags=expressive) for t in texts]
-    voice, language = _resolve_voice_and_language(provider, voice, language)
+    try:
+        voice, language = _resolve_voice_and_language(provider, voice, language)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
     requests = [
         SynthesisRequest(
             text=t,
@@ -533,8 +556,14 @@ def duet(
     """
     _validate_voice_settings(stability, similarity, style)
     provider = get_provider()
-    voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
-    voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+    try:
+        voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
+    try:
+        voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
     req1 = SynthesisRequest(
         text=text1,
         voice=voice1,
@@ -634,8 +663,14 @@ def ensemble(
     """
     _validate_voice_settings(stability, similarity, style)
     provider = get_provider()
-    voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
-    voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+    try:
+        voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
+    try:
+        voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": _voice_not_found_message(exc)})
 
     pair_requests: list[tuple[SynthesisRequest, SynthesisRequest]] = [
         (
