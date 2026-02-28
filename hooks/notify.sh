@@ -29,6 +29,13 @@ if [[ "$STOP_ACTIVE" == "true" ]]; then
   exit 0
 fi
 
+# No signals accumulated = no meaningful work to summarize.
+# Prevents empty recaps after trivial commands like /say hello.
+SIGNALS=$(read_vibe_signals)
+if [[ -z "$SIGNALS" ]]; then
+  exit 0
+fi
+
 SPEAK=$(read_speak)
 
 # Chime mode: play audio tone via flock-serialized queue, let Claude stop.
