@@ -22,9 +22,8 @@ htmlcov/
 .envrc
 lancedb/
 .mcp.json
-.claude/*
+.claude/
 !.claude/settings.json
-!.claude/commands/
 .tts/
 research/
 .biff.local
