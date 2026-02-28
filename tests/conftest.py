@@ -253,9 +253,9 @@ def say_provider() -> SayProvider:
 # ---------------------------------------------------------------------------
 
 # Test voice configs for espeak provider.
-ENGLISH_ESPEAK = EspeakVoiceConfig(name="english", language="en")
-GERMAN_ESPEAK = EspeakVoiceConfig(name="german", language="de")
-FRENCH_ESPEAK = EspeakVoiceConfig(name="french", language="fr")
+ENGLISH_ESPEAK = EspeakVoiceConfig(name="en", language="en")
+GERMAN_ESPEAK = EspeakVoiceConfig(name="de", language="de")
+FRENCH_ESPEAK = EspeakVoiceConfig(name="fr", language="fr")
 
 
 @pytest.fixture(autouse=True)
