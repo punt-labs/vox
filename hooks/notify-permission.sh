@@ -71,8 +71,13 @@ esac
 # macOS mktemp requires X's at the end of the template (no suffix allowed).
 TMPDIR=$(mktemp -d /tmp/tts_notify_XXXXXX)
 OUTPUT="$TMPDIR/notify.mp3"
+VOICE=$(_read_field "voice")
 if command -v tts &>/dev/null; then
-  tts synthesize "$TEXT" -o "$OUTPUT" >/dev/null 2>&1
+  VOICE_ARGS=()
+  if [[ -n "$VOICE" ]]; then
+    VOICE_ARGS=(--voice "$VOICE")
+  fi
+  tts synthesize "$TEXT" "${VOICE_ARGS[@]}" -o "$OUTPUT" >/dev/null 2>&1
   if [[ -f "$OUTPUT" && -s "$OUTPUT" ]]; then
     play_audio_blocking "$OUTPUT"
   fi

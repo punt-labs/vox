@@ -1,7 +1,7 @@
 ---
 description: "Control text-to-speech voice mode and session voice"
 argument-hint: "on | off | status | <voice-name>"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
+allowed-tools: ["mcp__plugin_tts_vox__set_config", "mcp__plugin_tts_vox__list_voices", "Read", "AskUserQuestion"]
 ---
 
 # /voice command
@@ -10,6 +10,7 @@ Control TTS voice mode and session voice selection.
 
 ## Usage
 
+- `/voice` — Browse who's around and pick a voice
 - `/voice on` — Enable voice mode (speak text responses as audio)
 - `/voice off` — Disable voice mode
 - `/voice status` — Show current voice mode and session voice
@@ -21,6 +22,14 @@ Control TTS voice mode and session voice selection.
 Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
 status queries.
 
+- **(no argument)**: Call `list_voices()` MCP tool to see who's around.
+  Pick 3-4 voices from the `featured` list. Present them via
+  `AskUserQuestion` with a "who's around" framing:
+  - Question: "Who do you want to hear from?" (header: "Voice")
+  - Each option: label = voice name, description = blurb from featured
+  - The "Other" option is always available for typing a custom name
+  - After the user picks, call `set_config(key="voice", value="<chosen>")`
+  - Confirm warmly (e.g. "aria's here — let's go")
 - **on**: `set_config(key="voice_enabled", value="true")`
 - **off**: `set_config(key="voice_enabled", value="false")`
 - **status**: Read `.tts/config.md` and report voice_enabled state and
@@ -34,5 +43,5 @@ status queries.
   voice so calls revert to the provider's default.
 
 After changing state, confirm warmly. Voices are people — say
-"alice is here" or "switching to roger", not "Session voice set to
-alice. All subsequent speech will use this voice."
+"aria's here" or "switching to roger", not "Session voice set to
+aria. All subsequent speech will use this voice."
