@@ -1,5 +1,5 @@
 {
-  "name": "tts-dev",
+  "name": "tts",
   "description": "Text-to-speech for Claude Code: /voice, /say, /notify, /speak, /recap",
   "version": "0.8.0.dev1",
   "author": {
@@ -10,7 +10,9 @@
     "vox": {
       "type": "stdio",
       "command": "tts",
-      "args": ["serve"]
+      "args": [
+        "serve"
+      ]
     }
   }
 }
