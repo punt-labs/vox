@@ -332,6 +332,7 @@ class SessionWatcher:
         self._consumers = list(consumers)
         self._poll_interval = poll_interval
         self._stop_event = threading.Event()
+        self._file_latched = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -346,6 +347,7 @@ class SessionWatcher:
             self._thread = None
 
         self._stop_event.clear()
+        self._file_latched.clear()
         self._thread = threading.Thread(
             target=self._run,
             name="tts-session-watcher",
@@ -398,6 +400,7 @@ class SessionWatcher:
                     current_path = jsonl
                     current_inode = stat.st_ino
                     file_pos = stat.st_size
+                    self._file_latched.set()
                     logger.debug(
                         "Tracking %s (inode=%d, pos=%d)",
                         jsonl,

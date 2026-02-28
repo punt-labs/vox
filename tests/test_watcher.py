@@ -27,25 +27,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-def _wait_for(
-    predicate: object,  # Callable[[], bool]
-    *,
-    timeout: float = 2.0,
-    interval: float = 0.02,
-) -> None:
-    """Poll *predicate* until it returns True or *timeout* expires."""
-    from collections.abc import Callable
-
-    assert isinstance(predicate, Callable)  # type: ignore[arg-type]
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():  # type: ignore[operator]
-            return
-        time.sleep(interval)
-    msg = f"Predicate not satisfied within {timeout}s"
-    raise AssertionError(msg)
-
-
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
@@ -401,10 +382,8 @@ class TestWatcherLifecycle:
         )
         watcher.start()
 
-        # Wait for watcher to latch onto the file
-        _wait_for(lambda: watcher.running)
-        # Give the watcher one poll cycle to discover and settle on the file
-        _wait_for(lambda: True, timeout=0.2)
+        # Wait for watcher to discover and latch onto the file
+        assert watcher._file_latched.wait(timeout=2.0)  # pyright: ignore[reportPrivateUsage]
 
         # Append a new line with a classifiable tool result
         line = json.dumps({"type": "tool_result", "content": "5 passed in 1.23s"})
@@ -435,8 +414,7 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        _wait_for(lambda: watcher.running)
-        _wait_for(lambda: True, timeout=0.2)
+        assert watcher._file_latched.wait(timeout=2.0)  # pyright: ignore[reportPrivateUsage]
 
         with jsonl_path.open("a") as f:
             f.write("not json\n")
@@ -458,8 +436,7 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        _wait_for(lambda: watcher.running)
-        _wait_for(lambda: True, timeout=0.2)
+        assert watcher._file_latched.wait(timeout=2.0)  # pyright: ignore[reportPrivateUsage]
 
         with jsonl_path.open("a") as f:
             f.write(
@@ -475,7 +452,8 @@ class TestWatcherLifecycle:
     def test_no_jsonl_does_not_crash(self, tmp_path: Path) -> None:
         watcher = SessionWatcher(session_dir=tmp_path, consumers=[], poll_interval=0.05)
         watcher.start()
-        _wait_for(lambda: watcher.running)
+        # Give the thread time to enter the run loop
+        time.sleep(0.1)
         assert watcher.running
         watcher.stop()
 
@@ -499,8 +477,7 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        _wait_for(lambda: watcher.running)
-        _wait_for(lambda: True, timeout=0.2)
+        assert watcher._file_latched.wait(timeout=2.0)  # pyright: ignore[reportPrivateUsage]
 
         line = json.dumps({"type": "tool_result", "content": "5 passed in 1.23s"})
         with jsonl_path.open("a") as f:
@@ -547,12 +524,16 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        _wait_for(lambda: watcher.running)
-        _wait_for(lambda: True, timeout=0.3)
+        assert watcher._file_latched.wait(timeout=2.0)  # pyright: ignore[reportPrivateUsage]
+
+        # Wait one poll cycle so the watcher reads the initial position
+        time.sleep(0.1)
 
         # Truncate the file (simulates copytruncate)
         jsonl_path.write_text("")
-        _wait_for(lambda: True, timeout=0.15)
+
+        # Wait for watcher to detect truncation and reset
+        time.sleep(0.15)
 
         # Write new content after truncation
         new_line = json.dumps({"type": "tool_result", "content": "5 passed in 1s"})
