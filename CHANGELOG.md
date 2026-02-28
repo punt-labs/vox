@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Per-session voice selection: `/voice <name>` sets a default voice for all speak/chorus/duet/ensemble calls. Stored in `.tts/config.md` as `voice` field. Use `/voice clear` to revert to provider default.
+- Session event watcher: daemon thread in MCP server tails the session transcript and announces milestones (tests passed, lint clean, code pushed) in real-time when `notify=c`. Uses pattern matching on bash tool output, per-signal throttle, and voice/chime modes.
 
 ## [0.7.1] - 2026-02-27
 
