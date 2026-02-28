@@ -94,12 +94,17 @@ def _resolve_voice_and_language(
 ) -> tuple[str, str | None]:
     """Resolve voice and language from MCP tool input.
 
+    Priority: explicit voice > session voice > language default > provider default.
+
     If only language is provided, selects the provider's default voice for it.
     If only voice is provided, infers language from the voice (best-effort).
     If both, validates compatibility.
     """
     if language is not None:
         language = validate_language(language)
+
+    if voice is None:
+        voice = _read_session_voice()
 
     if voice is None and language is not None:
         voice = provider.get_default_voice(language)
@@ -116,7 +121,19 @@ def _resolve_voice_and_language(
 
 
 _VIBE_TAGS_RE = re.compile(r'^vibe_tags:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_VOICE_RE = re.compile(r'^voice:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _CONFIG_PATH = Path(".tts/config.md")
+
+
+def _read_session_voice() -> str | None:
+    """Read the session voice from .tts/config.md, or None if unset."""
+    if not _CONFIG_PATH.exists():
+        return None
+    text = _CONFIG_PATH.read_text()
+    match = _VOICE_RE.search(text)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return None
 
 
 def _read_vibe_tags() -> str | None:
@@ -155,6 +172,7 @@ ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
     {
         "notify",
         "speak",
+        "voice",
         "voice_enabled",
         "vibe",
         "vibe_tags",
@@ -710,10 +728,13 @@ def set_config(
     When ``updates`` is provided, ``key`` and ``value`` are ignored.
 
     Args:
-        key: The config field to set. One of: notify, speak,
+        key: The config field to set. One of: notify, speak, voice,
             voice_enabled, vibe, vibe_tags, vibe_mode, vibe_signals.
             - notify: "y" or "n" — task completion notifications
             - speak: "y" or "n" — spoken vs chime notifications
+            - voice: Voice name for this session (e.g. "matilda", "aria").
+              Used as default when speak/chorus/duet/ensemble omit voice.
+              Empty string to clear (reverts to provider default).
             - voice_enabled: "true" or "false" — voice mode
             - vibe: Human-readable mood description (e.g. "3am debugging")
             - vibe_tags: ElevenLabs expressive tags (e.g. "[tired] [slow]")

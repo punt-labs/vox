@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-session voice selection: `/voice <name>` sets a default voice for all speak/chorus/duet/ensemble calls. Stored in `.tts/config.md` as `voice` field. Use `/voice clear` to revert to provider default.
+
 ## [0.7.1] - 2026-02-27
 
 ### Added
