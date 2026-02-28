@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,7 +16,9 @@ from punt_tts.server import (
     _write_config_field,  # pyright: ignore[reportPrivateUsage]
     _write_config_fields,  # pyright: ignore[reportPrivateUsage]
     set_config,
+    speak,
 )
+from punt_tts.types import AudioProviderId
 
 
 @pytest.fixture()
@@ -381,3 +384,70 @@ class TestSetConfigBatch:
             set_config(value="y")
         with pytest.raises(ValueError, match="requires both"):
             set_config()
+
+
+class TestSpeakVibeTags:
+    """Tests for the vibe_tags parameter on speak."""
+
+    def test_vibe_tags_writes_config_before_synthesis(
+        self, _patch_config: Path
+    ) -> None:
+        _patch_config.write_text('---\nvibe_signals: "tests-pass@14:00"\n---\n')
+        mock_provider = MagicMock()
+        mock_provider.name = "elevenlabs"
+        mock_provider.default_voice = "matilda"
+        mock_provider.supports_expressive_tags = True
+        mock_provider.resolve_voice.return_value = "matilda"
+        mock_provider.infer_language_from_voice.return_value = None
+        mock_result = MagicMock()
+        mock_result.path = _patch_config.parent / "out.mp3"
+        mock_result.text = "Done."
+        mock_result.provider = AudioProviderId("elevenlabs")
+        mock_result.voice = "matilda"
+        mock_result.language = None
+        mock_result.metadata = {}
+        mock_provider.synthesize.return_value = mock_result
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=mock_provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            speak(
+                text="Done.",
+                ephemeral=False,
+                auto_play=False,
+                vibe_tags="[warm] [satisfied]",
+            )
+
+        text = _patch_config.read_text()
+        assert 'vibe_tags: "[warm] [satisfied]"' in text
+        assert 'vibe_signals: ""' in text
+
+    def test_vibe_tags_none_does_not_write_config(self, _patch_config: Path) -> None:
+        _patch_config.write_text(
+            '---\nvibe_tags: "[old]"\nvibe_signals: "test@1"\n---\n'
+        )
+        mock_provider = MagicMock()
+        mock_provider.name = "elevenlabs"
+        mock_provider.default_voice = "matilda"
+        mock_provider.supports_expressive_tags = True
+        mock_provider.resolve_voice.return_value = "matilda"
+        mock_provider.infer_language_from_voice.return_value = None
+        mock_result = MagicMock()
+        mock_result.path = _patch_config.parent / "out.mp3"
+        mock_result.text = "Done."
+        mock_result.provider = AudioProviderId("elevenlabs")
+        mock_result.voice = "matilda"
+        mock_result.language = None
+        mock_result.metadata = {}
+        mock_provider.synthesize.return_value = mock_result
+
+        with (
+            patch("punt_tts.server.get_provider", return_value=mock_provider),
+            patch("punt_tts.server._enqueue_audio"),
+        ):
+            speak(text="Done.", ephemeral=False, auto_play=False)
+
+        text = _patch_config.read_text()
+        assert 'vibe_tags: "[old]"' in text
+        assert 'vibe_signals: "test@1"' in text
