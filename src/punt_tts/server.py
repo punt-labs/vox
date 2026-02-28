@@ -39,10 +39,9 @@ mcp = FastMCP(
         "vibe_mode, and vibe_signals fields. If vibe_mode is 'manual', treat "
         "vibe as your primary mood hint. If vibe_mode is 'auto' and "
         "vibe_signals is non-empty, interpret those signals to pick mood. Then "
-        'call set_config with updates={"vibe_tags": "<tags>", '
-        '"vibe_signals": ""} to set tags and clear consumed signals in one '
-        "call. Then write 1-2 sentences summarizing what you completed, call "
-        "the speak tool with ephemeral=true, then stop. No other output."
+        "write 1-2 sentences summarizing what you completed and call the speak "
+        'tool with ephemeral=true and vibe_tags="[tag1] [tag2]" to set mood '
+        "and speak in one call. No other output."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
