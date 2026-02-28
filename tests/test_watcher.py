@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +25,25 @@ from punt_tts.watcher import (
 
 if TYPE_CHECKING:
     import pytest
+
+
+def _wait_for(
+    predicate: object,  # Callable[[], bool]
+    *,
+    timeout: float = 2.0,
+    interval: float = 0.02,
+) -> None:
+    """Poll *predicate* until it returns True or *timeout* expires."""
+    from collections.abc import Callable
+
+    assert isinstance(predicate, Callable)  # type: ignore[arg-type]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():  # type: ignore[operator]
+            return
+        time.sleep(interval)
+    msg = f"Predicate not satisfied within {timeout}s"
+    raise AssertionError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -365,26 +385,34 @@ class TestWatcherLifecycle:
 
     def test_processes_new_lines(self, tmp_path: Path) -> None:
         events: list[SessionEvent] = []
+        received = threading.Event()
+
+        def _collecting_consumer(event: SessionEvent) -> None:
+            events.append(event)
+            received.set()
+
         jsonl_path = tmp_path / "session.jsonl"
         jsonl_path.write_text("")
 
         watcher = SessionWatcher(
             session_dir=tmp_path,
-            consumers=[events.append],
+            consumers=[_collecting_consumer],
             poll_interval=0.05,
         )
         watcher.start()
 
-        # Wait for watcher to latch onto the file (discover + settle)
-        time.sleep(0.2)
+        # Wait for watcher to latch onto the file
+        _wait_for(lambda: watcher.running)
+        # Give the watcher one poll cycle to discover and settle on the file
+        _wait_for(lambda: True, timeout=0.2)
 
         # Append a new line with a classifiable tool result
         line = json.dumps({"type": "tool_result", "content": "5 passed in 1.23s"})
         with jsonl_path.open("a") as f:
             f.write(line + "\n")
 
-        # Wait for processing
-        time.sleep(0.3)
+        # Wait for event delivery
+        received.wait(timeout=2.0)
         watcher.stop()
 
         assert len(events) == 1
@@ -392,22 +420,29 @@ class TestWatcherLifecycle:
 
     def test_skips_malformed_json(self, tmp_path: Path) -> None:
         events: list[SessionEvent] = []
+        received = threading.Event()
+
+        def _collecting_consumer(event: SessionEvent) -> None:
+            events.append(event)
+            received.set()
+
         jsonl_path = tmp_path / "session.jsonl"
         jsonl_path.write_text("")
 
         watcher = SessionWatcher(
             session_dir=tmp_path,
-            consumers=[events.append],
+            consumers=[_collecting_consumer],
             poll_interval=0.05,
         )
         watcher.start()
-        time.sleep(0.2)
+        _wait_for(lambda: watcher.running)
+        _wait_for(lambda: True, timeout=0.2)
 
         with jsonl_path.open("a") as f:
             f.write("not json\n")
             f.write(json.dumps({"type": "tool_result", "content": "5 passed"}) + "\n")
 
-        time.sleep(0.3)
+        received.wait(timeout=2.0)
         watcher.stop()
 
         assert len(events) == 1
@@ -423,14 +458,16 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        time.sleep(0.2)
+        _wait_for(lambda: watcher.running)
+        _wait_for(lambda: True, timeout=0.2)
 
         with jsonl_path.open("a") as f:
             f.write(
                 json.dumps({"type": "tool_result", "content": "hello world"}) + "\n"
             )
 
-        time.sleep(0.3)
+        # No event expected — wait a few poll cycles then check
+        time.sleep(0.15)
         watcher.stop()
 
         assert len(events) == 0
@@ -438,16 +475,18 @@ class TestWatcherLifecycle:
     def test_no_jsonl_does_not_crash(self, tmp_path: Path) -> None:
         watcher = SessionWatcher(session_dir=tmp_path, consumers=[], poll_interval=0.05)
         watcher.start()
-        time.sleep(0.2)
+        _wait_for(lambda: watcher.running)
         assert watcher.running
         watcher.stop()
 
     def test_consumer_exception_does_not_stop_watcher(self, tmp_path: Path) -> None:
         call_count = 0
+        called = threading.Event()
 
         def bad_consumer(event: SessionEvent) -> None:
             nonlocal call_count
             call_count += 1
+            called.set()
             msg = "boom"
             raise RuntimeError(msg)
 
@@ -460,13 +499,68 @@ class TestWatcherLifecycle:
             poll_interval=0.05,
         )
         watcher.start()
-        time.sleep(0.2)
+        _wait_for(lambda: watcher.running)
+        _wait_for(lambda: True, timeout=0.2)
 
         line = json.dumps({"type": "tool_result", "content": "5 passed in 1.23s"})
         with jsonl_path.open("a") as f:
             f.write(line + "\n")
 
-        time.sleep(0.3)
+        called.wait(timeout=2.0)
         assert watcher.running
         watcher.stop()
         assert call_count >= 1
+
+    def test_start_restarts_dead_thread(self, tmp_path: Path) -> None:
+        """start() restarts if the previous thread died."""
+        watcher = SessionWatcher(session_dir=tmp_path, consumers=[], poll_interval=0.05)
+
+        # Simulate a dead thread reference (thread finished but not cleared
+        # because of a join timeout scenario in production)
+        dead_thread = threading.Thread(target=lambda: None)
+        dead_thread.start()
+        dead_thread.join()
+        watcher._thread = dead_thread  # pyright: ignore[reportPrivateUsage]
+
+        # start() should detect the dead thread and restart
+        watcher.start()
+        assert watcher.running
+        watcher.stop()
+
+    def test_handles_file_truncation(self, tmp_path: Path) -> None:
+        """Watcher resets file position when file is truncated."""
+        events: list[SessionEvent] = []
+        received = threading.Event()
+
+        def _collecting_consumer(event: SessionEvent) -> None:
+            events.append(event)
+            received.set()
+
+        jsonl_path = tmp_path / "session.jsonl"
+        # Start with some content so the watcher latches at a non-zero offset
+        initial_line = json.dumps({"type": "tool_result", "content": "hello"})
+        jsonl_path.write_text(initial_line + "\n")
+
+        watcher = SessionWatcher(
+            session_dir=tmp_path,
+            consumers=[_collecting_consumer],
+            poll_interval=0.05,
+        )
+        watcher.start()
+        _wait_for(lambda: watcher.running)
+        _wait_for(lambda: True, timeout=0.3)
+
+        # Truncate the file (simulates copytruncate)
+        jsonl_path.write_text("")
+        _wait_for(lambda: True, timeout=0.15)
+
+        # Write new content after truncation
+        new_line = json.dumps({"type": "tool_result", "content": "5 passed in 1s"})
+        with jsonl_path.open("a") as f:
+            f.write(new_line + "\n")
+
+        received.wait(timeout=2.0)
+        watcher.stop()
+
+        assert len(events) >= 1
+        assert events[0].signal == "tests-pass"

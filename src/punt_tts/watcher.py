@@ -337,7 +337,14 @@ class SessionWatcher:
     def start(self) -> None:
         """Launch the watcher daemon thread."""
         if self._thread is not None:
-            return
+            if self._thread.is_alive():
+                return
+            logger.warning(
+                "Session watcher thread for %s was not alive; restarting",
+                self._session_dir,
+            )
+            self._thread = None
+
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run,
@@ -352,7 +359,13 @@ class SessionWatcher:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
-            self._thread = None
+            if self._thread.is_alive():
+                logger.warning(
+                    "Session watcher thread for %s did not stop within timeout",
+                    self._session_dir,
+                )
+            else:
+                self._thread = None
         logger.info("Session watcher stopped")
 
     @property
@@ -367,50 +380,66 @@ class SessionWatcher:
         file_pos: int = 0
 
         while not self._stop_event.is_set():
-            jsonl = _find_session_jsonl(self._session_dir)
-            if jsonl is None:
-                logger.debug("No JSONL found in %s", self._session_dir)
-                self._stop_event.wait(self._poll_interval)
-                continue
-
             try:
-                stat = jsonl.stat()
-            except OSError:
-                self._stop_event.wait(self._poll_interval)
-                continue
-
-            # New or rotated file — seek to end
-            if jsonl != current_path or stat.st_ino != current_inode:
-                current_path = jsonl
-                current_inode = stat.st_ino
-                file_pos = stat.st_size
-                logger.debug(
-                    "Tracking %s (inode=%d, pos=%d)",
-                    jsonl,
-                    current_inode,
-                    file_pos,
-                )
-                self._stop_event.wait(self._poll_interval)
-                continue
-
-            # Read new lines
-            if stat.st_size > file_pos:
-                try:
-                    with jsonl.open("r") as f:
-                        f.seek(file_pos)
-                        new_data = f.read()
-                        file_pos = f.tell()
-                except OSError:
-                    logger.debug("Failed to read %s", jsonl)
+                jsonl = _find_session_jsonl(self._session_dir)
+                if jsonl is None:
+                    logger.debug("No JSONL found in %s", self._session_dir)
                     self._stop_event.wait(self._poll_interval)
                     continue
 
-                for raw_line in new_data.splitlines():
-                    stripped = raw_line.strip()
-                    if stripped:
-                        self._process_line(stripped)
+                try:
+                    stat = jsonl.stat()
+                except OSError:
+                    self._stop_event.wait(self._poll_interval)
+                    continue
 
-            self._stop_event.wait(self._poll_interval)
+                # New or rotated file — seek to end
+                if jsonl != current_path or stat.st_ino != current_inode:
+                    current_path = jsonl
+                    current_inode = stat.st_ino
+                    file_pos = stat.st_size
+                    logger.debug(
+                        "Tracking %s (inode=%d, pos=%d)",
+                        jsonl,
+                        current_inode,
+                        file_pos,
+                    )
+                    self._stop_event.wait(self._poll_interval)
+                    continue
+
+                # File truncated (e.g. copytruncate) — reset position
+                if stat.st_size < file_pos:
+                    logger.debug(
+                        "File %s truncated (was %d, now %d), resetting",
+                        jsonl,
+                        file_pos,
+                        stat.st_size,
+                    )
+                    file_pos = stat.st_size
+                    self._stop_event.wait(self._poll_interval)
+                    continue
+
+                # Read new lines
+                if stat.st_size > file_pos:
+                    try:
+                        with jsonl.open("r") as f:
+                            f.seek(file_pos)
+                            new_data = f.read()
+                            file_pos = f.tell()
+                    except OSError:
+                        logger.debug("Failed to read %s", jsonl)
+                        self._stop_event.wait(self._poll_interval)
+                        continue
+
+                    for raw_line in new_data.splitlines():
+                        stripped = raw_line.strip()
+                        if stripped:
+                            self._process_line(stripped)
+
+                self._stop_event.wait(self._poll_interval)
+            except Exception:
+                logger.exception("Unhandled error in session watcher loop; continuing")
+                self._stop_event.wait(self._poll_interval)
 
     def _process_line(self, line: str) -> None:
         """Parse a JSONL line, classify, and dispatch to consumers."""

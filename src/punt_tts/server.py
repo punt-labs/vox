@@ -765,8 +765,9 @@ def set_config(
 def _start_watcher() -> None:
     """Start the session event watcher if a session directory exists.
 
-    Lazy-imports the watcher module to avoid loading provider machinery
-    at server startup. Gracefully skips if the session directory is
+    Lazily imports the watcher module so that watcher-related imports and
+    side effects are only triggered when needed. Gracefully skips if the
+    session directory is
     missing (e.g. running outside Claude Code).
     """
     from punt_tts.watcher import (
