@@ -415,6 +415,7 @@ class TestSpeakVibeTags:
         with (
             patch("punt_tts.server.get_provider", return_value=mock_provider),
             patch("punt_tts.server._enqueue_audio"),
+            patch("punt_tts.core._pad_audio_file"),
         ):
             speak(
                 text="Done.",
@@ -449,6 +450,7 @@ class TestSpeakVibeTags:
         with (
             patch("punt_tts.server.get_provider", return_value=mock_provider),
             patch("punt_tts.server._enqueue_audio"),
+            patch("punt_tts.core._pad_audio_file"),
         ):
             speak(text="Done.", ephemeral=False, auto_play=False)
 
