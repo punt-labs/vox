@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - macOS Say provider default voice changed from Fred to Samantha.
+- Stop hook now signal-gated: only fires when `vibe_signals` is non-empty (real work happened). Prevents empty recaps after trivial commands like `/say hello`.
+- Signal accumulation decoupled from `vibe_mode`: signals accumulate in all modes (auto, manual, off), not just auto. Required for stop hook gating.
+- New signal types: `git-commit` (commit created) and `pr-created` (pull request opened).
 
 ## [0.7.1] - 2026-02-27
 

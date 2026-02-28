@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # PostToolUse hook: accumulate vibe signals from Bash tool execution.
 #
-# Appends a signal token to vibe_signals in .tts/config.md when
-# vibe_mode=auto. Fast gate: exits immediately if config doesn't
-# exist or mode isn't auto.
+# Appends a signal token to vibe_signals in .tts/config.md.
+# Signals serve two purposes: vibe tag selection (auto mode) and
+# stop hook gating (notify=y/c skips recap when no signals present).
 #
 # No `set -euo pipefail` — hooks must degrade gracefully.
 
@@ -13,10 +13,6 @@ source "$SCRIPT_DIR/state.sh"
 
 # Fast gate: no config = not a TTS-enabled project
 [[ -f "$TTS_STATE_FILE" ]] || exit 0
-
-# Fast gate: only accumulate in auto mode
-VIBE_MODE=$(read_vibe_mode)
-[[ "$VIBE_MODE" == "auto" ]] || exit 0
 
 INPUT=$(cat)
 EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_response.exit_code // empty' 2>/dev/null)
@@ -37,6 +33,10 @@ elif echo "$OUTPUT" | grep -qi 'CONFLICT'; then
   SIGNAL="merge-conflict"
 elif echo "$OUTPUT" | grep -qiE 'Everything up-to-date|->.*main'; then
   SIGNAL="git-push-ok"
+elif echo "$OUTPUT" | grep -qiE '^\[.+\] .+|^create mode'; then
+  SIGNAL="git-commit"
+elif echo "$OUTPUT" | grep -qiE 'pull/[0-9]+|created pull request'; then
+  SIGNAL="pr-created"
 fi
 
 # Generic failure if nothing matched but exit code is non-zero

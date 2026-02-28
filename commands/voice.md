@@ -33,4 +33,6 @@ status queries.
 - **clear**: `set_config(key="voice", value="")` — clears the session
   voice so calls revert to the provider's default.
 
-After changing state, confirm the action to the user.
+After changing state, confirm warmly. Voices are people — say
+"alice is here" or "switching to roger", not "Session voice set to
+alice. All subsequent speech will use this voice."
