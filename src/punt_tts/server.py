@@ -776,11 +776,38 @@ def set_config(
     return json.dumps({"key": key, "value": value})
 
 
+def _start_watcher() -> None:
+    """Start the session event watcher if a session directory exists.
+
+    Lazily imports the watcher module so that watcher-related imports and
+    side effects are only triggered when needed. Gracefully skips if the
+    session directory is
+    missing (e.g. running outside Claude Code).
+    """
+    from punt_tts.watcher import (
+        SessionWatcher,
+        derive_session_dir,
+        make_notification_consumer,
+        resolve_chime_path,
+    )
+
+    session_dir = derive_session_dir()
+    if not session_dir.is_dir():
+        logger.info("Session dir %s not found, watcher not started", session_dir)
+        return
+
+    chime_path = resolve_chime_path()
+    consumer = make_notification_consumer(chime_path=chime_path)
+    watcher = SessionWatcher(session_dir=session_dir, consumers=[consumer])
+    watcher.start()
+
+
 def run_server() -> None:
     """Run the MCP server with stdio transport."""
     # MCP stdio servers must not write to stdout; stderr handler is safe.
     configure_logging(stderr_level="INFO")
     logger.info("Starting tts MCP server")
+    _start_watcher()
     mcp.run(transport="stdio")
 
 
