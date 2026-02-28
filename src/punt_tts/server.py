@@ -287,6 +287,7 @@ def speak(
     similarity: float | None = None,
     style: float | None = None,
     speaker_boost: bool | None = None,
+    vibe_tags: str | None = None,
 ) -> str:
     """Speak text aloud and save as MP3.
 
@@ -327,11 +328,18 @@ def speak(
             by other providers. Defaults to provider default.
         speaker_boost: ElevenLabs speaker boost toggle. Ignored by other
             providers. Defaults to provider default.
+        vibe_tags: ElevenLabs expressive tags to apply before synthesis
+            (e.g. "[warm] [satisfied]"). When provided, writes the tags
+            to config and clears vibe_signals in one step — replacing
+            the separate set_config call. Tags are prepended to text
+            automatically via _apply_vibe.
 
     Returns:
         JSON string with path, text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
+    if vibe_tags is not None:
+        _write_config_fields({"vibe_tags": vibe_tags, "vibe_signals": ""})
     provider = get_provider()
     voice, language = _resolve_voice_and_language(provider, voice, language)
 
@@ -379,6 +387,7 @@ def chorus(
     similarity: float | None = None,
     style: float | None = None,
     speaker_boost: bool | None = None,
+    vibe_tags: str | None = None,
 ) -> str:
     """Speak multiple texts to MP3 files.
 
@@ -406,12 +415,17 @@ def chorus(
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
         speaker_boost: ElevenLabs speaker boost toggle.
+        vibe_tags: ElevenLabs expressive tags to apply before synthesis
+            (e.g. "[warm] [satisfied]"). When provided, writes the tags
+            to config and clears vibe_signals in one step.
 
     Returns:
         JSON string with list of results, each containing path,
         text, voice, and language fields.
     """
     _validate_voice_settings(stability, similarity, style)
+    if vibe_tags is not None:
+        _write_config_fields({"vibe_tags": vibe_tags, "vibe_signals": ""})
     provider = get_provider()
     expressive = provider.supports_expressive_tags
     texts = [_apply_vibe(t, expressive_tags=expressive) for t in texts]
