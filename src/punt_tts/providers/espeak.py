@@ -132,11 +132,11 @@ def _load_voices_from_system() -> None:
         # Extract ISO 639-1 from language code (e.g. "en-gb" -> "en")
         iso = lang.split("-")[0]
         if len(iso) == 2 and key not in VOICES:
-            VOICES[key] = EspeakVoiceConfig(name=voice_name, language=iso)
+            VOICES[key] = EspeakVoiceConfig(name=lang, language=iso)
         # Also register by language code for convenience
         lang_key = lang.lower()
         if lang_key not in VOICES:
-            VOICES[lang_key] = EspeakVoiceConfig(name=voice_name, language=iso)
+            VOICES[lang_key] = EspeakVoiceConfig(name=lang, language=iso)
 
     _voices_loaded = True
     logger.debug("Loaded %d voices from espeak-ng", len(VOICES))

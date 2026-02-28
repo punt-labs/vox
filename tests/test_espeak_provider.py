@@ -69,15 +69,15 @@ class TestEspeakProviderName:
 class TestEspeakProviderResolveVoice:
     def test_resolve_cached_voice(self, espeak_provider: EspeakProvider) -> None:
         result = espeak_provider.resolve_voice("english")
-        assert result == "english"
+        assert result == "en"
 
     def test_resolve_by_language_code(self, espeak_provider: EspeakProvider) -> None:
         result = espeak_provider.resolve_voice("en")
-        assert result == "english"
+        assert result == "en"
 
     def test_resolve_case_insensitive(self, espeak_provider: EspeakProvider) -> None:
         result = espeak_provider.resolve_voice("ENGLISH")
-        assert result == "english"
+        assert result == "en"
 
     def test_unknown_voice_raises(self, espeak_provider: EspeakProvider) -> None:
         import punt_tts.providers.espeak as espeak_mod
@@ -92,7 +92,7 @@ class TestEspeakProviderResolveVoice:
 
     def test_matching_language(self, espeak_provider: EspeakProvider) -> None:
         result = espeak_provider.resolve_voice("english", language="en")
-        assert result == "english"
+        assert result == "en"
 
     def test_mismatching_language(self, espeak_provider: EspeakProvider) -> None:
         with pytest.raises(ValueError, match="does not support language 'de'"):
@@ -151,7 +151,7 @@ class TestEspeakProviderSynthesize:
             )
 
         assert result.provider == AudioProviderId.espeak
-        assert result.voice == "english"
+        assert result.voice == "en"
         assert result.language == "en"
         assert result.text == "hello"
 
@@ -172,7 +172,7 @@ class TestEspeakProviderSynthesize:
         espeak_args = espeak_call[0][0]
         assert "espeak" in espeak_args[0]
         assert "-v" in espeak_args
-        assert espeak_args[espeak_args.index("-v") + 1] == "english"
+        assert espeak_args[espeak_args.index("-v") + 1] == "en"
         assert "-s" in espeak_args
         assert espeak_args[espeak_args.index("-s") + 1] == "157"
         assert "hello" in espeak_args
