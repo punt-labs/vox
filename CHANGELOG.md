@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vibe_tags` parameter on `speak` and `chorus` tools: applies expressive tags and clears `vibe_signals` in one step, replacing the separate `set_config` call in the stop-hook flow.
 - Friendly voice-not-found errors: when a voice can't be resolved, providers raise `VoiceNotFoundError` with structured data. MCP tool handlers catch it and return a playful message (e.g. "bob stepped out for a coffee. How about matilda, aria, charlie?") instead of a raw traceback.
 
+### Fixed
+
+- Audio no longer clips at the end: 150ms trailing silence appended to all output files (single, stitched, and batch) to prevent MP3 frame truncation.
+
 ### Changed
 
 - macOS Say provider default voice changed from Fred to Samantha.

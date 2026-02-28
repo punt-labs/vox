@@ -30,6 +30,19 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["TTSClient", "split_text", "stitch_audio"]
 
+# Trailing silence appended to every final output file to prevent
+# MP3 frame truncation / player cutoff at end of audio.
+TRAILING_SILENCE_MS = 150
+
+
+def _pad_audio_file(path: Path) -> None:
+    """Append trailing silence to an MP3 file to prevent end-of-audio clipping."""
+    audio: Any = AudioSegment.from_mp3(str(path))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    tail: Any = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+    padded: Any = audio + tail  # pyright: ignore[reportUnknownVariableType]
+    padded.export(str(path), format="mp3")  # pyright: ignore[reportUnknownMemberType]
+
+
 # Sentence-ending punctuation followed by a space.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -129,7 +142,9 @@ class TTSClient:
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
         """Synthesize a single text to an audio file."""
-        return self._provider.synthesize(request, output_path)
+        result = self._provider.synthesize(request, output_path)
+        _pad_audio_file(output_path)
+        return result
 
     def synthesize_batch(
         self,
@@ -222,7 +237,7 @@ class TTSClient:
         for req in requests:
             filename = generate_filename(req.text)
             path = output_dir / filename
-            results.append(self._provider.synthesize(req, path))
+            results.append(self.synthesize(req, path))
         return results
 
     def _synthesize_batch_merged(
@@ -344,6 +359,9 @@ def stitch_audio(segments: list[Path], output_path: Path, pause_ms: int = 500) -
 
     if combined is None:
         raise ValueError("No audio segments to stitch")
+
+    tail: Any = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+    combined = combined + tail  # pyright: ignore[reportUnknownVariableType]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     combined.export(str(output_path), format="mp3")  # pyright: ignore[reportUnknownMemberType]

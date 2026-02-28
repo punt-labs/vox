@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydub import AudioSegment
 
-from punt_tts.core import TTSClient, stitch_audio
+from punt_tts.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
 from punt_tts.types import (
     MergeStrategy,
     SynthesisRequest,
@@ -306,3 +309,59 @@ class TestStitchAudio:
         stitch_audio([seg], out)
 
         assert out.exists()
+
+    def test_stitch_appends_trailing_silence(self, tmp_path: Path) -> None:
+        seg = tmp_path / "a.mp3"
+        self._write_fake_mp3(seg)
+        original_audio: Any = AudioSegment.from_mp3(str(seg))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        original_ms: int = len(original_audio)  # pyright: ignore[reportUnknownArgumentType]
+
+        out = tmp_path / "stitched.mp3"
+        stitch_audio([seg], out, pause_ms=0)
+
+        stitched: Any = AudioSegment.from_mp3(str(out))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        stitched_ms: int = len(stitched)  # pyright: ignore[reportUnknownArgumentType]
+        # Stitched file should be longer by ~TRAILING_SILENCE_MS.
+        # Allow 50ms tolerance for MP3 frame alignment.
+        assert stitched_ms >= original_ms + TRAILING_SILENCE_MS - 50
+
+
+class TestTrailingSilence:
+    """Verify that synthesize() pads the output file with trailing silence."""
+
+    def test_synthesize_pads_output(
+        self, tts_client: TTSClient, tmp_output_dir: Path
+    ) -> None:
+        request = SynthesisRequest(text="hello", voice="joanna", rate=75)
+        out = tmp_output_dir / "test.mp3"
+
+        tts_client.synthesize(request, out)
+
+        # Read the file back — it should have trailing silence beyond
+        # the raw 50ms silence the mock provider writes.
+        audio: Any = AudioSegment.from_mp3(str(out))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        duration_ms: int = len(audio)  # pyright: ignore[reportUnknownArgumentType]
+        assert duration_ms >= TRAILING_SILENCE_MS
+
+    def test_batch_separate_pads_each_file(
+        self, tts_client: TTSClient, tmp_output_dir: Path
+    ) -> None:
+        requests = [
+            SynthesisRequest(text="hello", voice="joanna"),
+            SynthesisRequest(text="world", voice="joanna"),
+        ]
+
+        results = tts_client.synthesize_batch(
+            requests, tmp_output_dir, MergeStrategy.ONE_FILE_PER_INPUT
+        )
+
+        for r in results:
+            audio: Any = AudioSegment.from_mp3(str(r.path))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            duration_ms: int = len(audio)  # pyright: ignore[reportUnknownArgumentType]
+            assert duration_ms >= TRAILING_SILENCE_MS
+
+    def _make_mp3_bytes(self, duration_ms: int = 50) -> bytes:
+        silence = AudioSegment.silent(duration=duration_ms)
+        buf = io.BytesIO()
+        silence.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
+        return buf.getvalue()
