@@ -1,7 +1,7 @@
 ---
 description: "Control text-to-speech voice mode and session voice"
 argument-hint: "on | off | status | <voice-name>"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "mcp__plugin_tts_vox__list_voices", "Read", "AskUserQuestion"]
+allowed-tools: ["mcp__plugin_tts_vox__set_config", "mcp__plugin_tts_vox__list_voices", "Read"]
 ---
 
 # /voice command
@@ -23,13 +23,18 @@ Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
 status queries.
 
 - **(no argument)**: Call `list_voices()` MCP tool to see who's around.
-  Pick 3-4 voices from the `featured` list. Present them via
-  `AskUserQuestion` with a "who's around" framing:
-  - Question: "Who do you want to hear from?" (header: "Voice")
-  - Each option: label = voice name, description = blurb from featured
-  - The "Other" option is always available for typing a custom name
-  - After the user picks, call `set_config(key="voice", value="<chosen>")`
-  - Confirm warmly (e.g. "aria's here — let's go")
+  Display the `featured` voices with their blurbs in a casual "who's
+  around" format. Show the current voice if set. Tell the user to
+  pick with `/voice <name>`. Example output:
+
+  > matilda's on the mic. Here's who else is around:
+  >
+  > - **aria** — Bright and clear, could narrate your life
+  > - **roger** — Steady and reassuring, explains turbulence well
+  > - **charlie** — Relaxed and genuine, telling you this over coffee
+  > - **laura** — Expressive and warm, brings stories to life
+  >
+  > Pick one with `/voice <name>` — or any name from the full roster.
 - **on**: `set_config(key="voice_enabled", value="true")`
 - **off**: `set_config(key="voice_enabled", value="false")`
 - **status**: Read `.tts/config.md` and report voice_enabled state and
