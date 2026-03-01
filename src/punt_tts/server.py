@@ -72,6 +72,57 @@ _VOICE_EXCUSES = [
     "is in the bathroom",
 ]
 
+_VOICE_BLURBS: dict[tuple[str, str], str] = {
+    # ElevenLabs (popular English voices)
+    ("elevenlabs", "matilda"): (
+        "Warm and thoughtful — sounds like she read the docs before answering"
+    ),
+    ("elevenlabs", "aria"): (
+        "Bright and clear — could narrate your life and you'd keep listening"
+    ),
+    ("elevenlabs", "roger"): (
+        "Steady and reassuring — the voice you want explaining turbulence"
+    ),
+    ("elevenlabs", "charlie"): ("Relaxed and genuine — telling you this over coffee"),
+    ("elevenlabs", "drew"): (
+        "Eloquent and calm — thinks before speaking, every word lands"
+    ),
+    ("elevenlabs", "sarah"): (
+        "Poised and articulate — boardroom-ready but never stiff"
+    ),
+    ("elevenlabs", "laura"): (
+        "Expressive and warm — brings stories to life without trying"
+    ),
+    ("elevenlabs", "george"): (
+        "Rich and composed — could read a phone book and make it interesting"
+    ),
+    ("elevenlabs", "jessica"): (
+        "Friendly and upbeat — makes everything sound like good news"
+    ),
+    ("elevenlabs", "river"): (
+        "Calm and unhurried — late-night radio host who never rushes"
+    ),
+    ("elevenlabs", "lily"): ("Gentle and precise — the quiet expert in the room"),
+    ("elevenlabs", "callum"): (
+        "Crisp and energetic — always slightly ahead of schedule"
+    ),
+    # OpenAI (all 9)
+    ("openai", "nova"): ("Balanced and versatile — the reliable all-rounder"),
+    ("openai", "alloy"): ("Neutral and clear — gets out of the way of the words"),
+    ("openai", "echo"): ("Deep and measured — gravitas without the drama"),
+    ("openai", "fable"): ("Warm and expressive — born to tell stories"),
+    ("openai", "onyx"): ("Low and authoritative — the voice of serious announcements"),
+    ("openai", "shimmer"): ("Bright and airy — light on its feet"),
+    ("openai", "coral"): ("Smooth and natural — easy to listen to for hours"),
+    ("openai", "sage"): ("Thoughtful and steady — wisdom in every syllable"),
+    ("openai", "ash"): ("Grounded and direct — no frills, all substance"),
+    # Polly (popular English voices)
+    ("polly", "joanna"): ("Clear and professional — the classic narrator"),
+    ("polly", "matthew"): ("Warm and conversational — a newscast you'd actually watch"),
+    ("polly", "ruth"): ("Confident and modern — neural voice with presence"),
+    ("polly", "amy"): ("British and crisp — the voice of polished documentation"),
+}
+
 
 def _voice_not_found_message(exc: VoiceNotFoundError) -> str:
     """Build a friendly, brand-appropriate message for an unknown voice."""
@@ -808,6 +859,45 @@ def set_config(
         raise ValueError(msg)
     _write_config_field(key, value)
     return json.dumps({"key": key, "value": value})
+
+
+@mcp.tool()
+def list_voices(language: str | None = None) -> str:
+    """Browse available voices for the current provider.
+
+    Returns a curated "who's around" list: featured voices with personality
+    blurbs, the full roster, and the current session voice (if set).
+
+    Args:
+        language: ISO 639-1 language code to filter by (e.g. 'de', 'ko').
+            When provided, only voices available in that language are listed.
+
+    Returns:
+        JSON string with provider, current voice, featured voices (with
+        blurbs), and full voice list.
+    """
+    if language is not None:
+        language = validate_language(language)
+    provider = get_provider()
+    all_voices = provider.list_voices(language)
+    current = _read_session_voice()
+
+    featured = [
+        {"name": name, "blurb": blurb}
+        for (prov, name), blurb in _VOICE_BLURBS.items()
+        if prov == provider.name and name in all_voices
+    ]
+    random.shuffle(featured)
+    featured = featured[:6]
+
+    return json.dumps(
+        {
+            "provider": provider.name,
+            "current": current,
+            "featured": featured,
+            "all": all_voices,
+        }
+    )
 
 
 def _start_watcher() -> None:

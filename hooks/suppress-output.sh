@@ -131,6 +131,16 @@ if [[ "$TOOL_NAME" == "set_config" ]]; then
   exit 0
 fi
 
+if [[ "$TOOL_NAME" == "list_voices" ]]; then
+  COUNT=$(echo "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
+  PHRASES=(
+    "♪ ${COUNT} voices checked in"
+    "♪ here's who's around"
+  )
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
 # Fallback: full output in panel
 jq -n --arg r "$RESULT" '{
   hookSpecificOutput: {

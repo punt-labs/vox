@@ -19,6 +19,7 @@ from punt_tts.server import (
     chorus,
     duet,
     ensemble,
+    list_voices,
     set_config,
     speak,
 )
@@ -566,3 +567,81 @@ class TestEnsembleVoiceNotFound:
 
         assert "error" in result
         assert "bob " in result["error"]
+
+
+class TestListVoices:
+    """Tests for the list_voices MCP tool."""
+
+    def _mock_provider(
+        self, name: str = "elevenlabs", voices: list[str] | None = None
+    ) -> MagicMock:
+        provider = MagicMock()
+        provider.name = name
+        provider.list_voices.return_value = voices or [
+            "aria",
+            "callum",
+            "charlie",
+            "drew",
+            "george",
+            "jessica",
+            "laura",
+            "lily",
+            "matilda",
+            "river",
+            "roger",
+            "sarah",
+        ]
+        return provider
+
+    def test_returns_provider_and_voices(self, _patch_config: Path) -> None:
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        assert result["provider"] == "elevenlabs"
+        assert isinstance(result["all"], list)
+        assert len(result["all"]) == 12
+        assert isinstance(result["featured"], list)
+
+    def test_featured_includes_blurbs(self, _patch_config: Path) -> None:
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        for entry in result["featured"]:
+            assert "name" in entry
+            assert "blurb" in entry
+            assert len(entry["blurb"]) > 0
+
+    def test_featured_capped_at_six(self, _patch_config: Path) -> None:
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        assert len(result["featured"]) <= 6
+
+    def test_current_voice_included(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvoice: "aria"\n---\n')
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        assert result["current"] == "aria"
+
+    def test_no_current_voice(self, _patch_config: Path) -> None:
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        assert result["current"] is None
+
+    def test_language_filter_passed_through(self, _patch_config: Path) -> None:
+        provider = self._mock_provider()
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            list_voices(language="de")
+        provider.list_voices.assert_called_once_with("de")
+
+    def test_provider_without_blurbs_returns_empty_featured(
+        self, _patch_config: Path
+    ) -> None:
+        provider = self._mock_provider(name="say", voices=["samantha", "alex"])
+        with patch("punt_tts.server.get_provider", return_value=provider):
+            result = json.loads(list_voices())
+        assert result["provider"] == "say"
+        assert result["featured"] == []
+        assert result["all"] == ["samantha", "alex"]
