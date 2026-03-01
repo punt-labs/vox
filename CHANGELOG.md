@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-28
+
+### Added
+
+- `list_voices` MCP tool: browse available voices for the current provider with curated personality blurbs, shuffled featured list (capped at 6), and full voice roster
+- `/voice` bare invocation: displays featured voices with blurbs and prompts user to pick with `/voice <name>`
+- `list_voices` panel handler in suppress-output hook: displays voice count or "here's who's around"
+
+### Fixed
+
+- Permission notification hook now uses the active session voice instead of always defaulting to matilda
+
 ## [0.8.1] - 2026-02-28
 
 ### Fixed
