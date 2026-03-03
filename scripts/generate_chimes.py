@@ -24,7 +24,6 @@ Output:   assets/chime_<signal>.mp3           (neutral)
 
 from __future__ import annotations
 
-import io
 import math
 import struct
 from pathlib import Path
@@ -176,25 +175,22 @@ def chime_prompt() -> AudioSegment:  # type: ignore[return]
 def _pitch_shift(seg: AudioSegment, semitones: int) -> AudioSegment:  # type: ignore[return]
     """Shift pitch by *semitones* via sample rate manipulation.
 
-    Exports to MP3 at the altered frame rate, then reimports at the
-    original rate. This changes pitch without changing duration
-    (though duration shifts slightly — acceptable for short chimes).
+    Adjusts the frame rate to change pitch, then resamples back to
+    the original frame rate to restore tempo. Pure PCM — no lossy
+    MP3 round-trip.
     """
     factor = 2 ** (semitones / 12)
     original_rate: int = seg.frame_rate  # pyright: ignore[reportUnknownMemberType]
     shifted_rate = int(original_rate * factor)
 
-    # Change frame rate (speeds up / slows down)
+    # Change frame rate (speeds up / slows down, affecting pitch)
     shifted: AudioSegment = seg._spawn(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
         seg.raw_data,  # pyright: ignore[reportUnknownMemberType]
         overrides={"frame_rate": shifted_rate},
     )
 
-    # Export and reimport at original rate to resample
-    buf = io.BytesIO()
-    shifted.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
-    buf.seek(0)
-    result: AudioSegment = AudioSegment.from_mp3(buf)  # pyright: ignore[reportUnknownMemberType]
+    # Resample back to original rate (restores tempo)
+    result: AudioSegment = shifted.set_frame_rate(original_rate)  # pyright: ignore[reportUnknownMemberType]
     return result
 
 
