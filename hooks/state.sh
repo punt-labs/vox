@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared state reader for punt-tts hooks.
+# Shared state reader for punt-vox hooks.
 #
 # All hooks source this file to read notification and speech state
 # from .vox/config.md (per-project, YAML frontmatter).
@@ -82,10 +82,10 @@ voice_pronoun() {
 }
 
 # Play audio via flock-serialized queue (non-blocking, fire-and-forget).
-# Uses `tts play` which acquires LOCK_EX before running afplay.
+# Uses `vox play` which acquires LOCK_EX before running afplay.
 enqueue_audio() {
-  if command -v tts &>/dev/null; then
-    nohup tts play "$1" >/dev/null 2>&1 &
+  if command -v vox &>/dev/null; then
+    nohup vox play "$1" >/dev/null 2>&1 &
     disown
   fi
 }
@@ -93,7 +93,7 @@ enqueue_audio() {
 # Play audio via flock-serialized queue (blocking, waits for completion).
 # Use when cleanup must happen after playback finishes.
 play_audio_blocking() {
-  if command -v tts &>/dev/null; then
-    tts play "$1" 2>/dev/null
+  if command -v vox &>/dev/null; then
+    vox play "$1" 2>/dev/null
   fi
 }

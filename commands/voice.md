@@ -1,7 +1,7 @@
 ---
 description: "Control text-to-speech voice mode and session voice"
 argument-hint: "on | off | status | <voice-name>"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "mcp__plugin_tts_vox__list_voices", "Read"]
+allowed-tools: ["mcp__plugin_vox_vox__set_config", "mcp__plugin_vox_vox__list_voices", "Read"]
 ---
 
 # /voice command

@@ -534,27 +534,27 @@ ffmpeg is already a project dependency (pydub uses it for audio processing).
 
 ### Problem
 
-`claude --plugin-dir .` loads the working tree as a plugin, but it collides with the installed production `tts` plugin if both use the same name. Developers cannot test plugin changes (hooks, commands, MCP tools) without uninstalling the production plugin first.
+`claude --plugin-dir .` loads the working tree as a plugin, but it collides with the installed production `vox` plugin if both use the same name. Developers cannot test plugin changes (hooks, commands, MCP tools) without uninstalling the production plugin first.
 
 ### Design
 
-The working tree uses `"name": "tts-dev"` in `.claude-plugin/plugin.json`. Claude Code treats `tts` and `tts-dev` as separate plugins:
+The working tree uses `"name": "vox-dev"` in `.claude-plugin/plugin.json`. Claude Code treats `vox` and `vox-dev` as separate plugins:
 
-- **Prod tools**: `mcp__plugin_tts_vox__speak` (from installed plugin)
-- **Dev tools**: `mcp__plugin_tts-dev_vox__speak` (from `--plugin-dir .`)
+- **Prod tools**: `mcp__plugin_vox_vox__speak` (from installed plugin)
+- **Dev tools**: `mcp__plugin_vox-dev_vox__speak` (from `--plugin-dir .`)
 
 Dev commands (`say-dev.md`, `recap-dev.md`) in `.claude/commands/` reference dev-namespaced tools. Prod commands in `commands/` are unchanged.
 
-The MCP server uses the installed `tts` binary as its command. With editable installs (`uv tool install --force --editable .`), the installed binary runs working-tree code — no `uv run` needed.
+The MCP server uses the installed `vox` binary as its command. With editable installs (`uv tool install --force --editable .`), the installed binary runs working-tree code — no `uv run` needed.
 
-Release scripts (`scripts/release-plugin.sh`) swap `tts-dev` → `tts` and remove `*-dev.md` files before tagging. `scripts/restore-dev-plugin.sh` reverses this after tagging.
+Release scripts (`scripts/release-plugin.sh`) swap `vox-dev` → `vox` and remove `*-dev.md` files before tagging. `scripts/restore-dev-plugin.sh` reverses this after tagging.
 
 ### Session-Start Hook Dispatch
 
-The session-start hook detects dev mode by checking plugin.json for `"tts-dev"`:
+The session-start hook detects dev mode by checking plugin.json for `"vox-dev"`:
 
-- **Dev mode**: skip command deployment (prod plugin deploys top-level commands), auto-allow `mcp__plugin_tts-dev_vox__*`
-- **Prod mode**: deploy commands to `~/.claude/commands/`, auto-allow `mcp__plugin_tts_vox__*`
+- **Dev mode**: skip command deployment (prod plugin deploys top-level commands), auto-allow `mcp__plugin_vox-dev_vox__*`
+- **Prod mode**: deploy commands to `~/.claude/commands/`, auto-allow `mcp__plugin_vox_vox__*`
 
 ### Alternatives Considered
 
@@ -566,7 +566,7 @@ The session-start hook detects dev mode by checking plugin.json for `"tts-dev"`:
 
 ### Key Invariant
 
-The installed `tts` binary always runs working-tree code (via editable install). This means hooks, MCP server, and CLI all exercise the current source without `uv run`.
+The installed `vox` binary always runs working-tree code (via editable install). This means hooks, MCP server, and CLI all exercise the current source without `uv run`.
 
 ---
 
@@ -583,19 +583,19 @@ Claude Code marketplace installs clone HEAD of the default branch, not the versi
 This is invisible when HEAD and the tag are the same commit. It becomes a breaking defect when they diverge — which is exactly what dev/prod namespace isolation does. The release workflow pushes three commits in sequence:
 
 ```text
-main:  ... → [release] → [prepare: name=tts] → [restore: name=tts-dev]
+main:  ... → [release] → [prepare: name=vox] → [restore: name=vox-dev]
                               ↑ tag v0.4.0           ↑ HEAD
 ```
 
-The tag points to the prepare commit (`name: "tts"`). HEAD points to the restore commit (`name: "tts-dev"`). The marketplace installs HEAD — so every user gets the dev plugin.
+The tag points to the prepare commit (`name: "vox"`). HEAD points to the restore commit (`name: "vox-dev"`). The marketplace installs HEAD — so every user gets the dev plugin.
 
 ### Consequences of Installing the Dev Plugin
 
-1. Plugin loads as `tts-dev`, not `tts`
+1. Plugin loads as `vox-dev`, not `vox`
 2. Session-start hook detects `DEV_MODE=true`, skips command deployment
 3. No top-level `/notify`, `/say`, `/speak`, `/recap`, `/voice` commands
-4. User sees only namespaced commands: `/tts-dev:notify`, `/tts-dev:say`, etc.
-5. Tool permission auto-allow writes the dev pattern (`mcp__plugin_tts-dev_vox__*`)
+4. User sees only namespaced commands: `/vox-dev:notify`, `/vox-dev:say`, etc.
+5. Tool permission auto-allow writes the dev pattern (`mcp__plugin_vox-dev_vox__*`)
 
 The plugin technically works — MCP server starts, audio plays — but the UX is wrong. The user has no idea they're running a dev build.
 
@@ -657,16 +657,16 @@ This uses `claude plugin marketplace update` rather than operating on the clone 
 | Alternative | Rejected Because |
 |-------------|-----------------|
 | Don't push restore commit to main | Breaks the dev workflow — developer's working tree would have prod name, defeating namespace isolation |
-| Tag HEAD instead of the prepare commit | Tag would include dev artifacts; marketplace clones the tag and gets `tts-dev` anyway |
+| Tag HEAD instead of the prepare commit | Tag would include dev artifacts; marketplace clones the tag and gets `vox-dev` anyway |
 | File a Claude Code bug to resolve `version` → tag | Correct long-term fix, but we can't control Claude Code's release timeline; `ref` is the available mechanism now |
 | Keep main always prod-ready, dev on branches | Every feature branch would need manual plugin.json swap; error-prone, defeats the automation |
 | Only pin `source.ref`, skip refresh | Existing users with stale clones never see the pin — install still resolves HEAD |
 
 ### Discovery Chain
 
-1. User installed v0.4.0, saw `/tts-dev:notify` instead of `/notify`
-2. Checked installed plugin cache: `name: "tts-dev"`, commit `06c2ec7` (restore commit)
-3. Compared to v0.4.0 tag: commit `c977c8c` (prepare commit), `name: "tts"`
+1. User installed v0.4.0, saw `/vox-dev:notify` instead of `/notify`
+2. Checked installed plugin cache: `name: "vox-dev"`, commit `06c2ec7` (restore commit)
+3. Compared to v0.4.0 tag: commit `c977c8c` (prepare commit), `name: "vox"`
 4. Confirmed: marketplace installed HEAD, not tag
 5. Added `source.ref: "v0.4.0"` to marketplace, nuked cache, reinstalled → `name: "tts"`, correct commit
 6. Discovered stale clone problem: existing users whose clone predates the ref pin still get HEAD

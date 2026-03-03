@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename log/state dir `~/.punt-tts/` → `~/.punt-vox/` (logs, playback lock, pending queue)
 - Release workflow installs `punt-vox` and verifies `vox --help` (was `punt-tts`/`tts`)
 - `install.sh` installs `punt-vox` package with `vox` binary (was `punt-tts`/`tts`)
+- Rename plugin name `tts-dev`/`tts` → `vox-dev`/`vox` (plugin.json, hooks, commands, settings)
+- Plugin MCP tool namespace `mcp__plugin_tts_vox__*` → `mcp__plugin_vox_vox__*`
+- Session-start hook cleans up all legacy `mcp__plugin_tts*` permission patterns
+- Hook scripts use `vox` CLI binary (was `tts`)
 
 ### Fixed
 
