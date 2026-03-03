@@ -197,7 +197,7 @@ class TestReadWatcherConfig:
 
     def test_missing_file(self, tmp_path: Path) -> None:
         config = _read_watcher_config(tmp_path / "missing.md")
-        assert config == _WatcherConfig(notify="n", speak="y")
+        assert config == _WatcherConfig(notify="n", speak="y", vibe=None)
 
     def test_reads_notify_c(self, tmp_path: Path) -> None:
         path = tmp_path / "config.md"
@@ -224,6 +224,24 @@ class TestReadWatcherConfig:
         config = _read_watcher_config(path)
         assert config.notify == "n"
         assert config.speak == "y"
+
+    def test_reads_vibe(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.md"
+        path.write_text('---\nnotify: "c"\nspeak: "n"\nvibe: "happy"\n---\n')
+        config = _read_watcher_config(path)
+        assert config.vibe == "happy"
+
+    def test_missing_vibe_is_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.md"
+        path.write_text('---\nnotify: "c"\n---\n')
+        config = _read_watcher_config(path)
+        assert config.vibe is None
+
+    def test_empty_vibe_is_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.md"
+        path.write_text('---\nvibe: ""\n---\n')
+        config = _read_watcher_config(path)
+        assert config.vibe is None
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +290,21 @@ class TestNotificationConsumer:
 
         with patch("punt_vox.watcher._announce_chime") as mock_chime:
             consumer(event)
-            mock_chime.assert_called_once_with("tests-pass")
+            mock_chime.assert_called_once_with("tests-pass", None)
+
+    def test_chime_mode_passes_vibe(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.md"
+        config_path.write_text('---\nnotify: "c"\nspeak: "n"\nvibe: "happy"\n---\n')
+        consumer = make_notification_consumer(
+            config_path=config_path, throttle_seconds=0.0
+        )
+        event = SessionEvent(
+            signal="tests-pass", timestamp=time.time(), source_text="ok"
+        )
+
+        with patch("punt_vox.watcher._announce_chime") as mock_chime:
+            consumer(event)
+            mock_chime.assert_called_once_with("tests-pass", "happy")
 
     @pytest.mark.skipif(
         os.environ.get("CI") == "true",
@@ -377,6 +409,54 @@ class TestResolveChimePath:
         monkeypatch.setattr("punt_vox.watcher.__file__", str(fake))
         assert resolve_chime_path() is None
         assert resolve_chime_path("tests-pass") is None
+
+    def test_mood_specific_signal_chime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "chime_done.mp3").write_bytes(b"fallback")
+        (assets / "chime_tests_pass.mp3").write_bytes(b"neutral")
+        bright = assets / "chime_tests_pass_bright.mp3"
+        bright.write_bytes(b"bright")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        assert resolve_chime_path("tests-pass", mood="bright") == bright
+
+    def test_mood_falls_back_to_neutral_signal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "chime_done.mp3").write_bytes(b"fallback")
+        neutral = assets / "chime_tests_pass.mp3"
+        neutral.write_bytes(b"neutral")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        # No bright variant → falls back to neutral signal chime
+        assert resolve_chime_path("tests-pass", mood="bright") == neutral
+
+    def test_mood_falls_back_to_mood_done(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "chime_done.mp3").write_bytes(b"neutral-done")
+        mood_done = assets / "chime_done_dark.mp3"
+        mood_done.write_bytes(b"dark-done")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        # Unknown signal, no signal chime → falls back to mood-specific done
+        assert resolve_chime_path("unknown-signal", mood="dark") == mood_done
+
+    def test_mood_neutral_skips_mood_suffix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        neutral = assets / "chime_tests_pass.mp3"
+        neutral.write_bytes(b"neutral")
+        (assets / "chime_done.mp3").write_bytes(b"fallback")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        # Neutral mood never looks for _neutral suffix
+        assert resolve_chime_path("tests-pass", mood="neutral") == neutral
 
     def test_resolve_assets_dir_from_plugin_root(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

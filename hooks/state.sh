@@ -81,6 +81,57 @@ voice_pronoun() {
   esac
 }
 
+# Classify vibe string into a mood family: bright, neutral, or dark.
+# Mirrors MOOD_FAMILIES from src/punt_vox/mood.py.
+classify_mood() {
+  local vibe
+  vibe=$(_read_field "vibe")
+  vibe=$(echo "$vibe" | tr '[:upper:]' '[:lower:]')
+  case "$vibe" in
+    *happy*|*excited*|*satisfied*|*warm*|*playful*|*cheerful*|*joyful*|*energetic*|*triumphant*)
+      echo "bright" ;;
+    *frustrated*|*tense*|*tired*|*concerned*|*annoyed*|*stressed*|*anxious*|*overwhelmed*)
+      echo "dark" ;;
+    *)
+      echo "neutral" ;;
+  esac
+}
+
+# Resolve mood-aware chime path for a signal.
+# Falls back: mood-specific signal → neutral signal → mood-specific done → done.
+resolve_chime() {
+  local signal="$1"
+  local mood
+  mood=$(classify_mood)
+
+  local base_dir
+  base_dir="$(cd "$(dirname "$0")" && pwd)/../assets"
+
+  if [[ "$mood" != "neutral" ]]; then
+    local mood_file="$base_dir/chime_${signal}_${mood}.mp3"
+    if [[ -f "$mood_file" ]]; then
+      echo "$mood_file"
+      return
+    fi
+  fi
+
+  local neutral_file="$base_dir/chime_${signal}.mp3"
+  if [[ -f "$neutral_file" ]]; then
+    echo "$neutral_file"
+    return
+  fi
+
+  if [[ "$mood" != "neutral" ]]; then
+    local mood_done="$base_dir/chime_done_${mood}.mp3"
+    if [[ -f "$mood_done" ]]; then
+      echo "$mood_done"
+      return
+    fi
+  fi
+
+  echo "$base_dir/chime_done.mp3"
+}
+
 # Play audio via flock-serialized queue (non-blocking, fire-and-forget).
 # Uses `vox play` which acquires LOCK_EX before running afplay.
 enqueue_audio() {

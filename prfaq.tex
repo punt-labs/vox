@@ -233,8 +233,11 @@ adds continuous mode: milestone updates during long-running tasks, so the
 developer hears progress without checking in.
 
 \texttt{/speak n} switches from voice to chime --- the same events fire, but
-the notification is an audio tone instead of words. For developers who want
-awareness without narration.
+the notification is an audio tone instead of words. Chimes are mood-aware:
+when a vibe is active, tones pitch-shift to match the session mood (brighter
+when things are going well, darker when they're not). Eight distinct signals
+across three mood variants keep chime-only mode as expressive as voice. For
+developers who want awareness without narration.
 
 \texttt{/recap} is on-demand: after a wall of terminal output, the developer
 types \texttt{/recap} and hears a 30-second spoken summary of what just
@@ -815,7 +818,7 @@ when their agent finishes or needs approval.
   \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. This is the highest time-saved-per-event feature.}\label{feat:permission}
   \featureitem{\texttt{/notify} command}{Toggle notifications: \texttt{y} (task done + permission), \texttt{c} (continuous --- add milestone updates), \texttt{n} (off). Persists via plugin state file.}\label{feat:notify}
   \featureitem{\texttt{/speak} command}{Toggle voice vs.\ chime: \texttt{y} (spoken words), \texttt{n} (audio tone only). Orthogonal to \texttt{/notify}.}\label{feat:speak}
-  \featureitem{Chime audio}{A short, pleasant audio tone for \texttt{/speak n} mode. Distinct tones for task-complete vs.\ needs-approval.}\label{feat:chime}
+  \featureitem{Chime audio}{Mood-aware audio tones for \texttt{/speak n} mode. Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) pitch-shift to match session vibe (bright/neutral/dark). 24 total assets.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly. No manual configuration.}\label{feat:autodetect}
 \end{enumerate}
 
@@ -839,7 +842,7 @@ choice.
   \featureitem{Voice input}{Listening to the developer and converting speech to commands. Different product, different architecture (ASR, wake word detection, continuous listening). punt-vox speaks; it does not listen.}\label{feat:no-voice-input}
   \featureitem{Screen reader / accessibility narrator}{Continuous reading of terminal output for visually impaired users. Requires cursor tracking, ARIA-like semantics, and fundamentally different event architecture. This is valuable but is a different product.}\label{feat:no-screenreader}
   \featureitem{Background music / ambient audio}{AgentVibes does this. It is a creative feature, not a productivity feature. punt-vox is a tool.}\label{feat:no-music}
-  \featureitem{Agent personality voices}{Character voices, mood-based inflection, conversational tone. This optimizes for entertainment. punt-vox optimizes for information delivery.}\label{feat:no-personality}
+  \featureitem{Agent personality voices}{Character voices, conversational tone, entertainment-oriented inflection. punt-vox does adapt to mood --- vibe-driven chime pitch and ElevenLabs expressive tags --- but for \emph{information clarity}, not personality. The voice sounds tired after failures because that is useful signal, not because it is playing a character.}\label{feat:no-personality}
   \featureitem{Custom voice training}{Training a TTS model on the user's voice or a custom voice. ElevenLabs supports this, but exposing it adds configuration complexity that contradicts the zero-config design principle.}\label{feat:no-custom-voice}
 \end{enumerate}
 
