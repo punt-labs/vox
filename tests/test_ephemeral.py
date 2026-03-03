@@ -16,7 +16,7 @@ class TestEphemeralOutputDir:
     def test_creates_directory(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
         result = ephemeral_output_dir()
-        assert result == tmp_path / ".tts"
+        assert result == tmp_path / ".vox"
         assert result.is_dir()
 
     def test_idempotent(self, tmp_path: Path) -> None:
@@ -30,7 +30,7 @@ class TestEphemeralOutputDir:
 class TestCleanEphemeral:
     def test_deletes_all_files(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
-        eph = tmp_path / ".tts"
+        eph = tmp_path / ".vox"
         eph.mkdir()
         (eph / "a.mp3").write_text("audio")
         (eph / "b.mp3").write_text("audio")
@@ -42,7 +42,7 @@ class TestCleanEphemeral:
 
     def test_keeps_specified_file(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
-        eph = tmp_path / ".tts"
+        eph = tmp_path / ".vox"
         eph.mkdir()
         keep = eph / "playing.mp3"
         keep.write_text("audio")
@@ -56,7 +56,7 @@ class TestCleanEphemeral:
 
     def test_preserves_non_mp3_files(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
-        eph = tmp_path / ".tts"
+        eph = tmp_path / ".vox"
         eph.mkdir()
         config = eph / "config.md"
         config.write_text("---\nnotify: y\n---\n")
@@ -74,14 +74,14 @@ class TestCleanEphemeral:
 
     def test_empty_directory_returns_zero(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
-        (tmp_path / ".tts").mkdir()
+        (tmp_path / ".vox").mkdir()
         assert clean_ephemeral() == 0
 
 
 class TestRemoveEphemeralDir:
     def test_removes_directory(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
-        eph = tmp_path / ".tts"
+        eph = tmp_path / ".vox"
         eph.mkdir()
         (eph / "file.mp3").write_text("audio")
 

@@ -11,12 +11,12 @@ from punt_vox.types import SynthesisRequest, generate_filename
 def default_output_dir() -> Path:
     """Resolve the default output directory from environment or fallback.
 
-    Resolution order: ``TTS_OUTPUT_DIR`` env var → ``~/tts-output``.
+    Resolution order: ``VOX_OUTPUT_DIR`` env var → ``~/vox-output``.
     """
-    env_dir = os.environ.get("TTS_OUTPUT_DIR")
+    env_dir = os.environ.get("VOX_OUTPUT_DIR")
     if env_dir:
         return Path(env_dir)
-    return Path.home() / "tts-output"
+    return Path.home() / "vox-output"
 
 
 def resolve_output_path(request: SynthesisRequest) -> Path:

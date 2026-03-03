@@ -58,7 +58,7 @@ Keep it to 1-3 tags. Fewer is better — let the mood breathe.
 
 ## Implementation
 
-Use the `set_config` MCP tool for all writes. Read `.tts/config.md` for
+Use the `set_config` MCP tool for all writes. Read `.vox/config.md` for
 status queries.
 
 - **`/vibe <mood>`**: Interpret the mood, choose tags, then call:
@@ -67,7 +67,7 @@ status queries.
   `set_config(updates={"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})`
 - **`/vibe off`**: Clear all vibe state:
   `set_config(updates={"vibe_tags": "", "vibe": "", "vibe_mode": "off"})`
-- **`/vibe` (no argument)**: Read `.tts/config.md` and report current
+- **`/vibe` (no argument)**: Read `.vox/config.md` and report current
   `vibe_mode`, `vibe`, and `vibe_tags`
 
 After changing, confirm: `Vibe: <mood> → <tags> [mode]` or `Vibe off.`

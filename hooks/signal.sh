@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook: accumulate vibe signals from Bash tool execution.
 #
-# Appends a signal token to vibe_signals in .tts/config.md.
+# Appends a signal token to vibe_signals in .vox/config.md.
 # Signals serve two purposes: vibe tag selection (auto mode) and
 # stop hook gating (notify=y/c skips recap when no signals present).
 #

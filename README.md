@@ -148,7 +148,7 @@ tts serve                                      # Start MCP server (stdio)
 |----------|-------------|---------|
 | `TTS_PROVIDER` | Force a specific provider | auto-detect |
 | `TTS_MODEL` | Model override | provider default |
-| `TTS_OUTPUT_DIR` | Output directory | `~/tts-output` |
+| `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
 ## Roadmap
 
@@ -158,7 +158,7 @@ tts serve                                      # Start MCP server (stdio)
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI
 - Claude Code plugin: marketplace install, MCP server, slash commands
 - CLI: synthesize, batch, pair, pair-batch, doctor
-- Ephemeral output mode (`.tts/` in cwd)
+- Ephemeral output mode (`.vox/` in cwd)
 - Two-channel display: `♪` panel summaries with voice/provider context
 - Playful stop hook phrases: randomized vocalization-themed messages ("Speaking my thoughts...", "Saying my piece...")
 - Natural notification phrasing: randomized phrases for permission and idle prompts

@@ -23,7 +23,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-LOCK_FILE = Path.home() / ".punt-tts" / "playback.lock"
+LOCK_FILE = Path.home() / ".punt-vox" / "playback.lock"
 PLAYBACK_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
 _PENDING_DIR = LOCK_FILE.parent / "pending"
 
@@ -71,7 +71,7 @@ def play_audio(path: Path) -> None:
 def enqueue(path: Path) -> None:
     """Spawn detached subprocess that plays audio. Non-blocking.
 
-    Copies the file to ``~/.punt-tts/pending/`` first so the original
+    Copies the file to ``~/.punt-vox/pending/`` first so the original
     can be safely deleted (e.g., by ephemeral cleanup) before the
     subprocess acquires the flock and opens the file.
     """

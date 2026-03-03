@@ -58,7 +58,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 ## State Management
 
 ```text
-.tts/config.md           # per-project, in project root
+.vox/config.md           # per-project, in project root
 ---
 voice_enabled: false     # /voice toggle
 notify: "n"              # /notify: y=on, c=continuous, n=off
@@ -167,7 +167,7 @@ The Notification hook runs outside the model's conversation. It cannot call MCP 
 
 ### Original Design (Superseded)
 
-Originally used `~/.claude/tts.local.md` (global). Now uses `.tts/config.md` (per-project). See DES-012 for the migration rationale.
+Originally used `~/.claude/tts.local.md` (global). Now uses `.vox/config.md` (per-project). See DES-012 for the migration rationale.
 
 ### Current Design
 
@@ -435,7 +435,7 @@ The user ran `install.sh` from a non-git directory. The SSH fallback added an HT
 
 ---
 
-## DES-012: Per-Project Config — `.tts/config.md` Not Global
+## DES-012: Per-Project Config — `.vox/config.md` Not Global
 
 **Date:** 2026-02-26
 **Status:** SETTLED
@@ -447,19 +447,19 @@ The original state file was `~/.claude/tts.local.md` — a global path shared ac
 
 ### Design
 
-State file moved to `.tts/config.md` in the project root (cwd). Same YAML frontmatter format, same hook parsing — only the path changed.
+State file moved to `.vox/config.md` in the project root (cwd). Same YAML frontmatter format, same hook parsing — only the path changed.
 
 ```bash
 # Before (global, leaked across projects)
 TTS_STATE_FILE="$HOME/.claude/tts.local.md"
 
 # After (per-project, isolated)
-TTS_STATE_FILE=".tts/config.md"
+TTS_STATE_FILE=".vox/config.md"
 ```
 
 ### Why This Works
 
-- `.tts/` is already in `.gitignore` (used for ephemeral audio output)
+- `.vox/` is already in `.gitignore` (used for ephemeral audio output)
 - Hooks run in the project root, so relative paths resolve correctly
 - Follows the biff pattern: biff uses `.biff/` in the project root for per-project state
 - Each project gets independent `/notify`, `/speak`, `/voice` settings
@@ -488,7 +488,7 @@ When multiple paths fire at once, audio overlaps (cacophony). PR #17 attempted P
 
 ### Design
 
-Every playback invocation acquires `LOCK_EX` on `~/.punt-tts/playback.lock`, runs `afplay` synchronously, then releases. Concurrent callers block on the lock and play in turn.
+Every playback invocation acquires `LOCK_EX` on `~/.punt-vox/playback.lock`, runs `afplay` synchronously, then releases. Concurrent callers block on the lock and play in turn.
 
 ```text
 Process A: flock(LOCK_EX) → afplay file1.mp3 → release
