@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install punt-tts — voice for your AI coding assistant.
+# Install punt-vox — voice for your AI coding assistant.
 # Usage: curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/<SHA>/install.sh | sh
 set -eu
 
@@ -18,8 +18,8 @@ fail() { printf '  %b✗%b %s\n' "$YELLOW" "$NC" "$1"; exit 1; }
 MARKETPLACE_REPO="punt-labs/claude-plugins"
 MARKETPLACE_NAME="punt-labs"
 PLUGIN_NAME="tts"
-PACKAGE="punt-tts"
-BINARY="tts"
+PACKAGE="punt-vox"
+BINARY="vox"
 
 # --- Step 1: Prerequisites ---
 
@@ -95,7 +95,7 @@ if [ "$(uname -s)" = "Linux" ]; then
   fi
 fi
 
-# --- Step 4: Install tts CLI ---
+# --- Step 4: Install vox CLI ---
 
 info "Installing $PACKAGE..."
 
