@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to punt-tts will be documented in this file.
+All notable changes to punt-vox will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin MCP tool namespace `mcp__plugin_tts_vox__*` → `mcp__plugin_vox_vox__*`
 - Session-start hook cleans up all legacy `mcp__plugin_tts*` permission patterns
 - Hook scripts use `vox` CLI binary (was `tts`)
+- All documentation updated: README.md, CLAUDE.md, DESIGN.md, prfaq.tex — `punt-tts`/`tts` → `punt-vox`/`vox`
 
 ### Fixed
 

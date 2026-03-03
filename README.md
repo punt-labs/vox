@@ -1,11 +1,11 @@
-# punt-tts
+# punt-vox
 
 > Voice for your AI coding assistant.
 
 [![License](https://img.shields.io/github/license/punt-labs/tts)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/tts/test.yml?label=CI)](https://github.com/punt-labs/tts/actions/workflows/test.yml)
-[![PyPI](https://img.shields.io/pypi/v/punt-tts)](https://pypi.org/project/punt-tts/)
-[![Python](https://img.shields.io/pypi/pyversions/punt-tts)](https://pypi.org/project/punt-tts/)
+[![PyPI](https://img.shields.io/pypi/v/punt-vox)](https://pypi.org/project/punt-vox/)
+[![Python](https://img.shields.io/pypi/pyversions/punt-vox)](https://pypi.org/project/punt-vox/)
 [![Working Backwards](https://img.shields.io/badge/Working_Backwards-hypothesis-lightgrey)](./prfaq.pdf)
 
 When Claude Code finishes a task, hits an error, or needs your approval --- you hear it. No need to watch the terminal. Keep working; your assistant will tell you what happened.
@@ -29,9 +29,9 @@ Restart Claude Code, then:
 <summary>Manual install (if you already have uv)</summary>
 
 ```bash
-uv tool install punt-tts
-tts install
-tts doctor
+uv tool install punt-vox
+vox install
+vox doctor
 ```
 
 </details>
@@ -55,7 +55,7 @@ sh install.sh
 - **Five providers** --- ElevenLabs, OpenAI, AWS Polly, macOS `say`, and Linux `espeak-ng`. The full experience (natural voice, expressive tags, `/vibe`) requires ElevenLabs.
 - **Opt-in only** --- no audio until you enable it, no surprises
 - **Voice or chime** --- `/speak n` switches to audio tones, no TTS API calls
-- **Graceful absence** --- if punt-tts isn't installed, Claude Code works exactly as before
+- **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
 
 ## What It Looks Like
@@ -130,16 +130,16 @@ Auto-detection order: ElevenLabs > OpenAI > say (macOS) / espeak (Linux) > Polly
 
 ## CLI
 
-punt-tts is also a standalone TTS tool, independent of Claude Code.
+punt-vox is also a standalone TTS tool, independent of Claude Code.
 
 ```bash
-tts synthesize "Hello world"                  # Synthesize with default provider
-tts synthesize "Hello" --provider elevenlabs  # Use specific provider
-tts doctor                                     # Check setup
-tts install                                    # Install Claude Code plugin (marketplace)
-tts uninstall                                  # Remove plugin and clean up
-tts install-desktop                            # Register MCP server with Claude Desktop
-tts serve                                      # Start MCP server (stdio)
+vox synthesize "Hello world"                  # Synthesize with default provider
+vox synthesize "Hello" --provider elevenlabs  # Use specific provider
+vox doctor                                     # Check setup
+vox install                                    # Install Claude Code plugin (marketplace)
+vox uninstall                                  # Remove plugin and clean up
+vox install-desktop                            # Register MCP server with Claude Desktop
+vox serve                                      # Start MCP server (stdio)
 ```
 
 ## Environment Variables
