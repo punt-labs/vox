@@ -24,7 +24,7 @@ ACTIONS=()
 
 # ── Deploy top-level commands if missing ──────────────────────────────
 # In dev mode, skip command deployment — prod plugin handles top-level commands.
-# Skip *-dev.md files — dev commands use plugin namespace (tts-dev:say-dev)
+# Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
 if [[ "$DEV_MODE" == "false" ]]; then
   DEPLOYED=()
   for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
