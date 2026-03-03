@@ -13,8 +13,7 @@ build/
 .coverage
 htmlcov/
 *.mp3
-!assets/chime_done.mp3
-!assets/chime_prompt.mp3
+!assets/chime_*.mp3
 *.wav
 *.ogg
 .venv/

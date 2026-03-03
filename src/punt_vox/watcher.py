@@ -222,7 +222,6 @@ _SIGNAL_PHRASES: dict[str, str] = {
 
 def make_notification_consumer(
     config_path: Path | None = None,
-    chime_path: Path | None = None,
     throttle_seconds: float = 15.0,
 ) -> SessionEventConsumer:
     """Create a consumer that announces events via speech or chime.
@@ -247,7 +246,7 @@ def make_notification_consumer(
         if config.speak == "y":
             _announce_voice(event)
         else:
-            _announce_chime(chime_path)
+            _announce_chime(event.signal)
 
     return _consumer
 
@@ -272,24 +271,33 @@ def _announce_voice(event: SessionEvent) -> None:
         logger.exception("Failed to announce %s via voice", event.signal)
 
 
-def _announce_chime(chime_path: Path | None = None) -> None:
-    """Play chime audio for the event."""
-    if chime_path is None:
-        logger.debug("No chime path configured")
+def _announce_chime(signal: str) -> None:
+    """Play the chime asset for *signal*."""
+    chime = resolve_chime_path(signal)
+    if chime is None:
+        logger.debug("No chime found for signal %s", signal)
         return
-    if chime_path.exists():
-        _enqueue_audio(chime_path)
-    else:
-        logger.debug("Chime not found at %s", chime_path)
+    _enqueue_audio(chime)
 
 
 # ---------------------------------------------------------------------------
 # Chime path resolution
 # ---------------------------------------------------------------------------
 
+_SIGNAL_CHIMES: dict[str, str] = {
+    "tests-pass": "chime_tests_pass.mp3",
+    "tests-fail": "chime_tests_fail.mp3",
+    "lint-pass": "chime_lint_pass.mp3",
+    "lint-fail": "chime_lint_fail.mp3",
+    "git-push-ok": "chime_git_push_ok.mp3",
+    "merge-conflict": "chime_merge_conflict.mp3",
+}
 
-def resolve_chime_path() -> Path | None:
-    """Find the ``chime_done.mp3`` asset file.
+_DEFAULT_CHIME = "chime_done.mp3"
+
+
+def _resolve_assets_dir() -> Path | None:
+    """Find the assets directory.
 
     Checks ``CLAUDE_PLUGIN_ROOT`` env var first (set by Claude Code
     for plugin processes), then falls back to a path relative to the
@@ -297,17 +305,40 @@ def resolve_chime_path() -> Path | None:
     """
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
-        candidate = Path(plugin_root) / "assets" / "chime_done.mp3"
-        if candidate.exists():
+        candidate = Path(plugin_root) / "assets"
+        if candidate.is_dir():
             return candidate
 
     # Editable install: watcher.py → punt_vox/ → src/ → project root
     source_root = Path(__file__).resolve().parent.parent.parent
-    candidate = source_root / "assets" / "chime_done.mp3"
-    if candidate.exists():
+    candidate = source_root / "assets"
+    if candidate.is_dir():
         return candidate
 
     return None
+
+
+def resolve_chime_path(signal: str | None = None) -> Path | None:
+    """Find the chime asset for *signal*.
+
+    Returns the signal-specific chime if it exists, otherwise falls
+    back to ``chime_done.mp3``. Returns ``None`` if no assets
+    directory is found.
+    """
+    assets_dir = _resolve_assets_dir()
+    if assets_dir is None:
+        return None
+
+    if signal is not None:
+        filename = _SIGNAL_CHIMES.get(signal)
+        if filename:
+            candidate = assets_dir / filename
+            if candidate.exists():
+                return candidate
+
+    # Fallback to generic chime
+    candidate = assets_dir / _DEFAULT_CHIME
+    return candidate if candidate.exists() else None
 
 
 # ---------------------------------------------------------------------------

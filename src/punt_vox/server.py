@@ -912,7 +912,6 @@ def _start_watcher() -> None:
         SessionWatcher,
         derive_session_dir,
         make_notification_consumer,
-        resolve_chime_path,
     )
 
     session_dir = derive_session_dir()
@@ -920,8 +919,7 @@ def _start_watcher() -> None:
         logger.info("Session dir %s not found, watcher not started", session_dir)
         return
 
-    chime_path = resolve_chime_path()
-    consumer = make_notification_consumer(chime_path=chime_path)
+    consumer = make_notification_consumer()
     watcher = SessionWatcher(session_dir=session_dir, consumers=[consumer])
     watcher.start()
 

@@ -13,11 +13,13 @@ from unittest.mock import patch
 import pytest
 
 from punt_vox.watcher import (
+    _SIGNAL_CHIMES,  # pyright: ignore[reportPrivateUsage]
     SessionEvent,
     SessionWatcher,
     _extract_tool_result_text,  # pyright: ignore[reportPrivateUsage]
     _find_session_jsonl,  # pyright: ignore[reportPrivateUsage]
     _read_watcher_config,  # pyright: ignore[reportPrivateUsage]
+    _resolve_assets_dir,  # pyright: ignore[reportPrivateUsage]
     _WatcherConfig,  # pyright: ignore[reportPrivateUsage]
     classify_output,
     derive_session_dir,
@@ -261,10 +263,8 @@ class TestNotificationConsumer:
     def test_chime_mode_when_speak_n(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.md"
         config_path.write_text('---\nnotify: "c"\nspeak: "n"\n---\n')
-        chime = tmp_path / "chime.mp3"
-        chime.write_bytes(b"fake")
         consumer = make_notification_consumer(
-            config_path=config_path, chime_path=chime, throttle_seconds=0.0
+            config_path=config_path, throttle_seconds=0.0
         )
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
@@ -272,7 +272,7 @@ class TestNotificationConsumer:
 
         with patch("punt_vox.watcher._announce_chime") as mock_chime:
             consumer(event)
-            mock_chime.assert_called_once_with(chime)
+            mock_chime.assert_called_once_with("tests-pass")
 
     @pytest.mark.skipif(
         os.environ.get("CI") == "true",
@@ -330,7 +330,7 @@ class TestNotificationConsumer:
 class TestResolveChimePath:
     """Chime file discovery from env var and source tree."""
 
-    def test_from_plugin_root_env(
+    def test_default_returns_chime_done(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         assets = tmp_path / "assets"
@@ -340,15 +340,60 @@ class TestResolveChimePath:
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         assert resolve_chime_path() == chime
 
-    def test_returns_none_when_not_found(
+    def test_signal_specific_chime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        (assets / "chime_done.mp3").write_bytes(b"fallback")
+        signal_chime = assets / "chime_tests_pass.mp3"
+        signal_chime.write_bytes(b"pass-chime")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        assert resolve_chime_path("tests-pass") == signal_chime
+
+    def test_signal_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        fallback = assets / "chime_done.mp3"
+        fallback.write_bytes(b"fallback")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        # No signal-specific file for lint-pass
+        assert resolve_chime_path("lint-pass") == fallback
+
+    def test_all_signals_have_mapping(self) -> None:
+        """Every classified signal has a chime filename entry."""
+        from punt_vox.watcher import _PATTERNS  # pyright: ignore[reportPrivateUsage]
+
+        signal_names = {name for name, _ in _PATTERNS}
+        assert signal_names == set(_SIGNAL_CHIMES.keys())
+
+    def test_returns_none_when_no_assets_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-        # Point __file__ at a location without assets nearby
         fake = tmp_path / "src" / "punt_vox" / "fake.py"
         monkeypatch.setattr("punt_vox.watcher.__file__", str(fake))
-        result = resolve_chime_path()
-        assert result is None
+        assert resolve_chime_path() is None
+        assert resolve_chime_path("tests-pass") is None
+
+    def test_resolve_assets_dir_from_plugin_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        assert _resolve_assets_dir() == assets
+
+    def test_resolve_assets_dir_from_source_tree(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        # Use the real source tree — assets/ exists in the repo
+        result = _resolve_assets_dir()
+        assert result is not None
+        assert result.name == "assets"
 
 
 # ---------------------------------------------------------------------------
