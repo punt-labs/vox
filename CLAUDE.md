@@ -209,7 +209,7 @@ gh pr view <number> --comments         # Read Copilot feedback — address befor
 **Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). `gh pr merge` tries to checkout main locally, which fails inside a worktree. After merging, pull main to stay ready for the next PR.
 
 ```bash
-# mcp__github__merge_pull_request(owner="punt-labs", repo="tts", pullNumber=N, merge_method="squash")
+# mcp__github__merge_pull_request(owner="punt-labs", repo="vox", pullNumber=N, merge_method="squash")
 git fetch origin main && git checkout origin/main  # Detached HEAD (worktree can't checkout main branch)
 git checkout -b feat/next-thing                     # New branch from latest main
 ```

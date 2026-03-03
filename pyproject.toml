@@ -35,9 +35,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/punt-labs/tts"
-Repository = "https://github.com/punt-labs/tts"
-"Bug Tracker" = "https://github.com/punt-labs/tts/issues"
+Homepage = "https://github.com/punt-labs/vox"
+Repository = "https://github.com/punt-labs/vox"
+"Bug Tracker" = "https://github.com/punt-labs/vox/issues"
 
 [project.scripts]
 vox = "punt_vox.cli:main"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install punt-vox — voice for your AI coding assistant.
-# Usage: curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/<SHA>/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/<SHA>/install.sh | sh
 set -eu
 
 # --- Colors (disabled when not a terminal) ---

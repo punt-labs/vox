@@ -2,8 +2,8 @@
 
 > Voice for your AI coding assistant.
 
-[![License](https://img.shields.io/github/license/punt-labs/tts)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/tts/test.yml?label=CI)](https://github.com/punt-labs/tts/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/punt-labs/vox)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/vox/test.yml?label=CI)](https://github.com/punt-labs/vox/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/punt-vox)](https://pypi.org/project/punt-vox/)
 [![Python](https://img.shields.io/pypi/pyversions/punt-vox)](https://pypi.org/project/punt-vox/)
 [![Working Backwards](https://img.shields.io/badge/Working_Backwards-hypothesis-lightgrey)](./prfaq.pdf)
@@ -15,7 +15,7 @@ When Claude Code finishes a task, hits an error, or needs your approval --- you 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/2d8922f/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2d8922f/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -40,7 +40,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/tts/2d8922f/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2d8922f/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh

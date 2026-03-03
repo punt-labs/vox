@@ -89,12 +89,12 @@ First release as **punt-vox**. The PyPI package name changed from `punt-tts` to 
 
 ### Added
 
-- Batch `set_config` mode: pass `updates` dict to write multiple config fields in a single atomic read-write ([#33](https://github.com/punt-labs/tts/pull/33))
+- Batch `set_config` mode: pass `updates` dict to write multiple config fields in a single atomic read-write ([#33](https://github.com/punt-labs/vox/pull/33))
 
 ### Fixed
 
-- Vibe tags (`[excited]`, `[weary]`, etc.) are now only prepended when the provider supports expressive tags (ElevenLabs). Other providers (Polly, OpenAI, say, espeak) no longer speak bracketed tag text literally ([#39](https://github.com/punt-labs/tts/pull/39))
-- Speak hook output now uses gendered pronouns: "matilda said her piece" instead of "matilda said the piece" ([#31](https://github.com/punt-labs/tts/pull/31))
+- Vibe tags (`[excited]`, `[weary]`, etc.) are now only prepended when the provider supports expressive tags (ElevenLabs). Other providers (Polly, OpenAI, say, espeak) no longer speak bracketed tag text literally ([#39](https://github.com/punt-labs/vox/pull/39))
+- Speak hook output now uses gendered pronouns: "matilda said her piece" instead of "matilda said the piece" ([#31](https://github.com/punt-labs/vox/pull/31))
 - `install.sh` now uses uninstall+install instead of `claude plugin update` which did not reliably pick up new versions
 - `tts doctor` MCP check now says "Claude Desktop MCP" (not "MCP server") and suggests the correct command (`tts install-desktop`)
 
@@ -112,11 +112,11 @@ First release as **punt-vox**. The PyPI package name changed from `punt-tts` to 
 
 ### Fixed
 
-- Stop hook no longer leaks `vibe_mode` debug data in user-visible hook error display; vibe data now read from `.tts/config.md` via Read tool ([#26](https://github.com/punt-labs/tts/pull/26))
-- `_apply_vibe()` skips vibe tag prepend when text already starts with an expression tag, preventing `[calm] [calm] ...` doubling ([#27](https://github.com/punt-labs/tts/pull/27))
+- Stop hook no longer leaks `vibe_mode` debug data in user-visible hook error display; vibe data now read from `.tts/config.md` via Read tool ([#26](https://github.com/punt-labs/vox/pull/26))
+- `_apply_vibe()` skips vibe tag prepend when text already starts with an expression tag, preventing `[calm] [calm] ...` doubling ([#27](https://github.com/punt-labs/vox/pull/27))
 - Voice name now appears in speak tool panel output; `suppress-output.sh` unwraps the `{"result": "..."}` wrapper Claude Code adds to MCP tool responses
-- `install.sh` now detects already-installed plugin and runs `claude plugin update` instead of silently no-oping ([#28](https://github.com/punt-labs/tts/pull/28))
-- TestPyPI verification in release CI uses `--refresh` to bust stale uv index cache between retry attempts ([#29](https://github.com/punt-labs/tts/pull/29))
+- `install.sh` now detects already-installed plugin and runs `claude plugin update` instead of silently no-oping ([#28](https://github.com/punt-labs/vox/pull/28))
+- TestPyPI verification in release CI uses `--refresh` to bust stale uv index cache between retry attempts ([#29](https://github.com/punt-labs/vox/pull/29))
 
 ## [0.6.0] - 2026-02-27
 
@@ -181,7 +181,7 @@ First release as **punt-vox**. The PyPI package name changed from `punt-tts` to 
 
 - Plugin name is now `tts` on main (was `tts-dev`); marketplace installs show `plugin:tts:tts` instead of `plugin:tts-dev:tts`
 - MCP server command is now `tts serve` (was `uv run tts serve`); works on machines without `uv`
-- Install script handles SSH auth failure with HTTPS fallback ([#8](https://github.com/punt-labs/tts/issues/8))
+- Install script handles SSH auth failure with HTTPS fallback ([#8](https://github.com/punt-labs/vox/issues/8))
 
 ### Removed
 

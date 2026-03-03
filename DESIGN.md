@@ -617,7 +617,7 @@ Every marketplace entry must specify the release tag:
   "name": "tts",
   "source": {
     "source": "github",
-    "repo": "punt-labs/tts",
+    "repo": "punt-labs/vox",
     "ref": "v0.4.0"
   },
   "version": "0.4.0"
