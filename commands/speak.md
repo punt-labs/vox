@@ -15,12 +15,12 @@ Toggle whether notifications use spoken words or an audio chime.
 
 ## Implementation
 
-Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
+Use the `set_config` MCP tool for writes. Read `.vox/config.md` for
 status queries.
 
 - **y**: `set_config(key="speak", value="y")`
 - **n**: `set_config(key="speak", value="n")`
-- **no argument**: Read `.tts/config.md` and report current state
+- **no argument**: Read `.vox/config.md` and report current state
 
 After changing state, confirm with a brief message:
 

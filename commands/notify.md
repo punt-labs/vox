@@ -16,13 +16,13 @@ Toggle audio notifications for Claude Code events.
 
 ## Implementation
 
-Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
+Use the `set_config` MCP tool for writes. Read `.vox/config.md` for
 status queries.
 
 - **y**: `set_config(key="notify", value="y")`
 - **c**: `set_config(key="notify", value="c")`
 - **n**: `set_config(key="notify", value="n")`
-- **no argument**: Read `.tts/config.md` and report current state
+- **no argument**: Read `.vox/config.md` and report current state
 
 After changing state, confirm with a brief message:
 

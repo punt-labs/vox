@@ -63,7 +63,7 @@ REASON=$(pick_random "${SUMMARY_PHRASES[@]}")
 
 # Voice mode: block the stop, ask Claude to summarize and speak.
 # Vibe data (vibe_mode, vibe_signals, vibe) lives in
-# .tts/config.md — Claude reads it via the Read file tool, while
+# .vox/config.md — Claude reads it via the Read file tool, while
 # set_config is used only for writing. Keeping the reason clean
 # avoids debug data leaking into the user-visible hook error display.
 jq -n --arg reason "$REASON" '{

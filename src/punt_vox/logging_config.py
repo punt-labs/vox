@@ -6,7 +6,7 @@ import logging
 import logging.config
 from pathlib import Path
 
-_LOG_DIR = Path.home() / ".punt-tts" / "logs"
+_LOG_DIR = Path.home() / ".punt-vox" / "logs"
 _LOG_FILE = _LOG_DIR / "tts.log"
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

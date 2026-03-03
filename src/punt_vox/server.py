@@ -37,7 +37,7 @@ mcp = FastMCP(
         "TTS is a text-to-speech engine. Use these tools to speak text aloud, "
         "generate audio files, and create language-learning pairs.\n\n"
         "When a stop hook blocks with a ♪ phrase (e.g. '♪ Speaking my thoughts...'), "
-        "first use the Read tool to read .tts/config.md and check the vibe, "
+        "first use the Read tool to read .vox/config.md and check the vibe, "
         "vibe_mode, and vibe_signals fields. If vibe_mode is 'manual', treat "
         "vibe as your primary mood hint. If vibe_mode is 'auto' and "
         "vibe_signals is non-empty, interpret those signals to pick mood. Then "
@@ -134,7 +134,7 @@ def _voice_not_found_message(exc: VoiceNotFoundError) -> str:
 def _resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Path:
     """Resolve an output directory, using the default if not specified.
 
-    When *ephemeral* is True, returns the ephemeral `.tts/` directory
+    When *ephemeral* is True, returns the ephemeral `.vox/` directory
     in the current working directory and ignores *output_dir*.
     """
     if ephemeral:
@@ -189,11 +189,11 @@ def _resolve_voice_and_language(
 
 _VIBE_TAGS_RE = re.compile(r'^vibe_tags:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _VOICE_RE = re.compile(r'^voice:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_CONFIG_PATH = Path(".tts/config.md")
+_CONFIG_PATH = Path(".vox/config.md")
 
 
 def _read_session_voice() -> str | None:
-    """Read the session voice from .tts/config.md, or None if unset."""
+    """Read the session voice from .vox/config.md, or None if unset."""
     if not _CONFIG_PATH.exists():
         return None
     text = _CONFIG_PATH.read_text()
@@ -204,7 +204,7 @@ def _read_session_voice() -> str | None:
 
 
 def _read_vibe_tags() -> str | None:
-    """Read expressive tags from .tts/config.md, or None if unset."""
+    """Read expressive tags from .vox/config.md, or None if unset."""
     if not _CONFIG_PATH.exists():
         return None
     text = _CONFIG_PATH.read_text()
@@ -252,7 +252,7 @@ _CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
 
 
 def _write_config_field(key: str, value: str) -> None:
-    """Write a single YAML frontmatter field to .tts/config.md.
+    """Write a single YAML frontmatter field to .vox/config.md.
 
     Updates the field in-place if present, or inserts it before the
     closing ``---`` if absent. Creates the file with minimal frontmatter
@@ -383,9 +383,9 @@ def speak(
             synthesis. Defaults to true.
         output_path: Full path for the output file. If not provided,
             a file is auto-generated in output_dir.
-        output_dir: Directory for output. Defaults to TTS_OUTPUT_DIR
-            env var or ~/tts-output/.
-        ephemeral: If true, write to `.tts/` in cwd and clean up
+        output_dir: Directory for output. Defaults to VOX_OUTPUT_DIR
+            env var or ~/vox-output/.
+        ephemeral: If true, write to `.vox/` in cwd and clean up
             previous ephemeral files. Ignores output_dir/output_path.
         stability: ElevenLabs voice stability (0.0-1.0). Ignored by
             other providers. Defaults to provider default.
@@ -478,8 +478,8 @@ def chorus(
         auto_play: Open the file(s) in the default audio player after
             synthesis. Defaults to true.
         output_dir: Directory for output files. Defaults to
-            TTS_OUTPUT_DIR env var or ~/tts-output/.
-        ephemeral: If true, write to `.tts/` in cwd and clean up
+            VOX_OUTPUT_DIR env var or ~/vox-output/.
+        ephemeral: If true, write to `.vox/` in cwd and clean up
             previous ephemeral files. Ignores output_dir.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
@@ -594,8 +594,8 @@ def duet(
         auto_play: Play the audio after synthesis. Defaults to true.
         output_path: Full path for the output file.
         output_dir: Directory for output. Defaults to
-            TTS_OUTPUT_DIR env var or ~/tts-output/.
-        ephemeral: If true, write to `.tts/` in cwd and clean up
+            VOX_OUTPUT_DIR env var or ~/vox-output/.
+        ephemeral: If true, write to `.vox/` in cwd and clean up
             previous ephemeral files. Ignores output_dir/output_path.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
@@ -701,8 +701,8 @@ def ensemble(
             files per pair. Defaults to false.
         auto_play: Play the audio after synthesis. Defaults to true.
         output_dir: Directory for output files. Defaults to
-            TTS_OUTPUT_DIR env var or ~/tts-output/.
-        ephemeral: If true, write to `.tts/` in cwd and clean up
+            VOX_OUTPUT_DIR env var or ~/vox-output/.
+        ephemeral: If true, write to `.vox/` in cwd and clean up
             previous ephemeral files. Ignores output_dir.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
@@ -813,7 +813,7 @@ def set_config(
     value: str | None = None,
     updates: dict[str, str] | None = None,
 ) -> str:
-    """Write configuration field(s) to .tts/config.md.
+    """Write configuration field(s) to .vox/config.md.
 
     Updates plugin state that controls TTS behavior. Use this instead
     of Read/Write/Edit file tools when changing plugin configuration.

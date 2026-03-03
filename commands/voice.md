@@ -19,7 +19,7 @@ Control TTS voice mode and session voice selection.
 
 ## Implementation
 
-Use the `set_config` MCP tool for writes. Read `.tts/config.md` for
+Use the `set_config` MCP tool for writes. Read `.vox/config.md` for
 status queries.
 
 - **(no argument)**: Call `list_voices()` MCP tool to see who's around.
@@ -37,7 +37,7 @@ status queries.
   > Pick one with `/voice <name>` — or any name from the full roster.
 - **on**: `set_config(key="voice_enabled", value="true")`
 - **off**: `set_config(key="voice_enabled", value="false")`
-- **status**: Read `.tts/config.md` and report voice_enabled state and
+- **status**: Read `.vox/config.md` and report voice_enabled state and
   session voice. If the file doesn't exist, voice mode is off and no
   session voice is set.
 - **`<name>`**: `set_config(key="voice", value="<name>")` — sets

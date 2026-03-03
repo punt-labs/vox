@@ -51,13 +51,13 @@ Module structure under `src/punt_tts/`:
 |--------|---------------|
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
-| `output.py` | Output path resolution: `TTS_OUTPUT_DIR` env var, `~/tts-output` fallback |
-| `logging_config.py` | Rotating file logging to `~/.punt-tts/logs/tts.log` |
-| `ephemeral.py` | Ephemeral output mode: `.tts/` in cwd, auto-cleanup |
+| `output.py` | Output path resolution: `VOX_OUTPUT_DIR` env var, `~/vox-output` fallback |
+| `logging_config.py` | Rotating file logging to `~/.punt-vox/logs/tts.log` |
+| `ephemeral.py` | Ephemeral output mode: `.vox/` in cwd, auto-cleanup |
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
 | `cli.py` | Click CLI — `--provider` flag, voice settings flags, synthesize, batch, pair, pair-batch, doctor, install, uninstall, install-desktop, play, serve |
 | `installer.py` | Marketplace-based plugin install/uninstall: punt-labs marketplace registration, `claude plugin install/uninstall` |
-| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble`, `set_config`. Reads/writes `.tts/config.md` for session vibe and plugin config. |
+| `server.py` | FastMCP server — MCP tools: `speak`, `chorus`, `duet`, `ensemble`, `set_config`. Reads/writes `.vox/config.md` for session vibe and plugin config. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |

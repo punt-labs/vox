@@ -712,7 +712,7 @@ class TestInstallDesktopCommand:
             "punt-vox",
             "vox-server",
         ]
-        assert server["env"]["TTS_OUTPUT_DIR"] == str(audio_dir)
+        assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
         assert server["env"]["TTS_PROVIDER"] == "say"
 
     @patch(f"{_CLI}.get_provider")

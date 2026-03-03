@@ -12,7 +12,7 @@ from punt_vox.types import SynthesisRequest
 class TestDefaultOutputDir:
     def test_returns_env_var_when_set(self, tmp_path: Path) -> None:
         custom = str(tmp_path / "custom-audio")
-        with patch.dict("os.environ", {"TTS_OUTPUT_DIR": custom}):
+        with patch.dict("os.environ", {"VOX_OUTPUT_DIR": custom}):
             result = default_output_dir()
         assert result == Path(custom)
 
@@ -20,9 +20,9 @@ class TestDefaultOutputDir:
         with patch.dict("os.environ", {}, clear=False):
             import os
 
-            os.environ.pop("TTS_OUTPUT_DIR", None)
+            os.environ.pop("VOX_OUTPUT_DIR", None)
             result = default_output_dir()
-        assert result == Path.home() / "tts-output"
+        assert result == Path.home() / "vox-output"
 
 
 class TestResolveOutputPath:

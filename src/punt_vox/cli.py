@@ -208,7 +208,7 @@ def main(
     "-o",
     default=None,
     type=click.Path(path_type=Path),
-    help="Output file path. Defaults to auto-generated name in ~/tts-output.",
+    help="Output file path. Defaults to auto-generated name in ~/vox-output.",
 )
 @_voice_settings_options
 @click.pass_context
@@ -274,7 +274,7 @@ def synthesize(
     "-d",
     default=None,
     type=click.Path(path_type=Path),
-    help="Output directory. Defaults to ~/tts-output.",
+    help="Output directory. Defaults to ~/vox-output.",
 )
 @click.option(
     "--merge",
@@ -495,7 +495,7 @@ def synthesize_pair(
     "-d",
     default=None,
     type=click.Path(path_type=Path),
-    help="Output directory. Defaults to ~/tts-output.",
+    help="Output directory. Defaults to ~/vox-output.",
 )
 @click.option(
     "--merge",
@@ -823,7 +823,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     """
     env: dict[str, str] = {
         "TTS_PROVIDER": provider,
-        "TTS_OUTPUT_DIR": str(audio_dir),
+        "VOX_OUTPUT_DIR": str(audio_dir),
     }
     if provider == "elevenlabs":
         key = os.environ.get("ELEVENLABS_API_KEY")
@@ -849,7 +849,7 @@ def _build_install_env(provider: str, audio_dir: Path) -> dict[str, str]:
     "--output-dir",
     default=None,
     type=click.Path(path_type=Path),
-    help="Output directory for synthesized audio. Default: ~/tts-output",
+    help="Output directory for synthesized audio. Default: ~/vox-output",
 )
 @click.option(
     "--uvx-path",

@@ -177,7 +177,7 @@ def _find_session_jsonl(session_dir: Path) -> Path | None:
 
 _NOTIFY_RE = re.compile(r'^notify:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _SPEAK_RE = re.compile(r'^speak:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_DEFAULT_CONFIG_PATH = Path(".tts/config.md")
+_DEFAULT_CONFIG_PATH = Path(".vox/config.md")
 
 
 def _read_watcher_config(config_path: Path | None = None) -> _WatcherConfig:

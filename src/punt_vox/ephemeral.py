@@ -1,6 +1,6 @@
 """Ephemeral output directory management.
 
-Provides a `.tts/` directory in the current working directory for
+Provides a `.vox/` directory in the current working directory for
 temporary audio files. Files are cleaned up automatically before
 each synthesis to prevent accumulation.
 """
@@ -13,11 +13,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_EPHEMERAL_DIR_NAME = ".tts"
+_EPHEMERAL_DIR_NAME = ".vox"
 
 
 def ephemeral_output_dir() -> Path:
-    """Return the ephemeral output directory (`.tts/` in cwd).
+    """Return the ephemeral output directory (`.vox/` in cwd).
 
     Creates the directory if it does not exist.
     """

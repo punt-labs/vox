@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Rename env var `TTS_OUTPUT_DIR` → `VOX_OUTPUT_DIR`
+- Rename default output dir `~/tts-output` → `~/vox-output`
+- Rename ephemeral dir `.tts/` → `.vox/` (config, audio)
+- Rename log/state dir `~/.punt-tts/` → `~/.punt-vox/` (logs, playback lock, pending queue)
+
 ### Fixed
 
 - `release-plugin.sh` no longer fails when no `-dev` commands exist — name swap proceeds with a warning instead of aborting
