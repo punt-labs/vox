@@ -1,4 +1,4 @@
-# punt-tts Design Decision Log
+# punt-vox Design Decision Log
 
 This file is the authoritative record of design decisions, prior approaches, and their outcomes. **Every design change must be logged here before implementation.**
 
@@ -35,7 +35,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 │    → stop_hook_active=true on second fire → let stop         │
 │                                                              │
 │  Notification hook (notify-permission.sh):                   │
-│    if notify=y: async call `tts synthesize` CLI directly     │
+│    if notify=y: async call `vox synthesize` CLI directly     │
 │    → audio plays immediately, no model involvement           │
 │                                                              │
 │  PostToolUse hook (suppress-output.sh):                      │
@@ -46,10 +46,10 @@ This file is the authoritative record of design decisions, prior approaches, and
           │ MCP tool calls                     │ CLI calls
           │                                    │
 ┌─────────▼────────────────────────────────────▼───────────────┐
-│                    punt-tts Engine                            │
+│                    punt-vox Engine                            │
 │                                                              │
 │  MCP Server (speak, chorus, duet, ensemble)                  │
-│  CLI (tts synthesize "text" --ephemeral --auto-play)         │
+│  CLI (vox synthesize "text" --ephemeral --auto-play)         │
 │  Providers: ElevenLabs > OpenAI > Polly (auto-detect)        │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -143,7 +143,7 @@ Permission dialog appears → Notification hook fires (async)
   → reads tts.local.md
   ├── notify=n → exit 0
   ├── speak=n → play chime audio file
-  └── speak=y → pick random phrase → tts synthesize "$TEXT" -o $TMPDIR/notify.mp3
+  └── speak=y → pick random phrase → vox synthesize "$TEXT" -o $TMPDIR/notify.mp3
 ```
 
 ### Why Async + CLI (Not Model)
@@ -500,7 +500,7 @@ Two entry points in `playback.py`:
 - `play_audio(path)` — blocking: flock → afplay → release
 - `enqueue(path)` — non-blocking: spawn detached subprocess that calls `play_audio`
 
-Bash hooks call `tts play <path>` (thin CLI wrapper). The MCP server calls `enqueue()` directly.
+Bash hooks call `vox play <path>` (thin CLI wrapper). The MCP server calls `enqueue()` directly.
 
 ### Why fcntl.flock
 

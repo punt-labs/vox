@@ -45,7 +45,7 @@ uvx twine check dist/*
 
 ## Architecture
 
-Module structure under `src/punt_tts/`:
+Module structure under `src/punt_vox/`:
 
 | Module | Responsibility |
 |--------|---------------|
@@ -242,7 +242,7 @@ git checkout -b feat/next-thing                     # New branch from latest mai
 
 Every release follows this exact sequence. No steps skipped.
 
-1. **Bump version** in `pyproject.toml`, `src/punt_tts/__init__.py`, and `.claude-plugin/plugin.json` (keep in sync)
+1. **Bump version** in `pyproject.toml`, `src/punt_vox/__init__.py`, and `.claude-plugin/plugin.json` (keep in sync)
 2. **Move `[Unreleased]`** entries in `CHANGELOG.md` to new version section with date
 3. **Run all quality gates** — ruff, mypy, pyright, pytest
 4. **Commit**: `chore: release vX.Y.Z`
