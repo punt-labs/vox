@@ -1,7 +1,7 @@
 {
   "name": "vox-dev",
   "description": "Text-to-speech for Claude Code: /voice, /say, /notify, /speak, /recap",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "author": {
     "name": "Punt Labs",
     "email": "hello@punt-labs.com"
