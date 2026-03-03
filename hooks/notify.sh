@@ -38,9 +38,9 @@ fi
 
 SPEAK=$(read_speak)
 
-# Chime mode: play audio tone via flock-serialized queue, let Claude stop.
+# Chime mode: play mood-aware audio tone via flock-serialized queue, let Claude stop.
 if [[ "$SPEAK" == "n" ]]; then
-  CHIME="$SCRIPT_DIR/../assets/chime_done.mp3"
+  CHIME=$(resolve_chime "done")
   if [[ -f "$CHIME" ]]; then
     enqueue_audio "$CHIME"
   fi

@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Vibe-driven chime notifications: chimes now reflect session mood (bright/neutral/dark) via pitch-shifted variants (±3 semitones)
+- Mood classification module (`mood.py`): maps free-form vibe strings to bright/neutral/dark tonal families
+- Mood-aware chime resolution: `resolve_chime_path(signal, mood=)` with four-level fallback chain
 - Per-signal chime assets: distinct sounds for tests-pass, tests-fail, lint-pass, lint-fail, git-push-ok, and merge-conflict (chime mode only)
 - Signal-aware `resolve_chime_path(signal)` with automatic fallback to `chime_done.mp3`
-- Generation script `scripts/generate_chimes.py` for reproducible chime synthesis
+- Generation script `scripts/generate_chimes.py` for reproducible chime synthesis with mood variants
 
 ## [0.10.1] - 2026-03-03
 

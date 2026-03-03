@@ -48,6 +48,7 @@ class _WatcherConfig:
 
     notify: str
     speak: str
+    vibe: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -177,14 +178,15 @@ def _find_session_jsonl(session_dir: Path) -> Path | None:
 
 _NOTIFY_RE = re.compile(r'^notify:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _SPEAK_RE = re.compile(r'^speak:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_VIBE_RE = re.compile(r'^vibe:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _DEFAULT_CONFIG_PATH = Path(".vox/config.md")
 
 
 def _read_watcher_config(config_path: Path | None = None) -> _WatcherConfig:
-    """Read notify and speak state from the config file."""
+    """Read notify, speak, and vibe state from the config file."""
     path = config_path or _DEFAULT_CONFIG_PATH
     if not path.exists():
-        return _WatcherConfig(notify="n", speak="y")
+        return _WatcherConfig(notify="n", speak="y", vibe=None)
 
     text = path.read_text()
 
@@ -198,7 +200,12 @@ def _read_watcher_config(config_path: Path | None = None) -> _WatcherConfig:
     if speak not in ("y", "n"):
         speak = "y"
 
-    return _WatcherConfig(notify=notify, speak=speak)
+    vibe_match = _VIBE_RE.search(text)
+    vibe = vibe_match.group(1).strip() if vibe_match else None
+    if vibe == "":
+        vibe = None
+
+    return _WatcherConfig(notify=notify, speak=speak, vibe=vibe)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +253,7 @@ def make_notification_consumer(
         if config.speak == "y":
             _announce_voice(event)
         else:
-            _announce_chime(event.signal)
+            _announce_chime(event.signal, config.vibe)
 
     return _consumer
 
@@ -271,11 +278,14 @@ def _announce_voice(event: SessionEvent) -> None:
         logger.exception("Failed to announce %s via voice", event.signal)
 
 
-def _announce_chime(signal: str) -> None:
-    """Play the chime asset for *signal*."""
-    chime = resolve_chime_path(signal)
+def _announce_chime(signal: str, vibe: str | None = None) -> None:
+    """Play the mood-appropriate chime asset for *signal*."""
+    from punt_vox.mood import classify_mood
+
+    mood = classify_mood(vibe)
+    chime = resolve_chime_path(signal, mood=mood)
     if chime is None:
-        logger.debug("No chime found for signal %s", signal)
+        logger.debug("No chime found for signal %s (mood=%s)", signal, mood)
         return
     _enqueue_audio(chime)
 
@@ -318,27 +328,46 @@ def _resolve_assets_dir() -> Path | None:
     return None
 
 
-def resolve_chime_path(signal: str | None = None) -> Path | None:
-    """Find the chime asset for *signal*.
+def resolve_chime_path(
+    signal: str | None = None, *, mood: str = "neutral"
+) -> Path | None:
+    """Find the chime asset for *signal* and *mood*.
 
-    Returns the signal-specific chime if it exists, otherwise falls
-    back to ``chime_done.mp3``. Returns ``None`` if no assets
-    directory is found.
+    Resolution chain (first existing file wins):
+    1. ``chime_{signal}_{mood}.mp3`` — mood-specific signal chime
+    2. ``chime_{signal}.mp3``        — neutral signal chime
+    3. ``chime_done_{mood}.mp3``     — mood-specific default
+    4. ``chime_done.mp3``            — neutral default
+
+    When *mood* is ``"neutral"``, steps 1 and 3 are skipped (neutral
+    files have no mood suffix).
     """
     assets_dir = _resolve_assets_dir()
     if assets_dir is None:
         return None
 
-    if signal is not None:
-        filename = _SIGNAL_CHIMES.get(signal)
-        if filename:
-            candidate = assets_dir / filename
-            if candidate.exists():
-                return candidate
+    candidates: list[str] = []
 
-    # Fallback to generic chime
-    candidate = assets_dir / _DEFAULT_CHIME
-    return candidate if candidate.exists() else None
+    if signal is not None:
+        base = _SIGNAL_CHIMES.get(signal)
+        if base:
+            stem = base.removesuffix(".mp3")
+            if mood != "neutral":
+                candidates.append(f"{stem}_{mood}.mp3")
+            candidates.append(base)
+
+    # Default fallback
+    default_stem = _DEFAULT_CHIME.removesuffix(".mp3")
+    if mood != "neutral":
+        candidates.append(f"{default_stem}_{mood}.mp3")
+    candidates.append(_DEFAULT_CHIME)
+
+    for filename in candidates:
+        candidate = assets_dir / filename
+        if candidate.exists():
+            return candidate
+
+    return None
 
 
 # ---------------------------------------------------------------------------

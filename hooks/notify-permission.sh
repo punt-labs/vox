@@ -24,9 +24,9 @@ SPEAK=$(read_speak)
 NOTIFICATION_TYPE=$(echo "$INPUT" | jq -r '.notification_type // "unknown"')
 MESSAGE=$(echo "$INPUT" | jq -r '.message // "Needs your attention"')
 
-# Chime mode: play attention chime via flock-serialized queue.
+# Chime mode: play mood-aware attention chime via flock-serialized queue.
 if [[ "$SPEAK" == "n" ]]; then
-  CHIME="$SCRIPT_DIR/../assets/chime_prompt.mp3"
+  CHIME=$(resolve_chime "prompt")
   if [[ -f "$CHIME" ]]; then
     enqueue_audio "$CHIME"
   fi
