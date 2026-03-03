@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-signal chime assets: distinct sounds for tests-pass, tests-fail, lint-pass, lint-fail, git-push-ok, and merge-conflict (chime mode only)
+- Signal-aware `resolve_chime_path(signal)` with automatic fallback to `chime_done.mp3`
+- Generation script `scripts/generate_chimes.py` for reproducible chime synthesis
+
 ## [0.10.1] - 2026-03-03
 
 ### Fixed
