@@ -1,4 +1,4 @@
-"""Tests for punt_tts.core."""
+"""Tests for punt_vox.core."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydub import AudioSegment
 
-from punt_tts.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
-from punt_tts.types import (
+from punt_vox.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
+from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
 )

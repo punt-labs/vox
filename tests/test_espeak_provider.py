@@ -1,4 +1,4 @@
-"""Tests for punt_tts.providers.espeak."""
+"""Tests for punt_vox.providers.espeak."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
-from punt_tts.providers.espeak import (
+from punt_vox.providers.espeak import (
     EspeakProvider,
     EspeakVoiceConfig,
     _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
+from punt_vox.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
 
 
 class TestEspeakVoiceConfig:
@@ -42,7 +42,7 @@ class TestEspeakProviderGuard:
     def test_no_binary_raises(self) -> None:
         with (
             patch(
-                "punt_tts.providers.espeak._find_espeak_binary",
+                "punt_vox.providers.espeak._find_espeak_binary",
                 return_value=None,
             ),
             pytest.raises(ValueError, match="espeak-ng or espeak not found"),
@@ -51,7 +51,7 @@ class TestEspeakProviderGuard:
 
     def test_binary_found_succeeds(self) -> None:
         with patch(
-            "punt_tts.providers.espeak._find_espeak_binary",
+            "punt_vox.providers.espeak._find_espeak_binary",
             return_value="/usr/bin/espeak-ng",
         ):
             provider = EspeakProvider()
@@ -80,7 +80,7 @@ class TestEspeakProviderResolveVoice:
         assert result == "en"
 
     def test_unknown_voice_raises(self, espeak_provider: EspeakProvider) -> None:
-        import punt_tts.providers.espeak as espeak_mod
+        import punt_vox.providers.espeak as espeak_mod
 
         espeak_mod.VOICES.clear()
         espeak_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
@@ -129,7 +129,7 @@ class TestEspeakProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.espeak.subprocess.run", mock):
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
             result = espeak_provider.synthesize(
                 SynthesisRequest(text="hello", voice="en"), out
             )
@@ -145,7 +145,7 @@ class TestEspeakProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.espeak.subprocess.run", mock):
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
             result = espeak_provider.synthesize(
                 SynthesisRequest(text="hello", voice="en"), out
             )
@@ -162,7 +162,7 @@ class TestEspeakProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock_run = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.espeak.subprocess.run", mock_run):
+        with patch("punt_vox.providers.espeak.subprocess.run", mock_run):
             espeak_provider.synthesize(
                 SynthesisRequest(text="hello", voice="en", rate=90),
                 out,
@@ -196,7 +196,7 @@ class TestEspeakProviderSynthesize:
             return result
 
         with patch(
-            "punt_tts.providers.espeak.subprocess.run",
+            "punt_vox.providers.espeak.subprocess.run",
             side_effect=tracking_side_effect,
         ):
             espeak_provider.synthesize(SynthesisRequest(text="hello", voice="en"), out)
@@ -211,7 +211,7 @@ class TestEspeakProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.espeak.subprocess.run", mock):
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
             result = espeak_provider.synthesize(
                 SynthesisRequest(text="Hallo", voice="german"), out
             )
@@ -222,7 +222,7 @@ class TestEspeakProviderSynthesize:
 class TestEspeakProviderCheckHealth:
     def test_binary_found(self) -> None:
         with patch(
-            "punt_tts.providers.espeak._find_espeak_binary",
+            "punt_vox.providers.espeak._find_espeak_binary",
             return_value="/usr/bin/espeak-ng",
         ):
             provider = EspeakProvider()
@@ -234,13 +234,13 @@ class TestEspeakProviderCheckHealth:
 
     def test_binary_not_found(self) -> None:
         with patch(
-            "punt_tts.providers.espeak._find_espeak_binary",
+            "punt_vox.providers.espeak._find_espeak_binary",
             return_value="/usr/bin/espeak-ng",
         ):
             provider = EspeakProvider()
 
         with patch(
-            "punt_tts.providers.espeak._find_espeak_binary",
+            "punt_vox.providers.espeak._find_espeak_binary",
             return_value=None,
         ):
             checks = provider.check_health()
@@ -291,14 +291,14 @@ class TestAutoDetectEspeakFallback:
     def test_linux_with_espeak_returns_espeak(self) -> None:
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("punt_tts.providers.platform") as mock_platform,
-            patch("punt_tts.providers.shutil") as mock_shutil,
+            patch("punt_vox.providers.platform") as mock_platform,
+            patch("punt_vox.providers.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Linux"
             mock_shutil.which.side_effect = lambda name: (  # pyright: ignore[reportUnknownLambdaType]
                 "/usr/bin/espeak-ng" if name == "espeak-ng" else None
             )
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "espeak"
@@ -306,12 +306,12 @@ class TestAutoDetectEspeakFallback:
     def test_linux_without_espeak_returns_polly(self) -> None:
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("punt_tts.providers.platform") as mock_platform,
-            patch("punt_tts.providers.shutil") as mock_shutil,
+            patch("punt_vox.providers.platform") as mock_platform,
+            patch("punt_vox.providers.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Linux"
             mock_shutil.which.return_value = None
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "polly"

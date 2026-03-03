@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from punt_tts.types import TTSProvider
+    from punt_vox.types import TTSProvider
 
 __all__ = [
     "DEFAULT_VOICES",
@@ -46,33 +46,33 @@ PROVIDER_REGISTRY: dict[str, Callable[..., TTSProvider]] = {}
 
 
 def _register_polly(**kwargs: str | None) -> TTSProvider:
-    from punt_tts.providers.polly import PollyProvider
+    from punt_vox.providers.polly import PollyProvider
 
     return PollyProvider()
 
 
 def _register_openai(**kwargs: str | None) -> TTSProvider:
-    from punt_tts.providers.openai import OpenAIProvider
+    from punt_vox.providers.openai import OpenAIProvider
 
     model = kwargs.get("model")
     return OpenAIProvider(model=model)
 
 
 def _register_elevenlabs(**kwargs: str | None) -> TTSProvider:
-    from punt_tts.providers.elevenlabs import ElevenLabsProvider
+    from punt_vox.providers.elevenlabs import ElevenLabsProvider
 
     model = kwargs.get("model")
     return ElevenLabsProvider(model=model)
 
 
 def _register_say(**kwargs: str | None) -> TTSProvider:
-    from punt_tts.providers.say import SayProvider
+    from punt_vox.providers.say import SayProvider
 
     return SayProvider()
 
 
 def _register_espeak(**kwargs: str | None) -> TTSProvider:
-    from punt_tts.providers.espeak import EspeakProvider
+    from punt_vox.providers.espeak import EspeakProvider
 
     return EspeakProvider()
 

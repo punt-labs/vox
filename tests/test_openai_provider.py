@@ -1,4 +1,4 @@
-"""Tests for punt_tts.providers.openai."""
+"""Tests for punt_vox.providers.openai."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_tts.core import (
+from punt_vox.core import (
     _split_at_words,  # pyright: ignore[reportPrivateUsage]
     split_text,
 )
-from punt_tts.providers.openai import OpenAIProvider
-from punt_tts.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
 class TestSplitText:

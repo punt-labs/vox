@@ -1,4 +1,4 @@
-"""Logging configuration for punt-tts."""
+"""Logging configuration for punt-vox."""
 
 from __future__ import annotations
 

@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import boto3
 
-from punt_tts.output import resolve_output_path
-from punt_tts.types import (
+from punt_vox.output import resolve_output_path
+from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,

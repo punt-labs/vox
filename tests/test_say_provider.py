@@ -1,4 +1,4 @@
-"""Tests for punt_tts.providers.say."""
+"""Tests for punt_vox.providers.say."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
-from punt_tts.providers.say import (
+from punt_vox.providers.say import (
     SayProvider,
     SayVoiceConfig,
     _locale_to_iso,  # pyright: ignore[reportPrivateUsage]
     _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
+from punt_vox.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
 
 
 class TestSayVoiceConfig:
@@ -56,8 +56,8 @@ class TestRateToWpm:
 class TestSayProviderPlatformGuard:
     def test_non_darwin_raises(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil"),
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil"),
         ):
             mock_platform.system.return_value = "Linux"
             with pytest.raises(ValueError, match="requires macOS"):
@@ -65,8 +65,8 @@ class TestSayProviderPlatformGuard:
 
     def test_no_say_command_raises(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = None
@@ -75,8 +75,8 @@ class TestSayProviderPlatformGuard:
 
     def test_darwin_with_say_succeeds(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
@@ -106,7 +106,7 @@ class TestSayProviderResolveVoice:
         assert result == "Anna"
 
     def test_unknown_voice_raises(self, say_provider: SayProvider) -> None:
-        import punt_tts.providers.say as say_mod
+        import punt_vox.providers.say as say_mod
 
         say_mod.VOICES.clear()
         say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
@@ -156,7 +156,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
 
         mock = self._mock_subprocess(mp3_bytes)
-        with patch("punt_tts.providers.say.subprocess.run", mock):
+        with patch("punt_vox.providers.say.subprocess.run", mock):
             result = say_provider.synthesize(
                 SynthesisRequest(text="hello", voice="fred"), out
             )
@@ -172,7 +172,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
 
         mock = self._mock_subprocess(mp3_bytes)
-        with patch("punt_tts.providers.say.subprocess.run", mock):
+        with patch("punt_vox.providers.say.subprocess.run", mock):
             result = say_provider.synthesize(
                 SynthesisRequest(text="hello", voice="fred"), out
             )
@@ -189,7 +189,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock_run = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.say.subprocess.run", mock_run):
+        with patch("punt_vox.providers.say.subprocess.run", mock_run):
             say_provider.synthesize(
                 SynthesisRequest(text="hello", voice="fred", rate=90), out
             )
@@ -211,7 +211,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
         mock_run = self._mock_subprocess(mp3_bytes)
 
-        with patch("punt_tts.providers.say.subprocess.run", mock_run):
+        with patch("punt_vox.providers.say.subprocess.run", mock_run):
             say_provider.synthesize(SynthesisRequest(text="hello", voice="fred"), out)
 
         # Second call should be ffmpeg
@@ -241,7 +241,7 @@ class TestSayProviderSynthesize:
             return result
 
         with patch(
-            "punt_tts.providers.say.subprocess.run", side_effect=tracking_side_effect
+            "punt_vox.providers.say.subprocess.run", side_effect=tracking_side_effect
         ):
             say_provider.synthesize(SynthesisRequest(text="hello", voice="fred"), out)
 
@@ -255,7 +255,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
 
         mock = self._mock_subprocess(mp3_bytes)
-        with patch("punt_tts.providers.say.subprocess.run", mock):
+        with patch("punt_vox.providers.say.subprocess.run", mock):
             result = say_provider.synthesize(
                 SynthesisRequest(text="Hallo", voice="anna"), out
             )
@@ -269,7 +269,7 @@ class TestSayProviderSynthesize:
         out = tmp_output_dir / "test.mp3"
 
         mock = self._mock_subprocess(mp3_bytes)
-        with patch("punt_tts.providers.say.subprocess.run", mock):
+        with patch("punt_vox.providers.say.subprocess.run", mock):
             result = say_provider.synthesize(
                 SynthesisRequest(text="hello", voice="fred", language="en"), out
             )
@@ -280,8 +280,8 @@ class TestSayProviderSynthesize:
 class TestSayProviderCheckHealth:
     def test_darwin_with_say(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
@@ -294,15 +294,15 @@ class TestSayProviderCheckHealth:
 
     def test_non_darwin(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
             provider = SayProvider()
 
         # Now check health from a non-Darwin perspective
-        with patch("punt_tts.providers.say.platform") as mock_platform:
+        with patch("punt_vox.providers.say.platform") as mock_platform:
             mock_platform.system.return_value = "Linux"
             checks = provider.check_health()
 
@@ -312,8 +312,8 @@ class TestSayProviderCheckHealth:
 
     def test_darwin_without_say(self) -> None:
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
@@ -321,8 +321,8 @@ class TestSayProviderCheckHealth:
 
         # Now check health when say is not found
         with (
-            patch("punt_tts.providers.say.platform") as mock_platform,
-            patch("punt_tts.providers.say.shutil") as mock_shutil,
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
         ):
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = None
@@ -387,16 +387,16 @@ class TestAutoDetectSayFallback:
                 {},
                 clear=True,
             ),
-            patch("punt_tts.providers.platform") as mock_platform,
+            patch("punt_vox.providers.platform") as mock_platform,
             patch(
-                "punt_tts.providers.shutil.which",
+                "punt_vox.providers.shutil.which",
                 side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
                     "/usr/bin/say" if name == "say" else None
                 ),
             ),
         ):
             mock_platform.system.return_value = "Darwin"
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "say"
@@ -408,11 +408,11 @@ class TestAutoDetectSayFallback:
                 {},
                 clear=True,
             ),
-            patch("punt_tts.providers.platform") as mock_platform,
-            patch("punt_tts.providers.shutil.which", return_value=None),
+            patch("punt_vox.providers.platform") as mock_platform,
+            patch("punt_vox.providers.shutil.which", return_value=None),
         ):
             mock_platform.system.return_value = "Linux"
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "polly"
@@ -424,16 +424,16 @@ class TestAutoDetectSayFallback:
                 {},
                 clear=True,
             ),
-            patch("punt_tts.providers.platform") as mock_platform,
+            patch("punt_vox.providers.platform") as mock_platform,
             patch(
-                "punt_tts.providers.shutil.which",
+                "punt_vox.providers.shutil.which",
                 side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
                     "/usr/bin/espeak-ng" if name == "espeak-ng" else None
                 ),
             ),
         ):
             mock_platform.system.return_value = "Linux"
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "espeak"
@@ -444,7 +444,7 @@ class TestAutoDetectSayFallback:
             {"TTS_PROVIDER": "openai"},
             clear=True,
         ):
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "openai"
@@ -456,10 +456,10 @@ class TestAutoDetectSayFallback:
                 {"ELEVENLABS_API_KEY": "test-key"},
                 clear=True,
             ),
-            patch("punt_tts.providers.platform") as mock_platform,
+            patch("punt_vox.providers.platform") as mock_platform,
         ):
             mock_platform.system.return_value = "Darwin"
-            from punt_tts.providers import auto_detect_provider
+            from punt_vox.providers import auto_detect_provider
 
             result = auto_detect_provider()
             assert result == "elevenlabs"

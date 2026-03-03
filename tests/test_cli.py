@@ -1,4 +1,4 @@
-"""Tests for punt_tts.cli."""
+"""Tests for punt_vox.cli."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner, Result
 
-from punt_tts.cli import main
-from punt_tts.types import (
+from punt_vox.cli import main
+from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     MergeStrategy,
@@ -42,7 +42,7 @@ def _make_mock_provider() -> MagicMock:
     return provider
 
 
-_CLI = "punt_tts.cli"
+_CLI = "punt_vox.cli"
 
 
 class TestSynthesizeCommand:
@@ -690,7 +690,7 @@ class TestInstallDesktopCommand:
                 f"{_CLI}._claude_desktop_config_path",
                 return_value=config_path,
             ),
-            patch("punt_tts.providers.platform.system", return_value="Darwin"),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
             # Ensure no API keys are set; on macOS, say is auto-detected
@@ -709,8 +709,8 @@ class TestInstallDesktopCommand:
         assert server["command"] == _UVX
         assert server["args"] == [
             "--from",
-            "punt-tts",
-            "tts-server",
+            "punt-vox",
+            "vox-server",
         ]
         assert server["env"]["TTS_OUTPUT_DIR"] == str(audio_dir)
         assert server["env"]["TTS_PROVIDER"] == "say"
@@ -926,7 +926,7 @@ class TestInstallDesktopCommand:
                 ),
             ),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch("punt_tts.providers.platform.system", return_value="Darwin"),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
             os.environ.pop("OPENAI_API_KEY", None)

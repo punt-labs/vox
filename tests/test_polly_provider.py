@@ -1,4 +1,4 @@
-"""Tests for punt_tts.providers.polly."""
+"""Tests for punt_vox.providers.polly."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_tts.providers.polly import (
+from punt_vox.providers.polly import (
     PollyProvider,
     VoiceConfig,
     _bcp47_matches_iso,  # pyright: ignore[reportPrivateUsage]
     _best_engine,  # pyright: ignore[reportPrivateUsage]
     _infer_iso_from_bcp47,  # pyright: ignore[reportPrivateUsage]
 )
-from punt_tts.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
 def _make_describe_voices_response(
@@ -65,7 +65,7 @@ class TestBestEngine:
 class TestPollyProviderResolveVoice:
     def test_resolve_cached_voice(self) -> None:
         """Resolve a voice that is already in the cache (from conftest fixture)."""
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES["joanna"] = VoiceConfig(
             voice_id="Joanna", language_code="en-US", engine="neural"
@@ -74,9 +74,9 @@ class TestPollyProviderResolveVoice:
         result = provider.resolve_voice("joanna")
         assert result == "Joanna"
 
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_resolve_from_api(self, mock_boto3: MagicMock) -> None:
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES.clear()
         polly._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
@@ -91,9 +91,9 @@ class TestPollyProviderResolveVoice:
 
         assert result == "Joanna"
 
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_resolve_case_insensitive(self, mock_boto3: MagicMock) -> None:
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES.clear()
         polly._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
@@ -107,9 +107,9 @@ class TestPollyProviderResolveVoice:
         result = provider.resolve_voice("HANS")
         assert result == "Hans"
 
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_resolve_unknown_voice_raises(self, mock_boto3: MagicMock) -> None:
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES.clear()
         polly._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
@@ -123,9 +123,9 @@ class TestPollyProviderResolveVoice:
         assert exc_info.value.voice_name == "nonexistent"
         assert isinstance(exc_info.value.available, list)
 
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_caches_api_results(self, mock_boto3: MagicMock) -> None:
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES.clear()
         polly._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
@@ -210,7 +210,7 @@ class TestPollyProviderName:
 
 
 class TestPollyProviderCheckHealth:
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_all_pass(self, mock_boto3: MagicMock) -> None:
         mock_sts = MagicMock()
         mock_sts.get_caller_identity.return_value = {"Account": "123456789012"}
@@ -232,7 +232,7 @@ class TestPollyProviderCheckHealth:
         assert len(checks) == 2
         assert all(c.passed for c in checks)
 
-    @patch("punt_tts.providers.polly.boto3")
+    @patch("punt_vox.providers.polly.boto3")
     def test_no_credentials(self, mock_boto3: MagicMock) -> None:
         from botocore.exceptions import NoCredentialsError
 
@@ -370,7 +370,7 @@ class TestPollyProviderInferLanguage:
         assert provider.infer_language_from_voice("seoyeon") == "ko"
 
     def test_unknown_voice_raises(self) -> None:
-        import punt_tts.providers.polly as polly
+        import punt_vox.providers.polly as polly
 
         polly.VOICES.clear()
         polly._voices_loaded = False  # pyright: ignore[reportPrivateUsage]

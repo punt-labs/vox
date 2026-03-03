@@ -11,9 +11,9 @@ from typing import Any
 
 import openai
 
-from punt_tts.core import split_text
-from punt_tts.output import resolve_output_path
-from punt_tts.types import (
+from punt_vox.core import split_text
+from punt_vox.output import resolve_output_path
+from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,
@@ -231,7 +231,7 @@ class OpenAIProvider:
         speed: float,
     ) -> None:
         """Split text into chunks, synthesize each, then stitch."""
-        from punt_tts.core import stitch_audio
+        from punt_vox.core import stitch_audio
 
         chunks = split_text(request.text, _MAX_CHARS)
         logger.debug("Chunked %d chars into %d parts", len(request.text), len(chunks))

@@ -1,4 +1,4 @@
-"""FastMCP server for punt-tts."""
+"""FastMCP server for punt-vox."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from punt_tts import __version__
-from punt_tts.core import TTSClient
-from punt_tts.ephemeral import clean_ephemeral, ephemeral_output_dir
-from punt_tts.logging_config import configure_logging
-from punt_tts.output import default_output_dir
-from punt_tts.playback import enqueue as _enqueue_audio
-from punt_tts.providers import get_provider
-from punt_tts.types import (
+from punt_vox import __version__
+from punt_vox.core import TTSClient
+from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
+from punt_vox.logging_config import configure_logging
+from punt_vox.output import default_output_dir
+from punt_vox.playback import enqueue as _enqueue_audio
+from punt_vox.providers import get_provider
+from punt_vox.types import (
     AudioProviderId,
     MergeStrategy,
     SynthesisRequest,
@@ -908,7 +908,7 @@ def _start_watcher() -> None:
     session directory is
     missing (e.g. running outside Claude Code).
     """
-    from punt_tts.watcher import (
+    from punt_vox.watcher import (
         SessionWatcher,
         derive_session_dir,
         make_notification_consumer,

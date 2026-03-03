@@ -1,4 +1,4 @@
-"""Tests for punt_tts.types."""
+"""Tests for punt_vox.types."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from punt_tts.types import (
+from punt_vox.types import (
     SUPPORTED_LANGUAGES,
     AudioProviderId,
     HealthCheck,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from punt_tts.types import SynthesisRequest, generate_filename
+from punt_vox.types import SynthesisRequest, generate_filename
 
 
 def default_output_dir() -> Path:

@@ -1,12 +1,12 @@
-"""Tests for punt_tts.output."""
+"""Tests for punt_vox.output."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-from punt_tts.output import default_output_dir, resolve_output_path
-from punt_tts.types import SynthesisRequest
+from punt_vox.output import default_output_dir, resolve_output_path
+from punt_vox.types import SynthesisRequest
 
 
 class TestDefaultOutputDir:
@@ -47,7 +47,7 @@ class TestResolveOutputPath:
 
     def test_falls_back_to_default_output_dir(self, tmp_path: Path) -> None:
         with patch(
-            "punt_tts.output.default_output_dir", return_value=tmp_path / "audio"
+            "punt_vox.output.default_output_dir", return_value=tmp_path / "audio"
         ):
             request = SynthesisRequest(text="hello", voice="joanna")
             result = resolve_output_path(request)

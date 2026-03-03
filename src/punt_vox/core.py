@@ -9,7 +9,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from punt_tts.types import (
+from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
     SynthesisResult,

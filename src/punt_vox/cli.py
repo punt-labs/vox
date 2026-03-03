@@ -1,4 +1,4 @@
-"""Click CLI for punt-tts."""
+"""Click CLI for punt-vox."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from typing import cast
 
 import click
 
-from punt_tts.core import TTSClient
-from punt_tts.output import default_output_dir
-from punt_tts.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
-from punt_tts.types import (
+from punt_vox.core import TTSClient
+from punt_vox.output import default_output_dir
+from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
+from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
     SynthesisResult,
@@ -51,7 +51,7 @@ def _emit(payload: object, text: str) -> None:
 
 
 def _configure_logging(verbose: bool) -> None:
-    from punt_tts.logging_config import configure_logging
+    from punt_vox.logging_config import configure_logging
 
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
 
@@ -914,7 +914,7 @@ def install_desktop(
 
     data["mcpServers"]["tts"] = {
         "command": uvx,
-        "args": ["--from", "punt-tts", "tts-server"],
+        "args": ["--from", "punt-vox", "vox-server"],
         "env": env,
     }
 
@@ -940,7 +940,7 @@ def install_desktop(
 @click.argument("audio_file", type=click.Path(exists=True, path_type=Path))
 def play(audio_file: Path) -> None:
     """Play an audio file with serialized flock-based queuing."""
-    from punt_tts.playback import play_audio
+    from punt_vox.playback import play_audio
 
     play_audio(audio_file)
 
@@ -953,6 +953,6 @@ def play(audio_file: Path) -> None:
 @main.command()
 def serve() -> None:
     """Run the MCP server with stdio transport."""
-    from punt_tts.server import run_server
+    from punt_vox.server import run_server
 
     run_server()

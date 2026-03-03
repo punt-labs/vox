@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from punt_tts.watcher import (
+from punt_vox.watcher import (
     SessionEvent,
     SessionWatcher,
     _extract_tool_result_text,  # pyright: ignore[reportPrivateUsage]
@@ -240,7 +240,7 @@ class TestNotificationConsumer:
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
 
-        with patch("punt_tts.watcher._announce_voice") as mock_voice:
+        with patch("punt_vox.watcher._announce_voice") as mock_voice:
             consumer(event)
             mock_voice.assert_not_called()
 
@@ -254,7 +254,7 @@ class TestNotificationConsumer:
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
 
-        with patch("punt_tts.watcher._announce_voice") as mock_voice:
+        with patch("punt_vox.watcher._announce_voice") as mock_voice:
             consumer(event)
             mock_voice.assert_called_once_with(event)
 
@@ -270,7 +270,7 @@ class TestNotificationConsumer:
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
 
-        with patch("punt_tts.watcher._announce_chime") as mock_chime:
+        with patch("punt_vox.watcher._announce_chime") as mock_chime:
             consumer(event)
             mock_chime.assert_called_once_with(chime)
 
@@ -288,7 +288,7 @@ class TestNotificationConsumer:
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
 
-        with patch("punt_tts.watcher._announce_voice") as mock_voice:
+        with patch("punt_vox.watcher._announce_voice") as mock_voice:
             consumer(event)  # fires
             consumer(event)  # throttled
             assert mock_voice.call_count == 1
@@ -306,7 +306,7 @@ class TestNotificationConsumer:
         e1 = SessionEvent(signal="tests-pass", timestamp=time.time(), source_text="ok")
         e2 = SessionEvent(signal="lint-pass", timestamp=time.time(), source_text="ok")
 
-        with patch("punt_tts.watcher._announce_voice") as mock_voice:
+        with patch("punt_vox.watcher._announce_voice") as mock_voice:
             consumer(e1)
             consumer(e2)
             assert mock_voice.call_count == 2
@@ -317,7 +317,7 @@ class TestNotificationConsumer:
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
 
-        with patch("punt_tts.watcher._announce_voice") as mock_voice:
+        with patch("punt_vox.watcher._announce_voice") as mock_voice:
             consumer(event)
             mock_voice.assert_not_called()
 
@@ -345,8 +345,8 @@ class TestResolveChimePath:
     ) -> None:
         monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
         # Point __file__ at a location without assets nearby
-        fake = tmp_path / "src" / "punt_tts" / "fake.py"
-        monkeypatch.setattr("punt_tts.watcher.__file__", str(fake))
+        fake = tmp_path / "src" / "punt_vox" / "fake.py"
+        monkeypatch.setattr("punt_vox.watcher.__file__", str(fake))
         result = resolve_chime_path()
         assert result is None
 

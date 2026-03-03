@@ -1,11 +1,11 @@
-"""Tests for punt_tts.ephemeral."""
+"""Tests for punt_vox.ephemeral."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from punt_tts.ephemeral import (
+from punt_vox.ephemeral import (
     clean_ephemeral,
     ephemeral_output_dir,
     remove_ephemeral_dir,

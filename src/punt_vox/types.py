@@ -1,4 +1,4 @@
-"""Domain types for punt-tts."""
+"""Domain types for punt-vox."""
 
 from __future__ import annotations
 
