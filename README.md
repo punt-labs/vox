@@ -98,6 +98,8 @@ Speak: off (chime only)
 Notifications will use audio tones instead of voice.
 ```
 
+Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (bright for happy sessions, dark for frustrated ones). Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) × three mood variants = 24 chime assets.
+
 ## Commands
 
 | Command | Purpose |
@@ -169,6 +171,8 @@ vox serve                                      # Start MCP server (stdio)
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
 - `set_config` MCP tool for atomic config mutations (replaces file-tool pattern)
 - System fallback providers: macOS `say` and Linux `espeak-ng` for zero-config offline speech
+- Per-signal chime assets: 8 distinct sounds for different events (tests, lint, git, done, prompt)
+- Vibe-driven chimes: mood-aware pitch shifting (bright/neutral/dark) so chimes match session vibe
 
 ### Coming Soon
 
