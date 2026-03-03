@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from punt_vox.config import read_config
 from punt_vox.playback import enqueue as _enqueue_audio
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,6 @@ class SessionEvent:
 
 
 SessionEventConsumer = Callable[[SessionEvent], None]
-
-
-@dataclass(frozen=True)
-class _WatcherConfig:
-    """Snapshot of config fields relevant to the watcher."""
-
-    notify: str
-    speak: str
-    vibe: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -173,42 +165,6 @@ def _find_session_jsonl(session_dir: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Config reading (standalone — no dependency on server module)
-# ---------------------------------------------------------------------------
-
-_NOTIFY_RE = re.compile(r'^notify:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_SPEAK_RE = re.compile(r'^speak:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_VIBE_RE = re.compile(r'^vibe:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_DEFAULT_CONFIG_PATH = Path(".vox/config.md")
-
-
-def _read_watcher_config(config_path: Path | None = None) -> _WatcherConfig:
-    """Read notify, speak, and vibe state from the config file."""
-    path = config_path or _DEFAULT_CONFIG_PATH
-    if not path.exists():
-        return _WatcherConfig(notify="n", speak="y", vibe=None)
-
-    text = path.read_text()
-
-    notify_match = _NOTIFY_RE.search(text)
-    notify = notify_match.group(1).strip() if notify_match else "n"
-    if notify not in ("y", "c", "n"):
-        notify = "n"
-
-    speak_match = _SPEAK_RE.search(text)
-    speak = speak_match.group(1).strip() if speak_match else "y"
-    if speak not in ("y", "n"):
-        speak = "y"
-
-    vibe_match = _VIBE_RE.search(text)
-    vibe = vibe_match.group(1).strip() if vibe_match else None
-    if vibe == "":
-        vibe = None
-
-    return _WatcherConfig(notify=notify, speak=speak, vibe=vibe)
-
-
-# ---------------------------------------------------------------------------
 # Signal phrases
 # ---------------------------------------------------------------------------
 
@@ -239,7 +195,7 @@ def make_notification_consumer(
     last_fired: dict[str, float] = {}
 
     def _consumer(event: SessionEvent) -> None:
-        config = _read_watcher_config(config_path)
+        config = read_config(config_path)
         if config.notify != "c":
             return
 

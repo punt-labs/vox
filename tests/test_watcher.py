@@ -18,9 +18,7 @@ from punt_vox.watcher import (
     SessionWatcher,
     _extract_tool_result_text,  # pyright: ignore[reportPrivateUsage]
     _find_session_jsonl,  # pyright: ignore[reportPrivateUsage]
-    _read_watcher_config,  # pyright: ignore[reportPrivateUsage]
     _resolve_assets_dir,  # pyright: ignore[reportPrivateUsage]
-    _WatcherConfig,  # pyright: ignore[reportPrivateUsage]
     classify_output,
     derive_session_dir,
     make_notification_consumer,
@@ -185,63 +183,6 @@ class TestSessionDiscovery:
 
     def test_find_session_jsonl_nonexistent_dir(self, tmp_path: Path) -> None:
         assert _find_session_jsonl(tmp_path / "nonexistent") is None
-
-
-# ---------------------------------------------------------------------------
-# Config reading
-# ---------------------------------------------------------------------------
-
-
-class TestReadWatcherConfig:
-    """Config reading for the notification consumer."""
-
-    def test_missing_file(self, tmp_path: Path) -> None:
-        config = _read_watcher_config(tmp_path / "missing.md")
-        assert config == _WatcherConfig(notify="n", speak="y", vibe=None)
-
-    def test_reads_notify_c(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
-        config = _read_watcher_config(path)
-        assert config.notify == "c"
-        assert config.speak == "y"
-
-    def test_reads_speak_n(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nnotify: "c"\nspeak: "n"\n---\n')
-        config = _read_watcher_config(path)
-        assert config.speak == "n"
-
-    def test_invalid_notify_defaults_n(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nnotify: "invalid"\n---\n')
-        config = _read_watcher_config(path)
-        assert config.notify == "n"
-
-    def test_missing_fields_use_defaults(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text("---\nvibe: happy\n---\n")
-        config = _read_watcher_config(path)
-        assert config.notify == "n"
-        assert config.speak == "y"
-
-    def test_reads_vibe(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nnotify: "c"\nspeak: "n"\nvibe: "happy"\n---\n')
-        config = _read_watcher_config(path)
-        assert config.vibe == "happy"
-
-    def test_missing_vibe_is_none(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nnotify: "c"\n---\n')
-        config = _read_watcher_config(path)
-        assert config.vibe is None
-
-    def test_empty_vibe_is_none(self, tmp_path: Path) -> None:
-        path = tmp_path / "config.md"
-        path.write_text('---\nvibe: ""\n---\n')
-        config = _read_watcher_config(path)
-        assert config.vibe is None
 
 
 # ---------------------------------------------------------------------------

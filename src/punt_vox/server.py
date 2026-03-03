@@ -11,6 +11,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from punt_vox import __version__
+from punt_vox.config import read_field
 from punt_vox.core import TTSClient
 from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_vox.logging_config import configure_logging
@@ -171,7 +172,7 @@ def _resolve_voice_and_language(
         language = validate_language(language)
 
     if voice is None:
-        voice = _read_session_voice()
+        voice = read_field("voice", _CONFIG_PATH)
 
     if voice is None and language is not None:
         voice = provider.get_default_voice(language)
@@ -187,32 +188,7 @@ def _resolve_voice_and_language(
     return voice, language
 
 
-_VIBE_TAGS_RE = re.compile(r'^vibe_tags:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_VOICE_RE = re.compile(r'^voice:\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _CONFIG_PATH = Path(".vox/config.md")
-
-
-def _read_session_voice() -> str | None:
-    """Read the session voice from .vox/config.md, or None if unset."""
-    if not _CONFIG_PATH.exists():
-        return None
-    text = _CONFIG_PATH.read_text()
-    match = _VOICE_RE.search(text)
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    return None
-
-
-def _read_vibe_tags() -> str | None:
-    """Read expressive tags from .vox/config.md, or None if unset."""
-    if not _CONFIG_PATH.exists():
-        return None
-    text = _CONFIG_PATH.read_text()
-    match = _VIBE_TAGS_RE.search(text)
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    return None
-
 
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 
@@ -229,7 +205,7 @@ def _apply_vibe(text: str, *, expressive_tags: bool) -> str:
     """
     if not expressive_tags:
         return text
-    tags = _read_vibe_tags()
+    tags = read_field("vibe_tags", _CONFIG_PATH)
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"
     return text
@@ -880,7 +856,7 @@ def list_voices(language: str | None = None) -> str:
         language = validate_language(language)
     provider = get_provider()
     all_voices = provider.list_voices(language)
-    current = _read_session_voice()
+    current = read_field("voice", _CONFIG_PATH)
 
     featured = [
         {"name": name, "blurb": blurb}
