@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from punt_tts.playback import enqueue as _enqueue_audio
+from punt_vox.playback import enqueue as _enqueue_audio
 
 logger = logging.getLogger(__name__)
 
@@ -256,9 +256,9 @@ def _announce_voice(event: SessionEvent) -> None:
     """Synthesize and play a short phrase for the event."""
     phrase = _SIGNAL_PHRASES.get(event.signal, event.signal)
     try:
-        from punt_tts.core import TTSClient
-        from punt_tts.providers import get_provider
-        from punt_tts.types import SynthesisRequest
+        from punt_vox.core import TTSClient
+        from punt_vox.providers import get_provider
+        from punt_vox.types import SynthesisRequest
 
         provider = get_provider()
         client = TTSClient(provider)
@@ -301,7 +301,7 @@ def resolve_chime_path() -> Path | None:
         if candidate.exists():
             return candidate
 
-    # Editable install: watcher.py → punt_tts/ → src/ → project root
+    # Editable install: watcher.py → punt_vox/ → src/ → project root
     source_root = Path(__file__).resolve().parent.parent.parent
     candidate = source_root / "assets" / "chime_done.mp3"
     if candidate.exists():

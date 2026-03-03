@@ -1,4 +1,4 @@
-"""Shared test fixtures for punt-tts."""
+"""Shared test fixtures for punt-vox."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydub import AudioSegment
 
-from punt_tts.core import TTSClient
-from punt_tts.providers.elevenlabs import ElevenLabsProvider
-from punt_tts.providers.espeak import EspeakProvider, EspeakVoiceConfig
-from punt_tts.providers.openai import OpenAIProvider
-from punt_tts.providers.polly import PollyProvider, VoiceConfig
-from punt_tts.providers.say import SayProvider, SayVoiceConfig
+from punt_vox.core import TTSClient
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
+from punt_vox.providers.espeak import EspeakProvider, EspeakVoiceConfig
+from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.providers.polly import PollyProvider, VoiceConfig
+from punt_vox.providers.say import SayProvider, SayVoiceConfig
 
 # Test voice configs — constructed directly, no API call needed.
 JOANNA = VoiceConfig(voice_id="Joanna", language_code="en-US", engine="neural")
@@ -32,7 +32,7 @@ def _populate_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFu
     Tests that verify resolve_voice's API-calling behavior (test_polly_provider.py)
     explicitly clear VOICES and reset _voices_loaded before their test logic.
     """
-    import punt_tts.providers.polly as polly
+    import punt_vox.providers.polly as polly
 
     saved_voices = dict(polly.VOICES)
     saved_loaded = polly._voices_loaded  # pyright: ignore[reportPrivateUsage]
@@ -176,7 +176,7 @@ def mock_elevenlabs_client() -> MagicMock:
 @pytest.fixture(autouse=True)
 def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pre-populate the ElevenLabs voice cache so resolve_voice() never hits the API."""
-    import punt_tts.providers.elevenlabs as elevenlabs
+    import punt_vox.providers.elevenlabs as elevenlabs
 
     saved_voices = dict(elevenlabs.VOICES)
     saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]
@@ -215,7 +215,7 @@ ANNA_SAY = SayVoiceConfig(name="Anna", locale="de_DE")
 @pytest.fixture(autouse=True)
 def _populate_say_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pre-populate the say voice cache so resolve_voice() never shells out."""
-    import punt_tts.providers.say as say_mod
+    import punt_vox.providers.say as say_mod
 
     saved_voices = dict(say_mod.VOICES)
     saved_loaded = say_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
@@ -240,8 +240,8 @@ def _populate_say_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnus
 def say_provider() -> SayProvider:
     """Create a SayProvider with platform and say command mocked."""
     with (
-        patch("punt_tts.providers.say.platform") as mock_platform,
-        patch("punt_tts.providers.say.shutil") as mock_shutil,
+        patch("punt_vox.providers.say.platform") as mock_platform,
+        patch("punt_vox.providers.say.shutil") as mock_shutil,
     ):
         mock_platform.system.return_value = "Darwin"
         mock_shutil.which.return_value = "/usr/bin/say"
@@ -261,7 +261,7 @@ FRENCH_ESPEAK = EspeakVoiceConfig(name="fr", language="fr")
 @pytest.fixture(autouse=True)
 def _populate_espeak_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pre-populate the espeak voice cache so resolve_voice() never shells out."""
-    import punt_tts.providers.espeak as espeak_mod
+    import punt_vox.providers.espeak as espeak_mod
 
     saved_voices = dict(espeak_mod.VOICES)
     saved_loaded = espeak_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
@@ -289,7 +289,7 @@ def _populate_espeak_voice_cache() -> Iterator[None]:  # pyright: ignore[reportU
 def espeak_provider() -> EspeakProvider:
     """Create an EspeakProvider with espeak-ng binary mocked."""
     with patch(
-        "punt_tts.providers.espeak._find_espeak_binary",
+        "punt_vox.providers.espeak._find_espeak_binary",
         return_value="/usr/bin/espeak-ng",
     ):
         return EspeakProvider()

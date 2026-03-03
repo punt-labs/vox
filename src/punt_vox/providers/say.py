@@ -12,8 +12,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from punt_tts.output import resolve_output_path
-from punt_tts.types import (
+from punt_vox.output import resolve_output_path
+from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,

@@ -12,8 +12,8 @@ from typing import Any
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
-from punt_tts.output import resolve_output_path
-from punt_tts.types import (
+from punt_vox.output import resolve_output_path
+from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,
@@ -328,7 +328,7 @@ class ElevenLabsProvider:
         char_limit: int,
     ) -> None:
         """Split text into chunks, synthesize each, then stitch."""
-        from punt_tts.core import split_text, stitch_audio
+        from punt_vox.core import split_text, stitch_audio
 
         chunks = split_text(request.text, char_limit)
         logger.debug(

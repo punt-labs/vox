@@ -84,7 +84,7 @@ def enqueue(path: Path) -> None:
         return
     try:
         subprocess.Popen(
-            [sys.executable, "-m", "punt_tts.playback", str(pending)],
+            [sys.executable, "-m", "punt_vox.playback", str(pending)],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -95,12 +95,12 @@ def enqueue(path: Path) -> None:
 
 
 if __name__ == "__main__":
-    from punt_tts.logging_config import configure_logging
+    from punt_vox.logging_config import configure_logging
 
     configure_logging(stderr_level="WARNING")
 
     if len(sys.argv) < 2:
-        logger.error("Usage: python -m punt_tts.playback <audio_file>")
+        logger.error("Usage: python -m punt_vox.playback <audio_file>")
         sys.exit(1)
 
     audio_path = Path(sys.argv[1])

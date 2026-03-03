@@ -1,4 +1,4 @@
-"""Tests for punt_tts.playback."""
+"""Tests for punt_vox.playback."""
 
 from __future__ import annotations
 
@@ -8,21 +8,21 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from punt_tts.playback import PLAYBACK_TIMEOUT, enqueue, play_audio
+from punt_vox.playback import PLAYBACK_TIMEOUT, enqueue, play_audio
 
-_MOD = "punt_tts.playback"
+_MOD = "punt_vox.playback"
 
 
 class TestResolvePlayer:
     def test_prefers_afplay(self) -> None:
-        from punt_tts.playback import resolve_player
+        from punt_vox.playback import resolve_player
 
         with patch(f"{_MOD}.shutil.which", side_effect=lambda cmd: cmd):  # pyright: ignore[reportUnknownLambdaType]
             result = resolve_player()
         assert result == ["afplay"]
 
     def test_falls_back_to_ffplay(self) -> None:
-        from punt_tts.playback import resolve_player
+        from punt_vox.playback import resolve_player
 
         def which(cmd: str) -> str | None:  # pyright: ignore[reportUnknownParameterType]
             return cmd if cmd == "ffplay" else None
@@ -35,7 +35,7 @@ class TestResolvePlayer:
     def test_raises_when_no_player(self) -> None:
         import pytest
 
-        from punt_tts.playback import resolve_player
+        from punt_vox.playback import resolve_player
 
         with (
             patch(f"{_MOD}.shutil.which", return_value=None),
@@ -211,7 +211,7 @@ class TestCliPlay:
     def test_play_calls_play_audio(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
 
-        from punt_tts.cli import main
+        from punt_vox.cli import main
 
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"fake")
@@ -230,7 +230,7 @@ class TestCliPlay:
     def test_play_rejects_missing_file(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
 
-        from punt_tts.cli import main
+        from punt_vox.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["play", str(tmp_path / "nonexistent.mp3")])

@@ -1,4 +1,4 @@
-"""Tests for punt_tts.providers.elevenlabs."""
+"""Tests for punt_vox.providers.elevenlabs."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_tts.providers.elevenlabs import ElevenLabsProvider
-from punt_tts.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
+from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
 class TestElevenLabsProviderName:
@@ -41,7 +41,7 @@ class TestElevenLabsProviderResolveVoice:
 
     def test_resolve_from_api(self, mock_elevenlabs_client: MagicMock) -> None:
         """Voice not in cache triggers API fetch."""
-        import punt_tts.providers.elevenlabs as elevenlabs
+        import punt_vox.providers.elevenlabs as elevenlabs
 
         saved_voices = dict(elevenlabs.VOICES)
         saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]
@@ -63,7 +63,7 @@ class TestElevenLabsProviderResolveVoice:
         self, mock_elevenlabs_client: MagicMock
     ) -> None:
         """Lookup of 'matilda' works when API returns description."""
-        import punt_tts.providers.elevenlabs as elevenlabs
+        import punt_vox.providers.elevenlabs as elevenlabs
 
         saved_voices = dict(elevenlabs.VOICES)
         saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_tts.server import (
+from punt_vox.server import (
     _apply_vibe,  # pyright: ignore[reportPrivateUsage]
     _read_session_voice,  # pyright: ignore[reportPrivateUsage]
     _read_vibe_tags,  # pyright: ignore[reportPrivateUsage]
@@ -23,7 +23,7 @@ from punt_tts.server import (
     set_config,
     speak,
 )
-from punt_tts.types import AudioProviderId, VoiceNotFoundError
+from punt_vox.types import AudioProviderId, VoiceNotFoundError
 
 
 @pytest.fixture()
@@ -31,7 +31,7 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
     """Return a writable config path and patch the module."""
-    import punt_tts.server as srv
+    import punt_vox.server as srv
 
     config = tmp_path / "config.md"
     monkeypatch.setattr(srv, "_CONFIG_PATH", config)
@@ -42,7 +42,7 @@ class TestReadSessionVoice:
     """Tests for _read_session_voice config parsing."""
 
     def test_no_config(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_tts.server as srv
+        import punt_vox.server as srv
 
         missing = tmp_path / "missing" / "config.md"
         monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
@@ -73,7 +73,7 @@ class TestReadVibeTags:
     """Tests for _read_vibe_tags config parsing."""
 
     def test_no_config(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_tts.server as srv
+        import punt_vox.server as srv
 
         missing = tmp_path / "missing" / "config.md"
         monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
@@ -135,7 +135,7 @@ class TestApplyVibe:
         assert result == "[dramatic tone] Something important"
 
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_tts.server as srv
+        import punt_vox.server as srv
 
         missing = tmp_path / "missing.md"
         monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
@@ -201,7 +201,7 @@ class TestWriteConfigField:
             _write_config_field("bad_key", "value")
 
     def test_creates_parent_directory(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_tts.server as srv
+        import punt_vox.server as srv
 
         nested = tmp_path / "deep" / "dir" / "config.md"
         monkeypatch.setattr(srv, "_CONFIG_PATH", nested)
@@ -215,7 +215,7 @@ class TestWriteConfigField:
         _patch_config.write_text("no frontmatter at all\n")
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="punt_tts.server"):
+        with caplog.at_level(logging.WARNING, logger="punt_vox.server"):
             _write_config_field("notify", "y")
         assert 'notify: "y"' in _patch_config.read_text()
         assert "Malformed config" in caplog.text
@@ -316,7 +316,7 @@ class TestWriteConfigFields:
         self, _patch_config: Path, monkeypatch: Any
     ) -> None:
         """Verify batch performs one read and one write."""
-        import punt_tts.server as srv
+        import punt_vox.server as srv
 
         _patch_config.write_text("---\n---\n")
         read_count = 0
@@ -414,9 +414,9 @@ class TestSpeakVibeTags:
         mock_provider.synthesize.return_value = mock_result
 
         with (
-            patch("punt_tts.server.get_provider", return_value=mock_provider),
-            patch("punt_tts.server._enqueue_audio"),
-            patch("punt_tts.core._pad_audio_file"),
+            patch("punt_vox.server.get_provider", return_value=mock_provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
         ):
             speak(
                 text="Done.",
@@ -449,9 +449,9 @@ class TestSpeakVibeTags:
         mock_provider.synthesize.return_value = mock_result
 
         with (
-            patch("punt_tts.server.get_provider", return_value=mock_provider),
-            patch("punt_tts.server._enqueue_audio"),
-            patch("punt_tts.core._pad_audio_file"),
+            patch("punt_vox.server.get_provider", return_value=mock_provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
         ):
             speak(text="Done.", ephemeral=False, auto_play=False)
 
@@ -504,8 +504,8 @@ class TestSpeakVoiceNotFound:
         provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
 
         with (
-            patch("punt_tts.server.get_provider", return_value=provider),
-            patch("punt_tts.server._enqueue_audio"),
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
         ):
             result = json.loads(speak(text="Hello", auto_play=False))
 
@@ -521,8 +521,8 @@ class TestChorusVoiceNotFound:
         provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
 
         with (
-            patch("punt_tts.server.get_provider", return_value=provider),
-            patch("punt_tts.server._enqueue_audio"),
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
         ):
             result = json.loads(chorus(texts=["Hello", "World"], auto_play=False))
 
@@ -538,8 +538,8 @@ class TestDuetVoiceNotFound:
         provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
 
         with (
-            patch("punt_tts.server.get_provider", return_value=provider),
-            patch("punt_tts.server._enqueue_audio"),
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
         ):
             result = json.loads(duet(text1="Hello", text2="Hallo", auto_play=False))
 
@@ -555,8 +555,8 @@ class TestEnsembleVoiceNotFound:
         provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
 
         with (
-            patch("punt_tts.server.get_provider", return_value=provider),
-            patch("punt_tts.server._enqueue_audio"),
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
         ):
             result = json.loads(
                 ensemble(
@@ -595,7 +595,7 @@ class TestListVoices:
 
     def test_returns_provider_and_voices(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         assert result["provider"] == "elevenlabs"
         assert isinstance(result["all"], list)
@@ -604,7 +604,7 @@ class TestListVoices:
 
     def test_featured_includes_blurbs(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         for entry in result["featured"]:
             assert "name" in entry
@@ -613,26 +613,26 @@ class TestListVoices:
 
     def test_featured_capped_at_six(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         assert len(result["featured"]) <= 6
 
     def test_current_voice_included(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvoice: "aria"\n---\n')
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         assert result["current"] == "aria"
 
     def test_no_current_voice(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         assert result["current"] is None
 
     def test_language_filter_passed_through(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             list_voices(language="de")
         provider.list_voices.assert_called_once_with("de")
 
@@ -640,7 +640,7 @@ class TestListVoices:
         self, _patch_config: Path
     ) -> None:
         provider = self._mock_provider(name="say", voices=["samantha", "alex"])
-        with patch("punt_tts.server.get_provider", return_value=provider):
+        with patch("punt_vox.server.get_provider", return_value=provider):
             result = json.loads(list_voices())
         assert result["provider"] == "say"
         assert result["featured"] == []
