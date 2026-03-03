@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-03-03
+
+### Fixed
+
+- Plugin name on release tags is now `vox` (was `vox-dev` — release script was not run before v0.10.0 tag)
+
 ## [0.10.0] - 2026-03-03
 
 First release as **punt-vox**. The PyPI package name changed from `punt-tts` to `punt-vox`, the CLI binary changed from `tts` to `vox`, and all internal paths and namespaces follow suit. No functional changes — this is a pure rename release.
