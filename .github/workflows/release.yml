@@ -65,22 +65,22 @@ jobs:
           MAX_ATTEMPTS=10
           WAIT_SECONDS=60
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
-            echo "Attempt $attempt/$MAX_ATTEMPTS: installing punt-tts==$VERSION from TestPyPI..."
+            echo "Attempt $attempt/$MAX_ATTEMPTS: installing punt-vox==$VERSION from TestPyPI..."
             if uv pip install --system --refresh \
               --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
               --index-strategy unsafe-best-match \
-              "punt-tts==$VERSION"; then
-              echo "Successfully installed punt-tts==$VERSION"
+              "punt-vox==$VERSION"; then
+              echo "Successfully installed punt-vox==$VERSION"
               exit 0
             fi
             echo "Attempt $attempt failed, waiting ${WAIT_SECONDS}s..."
             sleep $WAIT_SECONDS
           done
-          echo "Failed to install punt-tts==$VERSION after $MAX_ATTEMPTS attempts"
+          echo "Failed to install punt-vox==$VERSION after $MAX_ATTEMPTS attempts"
           exit 1
       - name: Verify CLI
-        run: tts --help
+        run: vox --help
 
   pypi:
     needs: test-install

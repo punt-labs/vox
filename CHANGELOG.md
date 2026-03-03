@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename default output dir `~/tts-output` → `~/vox-output`
 - Rename ephemeral dir `.tts/` → `.vox/` (config, audio)
 - Rename log/state dir `~/.punt-tts/` → `~/.punt-vox/` (logs, playback lock, pending queue)
+- Release workflow installs `punt-vox` and verifies `vox --help` (was `punt-tts`/`tts`)
+- `install.sh` installs `punt-vox` package with `vox` binary (was `punt-tts`/`tts`)
 
 ### Fixed
 
