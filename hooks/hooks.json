@@ -12,7 +12,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__plugin_tts(-dev)?_vox__.*",
+        "matcher": "mcp__(plugin_tts(-dev)?_)?vox__.*",
         "hooks": [
           {
             "type": "command",

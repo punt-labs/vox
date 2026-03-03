@@ -29,6 +29,13 @@ if [[ -z "$RELEASE_PREP_COMMIT" ]]; then
 fi
 
 echo "Restoring dev state from parent of ${RELEASE_PREP_COMMIT:0:12}"
-git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$PLUGIN_JSON" .claude/commands/
-git -C "$REPO_ROOT" add "$PLUGIN_JSON" .claude/commands/
+git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$PLUGIN_JSON"
+
+# Restore dev commands if the parent commit had a .claude/commands/ directory
+if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- .claude/commands/ | grep -q .; then
+  git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- .claude/commands/
+fi
+
+git -C "$REPO_ROOT" add "$PLUGIN_JSON"
+git -C "$REPO_ROOT" add .claude/commands/ 2>/dev/null || true
 git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state"
