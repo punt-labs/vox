@@ -1,7 +1,7 @@
 ---
 description: "Set session mood for TTS voice"
 argument-hint: "<mood> | auto | off"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
+allowed-tools: ["mcp__plugin_vox_vox__set_config", "Read"]
 ---
 
 # /vibe command

@@ -1,7 +1,7 @@
 ---
 description: "Control task notifications (hear when tasks finish or need input)"
 argument-hint: "y | c | n"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
+allowed-tools: ["mcp__plugin_vox_vox__set_config", "Read"]
 ---
 
 # /notify command

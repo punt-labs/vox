@@ -6,18 +6,18 @@ SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
 PLUGIN_JSON="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
 
-# Detect dev mode: plugin.json name contains "tts-dev"
+# Detect dev mode: plugin.json name contains "vox-dev"
 DEV_MODE=false
-if grep -q '"tts-dev"' "$PLUGIN_JSON" 2>/dev/null; then
+if grep -q '"vox-dev"' "$PLUGIN_JSON" 2>/dev/null; then
   DEV_MODE=true
 fi
 
 if [[ "$DEV_MODE" == "true" ]]; then
-  TOOL_PATTERN="mcp__plugin_tts-dev_vox__"
-  TOOL_GLOB="mcp__plugin_tts-dev_vox__*"
+  TOOL_PATTERN="mcp__plugin_vox-dev_vox__"
+  TOOL_GLOB="mcp__plugin_vox-dev_vox__*"
 else
-  TOOL_PATTERN="mcp__plugin_tts_vox__"
-  TOOL_GLOB="mcp__plugin_tts_vox__*"
+  TOOL_PATTERN="mcp__plugin_vox_vox__"
+  TOOL_GLOB="mcp__plugin_vox_vox__*"
 fi
 
 ACTIONS=()
@@ -46,10 +46,10 @@ fi
 if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
   CHANGED=false
 
-  # Remove legacy mcp__plugin_tts_tts__* pattern from pre-vox rename
-  if jq -e '.permissions.allow // [] | map(select(contains("mcp__plugin_tts_tts__"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
+  # Remove legacy mcp__plugin_tts_* patterns from pre-vox rename
+  if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_tts[_-]"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
     TMPFILE="$(mktemp)"
-    jq '.permissions.allow = [.permissions.allow[] | select(contains("mcp__plugin_tts_tts__") | not)]' "$SETTINGS" > "$TMPFILE"
+    jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_tts[_-]") | not)]' "$SETTINGS" > "$TMPFILE"
     mv "$TMPFILE" "$SETTINGS"
     CHANGED=true
   fi
@@ -62,13 +62,13 @@ if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
   fi
 
   if [[ "$CHANGED" == "true" ]]; then
-    ACTIONS+=("Auto-allowed tts MCP tools in permissions")
+    ACTIONS+=("Auto-allowed vox MCP tools in permissions")
   fi
 fi
 
 # ── Notify Claude if anything was set up ─────────────────────────────
 if [[ ${#ACTIONS[@]} -gt 0 ]]; then
-  MSG="TTS plugin first-run setup complete."
+  MSG="Vox plugin first-run setup complete."
   for action in "${ACTIONS[@]}"; do
     MSG="$MSG $action."
   done

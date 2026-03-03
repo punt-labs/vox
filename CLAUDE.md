@@ -4,9 +4,9 @@
 
 Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (premium), AWS Polly, and OpenAI TTS.
 
-- **Package**: `punt-tts`
-- **CLI**: `tts`
-- **MCP server**: `tts-server`
+- **Package**: `punt-vox`
+- **CLI**: `vox`
+- **MCP server**: `vox-server`
 - **Python**: 3.13+, managed with `uv`
 
 ## Build & Run
@@ -16,11 +16,11 @@ Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (pre
 uv sync --all-extras
 
 # CLI
-uv run tts --help
-uv run tts doctor
+uv run vox --help
+uv run vox doctor
 
 # MCP server (stdio transport)
-uv run tts-server
+uv run vox-server
 ```
 
 ## Quality Gates
@@ -67,7 +67,7 @@ Plugin structure (Claude Code hooks and commands):
 
 | Path | Responsibility |
 |------|---------------|
-| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (tts tools + Bash), Stop, Notification |
+| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (vox tools + Bash), Stop, Notification |
 | `hooks/state.sh` | Shared state reader and audio helpers for bash hooks (`enqueue_audio`, `play_audio_blocking`, `read_vibe_mode`, `read_vibe_signals`) |
 | `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern; includes auto-vibe signal data in block reason |
 | `hooks/signal.sh` | PostToolUse hook (Bash): fast-gated signal accumulator for auto-vibe — appends `tests-pass`, `lint-fail`, etc. to `vibe_signals` |
@@ -251,7 +251,7 @@ Every release follows this exact sequence. No steps skipped.
 7. **Push**: `git push origin main vX.Y.Z` (triggers GH Actions release workflow)
 8. **Wait for GH Actions**: `gh run watch` — workflow builds, publishes to TestPyPI, verifies install, then publishes to PyPI
 9. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
-10. **Verify**: `uv tool install --force --refresh punt-tts==X.Y.Z && tts doctor`
+10. **Verify**: `uv tool install --force --refresh punt-vox==X.Y.Z && vox doctor`
 11. **Restore editable**: `uv tool install --force --editable .` (for local dev)
 12. **Marketplace**: bump both `version` and `source.ref` in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge (ref MUST point to tag — see DES-015)
 
@@ -259,18 +259,18 @@ A release is not complete until all 12 steps are done. PyPI publishing is owned 
 
 ### Dev Plugin Testing
 
-The plugin uses dev/prod namespace isolation. The working tree has `"name": "tts-dev"` in plugin.json, so it can run alongside the installed production plugin.
+The plugin uses dev/prod namespace isolation. The working tree has `"name": "vox-dev"` in plugin.json, so it can run alongside the installed production plugin.
 
 ```bash
-uv tool install --force --editable .   # Editable install (tts binary = working tree)
-claude --plugin-dir .                   # Load dev plugin as tts-dev alongside prod tts
+uv tool install --force --editable .   # Editable install (vox binary = working tree)
+claude --plugin-dir .                   # Load dev plugin as vox-dev alongside prod vox
 ```
 
-Dev commands (`/tts-dev:say-dev`, `/tts-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_tts-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
+Dev commands (`/vox-dev:say-dev`, `/vox-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_vox-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
 
 Release scripts swap the name before tagging:
 
-- `bash scripts/release-plugin.sh` — swap `tts-dev` → `tts`, remove `*-dev.md`
+- `bash scripts/release-plugin.sh` — swap `vox-dev` → `vox`, remove `*-dev.md`
 - `bash scripts/restore-dev-plugin.sh` — restore dev state after tagging
 
 ### Session Close Protocol

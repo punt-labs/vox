@@ -1,6 +1,6 @@
 ---
 description: "Spoken summary of what just happened"
-allowed-tools: ["mcp__plugin_tts_vox__speak"]
+allowed-tools: ["mcp__plugin_vox_vox__speak"]
 ---
 
 # /recap command

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Notification hook: permission-prompt and idle-prompt audio alerts.
 #
-# Runs async — does not block the permission dialog. Calls the tts CLI
+# Runs async — does not block the permission dialog. Calls the vox CLI
 # directly (not MCP) because hooks cannot invoke MCP tools.
 #
 # When speak=n, plays a chime instead of spoken words.
@@ -69,15 +69,15 @@ esac
 
 # Voice mode: synthesize to temp file and play via flock queue.
 # macOS mktemp requires X's at the end of the template (no suffix allowed).
-TMPDIR=$(mktemp -d /tmp/tts_notify_XXXXXX)
+TMPDIR=$(mktemp -d /tmp/vox_notify_XXXXXX)
 OUTPUT="$TMPDIR/notify.mp3"
 VOICE=$(_read_field "voice")
-if command -v tts &>/dev/null; then
+if command -v vox &>/dev/null; then
   VOICE_ARGS=()
   if [[ -n "$VOICE" ]]; then
     VOICE_ARGS=(--voice "$VOICE")
   fi
-  tts synthesize "$TEXT" "${VOICE_ARGS[@]}" -o "$OUTPUT" >/dev/null 2>&1
+  vox synthesize "$TEXT" "${VOICE_ARGS[@]}" -o "$OUTPUT" >/dev/null 2>&1
   if [[ -f "$OUTPUT" && -s "$OUTPUT" ]]; then
     play_audio_blocking "$OUTPUT"
   fi

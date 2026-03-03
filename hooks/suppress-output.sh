@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Format tts MCP tool output for the UI panel.
+# Format vox MCP tool output for the UI panel.
 #
 # Two-channel display (see punt-kit/patterns/two-channel-display.md):
 #   updatedMCPToolOutput  → compact panel line (♪ prefix, max 80 cols)

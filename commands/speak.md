@@ -1,7 +1,7 @@
 ---
 description: "Toggle spoken notifications vs chime-only"
 argument-hint: "y | n"
-allowed-tools: ["mcp__plugin_tts_vox__set_config", "Read"]
+allowed-tools: ["mcp__plugin_vox_vox__set_config", "Read"]
 ---
 
 # /speak command
