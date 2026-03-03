@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `release-plugin.sh` no longer fails when no `-dev` commands exist — name swap proceeds with a warning instead of aborting
+- `restore-dev-plugin.sh` no longer fails when `.claude/commands/` directory doesn't exist at the release commit
+- PostToolUse hook matcher now fires for standalone MCP server registrations (`mcp__vox__*`) in addition to plugin-namespaced names
+
 ## [0.9.0] - 2026-02-28
 
 ### Added
