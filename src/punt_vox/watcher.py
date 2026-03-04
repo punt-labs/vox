@@ -289,11 +289,16 @@ def resolve_chime_path(
 ) -> Path | None:
     """Find the chime asset for *signal* and *mood*.
 
+    Signals (e.g. ``"tests-pass"``) are mapped to filenames via
+    ``_SIGNAL_CHIMES`` (e.g. ``"tests-pass"`` → ``"chime_tests_pass.mp3"``).
+    The ``.mp3`` suffix is stripped to get a stem, then candidates are
+    built from that stem.
+
     Resolution chain (first existing file wins):
-    1. ``chime_{signal}_{mood}.mp3`` — mood-specific signal chime
-    2. ``chime_{signal}.mp3``        — neutral signal chime
-    3. ``chime_done_{mood}.mp3``     — mood-specific default
-    4. ``chime_done.mp3``            — neutral default
+    1. ``{stem}_{mood}.mp3`` — mood-specific signal chime
+    2. ``{stem}.mp3``        — neutral signal chime
+    3. ``chime_done_{mood}.mp3`` — mood-specific default
+    4. ``chime_done.mp3``        — neutral default
 
     When *mood* is ``"neutral"``, steps 1 and 3 are skipped (neutral
     files have no mood suffix).

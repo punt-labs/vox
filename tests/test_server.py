@@ -360,33 +360,23 @@ class TestUnmute:
         assert 'vibe_tags: "[warm] [satisfied]"' in text
         assert 'vibe_signals: ""' in text
 
-    def test_voice_not_found_uses_default(
+    def test_voice_not_found_returns_error(
         self, _patch_config: Path, tmp_path: Path
     ) -> None:
-        """When a segment voice is not found, falls back to provider default."""
+        """When a segment voice is not found, returns a friendly error."""
         provider = _mock_provider_ok()
-        # First call raises (segment voice), provider still has default
-        call_count = 0
-
-        def resolve_side_effect(name: str, language: str | None = None) -> str:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise VoiceNotFoundError(name, ["matilda"])
-            return name
-
-        provider.resolve_voice.side_effect = resolve_side_effect
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
+        provider.resolve_voice.side_effect = VoiceNotFoundError(
+            "bob", ["matilda", "aria"]
+        )
 
         with (
             patch("punt_vox.server.get_provider", return_value=provider),
             patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
         ):
             result = json.loads(unmute(segments=[{"voice": "bob", "text": "Hello"}]))
 
-        assert isinstance(result, list)
+        assert "error" in result
+        assert "bob" in result["error"]
 
 
 # ---------------------------------------------------------------------------

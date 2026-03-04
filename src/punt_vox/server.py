@@ -32,7 +32,7 @@ from punt_vox.types import (
     result_to_dict,
     validate_language,
 )
-from punt_vox.voices import VOICE_BLURBS
+from punt_vox.voices import VOICE_BLURBS, voice_not_found_message
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ _CONFIG_PATH = Path(".vox/config.md")
 def _build_requests(
     segments: list[dict[str, str]],
     default_voice: str | None,
+    default_language: str | None,
     provider: TTSProvider,
     *,
     rate: int,
@@ -91,23 +92,24 @@ def _build_requests(
 ) -> list[SynthesisRequest]:
     """Convert segment dicts to SynthesisRequest objects.
 
-    Each segment has ``text`` (required) and optional ``voice``.
-    The *default_voice* is used when a segment omits ``voice``.
+    Each segment has ``text`` (required) and optional ``voice`` and
+    ``language``.  The *default_voice* and *default_language* are used
+    when a segment omits those fields.
+
+    Raises VoiceNotFoundError if a voice cannot be resolved — callers
+    should catch and return a friendly error via voice_not_found_message().
     """
     requests: list[SynthesisRequest] = []
     for seg in segments:
         seg_voice = seg.get("voice") or default_voice
+        seg_language = seg.get("language") or default_language
         seg_text = seg.get("text", "")
         if not seg_text:
             continue
 
-        try:
-            resolved_voice, language = resolve_voice_and_language(
-                provider, seg_voice, None
-            )
-        except VoiceNotFoundError:
-            resolved_voice = provider.default_voice
-            language = None
+        resolved_voice, language = resolve_voice_and_language(
+            provider, seg_voice, seg_language
+        )
 
         seg_text = apply_vibe(
             seg_text, expressive_tags=provider.supports_expressive_tags
@@ -156,15 +158,20 @@ def _synthesize_segments(
     # Multiple segments → stitch into one file
     combined_text = " | ".join(r.text for r in requests)
     out_path = output_dir / generate_filename(combined_text, prefix="batch_")
+
+    voices = {r.voice for r in requests}
+    languages = {r.language for r in requests}
+    voice = next(iter(voices)) if len(voices) == 1 else "mixed"
+    language = next(iter(languages)) if len(languages) == 1 else None
+
     if out_path.exists():
         return [
             SynthesisResult(
                 path=out_path,
                 text=combined_text,
                 provider=AudioProviderId(provider.name),
-                voice=requests[0].voice,
-                language=requests[0].language,
-                metadata=requests[0].metadata,
+                voice=voice,
+                language=language,
             )
         ]
     return client.synthesize_batch(
@@ -181,6 +188,7 @@ def _synthesize_segments(
 def unmute(
     text: str | None = None,
     voice: str | None = None,
+    language: str | None = None,
     segments: list[dict[str, str]] | None = None,
     rate: int = 90,
     pause_ms: int = 500,
@@ -201,8 +209,10 @@ def unmute(
         text: Simple text to speak. Ignored when segments is provided.
         voice: Default voice for all segments. If omitted, uses the
             session voice or provider default.
+        language: Default ISO 639-1 language code (e.g. 'de', 'ko').
+            Per-segment "language" overrides this.
         segments: List of segment objects, each with "text" (required)
-            and optional "voice". Example:
+            and optional "voice" and "language". Example:
             [{"voice": "roger", "text": "Hello."}, {"text": "Hi."}]
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
@@ -229,16 +239,20 @@ def unmute(
         segments = [{"text": text}]
 
     provider = get_provider()
-    requests = _build_requests(
-        segments,
-        voice,
-        provider,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-    )
+    try:
+        requests = _build_requests(
+            segments,
+            voice,
+            language,
+            provider,
+            rate=rate,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+        )
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": voice_not_found_message(exc)})
     if not requests:
         return json.dumps([])
 
@@ -255,6 +269,7 @@ def unmute(
 def record(
     text: str | None = None,
     voice: str | None = None,
+    language: str | None = None,
     segments: list[dict[str, str]] | None = None,
     rate: int = 90,
     pause_ms: int = 500,
@@ -274,8 +289,10 @@ def record(
         text: Simple text to synthesize. Ignored when segments is provided.
         voice: Default voice for all segments. If omitted, uses the
             session voice or provider default.
+        language: Default ISO 639-1 language code (e.g. 'de', 'ko').
+            Per-segment "language" overrides this.
         segments: List of segment objects, each with "text" (required)
-            and optional "voice".
+            and optional "voice" and "language".
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
         output_path: Full path for the output file. Auto-generated if omitted.
@@ -298,16 +315,20 @@ def record(
         segments = [{"text": text}]
 
     provider = get_provider()
-    requests = _build_requests(
-        segments,
-        voice,
-        provider,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-    )
+    try:
+        requests = _build_requests(
+            segments,
+            voice,
+            language,
+            provider,
+            rate=rate,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+        )
+    except VoiceNotFoundError as exc:
+        return json.dumps({"error": voice_not_found_message(exc)})
     if not requests:
         return json.dumps([])
 
@@ -330,12 +351,13 @@ def record(
                 tmp_paths.append(seg_path)
             stitch_audio(tmp_paths, Path(output_path), pause_ms)
         combined_text = " | ".join(r.text for r in requests)
+        voices = {r.voice for r in requests}
+        result_voice = next(iter(voices)) if len(voices) == 1 else "mixed"
         result = SynthesisResult(
             path=Path(output_path),
             text=combined_text,
             provider=AudioProviderId(provider.name),
-            voice=requests[0].voice,
-            language=requests[0].language,
+            voice=result_voice,
         )
         return json.dumps([result_to_dict(result)])
 

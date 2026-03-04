@@ -105,7 +105,7 @@ resolve_chime() {
   mood=$(classify_mood)
 
   local base_dir
-  base_dir="$(cd "$(dirname "$0")" && pwd)/../assets"
+  base_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/../assets"
 
   if [[ "$mood" != "neutral" ]]; then
     local mood_file="$base_dir/chime_${signal}_${mood}.mp3"
