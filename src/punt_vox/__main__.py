@@ -9,19 +9,22 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
-from punt_vox.core import TTSClient
+from punt_vox import __version__
+from punt_vox.config import read_config, write_field, write_fields
+from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.output import default_output_dir
 from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
 from punt_vox.resolve import resolve_voice_and_language
 from punt_vox.types import (
-    MergeStrategy,
     SynthesisRequest,
     SynthesisResult,
+    TTSProvider,
     result_to_dict,
 )
 
@@ -149,10 +152,6 @@ PauseOpt = Annotated[
     int,
     typer.Option("--pause", help="Pause between segments in ms."),
 ]
-MergeFlag = Annotated[
-    bool,
-    typer.Option("--merge", help="Merge all outputs into a single file."),
-]
 StabilityOpt = Annotated[
     float | None,
     typer.Option("--stability", help="ElevenLabs voice stability (0.0-1.0)."),
@@ -169,28 +168,13 @@ SpeakerBoostFlag = Annotated[
     bool,
     typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost."),
 ]
-
-# Pair-specific options (not shared widely enough for top-level aliases)
-Voice1Opt = Annotated[
-    str | None,
-    typer.Option("--voice1", help="Voice for first text(s)."),
+FromOpt = Annotated[
+    Path | None,
+    typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
-Voice2Opt = Annotated[
-    str | None,
-    typer.Option("--voice2", help="Voice for second text(s)."),
+TextArg = Annotated[
+    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
 ]
-Lang1Opt = Annotated[
-    str | None,
-    typer.Option("--lang1", help="ISO 639-1 language for first text(s)."),
-]
-Lang2Opt = Annotated[
-    str | None,
-    typer.Option("--lang2", help="ISO 639-1 language for second text(s)."),
-]
-TextArg = Annotated[str, typer.Argument(help="Text to convert to speech.")]
-Text1Arg = Annotated[str, typer.Argument(help="First text (typically English).")]
-Text2Arg = Annotated[str, typer.Argument(help="Second text (target language).")]
-InputFileArg = Annotated[Path, typer.Argument(help="JSON input file.", exists=True)]
 
 
 # ---------------------------------------------------------------------------
@@ -210,60 +194,17 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
-# synthesize
+# unmute — play audio
 # ---------------------------------------------------------------------------
 
 
 @app.command()
-def synthesize(
-    text: TextArg,
+def unmute(  # pyright: ignore[reportUnusedFunction]
+    text: TextArg = None,
+    from_file: FromOpt = None,
     voice: VoiceOpt = None,
     language: LanguageOpt = None,
     rate: RateOpt = 90,
-    output: OutputOpt = None,
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-    stability: StabilityOpt = None,
-    similarity: SimilarityOpt = None,
-    style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
-) -> None:
-    """Synthesize a single text to an MP3 file."""
-    _validate_voice_settings(stability, similarity, style)
-    prov = get_provider(provider, model=model)
-    voice, language = resolve_voice_and_language(prov, voice, language)
-    request = SynthesisRequest(
-        text=text,
-        voice=voice,
-        language=language,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost if speaker_boost else None,
-    )
-
-    if output is None:
-        output = default_output_dir() / f"{voice}_{text[:20].replace(' ', '_')}.mp3"
-
-    client = TTSClient(prov)
-    result = client.synthesize(request, output)
-    _print_result(result)
-
-
-# ---------------------------------------------------------------------------
-# synthesize-batch
-# ---------------------------------------------------------------------------
-
-
-@app.command("synthesize-batch")
-def synthesize_batch(
-    input_file: InputFileArg,
-    voice: VoiceOpt = None,
-    language: LanguageOpt = None,
-    rate: RateOpt = 90,
-    output_dir: OutputDirOpt = None,
-    merge: MergeFlag = False,
     pause: PauseOpt = 500,
     provider: ProviderOpt = None,
     model: ModelOpt = None,
@@ -272,192 +213,297 @@ def synthesize_batch(
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
 ) -> None:
-    """Synthesize a batch of texts from a JSON file."""
+    """Synthesize and play audio."""
+    from punt_vox.playback import enqueue
+
     _validate_voice_settings(stability, similarity, style)
     prov = get_provider(provider, model=model)
-    try:
-        raw = json.loads(input_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise typer.BadParameter(
-            "INPUT_FILE must contain valid JSON (array of strings)."
-        ) from exc
-
-    if not isinstance(raw, list):
-        raise typer.BadParameter("INPUT_FILE must contain a JSON array of strings.")
-
-    for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        if not isinstance(item, str):
-            raise typer.BadParameter(
-                f"Element {i} must be a string, got {type(item).__name__}."  # pyright: ignore[reportUnknownArgumentType]
-            )
-
-    voice, language = resolve_voice_and_language(prov, voice, language)
-    texts = cast("list[str]", raw)
     boost = speaker_boost if speaker_boost else None
-    requests = [
+
+    requests = _build_cli_requests(
+        text,
+        from_file,
+        voice,
+        language,
+        prov,
+        rate,
+        stability,
+        similarity,
+        style,
+        boost,
+    )
+
+    out_dir = default_output_dir()
+    client = TTSClient(prov)
+    for req in requests:
+        out_path = out_dir / f"{req.voice}_{req.text[:20].replace(' ', '_')}.mp3"
+        result = client.synthesize(req, out_path)
+        enqueue(result.path)
+        _print_result(result)
+
+
+# ---------------------------------------------------------------------------
+# record — save audio to file
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def record(  # pyright: ignore[reportUnusedFunction]
+    text: TextArg = None,
+    from_file: FromOpt = None,
+    voice: VoiceOpt = None,
+    language: LanguageOpt = None,
+    rate: RateOpt = 90,
+    pause: PauseOpt = 500,
+    output: OutputOpt = None,
+    output_dir: OutputDirOpt = None,
+    provider: ProviderOpt = None,
+    model: ModelOpt = None,
+    stability: StabilityOpt = None,
+    similarity: SimilarityOpt = None,
+    style: StyleOpt = None,
+    speaker_boost: SpeakerBoostFlag = False,
+) -> None:
+    """Synthesize and save audio to file."""
+    _validate_voice_settings(stability, similarity, style)
+    prov = get_provider(provider, model=model)
+    boost = speaker_boost if speaker_boost else None
+
+    requests = _build_cli_requests(
+        text,
+        from_file,
+        voice,
+        language,
+        prov,
+        rate,
+        stability,
+        similarity,
+        style,
+        boost,
+    )
+
+    out_dir = output_dir if output_dir is not None else default_output_dir()
+    client = TTSClient(prov)
+
+    if output is not None and len(requests) == 1:
+        result = client.synthesize(requests[0], output)
+        _print_result(result)
+        return
+
+    if output is not None and len(requests) > 1:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            tmp_paths: list[Path] = []
+            for i, req in enumerate(requests):
+                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
+                client.synthesize(req, seg_path)
+                tmp_paths.append(seg_path)
+            stitch_audio(tmp_paths, output, pause)
+        typer.echo(str(output))
+        return
+
+    for req in requests:
+        out_path = out_dir / f"{req.voice}_{req.text[:20].replace(' ', '_')}.mp3"
+        result = client.synthesize(req, out_path)
+        _print_result(result)
+
+
+def _build_cli_requests(
+    text: str | None,
+    from_file: Path | None,
+    voice: str | None,
+    language: str | None,
+    prov: TTSProvider,
+    rate: int,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+) -> list[SynthesisRequest]:
+    """Build SynthesisRequest list from CLI args."""
+    if from_file is not None:
+        return _requests_from_file(
+            from_file,
+            voice,
+            language,
+            prov,
+            rate,
+            stability,
+            similarity,
+            style,
+            speaker_boost,
+        )
+
+    if text is None:
+        typer.echo("Error: provide TEXT argument or --from file.", err=True)
+        raise typer.Exit(code=1)
+
+    resolved_voice, resolved_lang = resolve_voice_and_language(prov, voice, language)
+    return [
         SynthesisRequest(
-            text=t,
-            voice=voice,
-            language=language,
+            text=text,
+            voice=resolved_voice,
+            language=resolved_lang,
             rate=rate,
             stability=stability,
             similarity=similarity,
             style=style,
-            speaker_boost=boost,
+            speaker_boost=speaker_boost,
         )
-        for t in texts
     ]
-    strategy = (
-        MergeStrategy.ONE_FILE_PER_BATCH if merge else MergeStrategy.ONE_FILE_PER_INPUT
-    )
-    out_dir = output_dir if output_dir is not None else default_output_dir()
-
-    client = TTSClient(prov)
-    results = client.synthesize_batch(requests, out_dir, strategy, pause)
-    _print_results(results)
 
 
-# ---------------------------------------------------------------------------
-# synthesize-pair
-# ---------------------------------------------------------------------------
-
-
-@app.command("synthesize-pair")
-def synthesize_pair(
-    text1: Text1Arg,
-    text2: Text2Arg,
-    voice1: Voice1Opt = None,
-    voice2: Voice2Opt = None,
-    lang1: Lang1Opt = None,
-    lang2: Lang2Opt = None,
-    rate: RateOpt = 90,
-    pause: PauseOpt = 500,
-    output: OutputOpt = None,
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-    stability: StabilityOpt = None,
-    similarity: SimilarityOpt = None,
-    style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
-) -> None:
-    """Synthesize a pair of texts and stitch them with a pause."""
-    _validate_voice_settings(stability, similarity, style)
-    prov = get_provider(provider, model=model)
-    voice1, lang1 = resolve_voice_and_language(prov, voice1, lang1)
-    voice2, lang2 = resolve_voice_and_language(prov, voice2, lang2)
-    boost = speaker_boost if speaker_boost else None
-    req1 = SynthesisRequest(
-        text=text1,
-        voice=voice1,
-        language=lang1,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
-    )
-    req2 = SynthesisRequest(
-        text=text2,
-        voice=voice2,
-        language=lang2,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
-    )
-
-    if output is None:
-        output = default_output_dir() / f"pair_{text1[:10]}_{text2[:10]}.mp3"
-
-    client = TTSClient(prov)
-    result = client.synthesize_pair(text1, req1, text2, req2, output, pause)
-    _print_result(result)
-
-
-# ---------------------------------------------------------------------------
-# synthesize-pair-batch
-# ---------------------------------------------------------------------------
-
-
-@app.command("synthesize-pair-batch")
-def synthesize_pair_batch(
-    input_file: InputFileArg,
-    voice1: Voice1Opt = None,
-    voice2: Voice2Opt = None,
-    lang1: Lang1Opt = None,
-    lang2: Lang2Opt = None,
-    rate: RateOpt = 90,
-    pause: PauseOpt = 500,
-    output_dir: OutputDirOpt = None,
-    merge: MergeFlag = False,
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-    stability: StabilityOpt = None,
-    similarity: SimilarityOpt = None,
-    style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
-) -> None:
-    """Synthesize a batch of text pairs from a JSON file."""
-    _validate_voice_settings(stability, similarity, style)
-    prov = get_provider(provider, model=model)
+def _requests_from_file(
+    from_file: Path,
+    voice: str | None,
+    language: str | None,
+    prov: TTSProvider,
+    rate: int,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+) -> list[SynthesisRequest]:
+    """Parse a JSON segments file into SynthesisRequest list."""
     try:
-        raw = json.loads(input_file.read_text(encoding="utf-8"))
+        raw = json.loads(from_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise typer.BadParameter(
-            "INPUT_FILE must contain valid JSON (array of [text1, text2] pairs)."
-        ) from exc
+        raise typer.BadParameter("--from file must contain valid JSON.") from exc
+
     if not isinstance(raw, list):
-        raise typer.BadParameter(
-            "INPUT_FILE must contain a JSON array of [text1, text2] pairs."
-        )
+        raise typer.BadParameter("--from file must contain a JSON array.")
 
+    requests: list[SynthesisRequest] = []
     for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        if not isinstance(item, list) or len(item) != 2:  # pyright: ignore[reportUnknownArgumentType]
+        if isinstance(item, str):
+            seg_voice = voice
+            seg_text = item
+        elif isinstance(item, dict):
+            seg_voice = item.get("voice", voice)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            seg_text = item.get("text", "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        else:
             raise typer.BadParameter(
-                f"Element {i} must be a [text1, text2] pair, got {item!r}."
+                f"Element {i} must be a string or {{voice, text}} object."
             )
-        if not isinstance(item[0], str) or not isinstance(item[1], str):
-            raise typer.BadParameter(f"Element {i} must contain strings, got {item!r}.")
 
-    voice1, lang1 = resolve_voice_and_language(prov, voice1, lang1)
-    voice2, lang2 = resolve_voice_and_language(prov, voice2, lang2)
-    raw_pairs = cast("list[list[str]]", raw)
-    boost = speaker_boost if speaker_boost else None
-    pairs: list[tuple[SynthesisRequest, SynthesisRequest]] = [
-        (
-            SynthesisRequest(
-                text=p[0],
-                voice=voice1,
-                language=lang1,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=boost,
-            ),
-            SynthesisRequest(
-                text=p[1],
-                voice=voice2,
-                language=lang2,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=boost,
-            ),
+        if not seg_text:
+            continue
+
+        resolved_voice, resolved_lang = resolve_voice_and_language(
+            prov, seg_voice, language
         )
-        for p in raw_pairs
-    ]
+        requests.append(
+            SynthesisRequest(
+                text=seg_text,
+                voice=resolved_voice,
+                language=resolved_lang,
+                rate=rate,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+            )
+        )
+    return requests
 
-    strategy = (
-        MergeStrategy.ONE_FILE_PER_BATCH if merge else MergeStrategy.ONE_FILE_PER_INPUT
-    )
-    out_dir = output_dir if output_dir is not None else default_output_dir()
 
-    client = TTSClient(prov)
-    results = client.synthesize_pair_batch(pairs, out_dir, strategy, pause)
-    _print_results(results)
+# ---------------------------------------------------------------------------
+# vibe — set session mood
+# ---------------------------------------------------------------------------
+
+
+@app.command("vibe")
+def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
+    mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
+) -> None:
+    """Set session mood for TTS voice."""
+    if mood == "auto":
+        write_field("vibe_mode", "auto")
+        _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
+    elif mood == "off":
+        write_field("vibe_mode", "off")
+        _emit({"vibe_mode": "off"}, "Vibe mode: off")
+    else:
+        write_fields({"vibe": mood, "vibe_mode": "manual"})
+        _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+
+
+# ---------------------------------------------------------------------------
+# on / off — notification toggle
+# ---------------------------------------------------------------------------
+
+
+@app.command("on")
+def on_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Enable notifications."""
+    write_field("notify", "y")
+    _emit({"notify": "y"}, "Notifications enabled.")
+
+
+@app.command("off")
+def off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Disable notifications."""
+    write_field("notify", "n")
+    _emit({"notify": "n"}, "Notifications disabled.")
+
+
+# ---------------------------------------------------------------------------
+# mute — chimes only (disable voice)
+# ---------------------------------------------------------------------------
+
+
+@app.command("mute")
+def mute_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Chimes only — disable spoken notifications."""
+    write_field("speak", "n")
+    _emit({"speak": "n"}, "Muted — chimes only.")
+
+
+# ---------------------------------------------------------------------------
+# version
+# ---------------------------------------------------------------------------
+
+
+@app.command("version")
+def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Print version."""
+    _emit({"version": __version__}, f"vox {__version__}")
+
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+
+@app.command("status")
+def status_cmd(  # pyright: ignore[reportUnusedFunction]
+    provider: ProviderOpt = None,
+    model: ModelOpt = None,
+) -> None:
+    """Show current state (provider, voice, vibe, notify)."""
+    prov = get_provider(provider, model=model)
+    cfg = read_config()
+
+    info = {
+        "provider": prov.name,
+        "voice": cfg.voice or prov.default_voice,
+        "notify": cfg.notify,
+        "speak": cfg.speak,
+        "vibe_mode": cfg.vibe_mode,
+        "vibe": cfg.vibe,
+    }
+
+    if _json_output:
+        typer.echo(json.dumps(info))
+    else:
+        display_name = _PROVIDER_DISPLAY.get(prov.name, prov.name)
+        typer.echo(f"Provider:  {display_name}")
+        typer.echo(f"Voice:     {info['voice']}")
+        typer.echo(f"Notify:    {info['notify']}")
+        typer.echo(f"Speak:     {info['speak']}")
+        typer.echo(f"Vibe mode: {info['vibe_mode']}")
+        if cfg.vibe:
+            typer.echo(f"Vibe:      {cfg.vibe}")
 
 
 # ---------------------------------------------------------------------------
@@ -800,7 +846,7 @@ def play(
 
 
 # ---------------------------------------------------------------------------
-# mcp (replaces old "serve" command — "serve" is for HTTP, "mcp" for stdio)
+# mcp (stdio transport for Claude Code plugin)
 # ---------------------------------------------------------------------------
 
 
