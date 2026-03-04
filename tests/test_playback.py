@@ -209,9 +209,9 @@ class TestCliPlay:
     """Test the `tts play` CLI command."""
 
     def test_play_calls_play_audio(self, tmp_path: Path) -> None:
-        from click.testing import CliRunner
+        from typer.testing import CliRunner
 
-        from punt_vox.cli import main
+        from punt_vox.__main__ import app
 
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"fake")
@@ -222,17 +222,17 @@ class TestCliPlay:
             patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
         ):
             runner = CliRunner()
-            result = runner.invoke(main, ["play", str(audio)])
+            result = runner.invoke(app, ["play", str(audio)])
 
         assert result.exit_code == 0
         mock_run.assert_called_once()
 
     def test_play_rejects_missing_file(self, tmp_path: Path) -> None:
-        from click.testing import CliRunner
+        from typer.testing import CliRunner
 
-        from punt_vox.cli import main
+        from punt_vox.__main__ import app
 
         runner = CliRunner()
-        result = runner.invoke(main, ["play", str(tmp_path / "nonexistent.mp3")])
+        result = runner.invoke(app, ["play", str(tmp_path / "nonexistent.mp3")])
 
         assert result.exit_code != 0
