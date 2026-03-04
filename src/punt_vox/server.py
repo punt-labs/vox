@@ -96,8 +96,10 @@ def _build_requests(
     ``language``.  The *default_voice* and *default_language* are used
     when a segment omits those fields.
 
-    Raises VoiceNotFoundError if a voice cannot be resolved — callers
-    should catch and return a friendly error via voice_not_found_message().
+    Raises:
+        VoiceNotFoundError: If a voice cannot be resolved.
+        ValueError: If a language code is invalid or voice/language
+            are incompatible.
     """
     requests: list[SynthesisRequest] = []
     for seg in segments:
