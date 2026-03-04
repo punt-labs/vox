@@ -9,12 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mic API**: new MCP server key `mic` with four tools: `unmute` (synthesize + play), `record` (synthesize + save), `vibe` (session mood), `who` (voice roster)
+- Both `unmute` and `record` accept a uniform `segments` list — callers no longer need different tools for different cardinalities
+- CLI product commands: `vox unmute`, `vox record`, `vox vibe`, `vox on`/`off`, `vox mute`, `vox version`, `vox status`
+- Slash commands: `/unmute [@voice]`, `/mute`, `/vox on`, `/vox off`
+- Shared modules: `resolve.py` (voice/language/output resolution, vibe application), `voices.py` (blurbs, excuses), `config.py` write API
 - Vibe-driven chime notifications: chimes now reflect session mood (bright/neutral/dark) via pitch-shifted variants (±3 semitones)
 - Mood classification module (`mood.py`): maps free-form vibe strings to bright/neutral/dark tonal families
 - Mood-aware chime resolution: `resolve_chime_path(signal, mood=)` with four-level fallback chain
 - Per-signal chime assets: distinct sounds for tests-pass, tests-fail, lint-pass, lint-fail, git-push-ok, and merge-conflict (chime mode only)
 - Signal-aware `resolve_chime_path(signal)` with automatic fallback to `chime_done.mp3`
 - Generation script `scripts/generate_chimes.py` for reproducible chime synthesis with mood variants
+
+### Changed
+
+- MCP server key from `vox` to `mic` (`plugin:vox:mic`)
+- Hook matchers updated from `_vox__` to `_mic__` patterns
+- Session-start hook auto-migrates old permission patterns and cleans retired commands
+
+### Removed
+
+- MCP tools: `speak`, `chorus`, `duet`, `ensemble`, `set_config`, `list_voices`
+- CLI commands: `synthesize`, `synthesize-batch`, `synthesize-pair`, `synthesize-pair-batch`
+- Slash commands: `/say`, `/speak`, `/notify`, `/voice`
 
 ## [0.10.1] - 2026-03-03
 

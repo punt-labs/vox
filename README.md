@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2d8922f/install.sh | 
 Restart Claude Code, then:
 
 ```text
-/notify y     # hear when tasks complete or need input
+/vox on       # hear when tasks complete or need input
 /recap        # spoken summary of what just happened
 ```
 
@@ -54,7 +54,7 @@ sh install.sh
 - **Session vibe** --- `/vibe` sets the mood for all speech. Auto-mode reads session signals (test results, lint, git ops) and adapts the voice. Manual mode lets you set it yourself. ElevenLabs expressive tags (`[weary]`, `[excited]`, `[sighs]`) color every utterance.
 - **Five providers** --- ElevenLabs, OpenAI, AWS Polly, macOS `say`, and Linux `espeak-ng`. The full experience (natural voice, expressive tags, `/vibe`) requires ElevenLabs.
 - **Opt-in only** --- no audio until you enable it, no surprises
-- **Voice or chime** --- `/speak n` switches to audio tones, no TTS API calls
+- **Voice or chime** --- `/mute` switches to audio tones, no TTS API calls
 - **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
 
@@ -63,10 +63,10 @@ sh install.sh
 ### Enable notifications
 
 ```text
-> /notify y
+> /vox on
 
-Notifications: enabled (voice)
-You will hear spoken summaries when tasks complete and chimes when Claude needs input.
+Notifications on. You'll hear when tasks finish or need approval.
+Pick a voice with /unmute @<name>.
 ```
 
 ### Get a recap
@@ -92,10 +92,9 @@ Auto-mode (default) reads session signals and adapts automatically --- after a s
 ### Switch to chime-only
 
 ```text
-> /speak n
+> /mute
 
-Speak: off (chime only)
-Notifications will use audio tones instead of voice.
+Muted — chimes only.
 ```
 
 Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (bright for happy sessions, dark for frustrated ones). Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) × three mood variants = 24 chime assets.
@@ -104,17 +103,16 @@ Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (brigh
 
 | Command | Purpose |
 |---------|---------|
-| `/notify y` | Speak on task completion and permission prompts |
-| `/notify c` | Continuous --- also speak milestone updates during long tasks |
-| `/notify n` | Off |
-| `/speak y` | Notifications are spoken (default when /notify is on) |
-| `/speak n` | Notifications are a chime --- no words |
+| `/vox on` | Enable notifications + show voice roster |
+| `/vox off` | Disable notifications |
+| `/unmute` | Enable voice mode (spoken notifications) |
+| `/unmute @matilda` | Set session voice + enable voice |
+| `/unmute @` | Browse voice roster |
+| `/mute` | Chimes only --- no voice |
 | `/recap` | Spoken summary of Claude's last response |
-| `/say "text"` | Speak arbitrary text aloud |
 | `/vibe <mood>` | Set session mood --- voice adapts to match |
 | `/vibe auto` | Auto-detect mood from session signals (default) |
 | `/vibe off` | Disable vibe --- neutral voice |
-| `/voice on` \| `/voice off` | Enable/disable voice mode |
 
 ## Providers
 
@@ -135,13 +133,17 @@ Auto-detection order: ElevenLabs > OpenAI > say (macOS) / espeak (Linux) > Polly
 punt-vox is also a standalone TTS tool, independent of Claude Code.
 
 ```bash
-vox synthesize "Hello world"                  # Synthesize with default provider
-vox synthesize "Hello" --provider elevenlabs  # Use specific provider
+vox unmute "Hello world"                       # Synthesize + play
+vox record "Hello world" -o hello.mp3          # Synthesize + save
+vox record --from segments.json                # From JSON segments file
+vox vibe excited                               # Set session mood
+vox on                                         # Enable notifications
+vox mute                                       # Chimes only
+vox status                                     # Current state
+vox version                                    # Print version
 vox doctor                                     # Check setup
-vox install                                    # Install Claude Code plugin (marketplace)
-vox uninstall                                  # Remove plugin and clean up
-vox install-desktop                            # Register MCP server with Claude Desktop
-vox serve                                      # Start MCP server (stdio)
+vox install                                    # Install Claude Code plugin
+vox mcp                                        # Start MCP server (stdio)
 ```
 
 ## Environment Variables
@@ -156,23 +158,18 @@ vox serve                                      # Start MCP server (stdio)
 
 ### Shipped
 
-- Notification layer: `/notify`, `/speak`, `/recap`, Stop + Notification hooks
-- Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI
+- **Mic API**: unified `unmute`/`record`/`vibe`/`who` MCP tools with segment-based input
+- Notification layer: `/vox on`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
+- Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
-- CLI: synthesize, batch, pair, pair-batch, doctor
+- CLI: unmute, record, vibe, on/off, mute, version, status, doctor
 - Ephemeral output mode (`.vox/` in cwd)
 - Two-channel display: `♪` panel summaries with voice/provider context
-- Playful stop hook phrases: randomized vocalization-themed messages ("Speaking my thoughts...", "Saying my piece...")
-- Natural notification phrasing: randomized phrases for permission and idle prompts
 - Audio playback serialization via `flock` --- concurrent utterances queue instead of overlapping
 - ElevenLabs streaming API for lower time-to-first-audio
-- Dev/prod namespace isolation for plugin testing (`claude --plugin-dir .`)
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
-- `set_config` MCP tool for atomic config mutations (replaces file-tool pattern)
-- System fallback providers: macOS `say` and Linux `espeak-ng` for zero-config offline speech
-- Per-signal chime assets: 8 distinct sounds for different events (tests, lint, git, done, prompt)
-- Vibe-driven chimes: mood-aware pitch shifting (bright/neutral/dark) so chimes match session vibe
+- Per-signal chime assets and vibe-driven chimes with mood-aware pitch shifting
 
 ### Coming Soon
 
