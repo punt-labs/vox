@@ -162,7 +162,7 @@ def _synthesize_segments(
     voices = {r.voice for r in requests}
     languages = {r.language for r in requests}
     voice = next(iter(voices)) if len(voices) == 1 else "mixed"
-    language = next(iter(languages)) if len(languages) == 1 else None
+    language = next(iter(languages)) if len(languages) == 1 else "mixed"
 
     if out_path.exists():
         return [
@@ -253,6 +253,8 @@ def unmute(
         )
     except VoiceNotFoundError as exc:
         return json.dumps({"error": voice_not_found_message(exc)})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     if not requests:
         return json.dumps([])
 
@@ -329,6 +331,8 @@ def record(
         )
     except VoiceNotFoundError as exc:
         return json.dumps({"error": voice_not_found_message(exc)})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     if not requests:
         return json.dumps([])
 
@@ -352,12 +356,15 @@ def record(
             stitch_audio(tmp_paths, Path(output_path), pause_ms)
         combined_text = " | ".join(r.text for r in requests)
         voices = {r.voice for r in requests}
+        languages = {r.language for r in requests}
         result_voice = next(iter(voices)) if len(voices) == 1 else "mixed"
+        result_lang = next(iter(languages)) if len(languages) == 1 else "mixed"
         result = SynthesisResult(
             path=Path(output_path),
             text=combined_text,
             provider=AudioProviderId(provider.name),
             voice=result_voice,
+            language=result_lang,
         )
         return json.dumps([result_to_dict(result)])
 
