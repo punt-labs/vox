@@ -22,6 +22,22 @@ fi
 
 ACTIONS=()
 
+# ── Clean up retired commands from pre-mic-API ────────────────────────
+if [[ "$DEV_MODE" == "false" ]]; then
+  RETIRED=(say.md speak.md notify.md voice.md)
+  CLEANED=()
+  for name in "${RETIRED[@]}"; do
+    dest="$COMMANDS_DIR/$name"
+    if [[ -f "$dest" ]]; then
+      rm "$dest"
+      CLEANED+=("/${name%.md}")
+    fi
+  done
+  if [[ ${#CLEANED[@]} -gt 0 ]]; then
+    ACTIONS+=("Cleaned retired commands: ${CLEANED[*]}")
+  fi
+fi
+
 # ── Deploy top-level commands if missing ──────────────────────────────
 # In dev mode, skip command deployment — prod plugin handles top-level commands.
 # Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
@@ -46,10 +62,10 @@ fi
 if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
   CHANGED=false
 
-  # Remove legacy mcp__plugin_tts_* patterns from pre-vox rename
-  if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_tts[_-]"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
+  # Remove legacy mcp__plugin_tts_* and mcp__plugin_vox*_vox__* patterns
+  if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
     TMPFILE="$(mktemp)"
-    jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_tts[_-]") | not)]' "$SETTINGS" > "$TMPFILE"
+    jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE"
     mv "$TMPFILE" "$SETTINGS"
     CHANGED=true
   fi
