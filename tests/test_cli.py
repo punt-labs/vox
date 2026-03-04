@@ -57,8 +57,13 @@ class TestUnmuteCommand:
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
     def test_unmute_basic(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+        self,
+        mock_get_provider: MagicMock,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         out = tmp_path / "test.mp3"
         mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
@@ -74,8 +79,13 @@ class TestUnmuteCommand:
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
     def test_unmute_custom_voice(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+        self,
+        mock_get_provider: MagicMock,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         out = tmp_path / "test.mp3"
         mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value

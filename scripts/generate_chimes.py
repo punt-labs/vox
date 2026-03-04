@@ -16,7 +16,7 @@ instantly distinguishable by ear:
 Mood variants (bright/dark) are pitch-shifted ±3 semitones from the
 neutral originals.
 
-Requires: pydub (already a project dependency).
+Requires: pydub (already a project dependency), ffmpeg with libmp3lame.
 Output:   assets/chime_<signal>.mp3           (neutral)
           assets/chime_<signal>_bright.mp3    (+3 semitones)
           assets/chime_<signal>_dark.mp3      (-3 semitones)

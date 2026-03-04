@@ -360,33 +360,75 @@ class TestUnmute:
         assert 'vibe_tags: "[warm] [satisfied]"' in text
         assert 'vibe_signals: ""' in text
 
-    def test_voice_not_found_uses_default(
+    def test_voice_not_found_returns_error(
         self, _patch_config: Path, tmp_path: Path
     ) -> None:
-        """When a segment voice is not found, falls back to provider default."""
+        """When a segment voice is not found, returns a friendly error."""
         provider = _mock_provider_ok()
-        # First call raises (segment voice), provider still has default
-        call_count = 0
+        provider.resolve_voice.side_effect = VoiceNotFoundError(
+            "bob", ["matilda", "aria"]
+        )
 
-        def resolve_side_effect(name: str, language: str | None = None) -> str:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise VoiceNotFoundError(name, ["matilda"])
-            return name
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+        ):
+            result = json.loads(unmute(segments=[{"voice": "bob", "text": "Hello"}]))
 
-        provider.resolve_voice.side_effect = resolve_side_effect
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
+        assert "error" in result
+        assert "bob" in result["error"]
+
+    def test_language_passed_to_provider(
+        self, _patch_config: Path, tmp_path: Path
+    ) -> None:
+        """Top-level language param is passed through to voice resolution."""
+        provider = _mock_provider_ok()
+        provider.get_default_voice.return_value = "vicki"
+        mock_r = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_r
 
         with (
             patch("punt_vox.server.get_provider", return_value=provider),
             patch("punt_vox.server._enqueue_audio"),
             patch("punt_vox.core._pad_audio_file"),
         ):
-            result = json.loads(unmute(segments=[{"voice": "bob", "text": "Hello"}]))
+            unmute(text="Guten Tag", language="de")
 
-        assert isinstance(result, list)
+        # get_default_voice called with language, resolve_voice with result
+        provider.get_default_voice.assert_called_once_with("de")
+        provider.resolve_voice.assert_called_once_with("vicki", "de")
+
+    def test_per_segment_language_overrides_default(
+        self, _patch_config: Path, tmp_path: Path
+    ) -> None:
+        """Per-segment language overrides the top-level default."""
+        provider = _mock_provider_ok()
+        provider.get_default_voice.return_value = "amelie"
+        mock_r = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_r
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            unmute(
+                language="en",
+                segments=[{"text": "Bonjour", "language": "fr"}],
+            )
+
+        # Per-segment "fr" should override top-level "en"
+        provider.get_default_voice.assert_called_once_with("fr")
+        provider.resolve_voice.assert_called_once_with("amelie", "fr")
+
+    def test_invalid_language_returns_error(self, _patch_config: Path) -> None:
+        """Invalid language code returns a structured error."""
+        provider = _mock_provider_ok()
+
+        with patch("punt_vox.server.get_provider", return_value=provider):
+            result = json.loads(unmute(text="Hello", language="xxx"))
+
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------
