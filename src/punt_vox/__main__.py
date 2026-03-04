@@ -17,13 +17,12 @@ import typer
 from punt_vox.core import TTSClient
 from punt_vox.output import default_output_dir
 from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
+from punt_vox.resolve import resolve_voice_and_language
 from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
     SynthesisResult,
-    TTSProvider,
     result_to_dict,
-    validate_language,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,29 +77,6 @@ def _print_results(results: list[SynthesisResult]) -> None:
         return
     for r in results:
         _print_result(r)
-
-
-def _resolve_voice_and_language(
-    provider: TTSProvider,
-    voice: str | None,
-    language: str | None,
-) -> tuple[str, str | None]:
-    """Resolve voice and language from user input."""
-    if language is not None:
-        language = validate_language(language)
-
-    if voice is None and language is not None:
-        voice = provider.get_default_voice(language)
-    elif voice is None:
-        voice = provider.default_voice
-
-    if language is not None:
-        provider.resolve_voice(voice, language)
-    else:
-        provider.resolve_voice(voice)
-        language = provider.infer_language_from_voice(voice)
-
-    return voice, language
 
 
 def _validate_voice_settings(
@@ -255,7 +231,7 @@ def synthesize(
     """Synthesize a single text to an MP3 file."""
     _validate_voice_settings(stability, similarity, style)
     prov = get_provider(provider, model=model)
-    voice, language = _resolve_voice_and_language(prov, voice, language)
+    voice, language = resolve_voice_and_language(prov, voice, language)
     request = SynthesisRequest(
         text=text,
         voice=voice,
@@ -315,7 +291,7 @@ def synthesize_batch(
                 f"Element {i} must be a string, got {type(item).__name__}."  # pyright: ignore[reportUnknownArgumentType]
             )
 
-    voice, language = _resolve_voice_and_language(prov, voice, language)
+    voice, language = resolve_voice_and_language(prov, voice, language)
     texts = cast("list[str]", raw)
     boost = speaker_boost if speaker_boost else None
     requests = [
@@ -367,8 +343,8 @@ def synthesize_pair(
     """Synthesize a pair of texts and stitch them with a pause."""
     _validate_voice_settings(stability, similarity, style)
     prov = get_provider(provider, model=model)
-    voice1, lang1 = _resolve_voice_and_language(prov, voice1, lang1)
-    voice2, lang2 = _resolve_voice_and_language(prov, voice2, lang2)
+    voice1, lang1 = resolve_voice_and_language(prov, voice1, lang1)
+    voice2, lang2 = resolve_voice_and_language(prov, voice2, lang2)
     boost = speaker_boost if speaker_boost else None
     req1 = SynthesisRequest(
         text=text1,
@@ -444,8 +420,8 @@ def synthesize_pair_batch(
         if not isinstance(item[0], str) or not isinstance(item[1], str):
             raise typer.BadParameter(f"Element {i} must contain strings, got {item!r}.")
 
-    voice1, lang1 = _resolve_voice_and_language(prov, voice1, lang1)
-    voice2, lang2 = _resolve_voice_and_language(prov, voice2, lang2)
+    voice1, lang1 = resolve_voice_and_language(prov, voice1, lang1)
+    voice2, lang2 = resolve_voice_and_language(prov, voice2, lang2)
     raw_pairs = cast("list[list[str]]", raw)
     boost = speaker_boost if speaker_boost else None
     pairs: list[tuple[SynthesisRequest, SynthesisRequest]] = [

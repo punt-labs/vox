@@ -10,9 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.config import write_field, write_fields
+from punt_vox.resolve import apply_vibe
 from punt_vox.server import (
-    _apply_vibe,  # pyright: ignore[reportPrivateUsage]
-    _voice_not_found_message,  # pyright: ignore[reportPrivateUsage]
     chorus,
     duet,
     ensemble,
@@ -21,6 +20,7 @@ from punt_vox.server import (
     speak,
 )
 from punt_vox.types import AudioProviderId, VoiceNotFoundError
+from punt_vox.voices import voice_not_found_message
 
 
 @pytest.fixture()
@@ -42,49 +42,47 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 
 
 class TestApplyVibe:
-    """Tests for _apply_vibe text injection."""
+    """Tests for apply_vibe text injection."""
 
     def test_prepends_tags(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
-        result = _apply_vibe("Hello world", expressive_tags=True)
+        result = apply_vibe("Hello world", expressive_tags=True)
         assert result == "[excited] Hello world"
 
     def test_multiple_tags(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[frustrated] [sighs]"\n---\n')
-        result = _apply_vibe("Hello world", expressive_tags=True)
+        result = apply_vibe("Hello world", expressive_tags=True)
         assert result == "[frustrated] [sighs] Hello world"
 
     def test_skips_prepend_when_text_starts_with_tag(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe("[calm] Already tagged", expressive_tags=True)
+        result = apply_vibe("[calm] Already tagged", expressive_tags=True)
         assert result == "[calm] Already tagged"
 
     def test_skips_prepend_when_text_starts_with_different_tag(
         self, _patch_config: Path
     ) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe("[excited] Different tag", expressive_tags=True)
+        result = apply_vibe("[excited] Different tag", expressive_tags=True)
         assert result == "[excited] Different tag"
 
     def test_skips_prepend_when_tag_contains_punctuation(
         self, _patch_config: Path
     ) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
-        result = _apply_vibe(
-            "[dramatic tone] Something important", expressive_tags=True
-        )
+        result = apply_vibe("[dramatic tone] Something important", expressive_tags=True)
         assert result == "[dramatic tone] Something important"
 
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_vox.server as srv
+        import punt_vox.config as cfg
 
         missing = tmp_path / "missing.md"
-        monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
-        assert _apply_vibe("Hello world", expressive_tags=True) == "Hello world"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", missing)
+        assert apply_vibe("Hello world", expressive_tags=True) == "Hello world"
 
     def test_skips_tags_when_not_supported(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
-        result = _apply_vibe("Hello world", expressive_tags=False)
+        result = apply_vibe("Hello world", expressive_tags=False)
         assert result == "Hello world"
 
 
@@ -399,26 +397,26 @@ class TestSpeakVibeTags:
 
 
 class TestVoiceNotFoundMessage:
-    """Tests for _voice_not_found_message formatter."""
+    """Tests for voice_not_found_message formatter."""
 
     def test_includes_voice_name(self) -> None:
         exc = VoiceNotFoundError("bob", ["matilda", "aria", "charlie"])
-        msg = _voice_not_found_message(exc)
+        msg = voice_not_found_message(exc)
         assert msg.startswith("bob ")
 
     def test_includes_suggestions(self) -> None:
         exc = VoiceNotFoundError("bob", ["matilda", "aria", "charlie"])
-        msg = _voice_not_found_message(exc)
+        msg = voice_not_found_message(exc)
         assert "How about " in msg
 
     def test_single_available_voice(self) -> None:
         exc = VoiceNotFoundError("bob", ["matilda"])
-        msg = _voice_not_found_message(exc)
+        msg = voice_not_found_message(exc)
         assert "matilda" in msg
 
     def test_empty_available_voices(self) -> None:
         exc = VoiceNotFoundError("bob", [])
-        msg = _voice_not_found_message(exc)
+        msg = voice_not_found_message(exc)
         assert "bob " in msg
         assert "How about ?" in msg
 

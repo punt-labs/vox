@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -13,11 +12,15 @@ from mcp.server.fastmcp import FastMCP
 from punt_vox import __version__
 from punt_vox.config import read_field, write_field, write_fields
 from punt_vox.core import TTSClient
-from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_vox.logging_config import configure_logging
-from punt_vox.output import default_output_dir
 from punt_vox.playback import enqueue as _enqueue_audio
 from punt_vox.providers import get_provider
+from punt_vox.resolve import (
+    apply_vibe,
+    resolve_output_dir,
+    resolve_output_path,
+    resolve_voice_and_language,
+)
 from punt_vox.types import (
     AudioProviderId,
     MergeStrategy,
@@ -29,6 +32,7 @@ from punt_vox.types import (
     result_to_dict,
     validate_language,
 )
+from punt_vox.voices import VOICE_BLURBS, voice_not_found_message
 
 logger = logging.getLogger(__name__)
 
@@ -66,149 +70,7 @@ def _validate_voice_settings(
             raise ValueError(msg)
 
 
-_VOICE_EXCUSES = [
-    "is temporarily indisposed",
-    "is grabbing something to eat",
-    "stepped out for a coffee",
-    "is in the bathroom",
-]
-
-_VOICE_BLURBS: dict[tuple[str, str], str] = {
-    # ElevenLabs (popular English voices)
-    ("elevenlabs", "matilda"): (
-        "Warm and thoughtful — sounds like she read the docs before answering"
-    ),
-    ("elevenlabs", "aria"): (
-        "Bright and clear — could narrate your life and you'd keep listening"
-    ),
-    ("elevenlabs", "roger"): (
-        "Steady and reassuring — the voice you want explaining turbulence"
-    ),
-    ("elevenlabs", "charlie"): ("Relaxed and genuine — telling you this over coffee"),
-    ("elevenlabs", "drew"): (
-        "Eloquent and calm — thinks before speaking, every word lands"
-    ),
-    ("elevenlabs", "sarah"): (
-        "Poised and articulate — boardroom-ready but never stiff"
-    ),
-    ("elevenlabs", "laura"): (
-        "Expressive and warm — brings stories to life without trying"
-    ),
-    ("elevenlabs", "george"): (
-        "Rich and composed — could read a phone book and make it interesting"
-    ),
-    ("elevenlabs", "jessica"): (
-        "Friendly and upbeat — makes everything sound like good news"
-    ),
-    ("elevenlabs", "river"): (
-        "Calm and unhurried — late-night radio host who never rushes"
-    ),
-    ("elevenlabs", "lily"): ("Gentle and precise — the quiet expert in the room"),
-    ("elevenlabs", "callum"): (
-        "Crisp and energetic — always slightly ahead of schedule"
-    ),
-    # OpenAI (all 9)
-    ("openai", "nova"): ("Balanced and versatile — the reliable all-rounder"),
-    ("openai", "alloy"): ("Neutral and clear — gets out of the way of the words"),
-    ("openai", "echo"): ("Deep and measured — gravitas without the drama"),
-    ("openai", "fable"): ("Warm and expressive — born to tell stories"),
-    ("openai", "onyx"): ("Low and authoritative — the voice of serious announcements"),
-    ("openai", "shimmer"): ("Bright and airy — light on its feet"),
-    ("openai", "coral"): ("Smooth and natural — easy to listen to for hours"),
-    ("openai", "sage"): ("Thoughtful and steady — wisdom in every syllable"),
-    ("openai", "ash"): ("Grounded and direct — no frills, all substance"),
-    # Polly (popular English voices)
-    ("polly", "joanna"): ("Clear and professional — the classic narrator"),
-    ("polly", "matthew"): ("Warm and conversational — a newscast you'd actually watch"),
-    ("polly", "ruth"): ("Confident and modern — neural voice with presence"),
-    ("polly", "amy"): ("British and crisp — the voice of polished documentation"),
-}
-
-
-def _voice_not_found_message(exc: VoiceNotFoundError) -> str:
-    """Build a friendly, brand-appropriate message for an unknown voice."""
-    excuse = random.choice(_VOICE_EXCUSES)
-    suggestions = random.sample(exc.available, min(3, len(exc.available)))
-    return f"{exc.voice_name} {excuse}. How about {', '.join(suggestions)}?"
-
-
-def _resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Path:
-    """Resolve an output directory, using the default if not specified.
-
-    When *ephemeral* is True, returns the ephemeral `.vox/` directory
-    in the current working directory and ignores *output_dir*.
-    """
-    if ephemeral:
-        clean_ephemeral()
-        return ephemeral_output_dir()
-    if output_dir:
-        return Path(output_dir)
-    return default_output_dir()
-
-
-def _resolve_output_path(
-    output_path: str | None, output_dir: Path, default_name: str
-) -> Path:
-    """Resolve an output file path."""
-    if output_path:
-        return Path(output_path)
-    return output_dir / default_name
-
-
-def _resolve_voice_and_language(
-    provider: TTSProvider,
-    voice: str | None,
-    language: str | None,
-) -> tuple[str, str | None]:
-    """Resolve voice and language from MCP tool input.
-
-    Priority: explicit voice > session voice > language default > provider default.
-
-    If only language is provided, selects the provider's default voice for it.
-    If only voice is provided, infers language from the voice (best-effort).
-    If both, validates compatibility.
-    """
-    if language is not None:
-        language = validate_language(language)
-
-    if voice is None:
-        voice = read_field("voice", _CONFIG_PATH)
-
-    if voice is None and language is not None:
-        voice = provider.get_default_voice(language)
-    elif voice is None:
-        voice = provider.default_voice
-
-    if language is not None:
-        provider.resolve_voice(voice, language)
-    else:
-        provider.resolve_voice(voice)
-        language = provider.infer_language_from_voice(voice)
-
-    return voice, language
-
-
 _CONFIG_PATH = Path(".vox/config.md")
-
-_LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
-
-
-def _apply_vibe(text: str, *, expressive_tags: bool) -> str:
-    """Prepend session vibe tags to text if the provider supports them.
-
-    Only providers whose ``supports_expressive_tags`` is True interpret
-    bracketed tags as performance cues. Other providers would speak
-    them as literal words.
-
-    Skips prepending when the text already starts with an expression
-    tag (e.g. ``[calm]``) to avoid doubling.
-    """
-    if not expressive_tags:
-        return text
-    tags = read_field("vibe_tags", _CONFIG_PATH)
-    if tags and not _LEADING_TAG_RE.match(text):
-        return f"{tags} {text}"
-    return text
 
 
 def _cached_result(
@@ -285,7 +147,7 @@ def speak(
             (e.g. "[warm] [satisfied]"). When provided, writes the tags
             to config and clears vibe_signals in one step — replacing
             the separate set_config call. Tags are prepended to text
-            automatically via _apply_vibe.
+            automatically via apply_vibe.
 
     Returns:
         JSON string with path, text, voice, and language fields.
@@ -295,18 +157,18 @@ def speak(
         write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
     provider = get_provider()
     try:
-        voice, language = _resolve_voice_and_language(provider, voice, language)
+        voice, language = resolve_voice_and_language(provider, voice, language)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
 
-    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
-    path = _resolve_output_path(
+    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
+    path = resolve_output_path(
         output_path,
         dir_path,
         f"{voice}_{text[:20].replace(' ', '_')}.mp3",
     )
 
-    text = _apply_vibe(text, expressive_tags=provider.supports_expressive_tags)
+    text = apply_vibe(text, expressive_tags=provider.supports_expressive_tags)
     request = SynthesisRequest(
         text=text,
         voice=voice,
@@ -384,11 +246,11 @@ def chorus(
         write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
     provider = get_provider()
     expressive = provider.supports_expressive_tags
-    texts = [_apply_vibe(t, expressive_tags=expressive) for t in texts]
+    texts = [apply_vibe(t, expressive_tags=expressive) for t in texts]
     try:
-        voice, language = _resolve_voice_and_language(provider, voice, language)
+        voice, language = resolve_voice_and_language(provider, voice, language)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
     requests = [
         SynthesisRequest(
             text=t,
@@ -404,7 +266,7 @@ def chorus(
     ]
     if not requests:
         return json.dumps([])
-    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
+    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
 
     client = TTSClient(provider)
     results: list[SynthesisResult]
@@ -494,13 +356,13 @@ def duet(
     _validate_voice_settings(stability, similarity, style)
     provider = get_provider()
     try:
-        voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
+        voice1, lang1 = resolve_voice_and_language(provider, voice1, lang1)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
     try:
-        voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+        voice2, lang2 = resolve_voice_and_language(provider, voice2, lang2)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
     req1 = SynthesisRequest(
         text=text1,
         voice=voice1,
@@ -522,8 +384,8 @@ def duet(
         speaker_boost=speaker_boost,
     )
 
-    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
-    path = _resolve_output_path(
+    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
+    path = resolve_output_path(
         output_path,
         dir_path,
         f"pair_{text1[:10]}_{text2[:10]}.mp3",
@@ -601,13 +463,13 @@ def ensemble(
     _validate_voice_settings(stability, similarity, style)
     provider = get_provider()
     try:
-        voice1, lang1 = _resolve_voice_and_language(provider, voice1, lang1)
+        voice1, lang1 = resolve_voice_and_language(provider, voice1, lang1)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
     try:
-        voice2, lang2 = _resolve_voice_and_language(provider, voice2, lang2)
+        voice2, lang2 = resolve_voice_and_language(provider, voice2, lang2)
     except VoiceNotFoundError as exc:
-        return json.dumps({"error": _voice_not_found_message(exc)})
+        return json.dumps({"error": voice_not_found_message(exc)})
 
     pair_requests: list[tuple[SynthesisRequest, SynthesisRequest]] = [
         (
@@ -637,7 +499,7 @@ def ensemble(
     if not pair_requests:
         return json.dumps([])
 
-    dir_path = _resolve_output_dir(output_dir, ephemeral=ephemeral)
+    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
 
     client = TTSClient(provider)
     results: list[SynthesisResult]
@@ -770,7 +632,7 @@ def list_voices(language: str | None = None) -> str:
 
     featured = [
         {"name": name, "blurb": blurb}
-        for (prov, name), blurb in _VOICE_BLURBS.items()
+        for (prov, name), blurb in VOICE_BLURBS.items()
         if prov == provider.name and name in all_voices
     ]
     random.shuffle(featured)
