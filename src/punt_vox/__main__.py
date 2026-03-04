@@ -242,7 +242,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                 tmp_paths.append(seg_path)
             stitch_audio(tmp_paths, out_path, pause)
         enqueue(out_path)
-        typer.echo(str(out_path))
+        _emit({"path": str(out_path)}, str(out_path))
     else:
         for req in requests:
             out_path = out_dir / generate_filename(req.text)
@@ -308,7 +308,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
                 client.synthesize(req, seg_path)
                 tmp_paths.append(seg_path)
             stitch_audio(tmp_paths, output, pause)
-        typer.echo(str(output))
+        _emit({"path": str(output)}, str(output))
         return
 
     from punt_vox.types import generate_filename
@@ -438,7 +438,7 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
         _emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
-        write_fields({"vibe": mood, "vibe_mode": "manual"})
+        write_fields({"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"})
         _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 

@@ -70,15 +70,6 @@ def resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Pa
     return default_output_dir()
 
 
-def resolve_output_path(
-    output_path: str | None, output_dir: Path, default_name: str
-) -> Path:
-    """Resolve an output file path."""
-    if output_path:
-        return Path(output_path)
-    return output_dir / default_name
-
-
 def apply_vibe(
     text: str, *, expressive_tags: bool, config_path: Path | None = None
 ) -> str:

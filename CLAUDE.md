@@ -56,7 +56,7 @@ Module structure under `src/punt_vox/`:
 | `ephemeral.py` | Ephemeral output mode: `.vox/` in cwd, auto-cleanup |
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
 | `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()` |
-| `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `resolve_output_dir()`, `resolve_output_path()`, `apply_vibe()` |
+| `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `resolve_output_dir()`, `apply_vibe()` |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp |
 | `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`. Reads `.vox/config.md` for session state. |

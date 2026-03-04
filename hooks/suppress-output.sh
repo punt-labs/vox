@@ -44,6 +44,13 @@ emit() {
   }'
 }
 
+# Error guard: if the result contains an error field, surface it directly.
+ERROR_MSG=$(echo "$RESULT" | jq -r '.error // empty' 2>/dev/null)
+if [[ -n "$ERROR_MSG" ]]; then
+  emit "♪ error: ${ERROR_MSG}" "$RESULT"
+  exit 0
+fi
+
 if [[ "$TOOL_NAME" == "unmute" ]]; then
   extract_voice "$RESULT"
   PRONOUN=$(voice_pronoun "$VOICE")

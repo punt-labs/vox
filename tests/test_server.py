@@ -313,7 +313,7 @@ class TestUnmute:
             result = json.loads(unmute(text="Hello world"))
 
         assert isinstance(result, list)
-        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]  # pyright: ignore[reportUnknownArgumentType]
+        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
 
     def test_segments(self, _patch_config: Path, tmp_path: Path) -> None:
         provider = _mock_provider_ok()

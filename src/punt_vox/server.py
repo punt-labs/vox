@@ -155,7 +155,7 @@ def _synthesize_segments(
 
     # Multiple segments → stitch into one file
     combined_text = " | ".join(r.text for r in requests)
-    out_path = output_dir / generate_filename(combined_text, prefix="seg_")
+    out_path = output_dir / generate_filename(combined_text, prefix="batch_")
     if out_path.exists():
         return [
             SynthesisResult(
