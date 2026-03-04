@@ -1,8 +1,10 @@
 """Centralized reader for .vox/config.md YAML frontmatter.
 
-Every module that needs config (server, watcher, hooks) imports from
-here.  The canonical path is ``.vox/config.md`` in the current working
-directory.  All fields return safe defaults when the file is missing.
+Python components that need config (e.g. server, watcher) import from
+here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via their
+own bash-based reader.  The canonical path is ``.vox/config.md`` in the
+current working directory.  All fields return safe defaults when the
+file is missing.
 """
 
 from __future__ import annotations
