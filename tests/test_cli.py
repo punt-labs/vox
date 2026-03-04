@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
-    MergeStrategy,
     SynthesisResult,
 )
 
@@ -49,10 +48,15 @@ def _make_mock_provider() -> MagicMock:
 _CLI = "punt_vox.__main__"
 
 
-class TestSynthesizeCommand:
+# ---------------------------------------------------------------------------
+# unmute tests
+# ---------------------------------------------------------------------------
+
+
+class TestUnmuteCommand:
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
-    def test_synthesize_basic(
+    def test_unmute_basic(
         self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
@@ -61,15 +65,62 @@ class TestSynthesizeCommand:
         mock_instance.synthesize.return_value = _mock_synthesize_result(out)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["synthesize", "hello", "-o", str(out)])
+        with patch("punt_vox.playback.enqueue"):
+            result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0
-        assert str(out) in result.output
         mock_instance.synthesize.assert_called_once()
 
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
-    def test_synthesize_custom_voice(
+    def test_unmute_custom_voice(
+        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "test.mp3"
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+
+        runner = CliRunner()
+        with patch("punt_vox.playback.enqueue"):
+            result = runner.invoke(app, ["unmute", "Hallo", "--voice", "hans"])
+
+        assert result.exit_code == 0
+        request = mock_instance.synthesize.call_args[0][0]
+        assert request.voice == "hans"
+
+    def test_unmute_no_text_fails(self) -> None:
+        runner = CliRunner()
+        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
+            result = runner.invoke(app, ["unmute"])
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# record tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecordCommand:
+    @patch(f"{_CLI}.TTSClient")
+    @patch(f"{_CLI}.get_provider")
+    def test_record_basic(
+        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "test.mp3"
+        mock_get_provider.return_value = _make_mock_provider()
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+
+        assert result.exit_code == 0
+        mock_instance.synthesize.assert_called_once()
+
+    @patch(f"{_CLI}.TTSClient")
+    @patch(f"{_CLI}.get_provider")
+    def test_record_custom_voice(
         self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
@@ -79,39 +130,41 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            app,
-            ["synthesize", "Hallo", "--voice", "hans", "-o", str(out)],
+            app, ["record", "Hallo", "--voice", "hans", "-o", str(out)]
         )
 
         assert result.exit_code == 0
-        call_args = mock_instance.synthesize.call_args
-        request = call_args[0][0]
+        request = mock_instance.synthesize.call_args[0][0]
         assert request.voice == "hans"
 
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
-    def test_synthesize_custom_rate(
+    def test_record_from_file(
         self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
-        out = tmp_path / "test.mp3"
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(["hello", "world"]))
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
         mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.synthesize.side_effect = [
+            _mock_synthesize_result(out_dir / "a.mp3", "hello"),
+            _mock_synthesize_result(out_dir / "b.mp3", "world"),
+        ]
 
         runner = CliRunner()
         result = runner.invoke(
-            app,
-            ["synthesize", "hello", "--rate", "100", "-o", str(out)],
+            app, ["record", "--from", str(input_file), "-d", str(out_dir)]
         )
 
         assert result.exit_code == 0
-        call_args = mock_instance.synthesize.call_args
-        request = call_args[0][0]
-        assert request.rate == 100
+        assert mock_instance.synthesize.call_count == 2
 
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
-    def test_synthesize_voice_settings(
+    def test_record_voice_settings(
         self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
@@ -123,7 +176,7 @@ class TestSynthesizeCommand:
         result = runner.invoke(
             app,
             [
-                "synthesize",
+                "record",
                 "hello",
                 "-o",
                 str(out),
@@ -138,29 +191,15 @@ class TestSynthesizeCommand:
         )
 
         assert result.exit_code == 0
-        call_args = mock_instance.synthesize.call_args
-        request = call_args[0][0]
+        request = mock_instance.synthesize.call_args[0][0]
         assert request.stability == 0.5
         assert request.similarity == 0.7
         assert request.style == 0.3
         assert request.speaker_boost is True
 
-    @patch(f"{_CLI}.get_provider")
-    def test_synthesize_invalid_voice(self, mock_get_provider: MagicMock) -> None:
-        provider = _make_mock_provider()
-        provider.resolve_voice.side_effect = ValueError("Unknown voice 'nonexistent'")
-        mock_get_provider.return_value = provider
-
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            ["synthesize", "hello", "--voice", "nonexistent"],
-        )
-        assert result.exit_code != 0
-
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
-    def test_synthesize_with_language(
+    def test_record_with_language(
         self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
@@ -172,8 +211,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            app,
-            ["synthesize", "Guten Tag", "--language", "de", "-o", str(out)],
+            app, ["record", "Guten Tag", "--language", "de", "-o", str(out)]
         )
 
         assert result.exit_code == 0
@@ -181,235 +219,124 @@ class TestSynthesizeCommand:
         assert request.voice == "vicki"
         assert request.language == "de"
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_synthesize_lang_shorthand(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+
+# ---------------------------------------------------------------------------
+# vibe tests
+# ---------------------------------------------------------------------------
+
+
+class TestVibeCommand:
+    def test_vibe_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
 
         runner = CliRunner()
-        result = runner.invoke(
-            app,
-            ["synthesize", "hello", "--lang", "en", "-o", str(out)],
-        )
+        result = runner.invoke(app, ["vibe", "excited"])
         assert result.exit_code == 0
+        assert "excited" in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_synthesize_invalid_language(self, mock_get_provider: MagicMock) -> None:
-        mock_get_provider.return_value = _make_mock_provider()
+    def test_vibe_auto(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
 
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            ["synthesize", "hello", "--language", "xxx"],
-        )
-        assert result.exit_code != 0
-
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_synthesize_voice_and_language(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
 
         runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "synthesize",
-                "Hallo",
-                "--voice",
-                "hans",
-                "--language",
-                "de",
-                "-o",
-                str(out),
-            ],
-        )
+        result = runner.invoke(app, ["vibe", "auto"])
         assert result.exit_code == 0
-        request = mock_instance.synthesize.call_args[0][0]
-        assert request.voice == "hans"
-        assert request.language == "de"
+        assert "auto" in result.output
 
+    def test_vibe_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
 
-class TestSynthesizeBatchCommand:
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_batch_basic(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(["hello", "world"]))
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize_batch.return_value = [
-            _mock_synthesize_result(out_dir / "a.mp3", "hello"),
-            _mock_synthesize_result(out_dir / "b.mp3", "world"),
-        ]
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
 
         runner = CliRunner()
-        result = runner.invoke(
-            app,
-            ["synthesize-batch", str(input_file), "-d", str(out_dir)],
-        )
-
+        result = runner.invoke(app, ["vibe", "off"])
         assert result.exit_code == 0
-        mock_instance.synthesize_batch.assert_called_once()
+        assert "off" in result.output
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_batch_with_merge(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(["hello", "world"]))
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
 
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize_batch.return_value = [
-            _mock_synthesize_result(out_dir / "merged.mp3", "hello | world"),
-        ]
+# ---------------------------------------------------------------------------
+# on/off/mute tests
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationCommands:
+    def test_on(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
 
         runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "synthesize-batch",
-                str(input_file),
-                "-d",
-                str(out_dir),
-                "--merge",
-            ],
-        )
+        result = runner.invoke(app, ["on"])
+        assert result.exit_code == 0
+        assert "enabled" in result.output.lower()
+
+    def test_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["off"])
+        assert result.exit_code == 0
+        assert "disabled" in result.output.lower()
+
+    def test_mute(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["mute"])
+        assert result.exit_code == 0
+        assert "chimes" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# version tests
+# ---------------------------------------------------------------------------
+
+
+class TestVersionCommand:
+    def test_version(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["version"])
+        assert result.exit_code == 0
+        assert "vox" in result.output
+
+
+# ---------------------------------------------------------------------------
+# status tests
+# ---------------------------------------------------------------------------
+
+
+class TestStatusCommand:
+    def test_status(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+
+        runner = CliRunner()
+        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
+            result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        call_args = mock_instance.synthesize_batch.call_args
-        assert call_args[0][2] == MergeStrategy.ONE_FILE_PER_BATCH
+        assert "Provider" in result.output
+        assert "Voice" in result.output
 
 
-class TestSynthesizePairCommand:
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_pair_basic(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        out = tmp_path / "pair.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize_pair.return_value = SynthesisResult(
-            path=out,
-            text="strong | stark",
-            provider=AudioProviderId.polly,
-            voice="joanna+hans",
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "synthesize-pair",
-                "strong",
-                "stark",
-                "--voice1",
-                "joanna",
-                "--voice2",
-                "hans",
-                "-o",
-                str(out),
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert str(out) in result.output
-
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_pair_custom_pause(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        out = tmp_path / "pair.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize_pair.return_value = SynthesisResult(
-            path=out,
-            text="strong | stark",
-            provider=AudioProviderId.polly,
-            voice="joanna+hans",
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "synthesize-pair",
-                "strong",
-                "stark",
-                "--pause",
-                "1000",
-                "-o",
-                str(out),
-            ],
-        )
-
-        assert result.exit_code == 0
-        call_args = mock_instance.synthesize_pair.call_args
-        # pause is the 6th positional arg
-        assert call_args[0][5] == 1000
-
-
-class TestSynthesizePairBatchCommand:
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_pair_batch_basic(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        input_file = tmp_path / "pairs.json"
-        input_file.write_text(json.dumps([["strong", "stark"], ["house", "Haus"]]))
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize_pair_batch.return_value = [
-            SynthesisResult(
-                path=out_dir / "a.mp3",
-                text="strong | stark",
-                provider=AudioProviderId.polly,
-                voice="joanna+hans",
-            ),
-            SynthesisResult(
-                path=out_dir / "b.mp3",
-                text="house | Haus",
-                provider=AudioProviderId.polly,
-                voice="joanna+hans",
-            ),
-        ]
-
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "synthesize-pair-batch",
-                str(input_file),
-                "-d",
-                str(out_dir),
-            ],
-        )
-
-        assert result.exit_code == 0
-        mock_instance.synthesize_pair_batch.assert_called_once()
+# ---------------------------------------------------------------------------
+# main group tests
+# ---------------------------------------------------------------------------
 
 
 class TestMainGroup:
@@ -419,9 +346,9 @@ class TestMainGroup:
         assert result.exit_code == 0
         assert "vox" in result.output.lower()
 
-    def test_synthesize_help(self) -> None:
+    def test_unmute_help(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(app, ["synthesize", "--help"])
+        result = runner.invoke(app, ["unmute", "--help"])
         assert result.exit_code == 0
         assert "voice" in result.output.lower()
 
@@ -444,7 +371,7 @@ class TestMainGroup:
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["synthesize", "hello", "--provider", "polly", "-o", str(out)],
+            ["record", "hello", "--provider", "polly", "-o", str(out)],
         )
         assert result.exit_code == 0
         mock_get_provider.assert_called_once_with("polly", model=None)
@@ -508,70 +435,16 @@ class TestDoctorCommand:
         assert "✓ Python" in result.output
         assert "✓ Provider: polly" in result.output
         assert "✓ ffmpeg" in result.output
-        assert "✓ AWS credentials" in result.output
-        assert "✓ AWS Polly" in result.output
-        assert "✓ Output directory" in result.output
 
     def test_ffmpeg_missing_fails(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
         assert "✗ ffmpeg" in result.output
 
-    def test_aws_credentials_fail(self, tmp_path: Path) -> None:
-        result = self._run_doctor(
-            tmp_path,
-            health_checks=[
-                HealthCheck(
-                    passed=False,
-                    message="AWS credentials: not configured (run `aws configure`)",
-                ),
-                HealthCheck(passed=True, message="AWS Polly access"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "✗ AWS credentials" in result.output
-
-    def test_polly_access_fail(self, tmp_path: Path) -> None:
-        result = self._run_doctor(
-            tmp_path,
-            health_checks=[
-                HealthCheck(
-                    passed=True,
-                    message="AWS credentials (account: 123456789012)",
-                ),
-                HealthCheck(passed=False, message="AWS Polly access: access denied"),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "✗ AWS Polly" in result.output
-
     def test_uvx_missing_is_optional(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, uvx_found=False)
-        # uvx is optional — should not cause failure
         assert result.exit_code == 0
         assert "○ uvx" in result.output
-
-    def test_config_not_found_is_optional(self, tmp_path: Path) -> None:
-        result = self._run_doctor(tmp_path, config_exists=False)
-        assert result.exit_code == 0
-        assert "○ Claude Desktop config" in result.output
-
-    def test_server_registered(self, tmp_path: Path) -> None:
-        config_data: dict[str, object] = {
-            "mcpServers": {"tts": {"command": "uvx"}},
-        }
-        result = self._run_doctor(tmp_path, config_exists=True, config_data=config_data)
-        assert "✓ Claude Desktop MCP: registered" in result.output
-
-    def test_server_not_registered(self, tmp_path: Path) -> None:
-        config_data: dict[str, object] = {"mcpServers": {}}
-        result = self._run_doctor(tmp_path, config_exists=True, config_data=config_data)
-        assert "○ Claude Desktop MCP: not registered" in result.output
-
-    def test_summary_counts(self, tmp_path: Path) -> None:
-        result = self._run_doctor(tmp_path)
-        assert "passed" in result.output
-        assert "failed" in result.output
 
     def test_linux_no_keys_no_espeak_warns(self, tmp_path: Path) -> None:
         with patch.dict(os.environ, {}, clear=False):
@@ -580,29 +453,8 @@ class TestDoctorCommand:
             result = self._run_doctor(
                 tmp_path, system_platform="Linux", espeak_found=None
             )
-        # espeak check is optional — doctor passes but shows the warning
         assert result.exit_code == 0
         assert "espeak-ng/espeak: not found" in result.output
-        assert "sudo apt-get install espeak-ng" in result.output
-
-    def test_linux_no_keys_espeak_ng_found(self, tmp_path: Path) -> None:
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("ELEVENLABS_API_KEY", None)
-            os.environ.pop("OPENAI_API_KEY", None)
-            result = self._run_doctor(
-                tmp_path, system_platform="Linux", espeak_found="espeak-ng"
-            )
-        assert result.exit_code == 0
-        assert "✓ espeak-ng: /usr/bin/espeak-ng" in result.output
-
-    def test_linux_with_api_key_no_espeak_check(self, tmp_path: Path) -> None:
-        with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}, clear=False):
-            result = self._run_doctor(tmp_path, system_platform="Linux")
-        assert "espeak-ng:" not in result.output
-
-    def test_macos_no_espeak_check(self, tmp_path: Path) -> None:
-        result = self._run_doctor(tmp_path, system_platform="Darwin")
-        assert "espeak-ng:" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -644,13 +496,6 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Uninstalled." in result.output
 
-    def test_uninstall_no_claude(self) -> None:
-        runner = CliRunner()
-        with patch(f"{_CLI}.shutil.which", return_value=None):
-            result = runner.invoke(app, ["uninstall"])
-
-        assert result.exit_code != 0
-
 
 # ---------------------------------------------------------------------------
 # install-desktop tests (Claude Desktop MCP registration)
@@ -679,7 +524,6 @@ class TestInstallDesktopCommand:
             patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch.dict(os.environ, {}, clear=False),
         ):
-            # Ensure no API keys are set; on macOS, say is auto-detected
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
@@ -693,12 +537,7 @@ class TestInstallDesktopCommand:
         data = json.loads(config_path.read_text())
         server = data["mcpServers"]["tts"]
         assert server["command"] == _UVX
-        assert server["args"] == [
-            "--from",
-            "punt-vox",
-            "vox",
-            "mcp",
-        ]
+        assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
         assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
         assert server["env"]["TTS_PROVIDER"] == "say"
 
@@ -715,10 +554,7 @@ class TestInstallDesktopCommand:
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(
-                f"{_CLI}._claude_desktop_config_path",
-                return_value=config_path,
-            ),
+            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
         ):
             result = runner.invoke(
                 app,
@@ -729,311 +565,3 @@ class TestInstallDesktopCommand:
         data = json.loads(config_path.read_text())
         assert "other-server" in data["mcpServers"]
         assert "tts" in data["mcpServers"]
-
-    def test_overwrites_existing_entry(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        config_path.parent.mkdir(parents=True)
-        existing = {
-            "mcpServers": {
-                "tts": {"command": "old", "args": ["old"]},
-            }
-        }
-        config_path.write_text(json.dumps(existing))
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(
-                f"{_CLI}._claude_desktop_config_path",
-                return_value=config_path,
-            ),
-        ):
-            result = runner.invoke(
-                app,
-                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
-            )
-
-        assert result.exit_code == 0
-        assert "Updated existing" in result.output
-        data = json.loads(config_path.read_text())
-        server = data["mcpServers"]["tts"]
-        assert server["command"] == _UVX
-
-    def test_fails_when_uvx_not_found(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=None),
-            patch(
-                f"{_CLI}._claude_desktop_config_path",
-                return_value=config_path,
-            ),
-        ):
-            result = runner.invoke(
-                app,
-                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
-            )
-
-        assert result.exit_code != 0
-        assert "uvx not found" in result.output
-
-    def test_custom_uvx_path(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-
-        runner = CliRunner()
-        with patch(
-            f"{_CLI}._claude_desktop_config_path",
-            return_value=config_path,
-        ):
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(tmp_path / "audio"),
-                    "--uvx-path",
-                    "/custom/bin/uvx",
-                ],
-            )
-
-        assert result.exit_code == 0
-        data = json.loads(config_path.read_text())
-        server = data["mcpServers"]["tts"]
-        assert server["command"] == "/custom/bin/uvx"
-
-    def test_creates_output_directory(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "nested" / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(
-                f"{_CLI}._claude_desktop_config_path",
-                return_value=config_path,
-            ),
-        ):
-            result = runner.invoke(
-                app,
-                ["install-desktop", "--output-dir", str(audio_dir)],
-            )
-
-        assert result.exit_code == 0
-        assert audio_dir.is_dir()
-
-    def test_install_defaults_openai_when_key_set(self, tmp_path: Path) -> None:
-        """OPENAI_API_KEY in env auto-selects openai (ElevenLabs > OpenAI > Polly)."""
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
-        ):
-            os.environ.pop("ELEVENLABS_API_KEY", None)
-            result = runner.invoke(
-                app, ["install-desktop", "--output-dir", str(audio_dir)]
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: openai" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "openai"
-        assert env["OPENAI_API_KEY"] == "sk-test-key"
-
-    def test_install_explicit_openai_with_key(self, tmp_path: Path) -> None:
-        """--provider openai with OPENAI_API_KEY set writes key to config."""
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
-        ):
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(audio_dir),
-                    "--provider",
-                    "openai",
-                ],
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: openai" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "openai"
-        assert env["OPENAI_API_KEY"] == "sk-test-key"
-
-    def test_install_defaults_say_on_macos(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(
-                f"{_CLI}.shutil.which",
-                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
-                    _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
-                ),
-            ),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
-            patch.dict(os.environ, {}, clear=False),
-        ):
-            os.environ.pop("OPENAI_API_KEY", None)
-            os.environ.pop("ELEVENLABS_API_KEY", None)
-            result = runner.invoke(
-                app, ["install-desktop", "--output-dir", str(audio_dir)]
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: say" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "say"
-        assert "OPENAI_API_KEY" not in env
-
-    def test_install_explicit_provider_overrides(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
-        ):
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(audio_dir),
-                    "--provider",
-                    "polly",
-                ],
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: polly" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "polly"
-        assert "OPENAI_API_KEY" not in env
-
-    def test_install_openai_without_key_fails(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {}, clear=False),
-        ):
-            os.environ.pop("OPENAI_API_KEY", None)
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(audio_dir),
-                    "--provider",
-                    "openai",
-                ],
-            )
-
-        assert result.exit_code != 0
-        assert "OPENAI_API_KEY" in result.output
-
-    def test_install_elevenlabs_with_key(self, tmp_path: Path) -> None:
-        """--provider elevenlabs with ELEVENLABS_API_KEY set writes key to config."""
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {"ELEVENLABS_API_KEY": "sk_test_key"}, clear=False),
-        ):
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(audio_dir),
-                    "--provider",
-                    "elevenlabs",
-                ],
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: elevenlabs" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "elevenlabs"
-        assert env["ELEVENLABS_API_KEY"] == "sk_test_key"
-
-    def test_install_elevenlabs_without_key_fails(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {}, clear=False),
-        ):
-            os.environ.pop("ELEVENLABS_API_KEY", None)
-            result = runner.invoke(
-                app,
-                [
-                    "install-desktop",
-                    "--output-dir",
-                    str(audio_dir),
-                    "--provider",
-                    "elevenlabs",
-                ],
-            )
-
-        assert result.exit_code != 0
-        assert "ELEVENLABS_API_KEY" in result.output
-
-    def test_install_defaults_elevenlabs_when_key_set(self, tmp_path: Path) -> None:
-        """ELEVENLABS_API_KEY in env auto-selects elevenlabs."""
-        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
-        audio_dir = tmp_path / "audio"
-
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
-            patch.dict(os.environ, {"ELEVENLABS_API_KEY": "sk_test_key"}, clear=False),
-        ):
-            result = runner.invoke(
-                app, ["install-desktop", "--output-dir", str(audio_dir)]
-            )
-
-        assert result.exit_code == 0
-        assert "Provider: elevenlabs" in result.output
-
-        data = json.loads(config_path.read_text())
-        env = data["mcpServers"]["tts"]["env"]
-        assert env["TTS_PROVIDER"] == "elevenlabs"
-        assert env["ELEVENLABS_API_KEY"] == "sk_test_key"

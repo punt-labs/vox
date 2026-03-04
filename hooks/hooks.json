@@ -12,7 +12,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__(plugin_vox(-dev)?_)?vox__.*",
+        "matcher": "mcp__(plugin_vox(-dev)?_)?mic__.*",
         "hooks": [
           {
             "type": "command",
