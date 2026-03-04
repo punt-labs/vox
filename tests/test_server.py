@@ -378,6 +378,58 @@ class TestUnmute:
         assert "error" in result
         assert "bob" in result["error"]
 
+    def test_language_passed_to_provider(
+        self, _patch_config: Path, tmp_path: Path
+    ) -> None:
+        """Top-level language param is passed through to voice resolution."""
+        provider = _mock_provider_ok()
+        provider.get_default_voice.return_value = "vicki"
+        mock_r = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_r
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            unmute(text="Guten Tag", language="de")
+
+        # get_default_voice called with language, resolve_voice with result
+        provider.get_default_voice.assert_called_once_with("de")
+        provider.resolve_voice.assert_called_once_with("vicki", "de")
+
+    def test_per_segment_language_overrides_default(
+        self, _patch_config: Path, tmp_path: Path
+    ) -> None:
+        """Per-segment language overrides the top-level default."""
+        provider = _mock_provider_ok()
+        provider.get_default_voice.return_value = "amelie"
+        mock_r = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_r
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            unmute(
+                language="en",
+                segments=[{"text": "Bonjour", "language": "fr"}],
+            )
+
+        # Per-segment "fr" should override top-level "en"
+        provider.get_default_voice.assert_called_once_with("fr")
+        provider.resolve_voice.assert_called_once_with("amelie", "fr")
+
+    def test_invalid_language_returns_error(self, _patch_config: Path) -> None:
+        """Invalid language code returns a structured error."""
+        provider = _mock_provider_ok()
+
+        with patch("punt_vox.server.get_provider", return_value=provider):
+            result = json.loads(unmute(text="Hello", language="xxx"))
+
+        assert "error" in result
+
 
 # ---------------------------------------------------------------------------
 # record tool tests
