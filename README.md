@@ -121,10 +121,10 @@ The full experience --- natural voice with expressive tags that respond to `/vib
 | Provider | API Key | Default Voice | Best For |
 |----------|---------|---------------|----------|
 | **ElevenLabs** | `ELEVENLABS_API_KEY` | matilda | **Recommended.** Natural voice, expressive tags via `/vibe` |
-| OpenAI | `OPENAI_API_KEY` | nova | Fallback. Fast notifications, low latency |
-| AWS Polly | AWS credentials | joanna | Fallback. Cost-effective, no API key needed |
-| macOS say | — | fred | Fallback. Zero-config on macOS, offline |
-| espeak-ng | — | en | Fallback. Zero-config on Linux, offline |
+| OpenAI | `OPENAI_API_KEY` | nova | Fast notifications, low latency |
+| macOS say | — | samantha | Zero-config on macOS, offline |
+| espeak-ng | — | en | Zero-config on Linux, offline |
+| AWS Polly | AWS credentials | joanna | Cost-effective, requires AWS credentials |
 
 Auto-detection order: ElevenLabs > OpenAI > say (macOS) / espeak (Linux) > Polly.
 
