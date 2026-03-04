@@ -1,24 +1,24 @@
-"""FastMCP server for punt-vox."""
+"""FastMCP server for punt-vox — mic API."""
 
 from __future__ import annotations
 
 import json
 import logging
 import random
+import tempfile
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from punt_vox import __version__
-from punt_vox.config import read_field, write_field, write_fields
-from punt_vox.core import TTSClient
+from punt_vox.config import read_field, write_fields
+from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.logging_config import configure_logging
 from punt_vox.playback import enqueue as _enqueue_audio
 from punt_vox.providers import get_provider
 from punt_vox.resolve import (
     apply_vibe,
     resolve_output_dir,
-    resolve_output_path,
     resolve_voice_and_language,
 )
 from punt_vox.types import (
@@ -32,21 +32,21 @@ from punt_vox.types import (
     result_to_dict,
     validate_language,
 )
-from punt_vox.voices import VOICE_BLURBS, voice_not_found_message
+from punt_vox.voices import VOICE_BLURBS
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "vox",
+    "mic",
     instructions=(
-        "TTS is a text-to-speech engine. Use these tools to speak text aloud, "
-        "generate audio files, and create language-learning pairs.\n\n"
+        "Vox is a text-to-speech engine. Use these tools to speak text aloud "
+        "and generate audio files.\n\n"
         "When a stop hook blocks with a ♪ phrase (e.g. '♪ Speaking my thoughts...'), "
         "first use the Read tool to read .vox/config.md and check the vibe, "
         "vibe_mode, and vibe_signals fields. If vibe_mode is 'manual', treat "
         "vibe as your primary mood hint. If vibe_mode is 'auto' and "
         "vibe_signals is non-empty, interpret those signals to pick mood. Then "
-        "write 1-2 sentences summarizing what you completed and call the speak "
+        "write 1-2 sentences summarizing what you completed and call the unmute "
         'tool with ephemeral=true and vibe_tags="[tag1] [tag2]" to set mood '
         "and speak in one call. No other output."
     ),
@@ -73,556 +73,330 @@ def _validate_voice_settings(
 _CONFIG_PATH = Path(".vox/config.md")
 
 
-def _cached_result(
-    provider: TTSProvider, request: SynthesisRequest, output_path: Path
-) -> SynthesisResult:
-    """Build a cached AudioResult without calling the provider."""
-    provider_id = AudioProviderId(provider.name)
-    return SynthesisResult(
-        path=output_path,
-        text=request.text,
-        provider=provider_id,
-        voice=request.voice,
-        language=request.language,
-        metadata=request.metadata,
-    )
+# ---------------------------------------------------------------------------
+# Segment processing — shared by unmute and record
+# ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-def speak(
-    text: str,
-    voice: str | None = None,
-    language: str | None = None,
-    rate: int = 90,
-    auto_play: bool = True,
-    output_path: str | None = None,
-    output_dir: str | None = None,
-    ephemeral: bool = False,
-    stability: float | None = None,
-    similarity: float | None = None,
-    style: float | None = None,
-    speaker_boost: bool | None = None,
-    vibe_tags: str | None = None,
-) -> str:
-    """Speak text aloud and save as MP3.
+def _build_requests(
+    segments: list[dict[str, str]],
+    default_voice: str | None,
+    provider: TTSProvider,
+    *,
+    rate: int,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+) -> list[SynthesisRequest]:
+    """Convert segment dicts to SynthesisRequest objects.
 
-    Args:
-        text: The text to convert to speech. With ElevenLabs eleven_v3,
-            you can embed audio tags in square brackets anywhere in the
-            text to control delivery — e.g. [tired], [excited], [whisper],
-            [sad], [sigh], [laughs], [dramatic tone]. Tags are free-form;
-            the model interprets them as performance cues. Combine with
-            punctuation (ellipsis for pauses, ! for emphasis) for best
-            results. Tags only work with ElevenLabs eleven_v3 model.
-        voice: Voice name. Default: provider's default voice (currently
-            matilda for ElevenLabs, joanna for Polly, nova for OpenAI,
-            samantha for Say, en for eSpeak).
-            If language is provided without voice, a suitable default
-            voice for that language is selected automatically.
-        language: ISO 639-1 language code (e.g. 'de', 'ko', 'fr').
-            Enables language-aware voice selection and validation.
-            With Polly, validates voice-language compatibility.
-            With ElevenLabs/OpenAI, passed through (voices are
-            multilingual).
-        rate: Speech rate as percentage (90 = 90% speed, good for
-            language learners). Defaults to 90. ElevenLabs ignores rate;
-            use audio tags like [rushed] or [drawn out] instead.
-        auto_play: Open the file in the default audio player after
-            synthesis. Defaults to true.
-        output_path: Full path for the output file. If not provided,
-            a file is auto-generated in output_dir.
-        output_dir: Directory for output. Defaults to VOX_OUTPUT_DIR
-            env var or ~/vox-output/.
-        ephemeral: If true, write to `.vox/` in cwd and clean up
-            previous ephemeral files. Ignores output_dir/output_path.
-        stability: ElevenLabs voice stability (0.0-1.0). Ignored by
-            other providers. Defaults to provider default.
-        similarity: ElevenLabs voice similarity boost (0.0-1.0). Ignored
-            by other providers. Defaults to provider default.
-        style: ElevenLabs voice style/expressiveness (0.0-1.0). Ignored
-            by other providers. Defaults to provider default.
-        speaker_boost: ElevenLabs speaker boost toggle. Ignored by other
-            providers. Defaults to provider default.
-        vibe_tags: ElevenLabs expressive tags to apply before synthesis
-            (e.g. "[warm] [satisfied]"). When provided, writes the tags
-            to config and clears vibe_signals in one step — replacing
-            the separate set_config call. Tags are prepended to text
-            automatically via apply_vibe.
-
-    Returns:
-        JSON string with path, text, voice, and language fields.
+    Each segment has ``text`` (required) and optional ``voice``.
+    The *default_voice* is used when a segment omits ``voice``.
     """
-    _validate_voice_settings(stability, similarity, style)
-    if vibe_tags is not None:
-        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
-    provider = get_provider()
-    try:
-        voice, language = resolve_voice_and_language(provider, voice, language)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
+    requests: list[SynthesisRequest] = []
+    for seg in segments:
+        seg_voice = seg.get("voice") or default_voice
+        seg_text = seg.get("text", "")
+        if not seg_text:
+            continue
 
-    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
-    path = resolve_output_path(
-        output_path,
-        dir_path,
-        f"{voice}_{text[:20].replace(' ', '_')}.mp3",
-    )
+        try:
+            resolved_voice, language = resolve_voice_and_language(
+                provider, seg_voice, None
+            )
+        except VoiceNotFoundError:
+            resolved_voice = provider.default_voice
+            language = None
 
-    text = apply_vibe(text, expressive_tags=provider.supports_expressive_tags)
-    request = SynthesisRequest(
-        text=text,
-        voice=voice,
-        language=language,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-    )
-
-    client = TTSClient(provider)
-    if path.exists():
-        result = _cached_result(provider, request, path)
-    else:
-        result = client.synthesize(request, path)
-    if auto_play:
-        _enqueue_audio(result.path)
-    return json.dumps(result_to_dict(result))
-
-
-@mcp.tool()
-def chorus(
-    texts: list[str],
-    voice: str | None = None,
-    language: str | None = None,
-    rate: int = 90,
-    merge: bool = False,
-    pause_ms: int = 500,
-    auto_play: bool = True,
-    output_dir: str | None = None,
-    ephemeral: bool = False,
-    stability: float | None = None,
-    similarity: float | None = None,
-    style: float | None = None,
-    speaker_boost: bool | None = None,
-    vibe_tags: str | None = None,
-) -> str:
-    """Speak multiple texts to MP3 files.
-
-    Args:
-        texts: List of texts to synthesize. With ElevenLabs eleven_v3,
-            embed audio tags like [tired], [excited], [whisper] in text.
-        voice: Voice name for all texts. Default: provider's default voice
-            (currently matilda for ElevenLabs, joanna for Polly, nova for
-            OpenAI, fred for Say, en for eSpeak). If language is provided
-            without voice,
-            auto-selects.
-        language: ISO 639-1 language code (e.g. 'de', 'ko').
-        rate: Speech rate as percentage. Defaults to 90.
-        merge: If true, produce one merged file instead of separate
-            files per text. Defaults to false.
-        pause_ms: Pause between segments in milliseconds when merging.
-            Defaults to 500.
-        auto_play: Open the file(s) in the default audio player after
-            synthesis. Defaults to true.
-        output_dir: Directory for output files. Defaults to
-            VOX_OUTPUT_DIR env var or ~/vox-output/.
-        ephemeral: If true, write to `.vox/` in cwd and clean up
-            previous ephemeral files. Ignores output_dir.
-        stability: ElevenLabs voice stability (0.0-1.0).
-        similarity: ElevenLabs voice similarity boost (0.0-1.0).
-        style: ElevenLabs voice style/expressiveness (0.0-1.0).
-        speaker_boost: ElevenLabs speaker boost toggle.
-        vibe_tags: ElevenLabs expressive tags to apply before synthesis
-            (e.g. "[warm] [satisfied]"). When provided, writes the tags
-            to config and clears vibe_signals in one step.
-
-    Returns:
-        JSON string with list of results, each containing path,
-        text, voice, and language fields.
-    """
-    _validate_voice_settings(stability, similarity, style)
-    if vibe_tags is not None:
-        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
-    provider = get_provider()
-    expressive = provider.supports_expressive_tags
-    texts = [apply_vibe(t, expressive_tags=expressive) for t in texts]
-    try:
-        voice, language = resolve_voice_and_language(provider, voice, language)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    requests = [
-        SynthesisRequest(
-            text=t,
-            voice=voice,
-            language=language,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
+        seg_text = apply_vibe(
+            seg_text, expressive_tags=provider.supports_expressive_tags
         )
-        for t in texts
-    ]
-    if not requests:
-        return json.dumps([])
-    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
 
+        requests.append(
+            SynthesisRequest(
+                text=seg_text,
+                voice=resolved_voice,
+                language=language,
+                rate=rate,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+            )
+        )
+    return requests
+
+
+def _synthesize_segments(
+    requests: list[SynthesisRequest],
+    provider: TTSProvider,
+    output_dir: Path,
+    pause_ms: int,
+) -> list[SynthesisResult]:
+    """Synthesize a list of requests, stitching into one file if multiple."""
     client = TTSClient(provider)
-    results: list[SynthesisResult]
-    if merge:
-        combined_text = " | ".join(r.text for r in requests)
-        out_path = dir_path / generate_filename(combined_text, prefix="batch_")
+
+    if len(requests) == 1:
+        req = requests[0]
+        out_path = output_dir / generate_filename(req.text)
         if out_path.exists():
-            cached = SynthesisResult(
+            return [
+                SynthesisResult(
+                    path=out_path,
+                    text=req.text,
+                    provider=AudioProviderId(provider.name),
+                    voice=req.voice,
+                    language=req.language,
+                    metadata=req.metadata,
+                )
+            ]
+        return [client.synthesize(req, out_path)]
+
+    # Multiple segments → stitch into one file
+    combined_text = " | ".join(r.text for r in requests)
+    out_path = output_dir / generate_filename(combined_text, prefix="seg_")
+    if out_path.exists():
+        return [
+            SynthesisResult(
                 path=out_path,
                 text=combined_text,
                 provider=AudioProviderId(provider.name),
-                voice=voice,
-                language=language,
+                voice=requests[0].voice,
+                language=requests[0].language,
                 metadata=requests[0].metadata,
             )
-            results = [cached]
-        else:
-            results = client.synthesize_batch(
-                requests, dir_path, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms
-            )
-    else:
-        results = []
-        for req in requests:
-            out_path = dir_path / generate_filename(req.text)
-            if out_path.exists():
-                results.append(_cached_result(provider, req, out_path))
-            else:
-                results.append(client.synthesize(req, out_path))
-    if auto_play:
-        for r in results:
-            _enqueue_audio(r.path)
-    return json.dumps([result_to_dict(r) for r in results])
+        ]
+    return client.synthesize_batch(
+        requests, output_dir, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms
+    )
+
+
+# ---------------------------------------------------------------------------
+# MCP tools
+# ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def duet(
-    text1: str,
-    text2: str,
-    voice1: str | None = None,
-    voice2: str | None = None,
-    lang1: str | None = None,
-    lang2: str | None = None,
+def unmute(
+    text: str | None = None,
+    voice: str | None = None,
+    segments: list[dict[str, str]] | None = None,
     rate: int = 90,
     pause_ms: int = 500,
-    auto_play: bool = True,
-    output_path: str | None = None,
-    output_dir: str | None = None,
-    ephemeral: bool = False,
+    ephemeral: bool = True,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
     speaker_boost: bool | None = None,
+    vibe_tags: str | None = None,
 ) -> str:
-    """Stitch a pair of texts into one MP3.
+    """Synthesize and play audio sequentially.
 
-    Creates [text1 audio] [pause] [text2 audio]. Use for language
-    learning pairs like "strong" (English) + "stark" (German).
+    Pass either a simple ``text`` string or a ``segments`` list for
+    multi-voice sequential playback. Top-level ``voice`` is the default;
+    per-segment ``voice`` overrides it.
 
     Args:
-        text1: First text (typically English). With ElevenLabs eleven_v3,
-            embed audio tags like [tired], [excited], [whisper] in text.
-        text2: Second text (typically target language). Same audio tag
-            support as text1.
-        voice1: Voice for text1. Defaults to provider's default voice.
-            If lang1 is provided without voice1, auto-selects.
-        voice2: Voice for text2. Defaults to provider's default voice.
-            If lang2 is provided without voice2, auto-selects.
-        lang1: ISO 639-1 language code for text1 (e.g. 'en').
-        lang2: ISO 639-1 language code for text2 (e.g. 'de').
+        text: Simple text to speak. Ignored when segments is provided.
+        voice: Default voice for all segments. If omitted, uses the
+            session voice or provider default.
+        segments: List of segment objects, each with "text" (required)
+            and optional "voice". Example:
+            [{"voice": "roger", "text": "Hello."}, {"text": "Hi."}]
         rate: Speech rate as percentage. Defaults to 90.
-        pause_ms: Pause between the two texts in milliseconds.
-            Defaults to 500.
-        auto_play: Play the audio after synthesis. Defaults to true.
-        output_path: Full path for the output file.
-        output_dir: Directory for output. Defaults to
-            VOX_OUTPUT_DIR env var or ~/vox-output/.
-        ephemeral: If true, write to `.vox/` in cwd and clean up
-            previous ephemeral files. Ignores output_dir/output_path.
+        pause_ms: Pause between segments in milliseconds. Defaults to 500.
+        ephemeral: Write to .vox/ in cwd and clean up previous files.
+            Defaults to true (unmute is for playback, not saving).
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
         speaker_boost: ElevenLabs speaker boost toggle.
+        vibe_tags: ElevenLabs expressive tags (e.g. "[warm] [satisfied]").
+            When provided, writes tags to config and clears vibe_signals.
 
     Returns:
-        JSON string with path, text, voice, and language fields.
+        JSON string with synthesis results.
     """
     _validate_voice_settings(stability, similarity, style)
+    if vibe_tags is not None:
+        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
+
+    # Normalize input: text → single segment
+    if segments is None:
+        if text is None:
+            return json.dumps({"error": "Provide text or segments."})
+        segments = [{"text": text}]
+
     provider = get_provider()
-    try:
-        voice1, lang1 = resolve_voice_and_language(provider, voice1, lang1)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    try:
-        voice2, lang2 = resolve_voice_and_language(provider, voice2, lang2)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    req1 = SynthesisRequest(
-        text=text1,
-        voice=voice1,
-        language=lang1,
+    requests = _build_requests(
+        segments,
+        voice,
+        provider,
         rate=rate,
         stability=stability,
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
     )
-    req2 = SynthesisRequest(
-        text=text2,
-        voice=voice2,
-        language=lang2,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-    )
-
-    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
-    path = resolve_output_path(
-        output_path,
-        dir_path,
-        f"pair_{text1[:10]}_{text2[:10]}.mp3",
-    )
-
-    client = TTSClient(provider)
-    if path.exists():
-        voice_parts = [v for v in (voice1, voice2) if v]
-        combined_voice = "+".join(voice_parts) if voice_parts else None
-        result = SynthesisResult(
-            path=path,
-            text=f"{text1} | {text2}",
-            provider=AudioProviderId(provider.name),
-            voice=combined_voice,
-            language=lang1,
-            metadata=req1.metadata,
-        )
-    else:
-        result = client.synthesize_pair(text1, req1, text2, req2, path, pause_ms)
-    if auto_play:
-        _enqueue_audio(result.path)
-    return json.dumps(result_to_dict(result))
-
-
-@mcp.tool()
-def ensemble(
-    pairs: list[list[str]],
-    voice1: str | None = None,
-    voice2: str | None = None,
-    lang1: str | None = None,
-    lang2: str | None = None,
-    rate: int = 90,
-    pause_ms: int = 500,
-    merge: bool = False,
-    auto_play: bool = True,
-    output_dir: str | None = None,
-    ephemeral: bool = False,
-    stability: float | None = None,
-    similarity: float | None = None,
-    style: float | None = None,
-    speaker_boost: bool | None = None,
-) -> str:
-    """Stitch multiple text pairs into MP3 files.
-
-    Each pair becomes [text1 audio] [pause] [text2 audio]. Use for
-    vocabulary lists like [["strong","stark"], ["house","Haus"]].
-
-    Args:
-        pairs: List of [text1, text2] pairs. With ElevenLabs eleven_v3,
-            texts can include audio tags like [tired], [excited].
-        voice1: Voice for all first texts. Defaults to provider's default.
-            If lang1 is provided without voice1, auto-selects.
-        voice2: Voice for all second texts. Defaults to provider's default.
-            If lang2 is provided without voice2, auto-selects.
-        lang1: ISO 639-1 language code for first texts (e.g. 'en').
-        lang2: ISO 639-1 language code for second texts (e.g. 'de').
-        rate: Speech rate as percentage. Defaults to 90.
-        pause_ms: Pause between pair segments in milliseconds.
-            Defaults to 500.
-        merge: If true, produce one merged file instead of separate
-            files per pair. Defaults to false.
-        auto_play: Play the audio after synthesis. Defaults to true.
-        output_dir: Directory for output files. Defaults to
-            VOX_OUTPUT_DIR env var or ~/vox-output/.
-        ephemeral: If true, write to `.vox/` in cwd and clean up
-            previous ephemeral files. Ignores output_dir.
-        stability: ElevenLabs voice stability (0.0-1.0).
-        similarity: ElevenLabs voice similarity boost (0.0-1.0).
-        style: ElevenLabs voice style/expressiveness (0.0-1.0).
-        speaker_boost: ElevenLabs speaker boost toggle.
-
-    Returns:
-        JSON string with list of results.
-    """
-    _validate_voice_settings(stability, similarity, style)
-    provider = get_provider()
-    try:
-        voice1, lang1 = resolve_voice_and_language(provider, voice1, lang1)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    try:
-        voice2, lang2 = resolve_voice_and_language(provider, voice2, lang2)
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-
-    pair_requests: list[tuple[SynthesisRequest, SynthesisRequest]] = [
-        (
-            SynthesisRequest(
-                text=p[0],
-                voice=voice1,
-                language=lang1,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-            ),
-            SynthesisRequest(
-                text=p[1],
-                voice=voice2,
-                language=lang2,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-            ),
-        )
-        for p in pairs
-    ]
-    if not pair_requests:
+    if not requests:
         return json.dumps([])
 
-    dir_path = resolve_output_dir(output_dir, ephemeral=ephemeral)
+    dir_path = resolve_output_dir(None, ephemeral=ephemeral)
+    results = _synthesize_segments(requests, provider, dir_path, pause_ms)
 
-    client = TTSClient(provider)
-    results: list[SynthesisResult]
-    if merge:
-        all_texts = " | ".join(f"{r1.text}-{r2.text}" for r1, r2 in pair_requests)
-        out_path = dir_path / generate_filename(all_texts, prefix="pairs_")
-        if out_path.exists():
-            results = [
-                SynthesisResult(
-                    path=out_path,
-                    text=all_texts,
-                    provider=AudioProviderId(provider.name),
-                    voice="mixed",
-                    metadata=pair_requests[0][0].metadata,
-                )
-            ]
-        else:
-            results = client.synthesize_pair_batch(
-                pair_requests, dir_path, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms
-            )
-    else:
-        results = []
-        for req_1, req_2 in pair_requests:
-            combined = f"{req_1.text}_{req_2.text}"
-            out_path = dir_path / generate_filename(combined, prefix="pair_")
-            if out_path.exists():
-                voice_parts = [v for v in (req_1.voice, req_2.voice) if v]
-                combined_voice = "+".join(voice_parts) if voice_parts else None
-                results.append(
-                    SynthesisResult(
-                        path=out_path,
-                        text=f"{req_1.text} | {req_2.text}",
-                        provider=AudioProviderId(provider.name),
-                        voice=combined_voice,
-                        language=req_1.language,
-                        metadata=req_1.metadata,
-                    )
-                )
-            else:
-                results.append(
-                    client.synthesize_pair(
-                        req_1.text,
-                        req_1,
-                        req_2.text,
-                        req_2,
-                        out_path,
-                        pause_ms,
-                    )
-                )
-    if auto_play:
-        for r in results:
-            _enqueue_audio(r.path)
+    for r in results:
+        _enqueue_audio(r.path)
+
     return json.dumps([result_to_dict(r) for r in results])
 
 
 @mcp.tool()
-def set_config(
-    key: str | None = None,
-    value: str | None = None,
-    updates: dict[str, str] | None = None,
+def record(
+    text: str | None = None,
+    voice: str | None = None,
+    segments: list[dict[str, str]] | None = None,
+    rate: int = 90,
+    pause_ms: int = 500,
+    output_path: str | None = None,
+    output_dir: str | None = None,
+    stability: float | None = None,
+    similarity: float | None = None,
+    style: float | None = None,
+    speaker_boost: bool | None = None,
 ) -> str:
-    """Write configuration field(s) to .vox/config.md.
+    """Synthesize and save audio to a file.
 
-    Updates plugin state that controls TTS behavior. Use this instead
-    of Read/Write/Edit file tools when changing plugin configuration.
-
-    Supports two modes:
-
-    **Single field** (backward compatible): pass ``key`` and ``value``.
-
-    **Batch** (preferred for multi-field updates): pass ``updates``
-    dict. All fields are written in a single read-write cycle.
-    When ``updates`` is provided, ``key`` and ``value`` are ignored.
+    Pass either a simple ``text`` string or a ``segments`` list.
+    Call multiple times for multiple output files.
 
     Args:
-        key: The config field to set. One of: notify, speak, voice,
-            voice_enabled, vibe, vibe_tags, vibe_mode, vibe_signals.
-            - notify: "y" or "n" — task completion notifications
-            - speak: "y" or "n" — spoken vs chime notifications
-            - voice: Voice name for this session (e.g. "matilda", "aria").
-              Used as default when speak/chorus/duet/ensemble omit voice.
-              Empty string to clear (reverts to provider default).
-            - voice_enabled: "true" or "false" — voice mode
-            - vibe: Human-readable mood description (e.g. "3am debugging")
-            - vibe_tags: ElevenLabs expressive tags (e.g. "[tired] [slow]")
-            - vibe_mode: "auto", "manual", or "off" — vibe detection mode
-            - vibe_signals: Accumulated session signals (usually cleared
-              by passing empty string after reading)
-        value: The value to write. Use empty string to clear a field.
-        updates: Dict of key-value pairs to write in one pass. When
-            provided, key and value are ignored. All keys must be
-            valid config fields. Example:
-            ``{"vibe": "happy", "vibe_tags": "[cheerful]",
-            "vibe_mode": "manual"}``
+        text: Simple text to synthesize. Ignored when segments is provided.
+        voice: Default voice for all segments. If omitted, uses the
+            session voice or provider default.
+        segments: List of segment objects, each with "text" (required)
+            and optional "voice".
+        rate: Speech rate as percentage. Defaults to 90.
+        pause_ms: Pause between segments in milliseconds. Defaults to 500.
+        output_path: Full path for the output file. Auto-generated if omitted.
+        output_dir: Directory for output. Defaults to VOX_OUTPUT_DIR
+            env var or ~/vox-output/.
+        stability: ElevenLabs voice stability (0.0-1.0).
+        similarity: ElevenLabs voice similarity boost (0.0-1.0).
+        style: ElevenLabs voice style/expressiveness (0.0-1.0).
+        speaker_boost: ElevenLabs speaker boost toggle.
 
     Returns:
-        JSON string. Single mode: ``{"key": k, "value": v}``.
-        Batch mode: ``{"updates": {k: v, ...}}``.
+        JSON string with synthesis results including file path.
     """
-    if updates is not None:
-        write_fields(updates, _CONFIG_PATH)
-        return json.dumps({"updates": updates})
-    if key is None or value is None:
-        msg = "Single mode requires both key and value"
-        raise ValueError(msg)
-    write_field(key, value, _CONFIG_PATH)
-    return json.dumps({"key": key, "value": value})
+    _validate_voice_settings(stability, similarity, style)
+
+    # Normalize input: text → single segment
+    if segments is None:
+        if text is None:
+            return json.dumps({"error": "Provide text or segments."})
+        segments = [{"text": text}]
+
+    provider = get_provider()
+    requests = _build_requests(
+        segments,
+        voice,
+        provider,
+        rate=rate,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+    )
+    if not requests:
+        return json.dumps([])
+
+    dir_path = resolve_output_dir(output_dir)
+
+    # If output_path is given, synthesize all segments into that one file
+    if output_path:
+        client = TTSClient(provider)
+        if len(requests) == 1:
+            path = Path(output_path)
+            result = client.synthesize(requests[0], path)
+            return json.dumps([result_to_dict(result)])
+        # Multiple segments → stitch into the specified path
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            tmp_paths: list[Path] = []
+            for i, req in enumerate(requests):
+                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
+                client.synthesize(req, seg_path)
+                tmp_paths.append(seg_path)
+            stitch_audio(tmp_paths, Path(output_path), pause_ms)
+        combined_text = " | ".join(r.text for r in requests)
+        result = SynthesisResult(
+            path=Path(output_path),
+            text=combined_text,
+            provider=AudioProviderId(provider.name),
+            voice=requests[0].voice,
+            language=requests[0].language,
+        )
+        return json.dumps([result_to_dict(result)])
+
+    results = _synthesize_segments(requests, provider, dir_path, pause_ms)
+    return json.dumps([result_to_dict(r) for r in results])
 
 
 @mcp.tool()
-def list_voices(language: str | None = None) -> str:
-    """Browse available voices for the current provider.
+def vibe(
+    mood: str | None = None,
+    tags: str | None = None,
+    mode: str | None = None,
+) -> str:
+    """Set session mood and expressive tags.
 
-    Returns a curated "who's around" list: featured voices with personality
-    blurbs, the full roster, and the current session voice (if set).
+    Controls how TTS voices sound during the session. Mood is a
+    human-readable description; tags are ElevenLabs performance cues.
+
+    Args:
+        mood: Human-readable mood (e.g. "3am debugging", "excited").
+            Stored as the ``vibe`` config field.
+        tags: ElevenLabs expressive tags (e.g. "[tired] [slow]").
+            Stored as ``vibe_tags``. Clears ``vibe_signals``.
+        mode: Vibe detection mode: "auto", "manual", or "off".
+            Auto mode reads signals from tool use; manual uses
+            the mood/tags you set here.
+
+    Returns:
+        JSON string with the updated vibe state.
+    """
+    updates: dict[str, str] = {}
+    if mood is not None:
+        updates["vibe"] = mood
+    if tags is not None:
+        updates["vibe_tags"] = tags
+        updates["vibe_signals"] = ""
+    if mode is not None:
+        if mode not in ("auto", "manual", "off"):
+            return json.dumps({"error": f"Invalid mode '{mode}'. Use auto/manual/off."})
+        updates["vibe_mode"] = mode
+
+    if not updates:
+        return json.dumps({"error": "Provide at least one of: mood, tags, mode."})
+
+    write_fields(updates, _CONFIG_PATH)
+    return json.dumps({"vibe": updates})
+
+
+@mcp.tool()
+def who(language: str | None = None) -> str:
+    """List available voices for the current provider.
+
+    Returns the voice roster with personality blurbs, the full list
+    of available voices, and the current session voice.
 
     Args:
         language: ISO 639-1 language code to filter by (e.g. 'de', 'ko').
-            When provided, only voices available in that language are listed.
 
     Returns:
-        JSON string with provider, current voice, featured voices (with
-        blurbs), and full voice list.
+        JSON string with provider, current voice, featured voices,
+        and full voice list.
     """
     if language is not None:
         language = validate_language(language)
@@ -648,14 +422,13 @@ def list_voices(language: str | None = None) -> str:
     )
 
 
-def _start_watcher() -> None:
-    """Start the session event watcher if a session directory exists.
+# ---------------------------------------------------------------------------
+# Server lifecycle
+# ---------------------------------------------------------------------------
 
-    Lazily imports the watcher module so that watcher-related imports and
-    side effects are only triggered when needed. Gracefully skips if the
-    session directory is
-    missing (e.g. running outside Claude Code).
-    """
+
+def _start_watcher() -> None:
+    """Start the session event watcher if a session directory exists."""
     from punt_vox.watcher import (
         SessionWatcher,
         derive_session_dir,
@@ -674,9 +447,8 @@ def _start_watcher() -> None:
 
 def run_server() -> None:
     """Run the MCP server with stdio transport."""
-    # MCP stdio servers must not write to stdout; stderr handler is safe.
     configure_logging(stderr_level="INFO")
-    logger.info("Starting tts MCP server")
+    logger.info("Starting vox MCP server (mic)")
     _start_watcher()
     mcp.run(transport="stdio")
 

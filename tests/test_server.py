@@ -1,4 +1,4 @@
-"""Tests for server-level helpers (vibe injection, config reading/writing)."""
+"""Tests for server-level helpers and mic API tools."""
 
 from __future__ import annotations
 
@@ -11,14 +11,7 @@ import pytest
 
 from punt_vox.config import write_field, write_fields
 from punt_vox.resolve import apply_vibe
-from punt_vox.server import (
-    chorus,
-    duet,
-    ensemble,
-    list_voices,
-    set_config,
-    speak,
-)
+from punt_vox.server import record, unmute, vibe, who
 from punt_vox.types import AudioProviderId, VoiceNotFoundError
 from punt_vox.voices import voice_not_found_message
 
@@ -28,17 +21,18 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
     """Return a writable config path and patch the module."""
+    import punt_vox.config as cfg
     import punt_vox.server as srv
 
     config = tmp_path / "config.md"
     monkeypatch.setattr(srv, "_CONFIG_PATH", config)
-    # Also patch config module default so write_field/write_fields
-    # default to the same tmp path (only matters for set_config tests
-    # that go through the MCP tool → server → config chain).
-    import punt_vox.config as cfg
-
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
     return config
+
+
+# ---------------------------------------------------------------------------
+# apply_vibe tests
+# ---------------------------------------------------------------------------
 
 
 class TestApplyVibe:
@@ -84,6 +78,11 @@ class TestApplyVibe:
         _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
         result = apply_vibe("Hello world", expressive_tags=False)
         assert result == "Hello world"
+
+
+# ---------------------------------------------------------------------------
+# Config write tests
+# ---------------------------------------------------------------------------
 
 
 class TestWriteConfigField:
@@ -157,49 +156,6 @@ class TestWriteConfigField:
         assert "Malformed config" in caplog.text
 
 
-class TestSetConfig:
-    """Tests for the set_config MCP tool."""
-
-    def test_writes_and_returns_key_value(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nnotify: "y"\n---\n')
-        result = json.loads(set_config(key="vibe_tags", value="[frustrated]"))
-        assert result == {"key": "vibe_tags", "value": "[frustrated]"}
-        assert 'vibe_tags: "[frustrated]"' in _patch_config.read_text()
-
-    def test_clears_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        result = json.loads(set_config(key="vibe_tags", value=""))
-        assert result == {"key": "vibe_tags", "value": ""}
-        assert 'vibe_tags: ""' in _patch_config.read_text()
-
-    def test_rejects_invalid_key(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        with pytest.raises(ValueError, match="Unknown config key"):
-            set_config(key="invalid", value="x")
-
-    def test_writes_session_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        result = json.loads(set_config(key="voice", value="aria"))
-        assert result == {"key": "voice", "value": "aria"}
-        assert 'voice: "aria"' in _patch_config.read_text()
-
-    def test_clears_session_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "matilda"\n---\n')
-        set_config(key="voice", value="")
-        assert 'voice: ""' in _patch_config.read_text()
-
-    def test_writes_vibe_mode(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        result = json.loads(set_config(key="vibe_mode", value="auto"))
-        assert result == {"key": "vibe_mode", "value": "auto"}
-        assert 'vibe_mode: "auto"' in _patch_config.read_text()
-
-    def test_writes_vibe_signals(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        set_config(key="vibe_signals", value="tests-pass@14:00")
-        assert 'vibe_signals: "tests-pass@14:00"' in _patch_config.read_text()
-
-
 class TestWriteConfigFields:
     """Tests for write_fields batch helper."""
 
@@ -245,7 +201,6 @@ class TestWriteConfigFields:
         _patch_config.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
             write_fields({"vibe": "ok", "bad_key": "fail"})
-        # File unchanged — validation before write
         assert _patch_config.read_text() == "---\n---\n"
 
     def test_atomic_single_read_write(
@@ -279,121 +234,9 @@ class TestWriteConfigFields:
         assert write_count == 1
 
 
-class TestSetConfigBatch:
-    """Tests for set_config batch mode via updates parameter."""
-
-    def test_batch_returns_updates_dict(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        result = json.loads(
-            set_config(updates={"vibe": "happy", "vibe_tags": "[cheerful]"})
-        )
-        assert result == {"updates": {"vibe": "happy", "vibe_tags": "[cheerful]"}}
-
-    def test_batch_writes_to_file(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        set_config(updates={"notify": "n", "speak": "n"})
-        text = _patch_config.read_text()
-        assert 'notify: "n"' in text
-        assert 'speak: "n"' in text
-
-    def test_batch_rejects_invalid_key(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        with pytest.raises(ValueError, match="Unknown config key"):
-            set_config(updates={"vibe": "ok", "invalid": "bad"})
-
-    def test_batch_ignores_key_value(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        result = json.loads(
-            set_config(key="notify", value="y", updates={"vibe": "happy"})
-        )
-        # updates takes precedence; key/value ignored
-        assert "updates" in result
-        assert result["updates"] == {"vibe": "happy"}
-        text = _patch_config.read_text()
-        assert "notify" not in text
-
-    def test_single_mode_unchanged(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        result = json.loads(set_config(key="notify", value="y"))
-        assert result == {"key": "notify", "value": "y"}
-
-    def test_rejects_missing_key_or_value(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        with pytest.raises(ValueError, match="requires both"):
-            set_config(key="notify")
-        with pytest.raises(ValueError, match="requires both"):
-            set_config(value="y")
-        with pytest.raises(ValueError, match="requires both"):
-            set_config()
-
-
-class TestSpeakVibeTags:
-    """Tests for the vibe_tags parameter on speak."""
-
-    def test_vibe_tags_writes_config_before_synthesis(
-        self, _patch_config: Path
-    ) -> None:
-        _patch_config.write_text('---\nvibe_signals: "tests-pass@14:00"\n---\n')
-        mock_provider = MagicMock()
-        mock_provider.name = "elevenlabs"
-        mock_provider.default_voice = "matilda"
-        mock_provider.supports_expressive_tags = True
-        mock_provider.resolve_voice.return_value = "matilda"
-        mock_provider.infer_language_from_voice.return_value = None
-        mock_result = MagicMock()
-        mock_result.path = _patch_config.parent / "out.mp3"
-        mock_result.text = "Done."
-        mock_result.provider = AudioProviderId("elevenlabs")
-        mock_result.voice = "matilda"
-        mock_result.language = None
-        mock_result.metadata = {}
-        mock_provider.synthesize.return_value = mock_result
-
-        with (
-            patch("punt_vox.server.get_provider", return_value=mock_provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            speak(
-                text="Done.",
-                ephemeral=False,
-                auto_play=False,
-                vibe_tags="[warm] [satisfied]",
-            )
-
-        text = _patch_config.read_text()
-        assert 'vibe_tags: "[warm] [satisfied]"' in text
-        assert 'vibe_signals: ""' in text
-
-    def test_vibe_tags_none_does_not_write_config(self, _patch_config: Path) -> None:
-        _patch_config.write_text(
-            '---\nvibe_tags: "[old]"\nvibe_signals: "test@1"\n---\n'
-        )
-        mock_provider = MagicMock()
-        mock_provider.name = "elevenlabs"
-        mock_provider.default_voice = "matilda"
-        mock_provider.supports_expressive_tags = True
-        mock_provider.resolve_voice.return_value = "matilda"
-        mock_provider.infer_language_from_voice.return_value = None
-        mock_result = MagicMock()
-        mock_result.path = _patch_config.parent / "out.mp3"
-        mock_result.text = "Done."
-        mock_result.provider = AudioProviderId("elevenlabs")
-        mock_result.voice = "matilda"
-        mock_result.language = None
-        mock_result.metadata = {}
-        mock_provider.synthesize.return_value = mock_result
-
-        with (
-            patch("punt_vox.server.get_provider", return_value=mock_provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            speak(text="Done.", ephemeral=False, auto_play=False)
-
-        text = _patch_config.read_text()
-        assert 'vibe_tags: "[old]"' in text
-        assert 'vibe_signals: "test@1"' in text
+# ---------------------------------------------------------------------------
+# voice_not_found_message tests
+# ---------------------------------------------------------------------------
 
 
 class TestVoiceNotFoundMessage:
@@ -421,6 +264,11 @@ class TestVoiceNotFoundMessage:
         assert "How about ?" in msg
 
 
+# ---------------------------------------------------------------------------
+# Shared mock helpers
+# ---------------------------------------------------------------------------
+
+
 def _mock_provider_raising(voice_name: str, available: list[str]) -> MagicMock:
     """Create a mock provider whose resolve_voice raises VoiceNotFoundError."""
     provider = MagicMock()
@@ -432,81 +280,220 @@ def _mock_provider_raising(voice_name: str, available: list[str]) -> MagicMock:
     return provider
 
 
-class TestSpeakVoiceNotFound:
-    """Tests for speak tool returning friendly error on bad voice."""
-
-    def test_returns_friendly_error(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "bob"\n---\n')
-        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
-
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-        ):
-            result = json.loads(speak(text="Hello", auto_play=False))
-
-        assert "error" in result
-        assert "bob " in result["error"]
+def _mock_provider_ok() -> MagicMock:
+    """Create a mock provider that succeeds."""
+    provider = MagicMock()
+    provider.name = "elevenlabs"
+    provider.default_voice = "matilda"
+    provider.supports_expressive_tags = True
+    provider.resolve_voice.return_value = "matilda"
+    provider.infer_language_from_voice.return_value = None
+    return provider
 
 
-class TestChorusVoiceNotFound:
-    """Tests for chorus tool returning friendly error on bad voice."""
-
-    def test_returns_friendly_error(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "bob"\n---\n')
-        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
-
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-        ):
-            result = json.loads(chorus(texts=["Hello", "World"], auto_play=False))
-
-        assert "error" in result
-        assert "bob " in result["error"]
+def _mock_result(tmp_path: Path) -> MagicMock:
+    """Create a mock SynthesisResult."""
+    result = MagicMock()
+    result.path = tmp_path / "out.mp3"
+    result.text = "Done."
+    result.provider = AudioProviderId("elevenlabs")
+    result.voice = "matilda"
+    result.language = None
+    result.metadata = {}
+    return result
 
 
-class TestDuetVoiceNotFound:
-    """Tests for duet tool returning friendly error on bad voice."""
+# ---------------------------------------------------------------------------
+# unmute tool tests
+# ---------------------------------------------------------------------------
 
-    def test_voice1_not_found(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "bob"\n---\n')
-        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+
+class TestUnmute:
+    """Tests for the unmute MCP tool."""
+
+    def test_simple_text(self, _patch_config: Path, tmp_path: Path) -> None:
+        provider = _mock_provider_ok()
+        mock_result = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_result
 
         with (
             patch("punt_vox.server.get_provider", return_value=provider),
             patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
         ):
-            result = json.loads(duet(text1="Hello", text2="Hallo", auto_play=False))
+            result = json.loads(unmute(text="Hello world"))
 
-        assert "error" in result
-        assert "bob " in result["error"]
+        assert isinstance(result, list)
+        assert len(result) == 1
 
-
-class TestEnsembleVoiceNotFound:
-    """Tests for ensemble tool returning friendly error on bad voice."""
-
-    def test_voice1_not_found(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "bob"\n---\n')
-        provider = _mock_provider_raising("bob", ["matilda", "aria", "charlie"])
+    def test_segments(self, _patch_config: Path, tmp_path: Path) -> None:
+        provider = _mock_provider_ok()
+        mock_r = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_r
 
         with (
             patch("punt_vox.server.get_provider", return_value=provider),
             patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.server.TTSClient") as mock_client_cls,
         ):
+            mock_client = mock_client_cls.return_value
+            mock_client.synthesize_batch.return_value = [mock_r]
             result = json.loads(
-                ensemble(
-                    pairs=[["Hello", "Hallo"]],
-                    auto_play=False,
+                unmute(
+                    segments=[
+                        {"voice": "roger", "text": "Part one."},
+                        {"text": "Part two."},
+                    ]
                 )
             )
 
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    def test_no_input_returns_error(self, _patch_config: Path) -> None:
+        result = json.loads(unmute())
         assert "error" in result
-        assert "bob " in result["error"]
+
+    def test_vibe_tags_writes_config(self, _patch_config: Path, tmp_path: Path) -> None:
+        _patch_config.write_text('---\nvibe_signals: "tests-pass@14:00"\n---\n')
+        provider = _mock_provider_ok()
+        mock_result = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_result
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            unmute(text="Done.", vibe_tags="[warm] [satisfied]")
+
+        text = _patch_config.read_text()
+        assert 'vibe_tags: "[warm] [satisfied]"' in text
+        assert 'vibe_signals: ""' in text
+
+    def test_voice_not_found_uses_default(
+        self, _patch_config: Path, tmp_path: Path
+    ) -> None:
+        """When a segment voice is not found, falls back to provider default."""
+        provider = _mock_provider_ok()
+        # First call raises (segment voice), provider still has default
+        call_count = 0
+
+        def resolve_side_effect(name: str, language: str | None = None) -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise VoiceNotFoundError(name, ["matilda"])
+            return name
+
+        provider.resolve_voice.side_effect = resolve_side_effect
+        mock_result = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_result
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.server._enqueue_audio"),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            result = json.loads(unmute(segments=[{"voice": "bob", "text": "Hello"}]))
+
+        assert isinstance(result, list)
 
 
-class TestListVoices:
-    """Tests for the list_voices MCP tool."""
+# ---------------------------------------------------------------------------
+# record tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecord:
+    """Tests for the record MCP tool."""
+
+    def test_simple_text(self, _patch_config: Path, tmp_path: Path) -> None:
+        provider = _mock_provider_ok()
+        mock_result = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_result
+
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            result = json.loads(record(text="Hello world"))
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    def test_no_input_returns_error(self, _patch_config: Path) -> None:
+        result = json.loads(record())
+        assert "error" in result
+
+    def test_custom_output_path(self, _patch_config: Path, tmp_path: Path) -> None:
+        provider = _mock_provider_ok()
+        mock_result = _mock_result(tmp_path)
+        provider.synthesize.return_value = mock_result
+
+        out_path = str(tmp_path / "custom.mp3")
+        with (
+            patch("punt_vox.server.get_provider", return_value=provider),
+            patch("punt_vox.core._pad_audio_file"),
+        ):
+            result = json.loads(record(text="Hello", output_path=out_path))
+
+        assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# vibe tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestVibeTool:
+    """Tests for the vibe MCP tool."""
+
+    def test_set_mood(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe(mood="excited"))
+        assert result["vibe"]["vibe"] == "excited"
+        assert 'vibe: "excited"' in _patch_config.read_text()
+
+    def test_set_tags(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe(tags="[warm] [calm]"))
+        assert result["vibe"]["vibe_tags"] == "[warm] [calm]"
+        text = _patch_config.read_text()
+        assert 'vibe_tags: "[warm] [calm]"' in text
+        assert 'vibe_signals: ""' in text
+
+    def test_set_mode(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe(mode="manual"))
+        assert result["vibe"]["vibe_mode"] == "manual"
+
+    def test_invalid_mode(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe(mode="invalid"))
+        assert "error" in result
+
+    def test_no_args_returns_error(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe())
+        assert "error" in result
+
+    def test_combined_mood_and_tags(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(vibe(mood="happy", tags="[cheerful]", mode="manual"))
+        updates = result["vibe"]
+        assert updates["vibe"] == "happy"
+        assert updates["vibe_tags"] == "[cheerful]"
+        assert updates["vibe_mode"] == "manual"
+
+
+# ---------------------------------------------------------------------------
+# who tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestWho:
+    """Tests for the who MCP tool."""
 
     def _mock_provider(
         self, name: str = "elevenlabs", voices: list[str] | None = None
@@ -532,7 +519,7 @@ class TestListVoices:
     def test_returns_provider_and_voices(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         assert result["provider"] == "elevenlabs"
         assert isinstance(result["all"], list)
         assert len(result["all"]) == 12
@@ -541,7 +528,7 @@ class TestListVoices:
     def test_featured_includes_blurbs(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         for entry in result["featured"]:
             assert "name" in entry
             assert "blurb" in entry
@@ -550,26 +537,26 @@ class TestListVoices:
     def test_featured_capped_at_six(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         assert len(result["featured"]) <= 6
 
     def test_current_voice_included(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvoice: "aria"\n---\n')
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         assert result["current"] == "aria"
 
     def test_no_current_voice(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         assert result["current"] is None
 
     def test_language_filter_passed_through(self, _patch_config: Path) -> None:
         provider = self._mock_provider()
         with patch("punt_vox.server.get_provider", return_value=provider):
-            list_voices(language="de")
+            who(language="de")
         provider.list_voices.assert_called_once_with("de")
 
     def test_provider_without_blurbs_returns_empty_featured(
@@ -577,7 +564,7 @@ class TestListVoices:
     ) -> None:
         provider = self._mock_provider(name="say", voices=["samantha", "alex"])
         with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(list_voices())
+            result = json.loads(who())
         assert result["provider"] == "say"
         assert result["featured"] == []
         assert result["all"] == ["samantha", "alex"]

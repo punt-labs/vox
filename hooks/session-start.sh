@@ -13,11 +13,11 @@ if grep -q '"vox-dev"' "$PLUGIN_JSON" 2>/dev/null; then
 fi
 
 if [[ "$DEV_MODE" == "true" ]]; then
-  TOOL_PATTERN="mcp__plugin_vox-dev_vox__"
-  TOOL_GLOB="mcp__plugin_vox-dev_vox__*"
+  TOOL_PATTERN="mcp__plugin_vox-dev_mic__"
+  TOOL_GLOB="mcp__plugin_vox-dev_mic__*"
 else
-  TOOL_PATTERN="mcp__plugin_vox_vox__"
-  TOOL_GLOB="mcp__plugin_vox_vox__*"
+  TOOL_PATTERN="mcp__plugin_vox_mic__"
+  TOOL_GLOB="mcp__plugin_vox_mic__*"
 fi
 
 ACTIONS=()

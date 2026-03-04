@@ -1,17 +1,17 @@
 {
   "name": "vox-dev",
-  "description": "Text-to-speech for Claude Code: /voice, /say, /notify, /speak, /recap",
+  "description": "Text-to-speech for Claude Code: /unmute, /mute, /vibe, /recap",
   "version": "0.10.1",
   "author": {
     "name": "Punt Labs",
     "email": "hello@punt-labs.com"
   },
   "mcpServers": {
-    "vox": {
+    "mic": {
       "type": "stdio",
       "command": "vox",
       "args": [
-        "serve"
+        "mcp"
       ]
     }
   }
