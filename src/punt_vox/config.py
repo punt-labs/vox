@@ -1,17 +1,20 @@
-"""Centralized reader for .vox/config.md YAML frontmatter.
+"""Centralized read/write for .vox/config.md YAML frontmatter.
 
-Python components that need config (e.g. server, watcher) import from
-here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via their
-own bash-based reader.  The canonical path is ``.vox/config.md`` in the
-current working directory.  All fields return safe defaults when the
-file is missing.
+Python components that need config (e.g. server, CLI, watcher) import
+from here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via
+their own bash-based reader.  The canonical path is ``.vox/config.md``
+in the current working directory.  All fields return safe defaults when
+the file is missing.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(".vox/config.md")
 
@@ -83,3 +86,99 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
         vibe_tags=fields.get("vibe_tags"),
         vibe_signals=fields.get("vibe_signals"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Write helpers
+# ---------------------------------------------------------------------------
+
+ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "notify",
+        "speak",
+        "voice",
+        "voice_enabled",
+        "vibe",
+        "vibe_tags",
+        "vibe_mode",
+        "vibe_signals",
+    }
+)
+
+_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
+
+
+def write_field(key: str, value: str, config_path: Path | None = None) -> None:
+    """Write a single YAML frontmatter field to .vox/config.md.
+
+    Updates the field in-place if present, or inserts it before the
+    closing ``---`` if absent. Creates the file with minimal frontmatter
+    if it does not exist.
+    """
+    if key not in ALLOWED_CONFIG_KEYS:
+        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+        raise ValueError(msg)
+
+    path = config_path or DEFAULT_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    replacement = f'{key}: "{value}"'
+
+    if not path.exists():
+        path.write_text(f"---\n{replacement}\n---\n")
+        return
+
+    text = path.read_text()
+    field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
+
+    if field_re.search(text):
+        text = field_re.sub(replacement, text)
+    elif _CLOSING_FENCE_RE.search(text):
+        text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
+    else:
+        logger.warning("Malformed config (no closing ---): %s", path)
+        text = f"---\n{replacement}\n---\n"
+
+    path.write_text(text)
+    logger.info("Config: set %s = %r in %s", key, value, path)
+
+
+def write_fields(updates: dict[str, str], config_path: Path | None = None) -> None:
+    """Write multiple YAML frontmatter fields in a single read-write cycle.
+
+    Reads the file once, applies all regex substitutions, writes once.
+    All keys are validated before any I/O so a single bad key aborts
+    the entire batch.
+    """
+    for key in updates:
+        if key not in ALLOWED_CONFIG_KEYS:
+            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+            raise ValueError(msg)
+
+    path = config_path or DEFAULT_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not path.exists():
+        lines = [f'{k}: "{v}"' for k, v in updates.items()]
+        path.write_text("---\n" + "\n".join(lines) + "\n---\n")
+        return
+
+    text = path.read_text()
+    for key, value in updates.items():
+        replacement = f'{key}: "{value}"'
+        field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
+        if field_re.search(text):
+            text = field_re.sub(replacement, text)
+        elif _CLOSING_FENCE_RE.search(text):
+            text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
+        else:
+            logger.warning("Malformed config (no closing ---): %s", path)
+            lines = [f'{k}: "{v}"' for k, v in updates.items()]
+            text = "---\n" + "\n".join(lines) + "\n---\n"
+            break
+
+    path.write_text(text)
+    for key, value in updates.items():
+        logger.info("Config: set %s = %r in %s", key, value, path)

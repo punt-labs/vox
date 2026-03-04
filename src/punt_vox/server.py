@@ -11,7 +11,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from punt_vox import __version__
-from punt_vox.config import read_field
+from punt_vox.config import read_field, write_field, write_fields
 from punt_vox.core import TTSClient
 from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_vox.logging_config import configure_logging
@@ -211,96 +211,6 @@ def _apply_vibe(text: str, *, expressive_tags: bool) -> str:
     return text
 
 
-ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
-    {
-        "notify",
-        "speak",
-        "voice",
-        "voice_enabled",
-        "vibe",
-        "vibe_tags",
-        "vibe_mode",
-        "vibe_signals",
-    }
-)
-
-_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
-
-
-def _write_config_field(key: str, value: str) -> None:
-    """Write a single YAML frontmatter field to .vox/config.md.
-
-    Updates the field in-place if present, or inserts it before the
-    closing ``---`` if absent. Creates the file with minimal frontmatter
-    if it does not exist.
-    """
-    if key not in ALLOWED_CONFIG_KEYS:
-        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-        raise ValueError(msg)
-
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    replacement = f'{key}: "{value}"'
-
-    if not _CONFIG_PATH.exists():
-        _CONFIG_PATH.write_text(f"---\n{replacement}\n---\n")
-        return
-
-    text = _CONFIG_PATH.read_text()
-    field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
-
-    if field_re.search(text):
-        text = field_re.sub(replacement, text)
-    elif _CLOSING_FENCE_RE.search(text):
-        text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
-    else:
-        logger.warning("Malformed config (no closing ---): %s", _CONFIG_PATH)
-        text = f"---\n{replacement}\n---\n"
-
-    _CONFIG_PATH.write_text(text)
-    logger.info("Config: set %s = %r in %s", key, value, _CONFIG_PATH)
-
-
-def _write_config_fields(updates: dict[str, str]) -> None:
-    """Write multiple YAML frontmatter fields in a single read-write cycle.
-
-    Reads the file once, applies all regex substitutions, writes once.
-    All keys are validated before any I/O so a single bad key aborts
-    the entire batch.
-    """
-    for key in updates:
-        if key not in ALLOWED_CONFIG_KEYS:
-            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-            raise ValueError(msg)
-
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    if not _CONFIG_PATH.exists():
-        lines = [f'{k}: "{v}"' for k, v in updates.items()]
-        _CONFIG_PATH.write_text("---\n" + "\n".join(lines) + "\n---\n")
-        return
-
-    text = _CONFIG_PATH.read_text()
-    for key, value in updates.items():
-        replacement = f'{key}: "{value}"'
-        field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
-        if field_re.search(text):
-            text = field_re.sub(replacement, text)
-        elif _CLOSING_FENCE_RE.search(text):
-            text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
-        else:
-            logger.warning("Malformed config (no closing ---): %s", _CONFIG_PATH)
-            lines = [f'{k}: "{v}"' for k, v in updates.items()]
-            text = "---\n" + "\n".join(lines) + "\n---\n"
-            break
-
-    _CONFIG_PATH.write_text(text)
-    for key, value in updates.items():
-        logger.info("Config: set %s = %r in %s", key, value, _CONFIG_PATH)
-
-
 def _cached_result(
     provider: TTSProvider, request: SynthesisRequest, output_path: Path
 ) -> SynthesisResult:
@@ -382,7 +292,7 @@ def speak(
     """
     _validate_voice_settings(stability, similarity, style)
     if vibe_tags is not None:
-        _write_config_fields({"vibe_tags": vibe_tags, "vibe_signals": ""})
+        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
     provider = get_provider()
     try:
         voice, language = _resolve_voice_and_language(provider, voice, language)
@@ -471,7 +381,7 @@ def chorus(
     """
     _validate_voice_settings(stability, similarity, style)
     if vibe_tags is not None:
-        _write_config_fields({"vibe_tags": vibe_tags, "vibe_signals": ""})
+        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
     provider = get_provider()
     expressive = provider.supports_expressive_tags
     texts = [_apply_vibe(t, expressive_tags=expressive) for t in texts]
@@ -828,12 +738,12 @@ def set_config(
         Batch mode: ``{"updates": {k: v, ...}}``.
     """
     if updates is not None:
-        _write_config_fields(updates)
+        write_fields(updates, _CONFIG_PATH)
         return json.dumps({"updates": updates})
     if key is None or value is None:
         msg = "Single mode requires both key and value"
         raise ValueError(msg)
-    _write_config_field(key, value)
+    write_field(key, value, _CONFIG_PATH)
     return json.dumps({"key": key, "value": value})
 
 

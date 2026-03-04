@@ -9,11 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from punt_vox.config import write_field, write_fields
 from punt_vox.server import (
     _apply_vibe,  # pyright: ignore[reportPrivateUsage]
     _voice_not_found_message,  # pyright: ignore[reportPrivateUsage]
-    _write_config_field,  # pyright: ignore[reportPrivateUsage]
-    _write_config_fields,  # pyright: ignore[reportPrivateUsage]
     chorus,
     duet,
     ensemble,
@@ -33,6 +32,12 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 
     config = tmp_path / "config.md"
     monkeypatch.setattr(srv, "_CONFIG_PATH", config)
+    # Also patch config module default so write_field/write_fields
+    # default to the same tmp path (only matters for set_config tests
+    # that go through the MCP tool → server → config chain).
+    import punt_vox.config as cfg
+
+    monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
     return config
 
 
@@ -84,10 +89,10 @@ class TestApplyVibe:
 
 
 class TestWriteConfigField:
-    """Tests for _write_config_field in-place YAML editing."""
+    """Tests for write_field in-place YAML editing."""
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        _write_config_field("vibe_tags", "[excited]")
+        write_field("vibe_tags", "[excited]")
         assert _patch_config.exists()
         text = _patch_config.read_text()
         assert 'vibe_tags: "[excited]"' in text
@@ -96,21 +101,21 @@ class TestWriteConfigField:
 
     def test_updates_existing_field(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        _write_config_field("vibe_tags", "[excited]")
+        write_field("vibe_tags", "[excited]")
         text = _patch_config.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[tired]" not in text
 
     def test_updates_unquoted_field(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\nvibe_tags: [whispers]\n---\n")
-        _write_config_field("vibe_tags", "[excited]")
+        write_field("vibe_tags", "[excited]")
         text = _patch_config.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[whispers]" not in text
 
     def test_inserts_new_field_before_closing_fence(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nnotify: "y"\n---\n')
-        _write_config_field("vibe_tags", "[excited]")
+        write_field("vibe_tags", "[excited]")
         text = _patch_config.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert 'notify: "y"' in text
@@ -119,7 +124,7 @@ class TestWriteConfigField:
         _patch_config.write_text(
             '---\nnotify: "y"\nvibe_tags: "[tired]"\nspeak: "y"\n---\n'
         )
-        _write_config_field("vibe_tags", "[excited]")
+        write_field("vibe_tags", "[excited]")
         text = _patch_config.read_text()
         assert 'notify: "y"' in text
         assert 'speak: "y"' in text
@@ -127,21 +132,18 @@ class TestWriteConfigField:
 
     def test_clears_field_with_empty_string(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        _write_config_field("vibe_tags", "")
+        write_field("vibe_tags", "")
         text = _patch_config.read_text()
         assert 'vibe_tags: ""' in text
 
     def test_rejects_unknown_key(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            _write_config_field("bad_key", "value")
+            write_field("bad_key", "value")
 
-    def test_creates_parent_directory(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_vox.server as srv
-
+    def test_creates_parent_directory(self, tmp_path: Path) -> None:
         nested = tmp_path / "deep" / "dir" / "config.md"
-        monkeypatch.setattr(srv, "_CONFIG_PATH", nested)
-        _write_config_field("notify", "y")
+        write_field("notify", "y", nested)
         assert nested.exists()
         assert 'notify: "y"' in nested.read_text()
 
@@ -151,8 +153,8 @@ class TestWriteConfigField:
         _patch_config.write_text("no frontmatter at all\n")
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="punt_vox.server"):
-            _write_config_field("notify", "y")
+        with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
+            write_field("notify", "y", _patch_config)
         assert 'notify: "y"' in _patch_config.read_text()
         assert "Malformed config" in caplog.text
 
@@ -201,7 +203,7 @@ class TestSetConfig:
 
 
 class TestWriteConfigFields:
-    """Tests for _write_config_fields batch helper."""
+    """Tests for write_fields batch helper."""
 
     def test_writes_multiple_fields(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nnotify: "y"\n---\n')
@@ -210,7 +212,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[cheerful]",
             "vibe_mode": "manual",
         }
-        _write_config_fields(updates)
+        write_fields(updates)
         text = _patch_config.read_text()
         assert 'vibe: "happy"' in text
         assert 'vibe_tags: "[cheerful]"' in text
@@ -226,7 +228,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[new]",
             "vibe_mode": "manual",
         }
-        _write_config_fields(updates)
+        write_fields(updates)
         text = _patch_config.read_text()
         assert 'vibe: "new"' in text
         assert 'vibe_tags: "[new]"' in text
@@ -234,7 +236,7 @@ class TestWriteConfigFields:
         assert "old" not in text
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        _write_config_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
+        write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
         text = _patch_config.read_text()
         assert text.startswith("---\n")
         assert 'vibe: "happy"' in text
@@ -244,7 +246,7 @@ class TestWriteConfigFields:
     def test_rejects_invalid_key(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            _write_config_fields({"vibe": "ok", "bad_key": "fail"})
+            write_fields({"vibe": "ok", "bad_key": "fail"})
         # File unchanged — validation before write
         assert _patch_config.read_text() == "---\n---\n"
 
@@ -252,8 +254,6 @@ class TestWriteConfigFields:
         self, _patch_config: Path, monkeypatch: Any
     ) -> None:
         """Verify batch performs one read and one write."""
-        import punt_vox.server as srv
-
         _patch_config.write_text("---\n---\n")
         read_count = 0
         write_count = 0
@@ -262,19 +262,21 @@ class TestWriteConfigFields:
 
         def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
             nonlocal read_count
-            if self == srv._CONFIG_PATH:  # pyright: ignore[reportPrivateUsage]
+            if self == _patch_config:
                 read_count += 1
             return orig_read(self, *args, **kwargs)
 
         def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
             nonlocal write_count
-            if self == srv._CONFIG_PATH:  # pyright: ignore[reportPrivateUsage]
+            if self == _patch_config:
                 write_count += 1
             return orig_write(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", counting_read)
         monkeypatch.setattr(Path, "write_text", counting_write)
-        _write_config_fields({"vibe": "a", "vibe_tags": "[b]", "vibe_mode": "manual"})
+        write_fields(
+            {"vibe": "a", "vibe_tags": "[b]", "vibe_mode": "manual"}, _patch_config
+        )
         assert read_count == 1
         assert write_count == 1
 
