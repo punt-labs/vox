@@ -205,7 +205,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     speaker_boost: SpeakerBoostFlag = False,
 ) -> None:
     """Synthesize and play audio."""
+    from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
     from punt_vox.playback import enqueue
+    from punt_vox.types import generate_filename
 
     _validate_voice_settings(stability, similarity, style)
     prov = get_provider(provider, model=model)
@@ -224,13 +226,29 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
         boost,
     )
 
-    out_dir = default_output_dir()
+    clean_ephemeral()
+    out_dir = ephemeral_output_dir()
     client = TTSClient(prov)
-    for req in requests:
-        out_path = out_dir / f"{req.voice}_{req.text[:20].replace(' ', '_')}.mp3"
-        result = client.synthesize(req, out_path)
-        enqueue(result.path)
-        _print_result(result)
+
+    if len(requests) > 1:
+        combined_text = " | ".join(r.text for r in requests)
+        out_path = out_dir / generate_filename(combined_text, prefix="seg_")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            tmp_paths: list[Path] = []
+            for i, req in enumerate(requests):
+                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
+                client.synthesize(req, seg_path)
+                tmp_paths.append(seg_path)
+            stitch_audio(tmp_paths, out_path, pause)
+        enqueue(out_path)
+        typer.echo(str(out_path))
+    else:
+        for req in requests:
+            out_path = out_dir / generate_filename(req.text)
+            result = client.synthesize(req, out_path)
+            enqueue(result.path)
+            _print_result(result)
 
 
 # ---------------------------------------------------------------------------
@@ -293,8 +311,10 @@ def record(  # pyright: ignore[reportUnusedFunction]
         typer.echo(str(output))
         return
 
+    from punt_vox.types import generate_filename
+
     for req in requests:
-        out_path = out_dir / f"{req.voice}_{req.text[:20].replace(' ', '_')}.mp3"
+        out_path = out_dir / generate_filename(req.text)
         result = client.synthesize(req, out_path)
         _print_result(result)
 
@@ -412,10 +432,10 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Set session mood for TTS voice."""
     if mood == "auto":
-        write_field("vibe_mode", "auto")
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})
         _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
-        write_field("vibe_mode", "off")
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
         _emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
         write_fields({"vibe": mood, "vibe_mode": "manual"})
