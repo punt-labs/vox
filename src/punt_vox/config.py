@@ -35,7 +35,7 @@ def read_field(field: str, config_path: Path | None = None) -> str | None:
     path = config_path or DEFAULT_CONFIG_PATH
     if not path.exists():
         return None
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     pattern = re.compile(rf"^{re.escape(field)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
     match = pattern.search(text)
     if match and match.group(1).strip():
@@ -48,7 +48,7 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
     path = config_path or DEFAULT_CONFIG_PATH
     fields: dict[str, str] = {}
     if path.exists():
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for match in _FIELD_RE.finditer(text):
             key = match.group(1)
             val = match.group(2).strip()

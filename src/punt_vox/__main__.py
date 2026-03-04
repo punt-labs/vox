@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated, cast
@@ -659,9 +660,6 @@ _PLUGIN_ID = "tts@punt-labs"
 @app.command()
 def install() -> None:
     """Install the Claude Code plugin via the punt-labs marketplace."""
-    import shutil
-    import subprocess
-
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
@@ -680,9 +678,6 @@ def install() -> None:
 @app.command()
 def uninstall() -> None:
     """Uninstall the Claude Code plugin."""
-    import shutil
-    import subprocess
-
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
@@ -793,7 +788,7 @@ def install_desktop(
 
     data["mcpServers"]["tts"] = {
         "command": uvx,
-        "args": ["--from", "punt-vox", "vox-server"],
+        "args": ["--from", "punt-vox", "vox", "mcp"],
         "env": env,
     }
 

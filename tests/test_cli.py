@@ -615,7 +615,7 @@ class TestInstallCommand:
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
-            patch("subprocess.run") as mock_run,
+            patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             result = runner.invoke(app, ["install"])
@@ -636,7 +636,7 @@ class TestUninstallCommand:
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
-            patch("subprocess.run") as mock_run,
+            patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             result = runner.invoke(app, ["uninstall"])
@@ -696,7 +696,8 @@ class TestInstallDesktopCommand:
         assert server["args"] == [
             "--from",
             "punt-vox",
-            "vox-server",
+            "vox",
+            "mcp",
         ]
         assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
         assert server["env"]["TTS_PROVIDER"] == "say"
