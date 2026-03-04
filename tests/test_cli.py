@@ -1,15 +1,19 @@
-"""Tests for punt_vox.cli."""
+"""Tests for punt_vox.__main__ (typer CLI)."""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from click.testing import CliRunner, Result
+from typer.testing import CliRunner
 
-from punt_vox.cli import main
+from punt_vox.__main__ import app
+
+if TYPE_CHECKING:
+    from click.testing import Result
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -42,7 +46,7 @@ def _make_mock_provider() -> MagicMock:
     return provider
 
 
-_CLI = "punt_vox.cli"
+_CLI = "punt_vox.__main__"
 
 
 class TestSynthesizeCommand:
@@ -57,7 +61,7 @@ class TestSynthesizeCommand:
         mock_instance.synthesize.return_value = _mock_synthesize_result(out)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["synthesize", "hello", "-o", str(out)])
+        result = runner.invoke(app, ["synthesize", "hello", "-o", str(out)])
 
         assert result.exit_code == 0
         assert str(out) in result.output
@@ -75,7 +79,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "Hallo", "--voice", "hans", "-o", str(out)],
         )
 
@@ -96,7 +100,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "hello", "--rate", "100", "-o", str(out)],
         )
 
@@ -117,7 +121,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize",
                 "hello",
@@ -149,7 +153,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "hello", "--voice", "nonexistent"],
         )
         assert result.exit_code != 0
@@ -168,7 +172,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "Guten Tag", "--language", "de", "-o", str(out)],
         )
 
@@ -189,7 +193,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "hello", "--lang", "en", "-o", str(out)],
         )
         assert result.exit_code == 0
@@ -200,7 +204,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize", "hello", "--language", "xxx"],
         )
         assert result.exit_code != 0
@@ -217,7 +221,7 @@ class TestSynthesizeCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize",
                 "Hallo",
@@ -255,7 +259,7 @@ class TestSynthesizeBatchCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             ["synthesize-batch", str(input_file), "-d", str(out_dir)],
         )
 
@@ -280,7 +284,7 @@ class TestSynthesizeBatchCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize-batch",
                 str(input_file),
@@ -313,7 +317,7 @@ class TestSynthesizePairCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize-pair",
                 "strong",
@@ -347,7 +351,7 @@ class TestSynthesizePairCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize-pair",
                 "strong",
@@ -395,7 +399,7 @@ class TestSynthesizePairBatchCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
+            app,
             [
                 "synthesize-pair-batch",
                 str(input_file),
@@ -409,24 +413,21 @@ class TestSynthesizePairBatchCommand:
 
 
 class TestMainGroup:
-    @patch(f"{_CLI}.get_provider")
-    def test_help(self, mock_get_provider: MagicMock) -> None:
+    def test_help(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["--help"])
+        result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "tts" in result.output
+        assert "vox" in result.output.lower()
 
-    @patch(f"{_CLI}.get_provider")
-    def test_synthesize_help(self, mock_get_provider: MagicMock) -> None:
+    def test_synthesize_help(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["synthesize", "--help"])
+        result = runner.invoke(app, ["synthesize", "--help"])
         assert result.exit_code == 0
         assert "voice" in result.output.lower()
 
-    @patch(f"{_CLI}.get_provider")
-    def test_verbose_flag(self, mock_get_provider: MagicMock) -> None:
+    def test_verbose_flag(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(main, ["-v", "--help"])
+        result = runner.invoke(app, ["-v", "--help"])
         assert result.exit_code == 0
 
     @patch(f"{_CLI}.TTSClient")
@@ -442,8 +443,8 @@ class TestMainGroup:
 
         runner = CliRunner()
         result = runner.invoke(
-            main,
-            ["--provider", "polly", "synthesize", "hello", "-o", str(out)],
+            app,
+            ["synthesize", "hello", "--provider", "polly", "-o", str(out)],
         )
         assert result.exit_code == 0
         mock_get_provider.assert_called_once_with("polly", model=None)
@@ -497,7 +498,7 @@ class TestDoctorCommand:
             ),
             patch(f"{_CLI}.platform.system", return_value=system_platform),
         ):
-            result = runner.invoke(main, ["doctor"])
+            result = runner.invoke(app, ["doctor"])
 
         return result
 
@@ -610,55 +611,43 @@ class TestDoctorCommand:
 
 
 class TestInstallCommand:
-    @patch(f"{_CLI}.get_provider")
-    def test_install_success(self, mock_get_provider: MagicMock) -> None:
-        mock_get_provider.return_value = _make_mock_provider()
-
+    def test_install_success(self) -> None:
         runner = CliRunner()
         with (
-            patch("shutil.which", return_value="/usr/bin/claude"),
-            patch("subprocess.run") as mock_run,
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
-            result = runner.invoke(main, ["install"])
+            result = runner.invoke(app, ["install"])
 
         assert result.exit_code == 0
         assert "Restart Claude Code" in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_no_claude(self, mock_get_provider: MagicMock) -> None:
-        mock_get_provider.return_value = _make_mock_provider()
-
+    def test_install_no_claude(self) -> None:
         runner = CliRunner()
-        with patch("shutil.which", return_value=None):
-            result = runner.invoke(main, ["install"])
+        with patch(f"{_CLI}.shutil.which", return_value=None):
+            result = runner.invoke(app, ["install"])
 
         assert result.exit_code != 0
 
 
 class TestUninstallCommand:
-    @patch(f"{_CLI}.get_provider")
-    def test_uninstall_success(self, mock_get_provider: MagicMock) -> None:
-        mock_get_provider.return_value = _make_mock_provider()
-
+    def test_uninstall_success(self) -> None:
         runner = CliRunner()
         with (
-            patch("shutil.which", return_value="/usr/bin/claude"),
-            patch("subprocess.run") as mock_run,
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
-            result = runner.invoke(main, ["uninstall"])
+            result = runner.invoke(app, ["uninstall"])
 
         assert result.exit_code == 0
         assert "Uninstalled." in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_uninstall_no_claude(self, mock_get_provider: MagicMock) -> None:
-        mock_get_provider.return_value = _make_mock_provider()
-
+    def test_uninstall_no_claude(self) -> None:
         runner = CliRunner()
-        with patch("shutil.which", return_value=None):
-            result = runner.invoke(main, ["uninstall"])
+        with patch(f"{_CLI}.shutil.which", return_value=None):
+            result = runner.invoke(app, ["uninstall"])
 
         assert result.exit_code != 0
 
@@ -671,10 +660,7 @@ _UVX = "/usr/local/bin/uvx"
 
 
 class TestInstallDesktopCommand:
-    @patch(f"{_CLI}.get_provider")
-    def test_creates_config_from_scratch(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_creates_config_from_scratch(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -697,7 +683,7 @@ class TestInstallDesktopCommand:
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
-                main,
+                app,
                 ["install-desktop", "--output-dir", str(audio_dir)],
             )
 
@@ -710,15 +696,13 @@ class TestInstallDesktopCommand:
         assert server["args"] == [
             "--from",
             "punt-vox",
-            "vox-server",
+            "vox",
+            "mcp",
         ]
         assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
         assert server["env"]["TTS_PROVIDER"] == "say"
 
-    @patch(f"{_CLI}.get_provider")
-    def test_preserves_other_servers(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_preserves_other_servers(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         config_path.parent.mkdir(parents=True)
         existing: dict[str, object] = {
@@ -737,7 +721,7 @@ class TestInstallDesktopCommand:
             ),
         ):
             result = runner.invoke(
-                main,
+                app,
                 ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
@@ -746,10 +730,7 @@ class TestInstallDesktopCommand:
         assert "other-server" in data["mcpServers"]
         assert "tts" in data["mcpServers"]
 
-    @patch(f"{_CLI}.get_provider")
-    def test_overwrites_existing_entry(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_overwrites_existing_entry(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         config_path.parent.mkdir(parents=True)
         existing = {
@@ -768,7 +749,7 @@ class TestInstallDesktopCommand:
             ),
         ):
             result = runner.invoke(
-                main,
+                app,
                 ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
@@ -778,10 +759,7 @@ class TestInstallDesktopCommand:
         server = data["mcpServers"]["tts"]
         assert server["command"] == _UVX
 
-    @patch(f"{_CLI}.get_provider")
-    def test_fails_when_uvx_not_found(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_fails_when_uvx_not_found(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
 
         runner = CliRunner()
@@ -793,17 +771,14 @@ class TestInstallDesktopCommand:
             ),
         ):
             result = runner.invoke(
-                main,
+                app,
                 ["install-desktop", "--output-dir", str(tmp_path / "audio")],
             )
 
         assert result.exit_code != 0
         assert "uvx not found" in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_custom_uvx_path(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_custom_uvx_path(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
 
         runner = CliRunner()
@@ -812,7 +787,7 @@ class TestInstallDesktopCommand:
             return_value=config_path,
         ):
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -827,10 +802,7 @@ class TestInstallDesktopCommand:
         server = data["mcpServers"]["tts"]
         assert server["command"] == "/custom/bin/uvx"
 
-    @patch(f"{_CLI}.get_provider")
-    def test_creates_output_directory(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_creates_output_directory(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "nested" / "audio"
 
@@ -843,17 +815,14 @@ class TestInstallDesktopCommand:
             ),
         ):
             result = runner.invoke(
-                main,
+                app,
                 ["install-desktop", "--output-dir", str(audio_dir)],
             )
 
         assert result.exit_code == 0
         assert audio_dir.is_dir()
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_openai_when_key_set(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_defaults_openai_when_key_set(self, tmp_path: Path) -> None:
         """OPENAI_API_KEY in env auto-selects openai (ElevenLabs > OpenAI > Polly)."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
@@ -866,7 +835,7 @@ class TestInstallDesktopCommand:
         ):
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
-                main, ["install-desktop", "--output-dir", str(audio_dir)]
+                app, ["install-desktop", "--output-dir", str(audio_dir)]
             )
 
         assert result.exit_code == 0
@@ -877,10 +846,7 @@ class TestInstallDesktopCommand:
         assert env["TTS_PROVIDER"] == "openai"
         assert env["OPENAI_API_KEY"] == "sk-test-key"
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_explicit_openai_with_key(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_explicit_openai_with_key(self, tmp_path: Path) -> None:
         """--provider openai with OPENAI_API_KEY set writes key to config."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
@@ -892,7 +858,7 @@ class TestInstallDesktopCommand:
             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
         ):
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -910,10 +876,7 @@ class TestInstallDesktopCommand:
         assert env["TTS_PROVIDER"] == "openai"
         assert env["OPENAI_API_KEY"] == "sk-test-key"
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_say_on_macos(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_defaults_say_on_macos(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -932,7 +895,7 @@ class TestInstallDesktopCommand:
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
-                main, ["install-desktop", "--output-dir", str(audio_dir)]
+                app, ["install-desktop", "--output-dir", str(audio_dir)]
             )
 
         assert result.exit_code == 0
@@ -943,10 +906,7 @@ class TestInstallDesktopCommand:
         assert env["TTS_PROVIDER"] == "say"
         assert "OPENAI_API_KEY" not in env
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_explicit_provider_overrides(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_explicit_provider_overrides(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -957,7 +917,7 @@ class TestInstallDesktopCommand:
             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=False),
         ):
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -975,10 +935,7 @@ class TestInstallDesktopCommand:
         assert env["TTS_PROVIDER"] == "polly"
         assert "OPENAI_API_KEY" not in env
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_openai_without_key_fails(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_openai_without_key_fails(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -990,7 +947,7 @@ class TestInstallDesktopCommand:
         ):
             os.environ.pop("OPENAI_API_KEY", None)
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -1003,10 +960,7 @@ class TestInstallDesktopCommand:
         assert result.exit_code != 0
         assert "OPENAI_API_KEY" in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_elevenlabs_with_key(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_elevenlabs_with_key(self, tmp_path: Path) -> None:
         """--provider elevenlabs with ELEVENLABS_API_KEY set writes key to config."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
@@ -1018,7 +972,7 @@ class TestInstallDesktopCommand:
             patch.dict(os.environ, {"ELEVENLABS_API_KEY": "sk_test_key"}, clear=False),
         ):
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -1036,10 +990,7 @@ class TestInstallDesktopCommand:
         assert env["TTS_PROVIDER"] == "elevenlabs"
         assert env["ELEVENLABS_API_KEY"] == "sk_test_key"
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_elevenlabs_without_key_fails(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_elevenlabs_without_key_fails(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
 
@@ -1051,7 +1002,7 @@ class TestInstallDesktopCommand:
         ):
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
-                main,
+                app,
                 [
                     "install-desktop",
                     "--output-dir",
@@ -1064,10 +1015,7 @@ class TestInstallDesktopCommand:
         assert result.exit_code != 0
         assert "ELEVENLABS_API_KEY" in result.output
 
-    @patch(f"{_CLI}.get_provider")
-    def test_install_defaults_elevenlabs_when_key_set(
-        self, mock_get_provider: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_install_defaults_elevenlabs_when_key_set(self, tmp_path: Path) -> None:
         """ELEVENLABS_API_KEY in env auto-selects elevenlabs."""
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
@@ -1079,7 +1027,7 @@ class TestInstallDesktopCommand:
             patch.dict(os.environ, {"ELEVENLABS_API_KEY": "sk_test_key"}, clear=False),
         ):
             result = runner.invoke(
-                main, ["install-desktop", "--output-dir", str(audio_dir)]
+                app, ["install-desktop", "--output-dir", str(audio_dir)]
             )
 
         assert result.exit_code == 0

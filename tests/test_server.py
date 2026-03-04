@@ -11,8 +11,6 @@ import pytest
 
 from punt_vox.server import (
     _apply_vibe,  # pyright: ignore[reportPrivateUsage]
-    _read_session_voice,  # pyright: ignore[reportPrivateUsage]
-    _read_vibe_tags,  # pyright: ignore[reportPrivateUsage]
     _voice_not_found_message,  # pyright: ignore[reportPrivateUsage]
     _write_config_field,  # pyright: ignore[reportPrivateUsage]
     _write_config_fields,  # pyright: ignore[reportPrivateUsage]
@@ -36,68 +34,6 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     config = tmp_path / "config.md"
     monkeypatch.setattr(srv, "_CONFIG_PATH", config)
     return config
-
-
-class TestReadSessionVoice:
-    """Tests for _read_session_voice config parsing."""
-
-    def test_no_config(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_vox.server as srv
-
-        missing = tmp_path / "missing" / "config.md"
-        monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
-        assert _read_session_voice() is None
-
-    def test_no_voice_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nnotify: "y"\n---\n')
-        assert _read_session_voice() is None
-
-    def test_reads_quoted_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "aria"\n---\n')
-        assert _read_session_voice() == "aria"
-
-    def test_reads_unquoted_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\nvoice: matilda\n---\n")
-        assert _read_session_voice() == "matilda"
-
-    def test_empty_voice_returns_none(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: ""\n---\n')
-        assert _read_session_voice() is None
-
-    def test_ignores_voice_enabled_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice_enabled: "true"\n---\n')
-        assert _read_session_voice() is None
-
-
-class TestReadVibeTags:
-    """Tests for _read_vibe_tags config parsing."""
-
-    def test_no_config(self, tmp_path: Path, monkeypatch: Any) -> None:
-        import punt_vox.server as srv
-
-        missing = tmp_path / "missing" / "config.md"
-        monkeypatch.setattr(srv, "_CONFIG_PATH", missing)
-        assert _read_vibe_tags() is None
-
-    def test_no_vibe_tags_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nnotify: "y"\n---\n')
-        assert _read_vibe_tags() is None
-
-    def test_quoted_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[frustrated] [sighs]"\n---\n')
-        assert _read_vibe_tags() == "[frustrated] [sighs]"
-
-    def test_unquoted_single_tag(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\nvibe_tags: [whispers]\n---\n")
-        assert _read_vibe_tags() == "[whispers]"
-
-    def test_empty_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: ""\n---\n')
-        assert _read_vibe_tags() is None
-
-    def test_ignores_vibe_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe: "some mood"\n---\n')
-        assert _read_vibe_tags() is None
 
 
 class TestApplyVibe:
