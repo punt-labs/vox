@@ -73,15 +73,6 @@ def _print_result(result: SynthesisResult) -> None:
     _emit(payload, f"{result.path}")
 
 
-def _print_results(results: list[SynthesisResult]) -> None:
-    if _json_output:
-        payload = [result_to_dict(r) for r in results]
-        _emit(payload, "")
-        return
-    for r in results:
-        _print_result(r)
-
-
 def _validate_voice_settings(
     stability: float | None,
     similarity: float | None,
@@ -375,12 +366,15 @@ def _requests_from_file(
 
     requests: list[SynthesisRequest] = []
     for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        seg_voice: str | None
+        seg_text: str
         if isinstance(item, str):
             seg_voice = voice
             seg_text = item
         elif isinstance(item, dict):
-            seg_voice = item.get("voice", voice)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-            seg_text = item.get("text", "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            seg_voice = str(item.get("voice") or voice or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            seg_text = str(item.get("text") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            seg_voice = seg_voice or None
         else:
             raise typer.BadParameter(
                 f"Element {i} must be a string or {{voice, text}} object."

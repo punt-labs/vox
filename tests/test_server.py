@@ -269,17 +269,6 @@ class TestVoiceNotFoundMessage:
 # ---------------------------------------------------------------------------
 
 
-def _mock_provider_raising(voice_name: str, available: list[str]) -> MagicMock:
-    """Create a mock provider whose resolve_voice raises VoiceNotFoundError."""
-    provider = MagicMock()
-    provider.name = "elevenlabs"
-    provider.default_voice = "matilda"
-    provider.supports_expressive_tags = True
-    provider.resolve_voice.side_effect = VoiceNotFoundError(voice_name, available)
-    provider.infer_language_from_voice.return_value = None
-    return provider
-
-
 def _mock_provider_ok() -> MagicMock:
     """Create a mock provider that succeeds."""
     provider = MagicMock()
@@ -324,7 +313,7 @@ class TestUnmute:
             result = json.loads(unmute(text="Hello world"))
 
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]  # pyright: ignore[reportUnknownArgumentType]
 
     def test_segments(self, _patch_config: Path, tmp_path: Path) -> None:
         provider = _mock_provider_ok()
@@ -348,7 +337,7 @@ class TestUnmute:
             )
 
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
 
     def test_no_input_returns_error(self, _patch_config: Path) -> None:
         result = json.loads(unmute())
@@ -420,7 +409,7 @@ class TestRecord:
             result = json.loads(record(text="Hello world"))
 
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
 
     def test_no_input_returns_error(self, _patch_config: Path) -> None:
         result = json.loads(record())
