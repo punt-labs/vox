@@ -17,7 +17,7 @@ fail() { printf '  %b✗%b %s\n' "$YELLOW" "$NC" "$1"; exit 1; }
 
 MARKETPLACE_REPO="punt-labs/claude-plugins"
 MARKETPLACE_NAME="punt-labs"
-PLUGIN_NAME="tts"
+PLUGIN_NAME="vox"
 PACKAGE="punt-vox"
 BINARY="vox"
 
@@ -171,5 +171,5 @@ printf '\n'
 
 printf '%b%b%s is ready!%b\n\n' "$GREEN" "$BOLD" "$PLUGIN_NAME" "$NC"
 printf 'Restart Claude Code, then:\n'
-printf '  /notify y     # hear when tasks complete or need input\n'
+printf '  /vox on       # hear when tasks complete or need input\n'
 printf '  /recap        # spoken summary of what just happened\n\n'
