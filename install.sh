@@ -171,5 +171,5 @@ printf '\n'
 
 printf '%b%b%s is ready!%b\n\n' "$GREEN" "$BOLD" "$PLUGIN_NAME" "$NC"
 printf 'Restart Claude Code, then:\n'
-printf '  /vox on       # hear when tasks complete or need input\n'
+printf '  /vox y        # hear when tasks complete or need input\n'
 printf '  /recap        # spoken summary of what just happened\n\n'

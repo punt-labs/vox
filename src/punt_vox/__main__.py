@@ -16,7 +16,7 @@ from typing import Annotated
 import typer
 
 from punt_vox import __version__
-from punt_vox.config import read_config, write_field, write_fields
+from punt_vox.config import read_config, resolve_config_path, write_field, write_fields
 from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.hooks import hook_app
 from punt_vox.output import default_output_dir
@@ -445,34 +445,77 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
-# on / off — notification toggle
+# notify — notification mode (y/n/c)
 # ---------------------------------------------------------------------------
 
 
-@app.command("on")
-def on_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Enable notifications."""
-    write_field("notify", "y")
-    _emit({"notify": "y"}, "Notifications enabled.")
+@app.command("notify")
+def notify_cmd(  # pyright: ignore[reportUnusedFunction]
+    mode: Annotated[
+        str,
+        typer.Argument(help="Notification mode: y (on), n (off), c (continuous)."),
+    ],
+    voice: Annotated[
+        str | None,
+        typer.Option("--voice", help="Set session voice in the same call."),
+    ] = None,
+) -> None:
+    """Set notification mode."""
+    if mode not in ("y", "n", "c"):
+        typer.echo("Error: mode must be y, n, or c.", err=True)
+        raise typer.Exit(code=1)
 
+    config_path = resolve_config_path()
+    first_init = not config_path.exists()
+    updates: dict[str, str] = {"notify": mode}
+    if mode == "c" or (first_init and mode == "y"):
+        updates["speak"] = "y"
+    if voice is not None:
+        updates["voice"] = voice
+    write_fields(updates, config_path=config_path)
 
-@app.command("off")
-def off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Disable notifications."""
-    write_field("notify", "n")
-    _emit({"notify": "n"}, "Notifications disabled.")
+    labels = {
+        "y": "Notifications enabled.",
+        "n": "Notifications disabled.",
+        "c": "Continuous mode on.",
+    }
+    _emit(updates, labels[mode])
 
 
 # ---------------------------------------------------------------------------
-# mute — chimes only (disable voice)
+# speak — toggle spoken vs chime notifications (y/n)
 # ---------------------------------------------------------------------------
 
 
-@app.command("mute")
-def mute_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Chimes only — disable spoken notifications."""
-    write_field("speak", "n")
-    _emit({"speak": "n"}, "Muted — chimes only.")
+@app.command("speak")
+def speak_cmd(  # pyright: ignore[reportUnusedFunction]
+    mode: Annotated[
+        str,
+        typer.Argument(help="Speak mode: y (voice) or n (chimes only)."),
+    ],
+) -> None:
+    """Toggle spoken notifications on or off."""
+    if mode not in ("y", "n"):
+        typer.echo("Error: mode must be y or n.", err=True)
+        raise typer.Exit(code=1)
+
+    write_field("speak", mode, config_path=resolve_config_path())
+    label = "Voice on." if mode == "y" else "Muted — chimes only."
+    _emit({"speak": mode}, label)
+
+
+# ---------------------------------------------------------------------------
+# voice — set session voice
+# ---------------------------------------------------------------------------
+
+
+@app.command("voice")
+def voice_cmd(  # pyright: ignore[reportUnusedFunction]
+    name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
+) -> None:
+    """Set the session voice."""
+    write_field("voice", name, config_path=resolve_config_path())
+    _emit({"voice": name}, f"{name}'s here.")
 
 
 # ---------------------------------------------------------------------------

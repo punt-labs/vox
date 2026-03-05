@@ -138,8 +138,10 @@ vox unmute "Hello world"                       # Synthesize + play
 vox record "Hello world" -o hello.mp3          # Synthesize + save
 vox record --from segments.json                # From JSON segments file
 vox vibe excited                               # Set session mood
-vox on                                         # Enable notifications
-vox mute                                       # Chimes only
+vox notify y                                   # Enable notifications
+vox notify c                                   # Continuous spoken mode
+vox speak n                                    # Chimes only
+vox voice matilda                              # Set session voice
 vox status                                     # Current state
 vox version                                    # Print version
 vox doctor                                     # Check setup
