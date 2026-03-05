@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Merged `/vox-on` and `/vox-off` into single `/vox on|off` command with argument parsing
+- Merged `/vox-on` and `/vox-off` into a single `/vox` slash command that accepts an `on` or `off` argument
 
 ## [0.11.0] - 2026-03-04
 
