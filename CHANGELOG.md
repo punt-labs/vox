@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-03-05
+
 ### Changed
 
 - CLI: replaced `vox on`/`vox off`/`vox mute` with `vox notify y|n|c`, `vox speak y|n`, and `vox voice <name>` — aligns CLI with the standard that every slash command has a corresponding CLI command
