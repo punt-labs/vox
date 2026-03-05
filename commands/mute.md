@@ -1,11 +1,11 @@
 ---
-description: "Disable all notifications"
+description: "Chimes only — disable spoken notifications"
 allowed-tools: ["Edit", "Read", "Write"]
 ---
 
 # /mute command
 
-Disable all audio notifications — no voice, no chimes.
+Disable spoken notifications. Chime sounds still play on task completion and permission prompts.
 
 ## Config file
 
@@ -13,4 +13,4 @@ The config file is `<root>/.vox/config.md`. To find `<root>`: in a git repo, run
 
 ## Implementation
 
-Write `notify: "n"` and `speak: "n"` to `.vox/config.md` frontmatter. Confirm: "Muted."
+Write `speak: "n"` to `.vox/config.md` frontmatter. Confirm: "Muted — chimes only."
