@@ -433,14 +433,17 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
 ) -> None:
     """Set session mood for TTS voice."""
+    cp = resolve_config_path()
     if mood == "auto":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_path=cp)
         _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_path=cp)
         _emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
-        write_fields({"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"})
+        write_fields(
+            {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_path=cp
+        )
         _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
@@ -541,7 +544,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (provider, voice, vibe, notify)."""
     prov = get_provider(provider, model=model)
-    cfg = read_config()
+    cfg = read_config(config_path=resolve_config_path())
 
     info = {
         "provider": prov.name,
