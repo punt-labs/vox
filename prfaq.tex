@@ -224,15 +224,16 @@ that run for extended periods
 
 punt-vox adds an audio layer to Claude Code through three slash commands.
 
-\texttt{/notify y} enables voice notifications for two events: task completion
+\texttt{/vox y} enables chime notifications for two events: task completion
 and permission prompts. When the agent finishes a multi-file refactor, the
-developer hears a spoken summary of what changed. When the agent needs
-approval to run a destructive command, the developer hears that too --- no
-more silent permission dialogs burning minutes of idle time. \texttt{/notify c}
-adds continuous mode: milestone updates during long-running tasks, so the
-developer hears progress without checking in.
+developer hears an audio tone. When the agent needs approval to run a
+destructive command, the developer hears that too --- no more silent permission
+dialogs burning minutes of idle time. \texttt{/vox c} adds continuous mode
+with spoken summaries: milestone updates during long-running tasks, so the
+developer hears progress without checking in. \texttt{/unmute} enables voice
+mode with a specific voice from the roster.
 
-\texttt{/speak n} switches from voice to chime --- the same events fire, but
+\texttt{/mute} switches from voice to chime --- the same events fire, but
 the notification is an audio tone instead of words. Chimes are mood-aware:
 when a vibe is active, tones pitch-shift to match the session mood (brighter
 when things are going well, darker when they're not). Eight distinct signals
@@ -274,8 +275,9 @@ One command installs everything:
 The script checks Python 3.13+, installs \texttt{uv} if missing, installs
 the CLI, registers the MCP server with Claude Code, and runs
 \texttt{vox doctor} to verify that at least one TTS provider is available.
-Restart Claude Code and type \texttt{/notify y}. From that moment, every
-task completion and permission prompt produces a spoken notification.
+Restart Claude Code and type \texttt{/vox y}. From that moment, every
+task completion and permission prompt produces a chime notification.
+Type \texttt{/vox c} for continuous spoken summaries.
 
 There is no voice selection wizard, no audio device configuration, and no
 daemon to manage. If \texttt{vox doctor} passes, everything works. If punt-vox
@@ -305,7 +307,7 @@ and always will be. Install with one command:
 
 {\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/main/install.sh | sh}}
 
-Restart Claude Code and type \texttt{/notify y}.
+Restart Claude Code and type \texttt{/vox y}.
 
 \newpage
 
@@ -366,7 +368,7 @@ Restart Claude Code and type \texttt{/notify y}.
 
   The script installs the CLI, registers the MCP server with Claude Code, and
   runs \texttt{vox doctor} to verify providers. Restart Claude Code. Type
-  \texttt{/notify y}. Notifications are now active. Type \texttt{/recap} after
+  \texttt{/vox y}. Notifications are now active. Type \texttt{/recap} after
   any long output for a spoken summary.
 
   For manual installation:
@@ -407,8 +409,8 @@ Restart Claude Code and type \texttt{/notify y}.
 
 \begin{faqpair}{Does this work with agents other than Claude Code?}
   punt-vox is a standalone TTS engine distributed as a Python library and MCP
-  server. The Claude Code plugin (\texttt{/notify}, \texttt{/speak},
-  \texttt{/recap}) is specific to Claude Code's hooks system. The underlying
+  server. The Claude Code plugin (\texttt{/vox}, \texttt{/unmute},
+  \texttt{/mute}, \texttt{/recap}) is specific to Claude Code's hooks system. The underlying
   TTS engine can be called from any Python program or any MCP-compatible
   client. Integration with Cursor, GitHub Copilot, or other agents would
   require writing hooks for those tools' notification systems.
@@ -416,11 +418,11 @@ Restart Claude Code and type \texttt{/notify y}.
 
 \begin{faqpair}{Can I use my own voice or choose a specific voice?}
   punt-vox auto-selects a default voice per provider (Matilda for ElevenLabs,
-  Nova for OpenAI, Joanna for Polly). The CLI accepts
-  \texttt{-{}-voice} flags for overriding the default. There is no voice
-  selection wizard or in-session voice picker --- the design philosophy is
-  zero configuration. If you want a specific voice, set it once via
-  environment variable or CLI flag.
+  Nova for OpenAI, Joanna for Polly). Use \texttt{/unmute @matilda} to set a
+  session voice, or \texttt{/unmute @} to browse the roster. The CLI accepts
+  \texttt{-{}-voice} flags for overriding the default. The design philosophy
+  is zero configuration --- defaults work out of the box, but voice selection
+  is available for those who want it.
 \end{faqpair}
 
 % ── Internal FAQs (Business-facing) ──────────────────────────────────────────
@@ -545,14 +547,14 @@ Restart Claude Code and type \texttt{/notify y}.
 \end{faqpair}
 
 \begin{faqpair}{What is your next step to validate your vision?}\label{faq:validation-plan}
-  Ship the \texttt{/notify} command (Stop hook + permission-blocked
-  notification) and \texttt{/speak} toggle. Measure:
+  Ship the \texttt{/vox} command (Stop hook + permission-blocked
+  notification) and \texttt{/unmute}/\texttt{/mute} toggles. Measure:
 
   \begin{enumerate}[leftmargin=1.5em, nosep]
-    \item Do users who enable \texttt{/notify y} leave it on after one week?
+    \item Do users who enable \texttt{/vox y} leave it on after one week?
     \item Which event fires more often: task completion or permission prompt?
-    \item Do users toggle to \texttt{/speak n} (chime-only) or stay on spoken
-          notifications?
+    \item Do users stay on chimes (\texttt{/vox y}) or upgrade to voice
+          (\texttt{/unmute})?
   \end{enumerate}
 
   If retention after one week is below 30\%, the value proposition is
@@ -596,7 +598,7 @@ Restart Claude Code and type \texttt{/notify y}.
 \end{faqpair}
 
 \begin{faqpair}{What dependencies exist on external systems?}
-  \textbf{Claude Code hooks:} Required for \texttt{/notify} to fire
+  \textbf{Claude Code hooks:} Required for \texttt{/vox} notifications to fire
   automatically. Without hooks, punt-vox still works as a manual TTS tool
   (\texttt{/recap}, CLI synthesis) but loses its primary value proposition.
 
@@ -622,15 +624,16 @@ Restart Claude Code and type \texttt{/notify y}.
   layer:
 
   \textbf{Phase 1 (1--2 weeks):} Stop hook integration. When Claude Code
-  finishes a task, punt-vox synthesizes and plays a spoken summary.
-  \texttt{/notify y|n} toggle. \texttt{/speak y|n} toggle (voice vs.\ chime).
+  finishes a task, punt-vox plays a chime or spoken summary.
+  \texttt{/vox y|n|c} toggle. \texttt{/unmute}/\texttt{/mute} for voice
+  vs.\ chime.
 
   \textbf{Phase 2 (1 week):} Permission-blocked notification. When the
   agent waits for approval, punt-vox announces it. Uses the
   \texttt{Notification} hook with \texttt{permission\_prompt} subtype.
 
   \textbf{Phase 3 (1 week):} \texttt{/recap} command. Agent summarizes
-  the last response and speaks it via punt-vox. \texttt{/notify c}
+  the last response and speaks it via punt-vox. \texttt{/vox c}
   continuous mode with milestone updates.
 
   Total estimate: 3--4 weeks of development time. The uncertainty is in Phase
@@ -687,7 +690,7 @@ Restart Claude Code and type \texttt{/notify y}.
           Target: 500 monthly installs within 6 months of the notification
           feature shipping.
     \item \textbf{Notification retention:} Percentage of users who enable
-          \texttt{/notify y} and keep it enabled after one week. Target:
+          \texttt{/vox y} and keep it enabled after one week. Target:
           30\%+. Below this, the product is not sticky.
     \item \textbf{Event distribution:} Ratio of task-completion to
           permission-prompt notifications. Informs whether the product's
@@ -747,10 +750,10 @@ Restart Claude Code and type \texttt{/notify y}.
 
   \textbf{People turn it off.} Voice notifications are intrusive. If the
   default voice is too loud, too frequent, or too slow, users disable
-  \texttt{/notify} within hours and never re-enable. The notification
+  \texttt{/vox n} within hours and never re-enable. The notification
   retention metric (see \faqref{faq:metrics}) is the canary: below 30\%
   after one week means the UX is wrong.
-  \textit{Response:} \texttt{/speak n} (chime-only) is the escape valve.
+  \textit{Response:} \texttt{/mute} (chime-only) is the escape valve.
   If retention is low on voice but acceptable on chime, the product is
   an audio notification tool, not a voice tool. Adjust positioning
   accordingly.
@@ -816,9 +819,9 @@ when their agent finishes or needs approval.
 \begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. This is the minimum viable notification.}\label{feat:stop-hook}
   \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. This is the highest time-saved-per-event feature.}\label{feat:permission}
-  \featureitem{\texttt{/notify} command}{Toggle notifications: \texttt{y} (task done + permission), \texttt{c} (continuous --- add milestone updates), \texttt{n} (off). Persists via plugin state file.}\label{feat:notify}
-  \featureitem{\texttt{/speak} command}{Toggle voice vs.\ chime: \texttt{y} (spoken words), \texttt{n} (audio tone only). Orthogonal to \texttt{/notify}.}\label{feat:speak}
-  \featureitem{Chime audio}{Mood-aware audio tones for \texttt{/speak n} mode. Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) pitch-shift to match session vibe (bright/neutral/dark). 24 total assets.}\label{feat:chime}
+  \featureitem{\texttt{/vox} command}{Enable or disable vox: \texttt{y} (chime notifications), \texttt{c} (continuous spoken summaries), \texttt{n} (off). Persists via plugin state file.}\label{feat:notify}
+  \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only.}\label{feat:speak}
+  \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) pitch-shift to match session vibe (bright/neutral/dark). 24 total assets.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly. No manual configuration.}\label{feat:autodetect}
 \end{enumerate}
 
@@ -829,7 +832,7 @@ core notification use case.
 
 \begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Useful after long output.}\label{feat:recap}
-  \featureitem{Continuous mode milestones}{In \texttt{/notify c} mode, speak progress updates during long-running tasks (e.g., ``completed 3 of 5 files''). Requires hooking into intermediate Claude output.}\label{feat:continuous}
+  \featureitem{Continuous mode milestones}{In \texttt{/vox c} mode, speak progress updates during long-running tasks (e.g., ``completed 3 of 5 files''). Requires hooking into intermediate Claude output.}\label{feat:continuous}
   \featureitem{Plugin marketplace submission}{List punt-vox in the Claude Code plugin marketplace for one-click install. Requires release workflow (prod/dev namespace separation already built).}\label{feat:marketplace}
 \end{enumerate}
 

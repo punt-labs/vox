@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ef2db22/install.sh | 
 Restart Claude Code, then:
 
 ```text
-/vox on       # hear when tasks complete or need input
+/vox y        # hear when tasks complete or need input
 /recap        # spoken summary of what just happened
 ```
 
@@ -63,9 +63,9 @@ sh install.sh
 ### Enable notifications
 
 ```text
-> /vox on
+> /vox y
 
-Notifications on. You'll hear when tasks finish or need approval.
+Vox enabled. You'll hear when tasks finish or need approval.
 Pick a voice with /unmute @<name>.
 ```
 
@@ -103,8 +103,9 @@ Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (brigh
 
 | Command | Purpose |
 |---------|---------|
-| `/vox on` | Enable notifications + show voice roster |
-| `/vox off` | Disable notifications |
+| `/vox y` | Enable vox (chime notifications) |
+| `/vox n` | Disable vox |
+| `/vox c` | Continuous mode (spoken summaries on task completion) |
 | `/unmute` | Enable voice mode (spoken notifications) |
 | `/unmute @matilda` | Set session voice + enable voice |
 | `/unmute @` | Browse voice roster |
@@ -159,7 +160,7 @@ vox mcp                                        # Start MCP server (stdio)
 ### Shipped
 
 - **Mic API**: unified `unmute`/`record`/`vibe`/`who` MCP tools with segment-based input
-- Notification layer: `/vox on`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
+- Notification layer: `/vox y|n|c`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
 - CLI: unmute, record, vibe, on/off, mute, version, status, doctor
