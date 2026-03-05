@@ -131,6 +131,9 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (requires provider API credentials)",
 ]
+filterwarnings = [
+    "ignore:Core Pydantic V1 functionality isn't compatible with Python 3.14:UserWarning",
+]
 
 [tool.coverage.run]
 source = ["src"]

@@ -8,8 +8,18 @@ import os
 import platform
 import shutil
 import subprocess
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+# elevenlabs SDK imports pydantic.v1 which warns on Python 3.14+.
+# Their issue, not ours — suppress until they ship a fix.
+warnings.filterwarnings(
+    "ignore",
+    message="Core Pydantic V1 functionality isn't compatible with Python 3.14",
+    category=UserWarning,
+    module=r"elevenlabs\.core\.pydantic_utilities",
+)
 
 if TYPE_CHECKING:
     from punt_vox.types import TTSProvider
