@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/mute` now specifies exact config file location and create-if-missing behavior, matching other config-writing commands
 - Hooks resolve `.vox/config.md` via `git rev-parse --git-common-dir` so config is found from worktrees
 - All config-writing commands now specify exact `.vox/config.md` location and create-if-missing behavior, preventing agents from searching other directories
+- Config path resolution now catches `subprocess.TimeoutExpired` (was `TimeoutError`, which subprocess.run never raises)
+- Hook chime resolution uses `CLAUDE_PLUGIN_ROOT` env var for asset paths, fixing chime playback for pip-installed packages where `__file__` resolves into site-packages
 
 ### Changed
 
-- Merged `/vox-on` and `/vox-off` into a single `/vox` slash command with `y` (chimes), `n` (off), or `c` (continuous) argument
+- Merged `/vox-on` and `/vox-off` into a single `/vox` slash command with `y` (enable), `n` (disable), or `c` (continuous) argument
+- `/vox y` and `/vox c` now preserve existing `speak` setting on subsequent calls; only first init defaults `speak` to `"y"`
 - Migrated hook business logic from bash to Python via `vox hook <event>` CLI dispatcher — stop, post-bash, and notification hooks are now thin shell gates delegating to testable pure functions in `hooks.py`
 - Deleted `hooks/state.sh` — all config reading, mood classification, chime resolution, and audio helpers now use their Python equivalents
 - Fixed `notify-permission.sh` calling non-existent `vox synthesize` — now uses `vox unmute` via the Python hook dispatcher

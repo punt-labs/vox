@@ -1,18 +1,18 @@
 ---
-description: "Set notification level"
+description: "Enable or disable vox"
 argument-hint: "y | n | c"
 allowed-tools: ["mcp__plugin_vox_mic__who", "Edit", "Read", "Write"]
 ---
 
 # /vox command
 
-Set the notification level: enabled (chimes), disabled (silent), or continuous (spoken summaries).
+Enable or disable vox notifications.
 
 ## Usage
 
-- `/vox y` — enabled: chime notifications on task completion and permission prompts
-- `/vox n` — disabled: no notifications
-- `/vox c` — continuous: spoken summaries on task completion (requires `/unmute` for voice)
+- `/vox y` — enable vox (chime notifications on task completion and permission prompts)
+- `/vox n` — disable vox (no notifications)
+- `/vox c` — continuous mode (spoken summaries on task completion; requires `/unmute` for voice)
 
 ## Config file
 
@@ -24,21 +24,21 @@ Parse `$ARGUMENTS`:
 
 ### `y`
 
-1. Write `notify: "y"` to `.vox/config.md` frontmatter.
-2. Confirm: "Notifications on (chimes)."
+1. Read `.vox/config.md`. If the file **does not exist** (first init), write both `notify: "y"` and `speak: "y"`. If the file **already exists**, write only `notify: "y"` — preserve the existing `speak` value.
+2. Confirm: "Vox enabled."
 
 ### `n`
 
 1. Write `notify: "n"` to `.vox/config.md` frontmatter.
-2. Confirm: "Notifications off."
+2. Confirm: "Vox disabled."
 
 ### `c`
 
-1. Write `notify: "c"` to `.vox/config.md` frontmatter.
+1. Read `.vox/config.md`. If the file **does not exist** (first init), write both `notify: "c"` and `speak: "y"`. If the file **already exists**, write only `notify: "c"` — preserve the existing `speak` value.
 2. Call the `who` MCP tool to list voices.
 3. Display featured voices with blurbs. Tell user they can pick with `/unmute @<name>`.
 4. Confirm: "Continuous mode on. You'll hear spoken summaries when tasks finish."
 
 ### No argument or unrecognized
 
-Tell user: "Usage: `/vox y` (chimes), `/vox n` (off), or `/vox c` (continuous spoken summaries)"
+Tell user: "Usage: `/vox y` (enable), `/vox n` (disable), or `/vox c` (continuous spoken summaries)"

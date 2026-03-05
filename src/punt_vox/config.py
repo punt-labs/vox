@@ -38,7 +38,11 @@ def resolve_config_path() -> Path:
         git_common = result.stdout.strip()
         if git_common:
             return Path(git_common).resolve().parent / ".vox" / "config.md"
-    except (subprocess.CalledProcessError, FileNotFoundError, TimeoutError):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         pass
     return DEFAULT_CONFIG_PATH
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import random
 import subprocess
 import sys
@@ -35,7 +36,18 @@ hook_app = typer.Typer(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
+
+def _resolve_assets_dir() -> Path:
+    """Resolve the plugin assets directory.
+
+    Uses ``CLAUDE_PLUGIN_ROOT`` (set by Claude Code when running hooks)
+    for pip-installed packages.  Falls back to source-tree-relative path
+    for local development.
+    """
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin_root:
+        return Path(plugin_root) / "assets"
+    return Path(__file__).resolve().parent.parent.parent / "assets"
 
 
 def _read_hook_input() -> dict[str, object]:
@@ -68,23 +80,24 @@ def resolve_chime(signal: str, vibe: str | None) -> Path:
     Fallback chain: mood-specific signal -> neutral signal ->
     mood-specific done -> done.
     """
+    assets = _resolve_assets_dir()
     mood = classify_mood(vibe)
 
     if mood != "neutral":
-        mood_file = _ASSETS_DIR / f"chime_{signal}_{mood}.mp3"
+        mood_file = assets / f"chime_{signal}_{mood}.mp3"
         if mood_file.exists():
             return mood_file
 
-    neutral_file = _ASSETS_DIR / f"chime_{signal}.mp3"
+    neutral_file = assets / f"chime_{signal}.mp3"
     if neutral_file.exists():
         return neutral_file
 
     if mood != "neutral":
-        mood_done = _ASSETS_DIR / f"chime_done_{mood}.mp3"
+        mood_done = assets / f"chime_done_{mood}.mp3"
         if mood_done.exists():
             return mood_done
 
-    return _ASSETS_DIR / "chime_done.mp3"
+    return assets / "chime_done.mp3"
 
 
 # ---------------------------------------------------------------------------
