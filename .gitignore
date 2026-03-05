@@ -27,6 +27,7 @@ lancedb/
 research/
 .biff.local
 .entire/
+.vscode/
 
 # LaTeX auxiliary files (prfaq.pdf is tracked, build artifacts are not)
 *.aux
