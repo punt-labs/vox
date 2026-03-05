@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `/unmute` now sets `notify: "c"` (continuous mode) so spoken notifications actually fire — previously only set `speak: "y"` while `notify` defaulted to `"n"`, silently disabling all notifications
+- `/mute` now sets `notify: "n"` alongside `speak: "n"` — fully disables all notifications
+- Hooks resolve `.vox/config.md` via `git rev-parse --git-common-dir` so config is found from worktrees
 - All config-writing commands now specify exact `.vox/config.md` location and create-if-missing behavior, preventing agents from searching other directories
 
 ### Changed

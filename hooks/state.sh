@@ -8,7 +8,10 @@
 #   source "$(dirname "$0")/state.sh"
 #   if [[ "$(read_notify)" == "y" ]]; then ...
 
-TTS_STATE_FILE=".vox/config.md"
+# Resolve main repo root (works from both worktrees and main repo).
+# Falls back to cwd if git is unavailable.
+_repo_root=$(realpath "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null || echo ".")
+TTS_STATE_FILE="${_repo_root}/.vox/config.md"
 
 # Read a YAML frontmatter field from the state file.
 # Returns empty string if file doesn't exist or field not found.
