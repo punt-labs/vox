@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/unmute` now sets `notify: "c"` (continuous mode) so spoken notifications actually fire — previously only set `speak: "y"` while `notify` defaulted to `"n"`, silently disabling all notifications
+- All config-writing commands now specify exact `.vox/config.md` location and create-if-missing behavior, preventing agents from searching other directories
+
 ### Changed
 
 - Merged `/vox-on` and `/vox-off` into a single `/vox` slash command that accepts an `on` or `off` argument
