@@ -96,15 +96,14 @@ def _has_aws_credentials() -> bool:
     if not shutil.which("aws"):
         return False
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["aws", "sts", "get-caller-identity"],
             capture_output=True,
             timeout=5,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
-    else:
-        return True
+    return result.returncode == 0
 
 
 def auto_detect_provider() -> str:
