@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Provider auto-detection now prefers AWS Polly over macOS `say` and Linux `espeak` when AWS credentials are valid — Polly produces significantly better audio than local fallbacks
+- Session voice gracefully falls back to provider default when the configured voice isn't available in the current provider (e.g. ElevenLabs voice "sarah" stored in config but Polly is the active provider)
+
 ## [1.0.1] - 2026-03-05
 
 ### Changed

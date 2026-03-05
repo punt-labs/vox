@@ -7,13 +7,16 @@ in core.py (provider-agnostic orchestration) or config.py (file I/O).
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 import punt_vox.config as _config
 from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
 from punt_vox.output import default_output_dir
-from punt_vox.types import TTSProvider, validate_language
+from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
+
+logger = logging.getLogger(__name__)
 
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 
@@ -39,19 +42,37 @@ def resolve_voice_and_language(
     if language is not None:
         language = validate_language(language)
 
+    voice_from_config = False
     if voice is None:
         voice = _config.read_field("voice", config_path or _config.DEFAULT_CONFIG_PATH)
+        voice_from_config = voice is not None
 
     if voice is None and language is not None:
         voice = provider.get_default_voice(language)
     elif voice is None:
         voice = provider.default_voice
 
-    if language is not None:
-        provider.resolve_voice(voice, language)
-    else:
-        provider.resolve_voice(voice)
-        language = provider.infer_language_from_voice(voice)
+    try:
+        if language is not None:
+            provider.resolve_voice(voice, language)
+        else:
+            provider.resolve_voice(voice)
+            language = provider.infer_language_from_voice(voice)
+    except VoiceNotFoundError:
+        if not voice_from_config:
+            raise
+        logger.info(
+            "Session voice '%s' not available for %s; using default '%s'",
+            voice,
+            type(provider).__name__,
+            provider.default_voice,
+        )
+        voice = provider.default_voice
+        if language is not None:
+            provider.resolve_voice(voice, language)
+        else:
+            provider.resolve_voice(voice)
+            language = provider.infer_language_from_voice(voice)
 
     return voice, language
 
