@@ -16,7 +16,7 @@ Enable voice mode (continuous spoken notifications). Optionally set a session vo
 
 ## Config file
 
-The config file is `<repo>/.vox/config.md` where `<repo>` is the main repository root: `realpath "$(git rev-parse --git-common-dir)/.."`. This works from both the main repo and worktrees. If the file does not exist, create the `.vox/` directory and the file with YAML frontmatter delimiters (`---`). Never search other directories.
+The config file is `<root>/.vox/config.md`. To find `<root>`: in a git repo, run `realpath "$(git rev-parse --git-common-dir)/.."` (returns the main repo root, even from worktrees). Outside git, use the current working directory. If the file does not exist, create the `.vox/` directory and the file with YAML frontmatter delimiters (`---`). Never search other directories.
 
 ## Implementation
 
