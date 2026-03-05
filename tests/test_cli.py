@@ -276,43 +276,127 @@ class TestVibeCommand:
 
 
 # ---------------------------------------------------------------------------
-# on/off/mute tests
+# notify/speak/voice tests
 # ---------------------------------------------------------------------------
 
 
-class TestNotificationCommands:
-    def test_on(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+class TestNotifyCommand:
+    def test_notify_y(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["on"])
+        result = runner.invoke(app, ["notify", "y"])
         assert result.exit_code == 0
         assert "enabled" in result.output.lower()
 
-    def test_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_notify_n(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["off"])
+        result = runner.invoke(app, ["notify", "n"])
         assert result.exit_code == 0
         assert "disabled" in result.output.lower()
 
-    def test_mute(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_notify_c(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["mute"])
+        result = runner.invoke(app, ["notify", "c"])
+        assert result.exit_code == 0
+        assert "continuous" in result.output.lower()
+
+    def test_notify_c_always_enables_speak(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        """Continuous mode always sets speak=y, even if file exists."""
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        config.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["notify", "c"])
+        assert result.exit_code == 0
+        text = config.read_text()
+        assert 'speak: "y"' in text
+        assert 'notify: "c"' in text
+
+    def test_notify_c_with_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["notify", "c", "--voice", "matilda"])
+        assert result.exit_code == 0
+        text = config.read_text()
+        assert 'voice: "matilda"' in text
+        assert 'notify: "c"' in text
+        assert 'speak: "y"' in text
+
+    def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        config = tmp_path / "config.md"
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["notify", "x"])
+        assert result.exit_code == 1
+
+
+class TestSpeakCommand:
+    def test_speak_y(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["speak", "y"])
+        assert result.exit_code == 0
+        assert "voice on" in result.output.lower()
+
+    def test_speak_n(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["speak", "n"])
         assert result.exit_code == 0
         assert "chimes" in result.output.lower()
+
+
+class TestVoiceCommand:
+    def test_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voice", "matilda"])
+        assert result.exit_code == 0
+        assert "matilda" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
