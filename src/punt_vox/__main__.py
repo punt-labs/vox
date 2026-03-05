@@ -18,6 +18,7 @@ import typer
 from punt_vox import __version__
 from punt_vox.config import read_config, write_field, write_fields
 from punt_vox.core import TTSClient, stitch_audio
+from punt_vox.hooks import hook_app
 from punt_vox.output import default_output_dir
 from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
 from punt_vox.resolve import resolve_voice_and_language
@@ -31,6 +32,7 @@ from punt_vox.types import (
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="vox", help="Text-to-speech CLI.", no_args_is_help=True)
+app.add_typer(hook_app, name="hook", hidden=True)
 
 # ---------------------------------------------------------------------------
 # Display constants

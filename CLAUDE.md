@@ -55,10 +55,11 @@ Module structure under `src/punt_vox/`:
 | `logging_config.py` | Rotating file logging to `~/.punt-vox/logs/tts.log` |
 | `ephemeral.py` | Ephemeral output mode: `.vox/` in cwd, auto-cleanup |
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
-| `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()` |
+| `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()`, `resolve_config_path()` |
 | `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `resolve_output_dir()`, `apply_vibe()` |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
-| `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp |
+| `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `classify_signal()`, `resolve_chime()` |
+| `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, hook |
 | `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`. Reads `.vox/config.md` for session state. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
@@ -70,13 +71,12 @@ Plugin structure (Claude Code hooks and commands):
 | Path | Responsibility |
 |------|---------------|
 | `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (mic tools + Bash), Stop, Notification |
-| `hooks/state.sh` | Shared state reader and audio helpers for bash hooks (`enqueue_audio`, `play_audio_blocking`, `read_vibe_mode`, `read_vibe_signals`) |
-| `hooks/notify.sh` | Stop hook: task-completion notification via decision-block pattern |
-| `hooks/signal.sh` | PostToolUse hook (Bash): fast-gated signal accumulator for auto-vibe |
-| `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
-| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
+| `hooks/notify.sh` | Stop hook: thin gate → `vox hook stop` |
+| `hooks/signal.sh` | PostToolUse hook (Bash): thin gate → `vox hook post-bash` |
+| `hooks/notify-permission.sh` | Notification hook: thin gate → `vox hook notification` |
+| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel (self-contained bash) |
 | `hooks/session-start.sh` | SessionStart hook: deploys commands, cleans retired commands, auto-allows MCP tools |
-| `commands/vox.md` | `/vox` — notifications on/off (args: `on` or `off`; `on` shows voice roster) |
+| `commands/vox.md` | `/vox y\|n\|c` — set notification level: chimes, off, or continuous |
 | `commands/unmute.md` | `/unmute [@voice]` — enable voice mode, set session voice, browse roster |
 | `commands/mute.md` | `/mute` — chimes only |
 | `commands/recap.md` | `/recap` — on-demand spoken summary (uses `unmute` MCP tool) |
@@ -84,7 +84,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
 
 ## Python Coding Standards
 

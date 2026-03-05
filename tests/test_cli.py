@@ -210,8 +210,13 @@ class TestRecordCommand:
     @patch(f"{_CLI}.TTSClient")
     @patch(f"{_CLI}.get_provider")
     def test_record_with_language(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+        self,
+        mock_get_provider: MagicMock,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
     ) -> None:
+        monkeypatch.chdir(tmp_path)
         out = tmp_path / "test.mp3"
         provider = _make_mock_provider()
         provider.get_default_voice.side_effect = lambda lang: "vicki"  # pyright: ignore[reportUnknownLambdaType,reportUnknownMemberType]
