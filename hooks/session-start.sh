@@ -22,7 +22,7 @@ fi
 
 ACTIONS=()
 
-# ── Clean up retired commands from pre-mic-API ────────────────────────
+# ── Clean up retired commands ─────────────────────────────────────────
 if [[ "$DEV_MODE" == "false" ]]; then
   RETIRED=(say.md speak.md notify.md voice.md vox-on.md vox-off.md)
   CLEANED=()
