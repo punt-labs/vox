@@ -11,12 +11,37 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(".vox/config.md")
+
+
+def resolve_config_path() -> Path:
+    """Resolve .vox/config.md at the main repo root (worktree-safe).
+
+    Uses ``git rev-parse --git-common-dir`` to find the shared git
+    directory, then resolves to its parent.  Falls back to cwd-relative
+    ``.vox/config.md`` when git is unavailable or not in a repo.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        git_common = result.stdout.strip()
+        if git_common:
+            return Path(git_common).resolve().parent / ".vox" / "config.md"
+    except (subprocess.CalledProcessError, FileNotFoundError, TimeoutError):
+        pass
+    return DEFAULT_CONFIG_PATH
+
 
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 

@@ -8,10 +8,6 @@
 # No `set -euo pipefail` — hooks must degrade gracefully on
 # malformed input rather than failing the tool call.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=hooks/state.sh
-source "$SCRIPT_DIR/state.sh"
-
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
@@ -31,6 +27,27 @@ extract_voice() {
   local data="$1"
   VOICE=$(echo "$data" | jq -r '.[0].voice // .voice // empty' 2>/dev/null)
   [[ -z "$VOICE" ]] && VOICE="the voice"
+}
+
+# Infer possessive pronoun for a voice name.
+voice_pronoun() {
+  local name
+  name=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+  case "$name" in
+    matilda|joanna|jessica|rachel|emily|aria|lily|charlotte|alice|domi|elli|freya|gigi|serena|glinda|mimi|nicole)
+      echo "her" ;;
+    adam|josh|sam|matthew|daniel|james|clyde|ethan|fin|harry|liam|patrick|thomas|michael|george|callum)
+      echo "his" ;;
+    *)
+      echo "their" ;;
+  esac
+}
+
+# Pick a random element from positional arguments (Bash 3.2 compatible).
+pick_random() {
+  local idx=$((RANDOM % $#))
+  shift "$idx"
+  echo "$1"
 }
 
 emit() {

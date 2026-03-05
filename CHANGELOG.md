@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Merged `/vox-on` and `/vox-off` into a single `/vox` slash command with `y` (chimes), `n` (off), or `c` (continuous) argument
+- Migrated hook business logic from bash to Python via `vox hook <event>` CLI dispatcher — stop, post-bash, and notification hooks are now thin shell gates delegating to testable pure functions in `hooks.py`
+- Deleted `hooks/state.sh` — all config reading, mood classification, chime resolution, and audio helpers now use their Python equivalents
+- Fixed `notify-permission.sh` calling non-existent `vox synthesize` — now uses `vox unmute` via the Python hook dispatcher
+- Signal classifier now checks lint patterns before test patterns, fixing false matches where "Found N errors" was classified as `tests-fail` instead of `lint-fail`
 
 ## [0.11.0] - 2026-03-04
 
