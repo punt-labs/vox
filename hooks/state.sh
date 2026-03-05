@@ -10,7 +10,11 @@
 
 # Resolve main repo root (works from both worktrees and main repo).
 # Falls back to cwd if git is unavailable.
-_repo_root=$(realpath "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null || echo ".")
+if _git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) && [[ -n "$_git_common_dir" ]]; then
+  _repo_root=$(realpath "${_git_common_dir}/.." 2>/dev/null || echo ".")
+else
+  _repo_root="."
+fi
 TTS_STATE_FILE="${_repo_root}/.vox/config.md"
 
 # Read a YAML frontmatter field from the state file.
