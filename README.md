@@ -123,11 +123,11 @@ The full experience --- natural voice with expressive tags that respond to `/vib
 |----------|---------|---------------|----------|
 | **ElevenLabs** | `ELEVENLABS_API_KEY` | matilda | **Recommended.** Natural voice, expressive tags via `/vibe` |
 | OpenAI | `OPENAI_API_KEY` | nova | Fast notifications, low latency |
+| AWS Polly | AWS credentials | joanna | Natural voice, cost-effective |
 | macOS say | — | samantha | Zero-config on macOS, offline |
 | espeak-ng | — | en | Zero-config on Linux, offline |
-| AWS Polly | AWS credentials | joanna | Cost-effective, requires AWS credentials |
 
-Auto-detection order: ElevenLabs > OpenAI > say (macOS) / espeak (Linux) > Polly.
+Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > say (macOS) / espeak (Linux).
 
 ## CLI
 

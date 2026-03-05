@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import os
 import platform
 import shutil
+import subprocess
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -84,13 +87,32 @@ PROVIDER_REGISTRY["say"] = _register_say
 PROVIDER_REGISTRY["espeak"] = _register_espeak
 
 
+logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def _has_aws_credentials() -> bool:
+    """Check whether AWS credentials are configured (cached)."""
+    if not shutil.which("aws"):
+        return False
+    try:
+        subprocess.run(
+            ["aws", "sts", "get-caller-identity"],
+            capture_output=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    else:
+        return True
+
+
 def auto_detect_provider() -> str:
     """Detect the provider from environment.
 
     Checks TTS_PROVIDER env var first, then probes for API keys:
-    ElevenLabs > OpenAI > system fallback. On macOS, falls back to
-    say; on Linux, falls back to espeak-ng if installed. Final
-    fallback is polly (requires AWS credentials).
+    ElevenLabs > OpenAI > Polly (if AWS credentials valid) >
+    system fallback (say on macOS, espeak on Linux).
     """
     env = os.environ.get("TTS_PROVIDER")
     if env:
@@ -99,12 +121,15 @@ def auto_detect_provider() -> str:
         return "elevenlabs"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
+    if _has_aws_credentials():
+        return "polly"
     if platform.system() == "Darwin" and shutil.which("say"):
         return "say"
     if platform.system() == "Linux" and (
         shutil.which("espeak-ng") or shutil.which("espeak")
     ):
         return "espeak"
+    logger.warning("No TTS provider detected; falling back to polly")
     return "polly"
 
 
