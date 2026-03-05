@@ -76,8 +76,7 @@ Plugin structure (Claude Code hooks and commands):
 | `hooks/notify-permission.sh` | Notification hook: async audio alerts for permission/idle prompts |
 | `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
 | `hooks/session-start.sh` | SessionStart hook: deploys commands, cleans retired commands, auto-allows MCP tools |
-| `commands/vox-on.md` | `/vox on` — enable notifications + show voice roster |
-| `commands/vox-off.md` | `/vox off` — disable notifications |
+| `commands/vox.md` | `/vox on\|off` — enable/disable notifications (on: show voice roster) |
 | `commands/unmute.md` | `/unmute [@voice]` — enable voice mode, set session voice, browse roster |
 | `commands/mute.md` | `/mute` — chimes only |
 | `commands/recap.md` | `/recap` — on-demand spoken summary (uses `unmute` MCP tool) |
