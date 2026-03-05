@@ -82,13 +82,16 @@ def resolve_chime(signal: str, vibe: str | None) -> Path:
     """
     assets = _resolve_assets_dir()
     mood = classify_mood(vibe)
+    # Asset filenames use underscores (chime_tests_pass.mp3) but
+    # signal tokens use hyphens (tests-pass).
+    file_signal = signal.replace("-", "_")
 
     if mood != "neutral":
-        mood_file = assets / f"chime_{signal}_{mood}.mp3"
+        mood_file = assets / f"chime_{file_signal}_{mood}.mp3"
         if mood_file.exists():
             return mood_file
 
-    neutral_file = assets / f"chime_{signal}.mp3"
+    neutral_file = assets / f"chime_{file_signal}.mp3"
     if neutral_file.exists():
         return neutral_file
 
@@ -173,7 +176,7 @@ _SIGNAL_PATTERNS: list[tuple[str, list[str]]] = [
     # so the more specific "Found N error" and "0 errors" must match first.
     ("lint-fail", [r"Found [0-9]+ error"]),
     ("lint-pass", [r"0 errors"]),
-    ("tests-pass", [r"passed", r"tests? ok", r"\u2713.*passed"]),
+    ("tests-pass", [r"passed", r"tests? ok", "\u2713.*passed"]),
     ("tests-fail", [r"FAILED", r"AssertionError", r"ERRORS?\b"]),
     ("merge-conflict", [r"CONFLICT"]),
     ("git-push-ok", [r"Everything up-to-date", r"->.*main"]),
@@ -195,7 +198,7 @@ def classify_signal(exit_code: int | None, stdout: str) -> str | None:
 
     for signal, patterns in _SIGNAL_PATTERNS:
         for pattern in patterns:
-            if re.search(pattern, text, re.IGNORECASE):
+            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
                 return signal
 
     # Generic failure if nothing matched but exit code is non-zero
@@ -218,8 +221,9 @@ def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
     exit_code: int | None = None
     if isinstance(exit_code_raw, int):
         exit_code = exit_code_raw
-    elif isinstance(exit_code_raw, str) and exit_code_raw.isdigit():
-        exit_code = int(exit_code_raw)
+    elif isinstance(exit_code_raw, str):
+        with contextlib.suppress(ValueError):
+            exit_code = int(exit_code_raw)
 
     stdout = tool_response.get("stdout", "")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
     if not isinstance(stdout, str):

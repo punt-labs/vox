@@ -87,6 +87,15 @@ class TestClassifySignal:
     def test_none_exit_code_no_match(self) -> None:
         assert classify_signal(None, "some output") is None
 
+    def test_git_commit_not_first_line(self) -> None:
+        # re.MULTILINE: ^ matches line starts, not just string start
+        output = "some preamble\n[main abc1234] fix: thing\n"
+        assert classify_signal(0, output) == "git-commit"
+
+    def test_negative_exit_code_string(self) -> None:
+        # Negative exit codes passed as strings should still classify
+        assert classify_signal(-1, "some unknown output") == "cmd-fail"
+
 
 # ---------------------------------------------------------------------------
 # handle_stop tests
@@ -160,6 +169,11 @@ class TestResolveChime:
     def test_prompt_chime(self) -> None:
         chime = resolve_chime("prompt", None)
         assert chime.name == "chime_prompt.mp3"
+
+    def test_hyphenated_signal_resolves_underscore_file(self) -> None:
+        # Signal "tests-pass" should find "chime_tests_pass.mp3"
+        chime = resolve_chime("tests-pass", None)
+        assert chime.name == "chime_tests_pass.mp3"
 
 
 # ---------------------------------------------------------------------------

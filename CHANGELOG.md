@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All config-writing commands now specify exact `.vox/config.md` location and create-if-missing behavior, preventing agents from searching other directories
 - Config path resolution now catches `subprocess.TimeoutExpired` (was `TimeoutError`, which subprocess.run never raises)
 - Hook chime resolution uses `CLAUDE_PLUGIN_ROOT` env var for asset paths, fixing chime playback for pip-installed packages where `__file__` resolves into site-packages
+- `notify-permission.sh` called non-existent `vox synthesize` — now uses `vox unmute` via the Python hook dispatcher
+- Signal classifier now checks lint patterns before test patterns, fixing false matches where "Found N errors" was classified as `tests-fail` instead of `lint-fail`
+- Signal classifier uses `re.MULTILINE` so `^` anchors match line starts in multi-line bash output (matches original bash `grep` behavior)
+- Chime filename resolution normalizes signal hyphens to underscores (`tests-pass` → `chime_tests_pass.mp3`)
+- Checkmark pattern in signal classifier uses literal `✓` instead of raw `\u2713` which was never interpreted as Unicode
 
 ### Changed
 
@@ -22,8 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/vox y` and `/vox c` now preserve existing `speak` setting on subsequent calls; only first init defaults `speak` to `"y"`
 - Migrated hook business logic from bash to Python via `vox hook <event>` CLI dispatcher — stop, post-bash, and notification hooks are now thin shell gates delegating to testable pure functions in `hooks.py`
 - Deleted `hooks/state.sh` — all config reading, mood classification, chime resolution, and audio helpers now use their Python equivalents
-- Fixed `notify-permission.sh` calling non-existent `vox synthesize` — now uses `vox unmute` via the Python hook dispatcher
-- Signal classifier now checks lint patterns before test patterns, fixing false matches where "Found N errors" was classified as `tests-fail` instead of `lint-fail`
 
 ## [0.11.0] - 2026-03-04
 
