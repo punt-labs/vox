@@ -24,7 +24,7 @@ ACTIONS=()
 
 # ── Clean up retired commands from pre-mic-API ────────────────────────
 if [[ "$DEV_MODE" == "false" ]]; then
-  RETIRED=(say.md speak.md notify.md voice.md)
+  RETIRED=(say.md speak.md notify.md voice.md vox-on.md vox-off.md)
   CLEANED=()
   for name in "${RETIRED[@]}"; do
     dest="$COMMANDS_DIR/$name"
