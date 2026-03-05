@@ -28,7 +28,7 @@ import math
 import struct
 from pathlib import Path
 
-from pydub import AudioSegment  # type: ignore[import-untyped]
+from pydub import AudioSegment  # pyright: ignore[reportMissingImports]
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 SAMPLE_RATE = 44100
@@ -36,7 +36,7 @@ CHANNELS = 1
 SAMPLE_WIDTH = 2  # 16-bit
 
 
-def _sine_wave(  # type: ignore[return]
+def _sine_wave(
     freq_hz: float,
     duration_ms: int,
     volume_db: float = -10.0,
@@ -65,7 +65,7 @@ def _sine_wave(  # type: ignore[return]
     return seg
 
 
-def _fade(  # type: ignore[return]
+def _fade(
     seg: AudioSegment,
     fade_in_ms: int = 15,
     fade_out_ms: int = 50,
@@ -96,7 +96,7 @@ MOOD_SHIFTS: dict[str, int] = {
 }
 
 
-def chime_tests_pass() -> AudioSegment:  # type: ignore[return]
+def chime_tests_pass() -> AudioSegment:
     """Bright ascending two-note: C5 → G5."""
     note1 = _fade(_sine_wave(C5, 200, volume_db=-12.0))
     note2 = _fade(_sine_wave(G5, 300, volume_db=-10.0))
@@ -105,7 +105,7 @@ def chime_tests_pass() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_tests_fail() -> AudioSegment:  # type: ignore[return]
+def chime_tests_fail() -> AudioSegment:
     """Low descending two-note: G3 → C3."""
     note1 = _fade(_sine_wave(G3, 250, volume_db=-10.0))
     note2 = _fade(_sine_wave(C3, 400, volume_db=-8.0))
@@ -114,7 +114,7 @@ def chime_tests_fail() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_lint_pass() -> AudioSegment:  # type: ignore[return]
+def chime_lint_pass() -> AudioSegment:
     """Crisp single high ping: E6."""
     result: AudioSegment = _fade(
         _sine_wave(E6, 150, volume_db=-14.0),
@@ -124,7 +124,7 @@ def chime_lint_pass() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_lint_fail() -> AudioSegment:  # type: ignore[return]
+def chime_lint_fail() -> AudioSegment:
     """Dull low thud: A2."""
     result: AudioSegment = _fade(
         _sine_wave(A2, 350, volume_db=-6.0),
@@ -134,7 +134,7 @@ def chime_lint_fail() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_git_push_ok() -> AudioSegment:  # type: ignore[return]
+def chime_git_push_ok() -> AudioSegment:
     """Triumphant three-note arpeggio: C5 → E5 → G5."""
     note1 = _fade(_sine_wave(C5, 150, volume_db=-12.0))
     note2 = _fade(_sine_wave(E5, 150, volume_db=-11.0))
@@ -144,7 +144,7 @@ def chime_git_push_ok() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_merge_conflict() -> AudioSegment:  # type: ignore[return]
+def chime_merge_conflict() -> AudioSegment:
     """Dissonant two-tone alert: C4 + C#4 overlaid."""
     tone1 = _sine_wave(C4, 500, volume_db=-10.0)
     tone2 = _sine_wave(CS4, 500, volume_db=-10.0)
@@ -153,7 +153,7 @@ def chime_merge_conflict() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_done() -> AudioSegment:  # type: ignore[return]
+def chime_done() -> AudioSegment:
     """Warm resolution chord: C4 → E4 → G4."""
     note1 = _fade(_sine_wave(C4, 200, volume_db=-12.0))
     note2 = _fade(_sine_wave(E4, 200, volume_db=-11.0))
@@ -163,7 +163,7 @@ def chime_done() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def chime_prompt() -> AudioSegment:  # type: ignore[return]
+def chime_prompt() -> AudioSegment:
     """Gentle attention ping: A5 → E5."""
     note1 = _fade(_sine_wave(A5, 150, volume_db=-14.0), fade_in_ms=5, fade_out_ms=80)
     note2 = _fade(_sine_wave(E5, 250, volume_db=-12.0), fade_in_ms=5, fade_out_ms=120)
@@ -172,7 +172,7 @@ def chime_prompt() -> AudioSegment:  # type: ignore[return]
     return result
 
 
-def _pitch_shift(seg: AudioSegment, semitones: int) -> AudioSegment:  # type: ignore[return]
+def _pitch_shift(seg: AudioSegment, semitones: int) -> AudioSegment:
     """Shift pitch by *semitones* via sample rate manipulation.
 
     Adjusts the frame rate to change pitch, then resamples back to
