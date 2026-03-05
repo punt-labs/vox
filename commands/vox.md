@@ -15,7 +15,7 @@ Toggle task-completion and permission-prompt notifications.
 
 ## Config file
 
-The config file is `.vox/config.md` in the current working directory (project root). If it does not exist, create the `.vox/` directory and the file with YAML frontmatter delimiters (`---`). Never search other directories — the file is always at `.vox/config.md` relative to cwd.
+The config file is `<repo>/.vox/config.md` where `<repo>` is the main repository root: `realpath "$(git rev-parse --git-common-dir)/.."`. This works from both the main repo and worktrees. If the file does not exist, create the `.vox/` directory and the file with YAML frontmatter delimiters (`---`). Never search other directories.
 
 ## Implementation
 
