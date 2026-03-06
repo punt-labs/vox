@@ -113,6 +113,36 @@ if [[ "$TOOL_NAME" == "vibe" ]]; then
   exit 0
 fi
 
+if [[ "$TOOL_NAME" == "notify" ]]; then
+  MODE=$(echo "$RESULT" | jq -r '.notify.notify // empty' 2>/dev/null)
+  case "$MODE" in
+    y) MSG="♪ vox enabled" ;;
+    n) MSG="♪ vox disabled" ;;
+    c) MSG="♪ continuous mode on" ;;
+    *) MSG="♪ notify updated" ;;
+  esac
+  emit "$MSG" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "speak" ]]; then
+  MODE=$(echo "$RESULT" | jq -r '.speak // empty' 2>/dev/null)
+  case "$MODE" in
+    y) MSG="♪ voice on" ;;
+    n) MSG="♪ chimes only" ;;
+    *) MSG="♪ speak updated" ;;
+  esac
+  emit "$MSG" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "status" ]]; then
+  VOICE=$(echo "$RESULT" | jq -r '.voice // "unknown"' 2>/dev/null)
+  NOTIFY=$(echo "$RESULT" | jq -r '.notify // "?"' 2>/dev/null)
+  emit "♪ ${VOICE} · notify=${NOTIFY}" "$RESULT"
+  exit 0
+fi
+
 if [[ "$TOOL_NAME" == "who" ]]; then
   COUNT=$(echo "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
   PHRASES=(
