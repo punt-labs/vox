@@ -73,11 +73,11 @@
 
 % ── Document stage ───────────────────────────────────────────────────────────
 \newcommand{\prfaqstage}[1]{\def\theprfaqstage{#1}}
-\prfaqstage{hypothesis}
+\prfaqstage{shipped}
 
 % ── Document version ─────────────────────────────────────────────────────────
 \newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
-\prfaqversion{1}{0}
+\prfaqversion{1}{1}
 
 % ── Header/footer ────────────────────────────────────────────────────────────
 \usepackage{fancyhdr}
@@ -619,26 +619,20 @@ Restart Claude Code and type \texttt{/vox y}.
 \end{faqpair}
 
 \begin{faqpair}{What is the estimated development timeline?}\label{faq:timeline}
-  punt-vox is partially built. The TTS engine, CLI, MCP server, and provider
-  integrations are shipped and tested. The remaining work is the notification
-  layer:
+  punt-vox is shipped at v1.2.0 on PyPI. All three phases from the original
+  timeline have been delivered:
 
-  \textbf{Phase 1 (1--2 weeks):} Stop hook integration. When Claude Code
-  finishes a task, punt-vox plays a chime or spoken summary.
+  \textbf{Shipped:} Stop hook notification with spoken summaries.
   \texttt{/vox y|n|c} toggle. \texttt{/unmute}/\texttt{/mute} for voice
-  vs.\ chime.
+  vs.\ chime. Permission-blocked notification via \texttt{Notification}
+  hook. \texttt{/recap} command (agent-executed spoken summary).
+  \texttt{/vibe} with auto-detection and manual modes. Five providers
+  (ElevenLabs, OpenAI, Polly, macOS \texttt{say}, Linux \texttt{espeak-ng}).
+  Mood-aware chimes with pitch shifting (8 signals $\times$ 3 moods).
+  Non-blocking MCP tools (v1.2.0). Claude Code plugin on marketplace.
 
-  \textbf{Phase 2 (1 week):} Permission-blocked notification. When the
-  agent waits for approval, punt-vox announces it. Uses the
-  \texttt{Notification} hook with \texttt{permission\_prompt} subtype.
-
-  \textbf{Phase 3 (1 week):} \texttt{/recap} command. Agent summarizes
-  the last response and speaks it via punt-vox. \texttt{/vox c}
-  continuous mode with milestone updates.
-
-  Total estimate: 3--4 weeks of development time. The uncertainty is in Phase
-  1 --- the Stop hook payload format and the best strategy for generating
-  spoken summaries from Claude's output need experimentation.
+  \textbf{Next:} Continuous mode milestone updates during long-running tasks.
+  Downstream library adoption beyond langlearn-tts.
 \end{faqpair}
 
 \begin{faqpair}{What is the scaling story?}
