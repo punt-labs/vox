@@ -553,6 +553,8 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         "speak": cfg.speak,
         "vibe_mode": cfg.vibe_mode,
         "vibe": cfg.vibe,
+        "vibe_tags": cfg.vibe_tags,
+        "vibe_signals": cfg.vibe_signals,
     }
 
     if _json_output:
@@ -566,6 +568,10 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo(f"Vibe mode: {info['vibe_mode']}")
         if cfg.vibe:
             typer.echo(f"Vibe:      {cfg.vibe}")
+        if cfg.vibe_tags:
+            typer.echo(f"Tags:      {cfg.vibe_tags}")
+        if cfg.vibe_signals:
+            typer.echo(f"Signals:   {cfg.vibe_signals}")
 
 
 # ---------------------------------------------------------------------------

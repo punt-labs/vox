@@ -6,6 +6,7 @@ import json
 import logging
 import random
 import tempfile
+import threading
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -134,6 +135,48 @@ def _build_requests(
     return requests
 
 
+def _predict_results(
+    requests: list[SynthesisRequest],
+    provider: TTSProvider,
+    output_dir: Path,
+) -> list[SynthesisResult]:
+    """Compute the expected result metadata without synthesizing.
+
+    Returns ``SynthesisResult`` objects with the paths that
+    ``_synthesize_segments`` will write to.  Used by non-blocking
+    tools to return immediately.
+    """
+    if len(requests) == 1:
+        req = requests[0]
+        out_path = output_dir / generate_filename(req.text)
+        return [
+            SynthesisResult(
+                path=out_path,
+                text=req.text,
+                provider=AudioProviderId(provider.name),
+                voice=req.voice,
+                language=req.language,
+                metadata=req.metadata,
+            )
+        ]
+
+    combined_text = " | ".join(r.text for r in requests)
+    out_path = output_dir / generate_filename(combined_text, prefix="batch_")
+    voices = {r.voice for r in requests}
+    languages = {r.language for r in requests}
+    voice = next(iter(voices)) if len(voices) == 1 else "mixed"
+    language = next(iter(languages)) if len(languages) == 1 else "mixed"
+    return [
+        SynthesisResult(
+            path=out_path,
+            text=combined_text,
+            provider=AudioProviderId(provider.name),
+            voice=voice,
+            language=language,
+        )
+    ]
+
+
 def _synthesize_segments(
     requests: list[SynthesisRequest],
     provider: TTSProvider,
@@ -147,40 +190,59 @@ def _synthesize_segments(
         req = requests[0]
         out_path = output_dir / generate_filename(req.text)
         if out_path.exists():
-            return [
-                SynthesisResult(
-                    path=out_path,
-                    text=req.text,
-                    provider=AudioProviderId(provider.name),
-                    voice=req.voice,
-                    language=req.language,
-                    metadata=req.metadata,
-                )
-            ]
+            return _predict_results(requests, provider, output_dir)
         return [client.synthesize(req, out_path)]
 
-    # Multiple segments → stitch into one file
     combined_text = " | ".join(r.text for r in requests)
     out_path = output_dir / generate_filename(combined_text, prefix="batch_")
-
-    voices = {r.voice for r in requests}
-    languages = {r.language for r in requests}
-    voice = next(iter(voices)) if len(voices) == 1 else "mixed"
-    language = next(iter(languages)) if len(languages) == 1 else "mixed"
-
     if out_path.exists():
-        return [
-            SynthesisResult(
-                path=out_path,
-                text=combined_text,
-                provider=AudioProviderId(provider.name),
-                voice=voice,
-                language=language,
-            )
-        ]
+        return _predict_results(requests, provider, output_dir)
     return client.synthesize_batch(
         requests, output_dir, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms
     )
+
+
+def _synthesize_and_enqueue(
+    requests: list[SynthesisRequest],
+    provider: TTSProvider,
+    output_dir: Path,
+    pause_ms: int,
+) -> None:
+    """Background worker: synthesize segments and enqueue for playback."""
+    try:
+        results = _synthesize_segments(requests, provider, output_dir, pause_ms)
+        for r in results:
+            _enqueue_audio(r.path)
+    except Exception:
+        logger.exception("Background synthesis failed")
+
+
+def _synthesize_to_disk(
+    requests: list[SynthesisRequest],
+    provider: TTSProvider,
+    output_dir: Path,
+    pause_ms: int,
+    output_path: str | None,
+) -> None:
+    """Background worker: synthesize segments to disk (no playback)."""
+    try:
+        if output_path:
+            client = TTSClient(provider)
+            if len(requests) == 1:
+                client.synthesize(requests[0], Path(output_path))
+            else:
+                with tempfile.TemporaryDirectory() as tmp:
+                    tmp_dir = Path(tmp)
+                    tmp_paths: list[Path] = []
+                    for i, req in enumerate(requests):
+                        seg_path = tmp_dir / f"seg_{i:04d}.mp3"
+                        client.synthesize(req, seg_path)
+                        tmp_paths.append(seg_path)
+                    stitch_audio(tmp_paths, Path(output_path), pause_ms)
+        else:
+            _synthesize_segments(requests, provider, output_dir, pause_ms)
+    except Exception:
+        logger.exception("Background synthesis failed")
 
 
 # ---------------------------------------------------------------------------
@@ -263,12 +325,16 @@ def unmute(
         return json.dumps([])
 
     dir_path = resolve_output_dir(None, ephemeral=ephemeral)
-    results = _synthesize_segments(requests, provider, dir_path, pause_ms)
+    predicted = _predict_results(requests, provider, dir_path)
 
-    for r in results:
-        _enqueue_audio(r.path)
+    # Synthesize and play in background — return immediately
+    threading.Thread(
+        target=_synthesize_and_enqueue,
+        args=(requests, provider, dir_path, pause_ms),
+        daemon=True,
+    ).start()
 
-    return json.dumps([result_to_dict(r) for r in results])
+    return json.dumps([result_to_dict(r) for r in predicted])
 
 
 @mcp.tool()
@@ -342,38 +408,34 @@ def record(
 
     dir_path = resolve_output_dir(output_dir)
 
-    # If output_path is given, synthesize all segments into that one file
+    # Compute expected results before synthesis
     if output_path:
-        client = TTSClient(provider)
-        if len(requests) == 1:
-            path = Path(output_path)
-            result = client.synthesize(requests[0], path)
-            return json.dumps([result_to_dict(result)])
-        # Multiple segments → stitch into the specified path
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            tmp_paths: list[Path] = []
-            for i, req in enumerate(requests):
-                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
-                client.synthesize(req, seg_path)
-                tmp_paths.append(seg_path)
-            stitch_audio(tmp_paths, Path(output_path), pause_ms)
+        path_obj = Path(output_path)
         combined_text = " | ".join(r.text for r in requests)
         voices = {r.voice for r in requests}
         languages = {r.language for r in requests}
         result_voice = next(iter(voices)) if len(voices) == 1 else "mixed"
         result_lang = next(iter(languages)) if len(languages) == 1 else "mixed"
-        result = SynthesisResult(
-            path=Path(output_path),
-            text=combined_text,
-            provider=AudioProviderId(provider.name),
-            voice=result_voice,
-            language=result_lang,
-        )
-        return json.dumps([result_to_dict(result)])
+        predicted = [
+            SynthesisResult(
+                path=path_obj,
+                text=requests[0].text if len(requests) == 1 else combined_text,
+                provider=AudioProviderId(provider.name),
+                voice=result_voice,
+                language=result_lang,
+            )
+        ]
+    else:
+        predicted = _predict_results(requests, provider, dir_path)
 
-    results = _synthesize_segments(requests, provider, dir_path, pause_ms)
-    return json.dumps([result_to_dict(r) for r in results])
+    # Synthesize in background — return the predicted paths immediately
+    threading.Thread(
+        target=_synthesize_to_disk,
+        args=(requests, provider, dir_path, pause_ms, output_path),
+        daemon=True,
+    ).start()
+
+    return json.dumps([result_to_dict(r) for r in predicted])
 
 
 @mcp.tool()
