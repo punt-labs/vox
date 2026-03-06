@@ -68,4 +68,4 @@ status queries.
 - **`/vibe` (no argument)**: Call the `status` MCP tool and report current
   `vibe_mode`, `vibe`, and `vibe_tags`
 
-After changing, confirm: `Vibe: <mood> → <tags> [mode]` or `Vibe off.`
+No text output after changes — the panel confirms with the vibe shift.

@@ -9,6 +9,4 @@ Disable spoken notifications. Chime sounds still play on task completion and per
 
 ## Implementation
 
-Call the `speak` MCP tool with `mode="n"`.
-
-Confirm: "Muted — chimes only."
+Call the `speak` MCP tool with `mode="n"`. No text output — the panel confirms.

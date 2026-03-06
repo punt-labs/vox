@@ -22,7 +22,13 @@ from pathlib import Path
 
 import typer
 
-from punt_vox.config import VoxConfig, read_config, resolve_config_path, write_field
+from punt_vox.config import (
+    VoxConfig,
+    read_config,
+    resolve_config_path,
+    write_field,
+    write_fields,
+)
 from punt_vox.mood import classify_mood
 
 logger = logging.getLogger(__name__)
@@ -136,6 +142,54 @@ STOP_PHRASES = [
 ]
 
 
+def resolve_tags_from_signals(signals: str) -> str:
+    """Pick expressive tags from accumulated session signals.
+
+    Deterministic mapping — no LLM needed. Examines signal counts and
+    trajectory (how the session ended) to choose 1-2 ElevenLabs tags.
+    """
+    parts = [s.split("@")[0] for s in signals.split(",") if s]
+    if not parts:
+        return "[calm]"
+
+    counts: dict[str, int] = {}
+    for p in parts:
+        counts[p] = counts.get(p, 0) + 1
+
+    # Trajectory: what happened at the end matters most
+    last_few = parts[-3:]
+    ended_with_fail = any(s.endswith("-fail") for s in last_few)
+    ended_with_pass = any(s.endswith("-pass") for s in last_few)
+    had_push = "git-push-ok" in counts
+    had_pr = "pr-created" in counts
+    had_fails = sum(c for k, c in counts.items() if k.endswith("-fail"))
+    had_passes = sum(c for k, c in counts.items() if k.endswith("-pass"))
+
+    # Recovery arc: fails followed by passes
+    if had_fails > 0 and ended_with_pass:
+        return "[relieved]"
+
+    # Shipped something
+    if had_push or had_pr:
+        if had_fails == 0:
+            return "[satisfied]"
+        return "[relieved] [satisfied]"
+
+    # Mostly failing
+    if ended_with_fail and had_fails > had_passes:
+        return "[frustrated] [sighs]"
+
+    # Productive session, all green
+    if had_passes > 3 and had_fails == 0:
+        return "[excited]"
+
+    # Some passes, no drama
+    if had_passes > 0:
+        return "[calm]"
+
+    return "[calm]"
+
+
 def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
@@ -163,14 +217,18 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         return None
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
-    # Embed vibe fields so the LLM has mood context without a Read call.
+    # Resolve tags and write to config so apply_vibe picks them up
+    # automatically — no data in the user-visible reason string.
     phrase = random.choice(STOP_PHRASES)
-    vibe_context = (
-        f" | vibe_mode={config.vibe_mode or 'auto'}"
-        f" vibe={config.vibe or ''}"
-        f" vibe_signals={config.vibe_signals or ''}"
-    )
-    return {"decision": "block", "reason": phrase + vibe_context}
+    if config.vibe_mode == "off":
+        pass  # User disabled vibe — don't write tags
+    elif config.vibe_mode == "manual" and config.vibe_tags:
+        pass  # Manual mode with existing tags — already set
+    else:
+        tags = resolve_tags_from_signals(config.vibe_signals)
+        config_path = resolve_config_path()
+        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_path)
+    return {"decision": "block", "reason": phrase}
 
 
 # ---------------------------------------------------------------------------

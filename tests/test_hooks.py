@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
@@ -12,6 +12,7 @@ from punt_vox.hooks import (
     handle_notification,
     handle_stop,
     resolve_chime,
+    resolve_tags_from_signals,
 )
 
 # ---------------------------------------------------------------------------
@@ -125,21 +126,117 @@ class TestHandleStop:
         result = handle_stop({}, config)
         assert result is None
 
-    def test_voice_mode_blocks(self) -> None:
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.resolve_config_path")
+    def test_voice_mode_blocks_clean_reason(
+        self, _mock_path: MagicMock, _mock_write: MagicMock
+    ) -> None:
         config = _make_config()
         result = handle_stop({}, config)
         assert result is not None
         assert result["decision"] == "block"
         reason = str(result["reason"])
-        assert any(reason.startswith(phrase) for phrase in STOP_PHRASES)
-        assert "| vibe_mode=" in reason
-        assert "vibe_signals=tests-pass@12:00" in reason
+        # Reason is just the ♪ phrase — no data appended
+        assert any(reason == phrase for phrase in STOP_PHRASES)
+        assert "|" not in reason
+        assert "vibe_tags" not in reason
+        assert "vibe_signals" not in reason
 
-    def test_continuous_mode_blocks(self) -> None:
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.resolve_config_path")
+    def test_auto_mode_writes_tags_and_clears_signals(
+        self, mock_path: MagicMock, mock_write: MagicMock
+    ) -> None:
+        config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
+        handle_stop({}, config)
+        assert mock_write.call_count == 1
+        assert mock_write.call_args == call(
+            {"vibe_tags": "[satisfied]", "vibe_signals": ""},
+            mock_path.return_value,
+        )
+
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.resolve_config_path")
+    def test_continuous_mode_blocks(
+        self, _mock_path: MagicMock, _mock_write: MagicMock
+    ) -> None:
         config = _make_config(notify="c")
         result = handle_stop({}, config)
         assert result is not None
         assert result["decision"] == "block"
+
+    def test_manual_vibe_skips_config_write(self) -> None:
+        config = VoxConfig(
+            notify="y",
+            speak="y",
+            voice_enabled="true",
+            vibe_mode="manual",
+            voice=None,
+            vibe=None,
+            vibe_tags="[excited] [warm]",
+            vibe_signals="tests-pass@12:00",
+        )
+        with patch("punt_vox.hooks.write_field") as mock_write:
+            result = handle_stop({}, config)
+        assert result is not None
+        # Manual mode with existing tags — no write needed
+        mock_write.assert_not_called()
+
+    def test_vibe_off_skips_config_write(self) -> None:
+        config = VoxConfig(
+            notify="y",
+            speak="y",
+            voice_enabled="true",
+            vibe_mode="off",
+            voice=None,
+            vibe=None,
+            vibe_tags=None,
+            vibe_signals="tests-pass@12:00",
+        )
+        with patch("punt_vox.hooks.write_field") as mock_write:
+            result = handle_stop({}, config)
+        assert result is not None
+        assert result["decision"] == "block"
+        # Vibe off — must not write tags to config
+        mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# resolve_tags_from_signals tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTagsFromSignals:
+    def test_empty_signals(self) -> None:
+        assert resolve_tags_from_signals("") == "[calm]"
+
+    def test_single_pass(self) -> None:
+        assert resolve_tags_from_signals("tests-pass@12:00") == "[calm]"
+
+    def test_many_passes_no_fails(self) -> None:
+        signals = ",".join(f"tests-pass@{i:02d}:00" for i in range(5))
+        assert resolve_tags_from_signals(signals) == "[excited]"
+
+    def test_recovery_arc(self) -> None:
+        signals = "tests-fail@01:00,tests-fail@02:00,tests-pass@03:00"
+        assert resolve_tags_from_signals(signals) == "[relieved]"
+
+    def test_mostly_failing(self) -> None:
+        signals = "tests-fail@01:00,tests-fail@02:00,lint-fail@03:00"
+        assert "[frustrated]" in resolve_tags_from_signals(signals)
+
+    def test_shipped_clean(self) -> None:
+        signals = "tests-pass@01:00,git-push-ok@02:00"
+        assert "[satisfied]" in resolve_tags_from_signals(signals)
+
+    def test_shipped_after_struggle(self) -> None:
+        signals = "tests-fail@01:00,tests-pass@02:00,git-push-ok@03:00"
+        tags = resolve_tags_from_signals(signals)
+        assert "[relieved]" in tags or "[satisfied]" in tags
+
+    def test_pr_created(self) -> None:
+        signals = "tests-pass@01:00,pr-created@02:00"
+        assert "[satisfied]" in resolve_tags_from_signals(signals)
 
 
 # ---------------------------------------------------------------------------
