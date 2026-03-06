@@ -79,6 +79,22 @@ class TestApplyVibe:
         result = apply_vibe("Hello world", expressive_tags=False)
         assert result == "Hello world"
 
+    def test_override_tags_win_over_config(self, _patch_config: Path) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe(
+            "Hello world",
+            expressive_tags=True,
+            override_tags="[excited]",
+        )
+        assert result == "[excited] Hello world"
+
+    def test_override_tags_empty_falls_through_to_config(
+        self, _patch_config: Path
+    ) -> None:
+        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe("Hello world", expressive_tags=True, override_tags="")
+        assert result == "[calm] Hello world"
+
 
 # ---------------------------------------------------------------------------
 # Config write tests

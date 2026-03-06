@@ -117,7 +117,9 @@ def _build_requests(
         )
 
         seg_text = apply_vibe(
-            seg_text, expressive_tags=provider.supports_expressive_tags
+            seg_text,
+            expressive_tags=provider.supports_expressive_tags,
+            override_tags=seg.get("vibe_tags"),
         )
 
         requests.append(
@@ -278,8 +280,11 @@ def unmute(
         language: Default ISO 639-1 language code (e.g. 'de', 'ko').
             Per-segment "language" overrides this.
         segments: List of segment objects, each with "text" (required)
-            and optional "voice" and "language". Example:
-            [{"voice": "roger", "text": "Hello."}, {"text": "Hi."}]
+            and optional "voice", "language", and "vibe_tags".
+            Per-segment "vibe_tags" override the top-level default.
+            Example:
+            [{"voice": "roger", "text": "Hello.", "vibe_tags": "[excited]"},
+             {"text": "Hi."}]
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
         ephemeral: Write to .vox/ in cwd and clean up previous files.
@@ -364,7 +369,8 @@ def record(
         language: Default ISO 639-1 language code (e.g. 'de', 'ko').
             Per-segment "language" overrides this.
         segments: List of segment objects, each with "text" (required)
-            and optional "voice" and "language".
+            and optional "voice", "language", and "vibe_tags".
+            Per-segment "vibe_tags" override the session config.
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
         output_path: Full path for the output file. Auto-generated if omitted.

@@ -92,20 +92,27 @@ def resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Pa
 
 
 def apply_vibe(
-    text: str, *, expressive_tags: bool, config_path: Path | None = None
+    text: str,
+    *,
+    expressive_tags: bool,
+    override_tags: str | None = None,
+    config_path: Path | None = None,
 ) -> str:
-    """Prepend session vibe tags to text if the provider supports them.
+    """Prepend vibe tags to text if the provider supports them.
 
     Only providers whose ``supports_expressive_tags`` is True interpret
     bracketed tags as performance cues. Other providers would speak
     them as literal words.
 
-    Skips prepending when the text already starts with an expression
-    tag (e.g. ``[calm]``) to avoid doubling.
+    Per-segment ``override_tags`` take priority over the session-level
+    config tags.  Skips prepending when the text already starts with an
+    expression tag (e.g. ``[calm]``) to avoid doubling.
     """
     if not expressive_tags:
         return text
-    tags = _config.read_field("vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH)
+    tags = override_tags or _config.read_field(
+        "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
+    )
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"
     return text
