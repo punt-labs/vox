@@ -177,8 +177,8 @@ TextArg = Annotated[
 
 @app.callback()
 def _callback(  # pyright: ignore[reportUnusedFunction]
-    verbose: Verbose = False,
     json_output: JsonOutput = False,
+    verbose: Verbose = False,
 ) -> None:
     """Text-to-speech CLI."""
     global _json_output
