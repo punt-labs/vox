@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-segment `vibe_tags` in `unmute` and `record` — each segment can now specify its own expressive tags, overriding the session default (same pattern as `voice` and `language`)
+
 ### Changed
 
 - `unmute` MCP tool is now non-blocking — synthesis and playback run in a background thread; tool returns predicted metadata immediately
