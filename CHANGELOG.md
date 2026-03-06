@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-05
+
 ### Added
 
 - Per-segment `vibe_tags` in `unmute` and `record` — each segment can now specify its own expressive tags, overriding the session default (same pattern as `voice` and `language`)
