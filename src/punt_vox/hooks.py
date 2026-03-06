@@ -22,7 +22,13 @@ from pathlib import Path
 
 import typer
 
-from punt_vox.config import VoxConfig, read_config, resolve_config_path, write_field
+from punt_vox.config import (
+    VoxConfig,
+    read_config,
+    resolve_config_path,
+    write_field,
+    write_fields,
+)
 from punt_vox.mood import classify_mood
 
 logger = logging.getLogger(__name__)
@@ -156,8 +162,8 @@ def resolve_tags_from_signals(signals: str) -> str:
     ended_with_pass = any(s.endswith("-pass") for s in last_few)
     had_push = "git-push-ok" in counts
     had_pr = "pr-created" in counts
-    had_fails = counts.get("tests-fail", 0) + counts.get("lint-fail", 0)
-    had_passes = counts.get("tests-pass", 0) + counts.get("lint-pass", 0)
+    had_fails = sum(c for k, c in counts.items() if k.endswith("-fail"))
+    had_passes = sum(c for k, c in counts.items() if k.endswith("-pass"))
 
     # Recovery arc: fails followed by passes
     if had_fails > 0 and ended_with_pass:
@@ -221,7 +227,7 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
     else:
         tags = resolve_tags_from_signals(config.vibe_signals)
         config_path = resolve_config_path()
-        write_field("vibe_tags", tags, config_path)
+        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_path)
     return {"decision": "block", "reason": phrase}
 
 

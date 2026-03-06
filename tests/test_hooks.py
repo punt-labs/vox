@@ -126,7 +126,7 @@ class TestHandleStop:
         result = handle_stop({}, config)
         assert result is None
 
-    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.write_fields")
     @patch("punt_vox.hooks.resolve_config_path")
     def test_voice_mode_blocks_clean_reason(
         self, _mock_path: MagicMock, _mock_write: MagicMock
@@ -142,19 +142,20 @@ class TestHandleStop:
         assert "vibe_tags" not in reason
         assert "vibe_signals" not in reason
 
-    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.write_fields")
     @patch("punt_vox.hooks.resolve_config_path")
-    def test_auto_mode_writes_tags_to_config(
+    def test_auto_mode_writes_tags_and_clears_signals(
         self, mock_path: MagicMock, mock_write: MagicMock
     ) -> None:
         config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
         handle_stop({}, config)
         assert mock_write.call_count == 1
         assert mock_write.call_args == call(
-            "vibe_tags", "[satisfied]", mock_path.return_value
+            {"vibe_tags": "[satisfied]", "vibe_signals": ""},
+            mock_path.return_value,
         )
 
-    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.write_fields")
     @patch("punt_vox.hooks.resolve_config_path")
     def test_continuous_mode_blocks(
         self, _mock_path: MagicMock, _mock_write: MagicMock
