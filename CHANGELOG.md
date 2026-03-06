@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `notify` MCP tool: set notification mode (y/n/c) and session voice without Bash
+- `speak` MCP tool: toggle spoken notifications (y/n) without Bash
+- `status` MCP tool: query current vox state (provider, voice, notify, vibe) without Bash
+
+### Changed
+
+- All slash commands (`/vox`, `/unmute`, `/mute`, `/vibe`) now use MCP tools exclusively — no Bash, Read, or Write tool permissions needed (DES-017)
+- Stop hook block reason now embeds vibe context (mode, mood, signals) so the model never needs to Read `.vox/config.md`
+
 ## [1.0.3] - 2026-03-05
 
 ### Fixed
