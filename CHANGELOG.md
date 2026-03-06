@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `unmute` MCP tool is now non-blocking — synthesis and playback run in a background thread; tool returns predicted metadata immediately
+- `record` MCP tool is now non-blocking — returns the predicted file path immediately; synthesis completes in background
+- CLI `status` now includes `vibe_tags` and `vibe_signals` in both text and `--json` output (parity with MCP `status` tool)
+
 ## [1.1.1] - 2026-03-05
 
 ### Fixed
