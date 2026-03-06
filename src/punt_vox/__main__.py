@@ -55,12 +55,13 @@ _VOICE_DEFAULTS = ", ".join(
 # ---------------------------------------------------------------------------
 
 _json_output = False
+_quiet_output = False
 
 
 def _emit(payload: object, text: str) -> None:
     if _json_output:
         typer.echo(json.dumps(payload))
-    else:
+    elif not _quiet_output:
         typer.echo(text)
 
 
@@ -97,6 +98,10 @@ def _validate_voice_settings(
 Verbose = Annotated[
     bool,
     typer.Option("--verbose", "-v", help="Enable debug logging."),
+]
+Quiet = Annotated[
+    bool,
+    typer.Option("--quiet", "-q", help="Suppress non-JSON output."),
 ]
 JsonOutput = Annotated[
     bool,
@@ -179,10 +184,14 @@ TextArg = Annotated[
 def _callback(  # pyright: ignore[reportUnusedFunction]
     json_output: JsonOutput = False,
     verbose: Verbose = False,
+    quiet: Quiet = False,
 ) -> None:
     """Text-to-speech CLI."""
-    global _json_output
+    if verbose and quiet:
+        raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
+    global _json_output, _quiet_output
     _json_output = json_output
+    _quiet_output = quiet
     _configure_logging(verbose)
 
 
