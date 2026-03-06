@@ -19,6 +19,7 @@ MARKETPLACE_REPO="punt-labs/claude-plugins"
 MARKETPLACE_NAME="punt-labs"
 PLUGIN_NAME="vox"
 PACKAGE="punt-vox"
+VERSION="1.2.0"
 BINARY="vox"
 
 # --- Step 1: Prerequisites ---
@@ -100,7 +101,7 @@ fi
 info "Installing $PACKAGE..."
 
 # shellcheck disable=SC2086
-uv tool install --force $PYTHON_FLAG "$PACKAGE" || fail "Failed to install $PACKAGE"
+uv tool install --force $PYTHON_FLAG "$PACKAGE==$VERSION" || fail "Failed to install $PACKAGE==$VERSION"
 ok "$PACKAGE installed"
 
 if ! command -v "$BINARY" >/dev/null 2>&1; then
