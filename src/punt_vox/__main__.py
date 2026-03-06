@@ -31,7 +31,12 @@ from punt_vox.types import (
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(name="vox", help="Text-to-speech CLI.", no_args_is_help=True)
+app = typer.Typer(
+    name="vox",
+    help="Text-to-speech CLI.",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 app.add_typer(hook_app, name="hook", hidden=True)
 
 # ---------------------------------------------------------------------------
@@ -55,12 +60,13 @@ _VOICE_DEFAULTS = ", ".join(
 # ---------------------------------------------------------------------------
 
 _json_output = False
+_quiet_output = False
 
 
 def _emit(payload: object, text: str) -> None:
     if _json_output:
         typer.echo(json.dumps(payload))
-    else:
+    elif not _quiet_output:
         typer.echo(text)
 
 
@@ -97,6 +103,10 @@ def _validate_voice_settings(
 Verbose = Annotated[
     bool,
     typer.Option("--verbose", "-v", help="Enable debug logging."),
+]
+Quiet = Annotated[
+    bool,
+    typer.Option("--quiet", "-q", help="Suppress non-JSON output."),
 ]
 JsonOutput = Annotated[
     bool,
@@ -177,12 +187,16 @@ TextArg = Annotated[
 
 @app.callback()
 def _callback(  # pyright: ignore[reportUnusedFunction]
-    verbose: Verbose = False,
     json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
 ) -> None:
     """Text-to-speech CLI."""
-    global _json_output
+    if verbose and quiet:
+        raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
+    global _json_output, _quiet_output
     _json_output = json_output
+    _quiet_output = quiet
     _configure_logging(verbose)
 
 
@@ -557,21 +571,21 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         "vibe_signals": cfg.vibe_signals,
     }
 
-    if _json_output:
-        typer.echo(json.dumps(info))
-    else:
-        display_name = _PROVIDER_DISPLAY.get(prov.name, prov.name)
-        typer.echo(f"Provider:  {display_name}")
-        typer.echo(f"Voice:     {info['voice']}")
-        typer.echo(f"Notify:    {info['notify']}")
-        typer.echo(f"Speak:     {info['speak']}")
-        typer.echo(f"Vibe mode: {info['vibe_mode']}")
-        if cfg.vibe:
-            typer.echo(f"Vibe:      {cfg.vibe}")
-        if cfg.vibe_tags:
-            typer.echo(f"Tags:      {cfg.vibe_tags}")
-        if cfg.vibe_signals:
-            typer.echo(f"Signals:   {cfg.vibe_signals}")
+    display_name = _PROVIDER_DISPLAY.get(prov.name, prov.name)
+    text_lines = [
+        f"Provider:  {display_name}",
+        f"Voice:     {info['voice']}",
+        f"Notify:    {info['notify']}",
+        f"Speak:     {info['speak']}",
+        f"Vibe mode: {info['vibe_mode']}",
+    ]
+    if cfg.vibe:
+        text_lines.append(f"Vibe:      {cfg.vibe}")
+    if cfg.vibe_tags:
+        text_lines.append(f"Tags:      {cfg.vibe_tags}")
+    if cfg.vibe_signals:
+        text_lines.append(f"Signals:   {cfg.vibe_signals}")
+    _emit(info, "\n".join(text_lines))
 
 
 # ---------------------------------------------------------------------------
@@ -724,17 +738,11 @@ def doctor(
             " \u2014 check permissions or use --output-dir",
         )
 
-    if _json_output:
-        _emit(
-            {"passed": passed, "failed": failed, "checks": checks},
-            "",
-        )
-    else:
-        typer.echo("=" * 40)
-        for line in lines:
-            typer.echo(line)
-        typer.echo("=" * 40)
-        typer.echo(f"{passed} passed, {failed} failed")
+    text_parts = ["=" * 40, *lines, "=" * 40, f"{passed} passed, {failed} failed"]
+    _emit(
+        {"passed": passed, "failed": failed, "checks": checks},
+        "\n".join(text_parts),
+    )
 
     if failed > 0:
         raise typer.Exit(code=1)
