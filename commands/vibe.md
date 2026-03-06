@@ -1,7 +1,7 @@
 ---
 description: "Set session mood for TTS voice"
 argument-hint: "<mood> | auto | off"
-allowed-tools: ["mcp__plugin_vox_mic__vibe", "Bash"]
+allowed-tools: ["mcp__plugin_vox_mic__vibe", "mcp__plugin_vox_mic__status"]
 ---
 
 # /vibe command
@@ -58,14 +58,14 @@ Keep it to 1-3 tags. Fewer is better — let the mood breathe.
 
 ## Implementation
 
-Use the `vibe` MCP tool for all writes. Use `vox status --json` via
-Bash for status queries.
+Use the `vibe` MCP tool for all writes. Use the `status` MCP tool for
+status queries.
 
 - **`/vibe <mood>`**: Interpret the mood, choose tags, then call:
   `vibe(mood="<mood text>", tags="<your tags>", mode="manual")`
 - **`/vibe auto`**: `vibe(tags="", mode="auto")`
 - **`/vibe off`**: `vibe(tags="", mode="off")`
-- **`/vibe` (no argument)**: Run `vox status --json` and report current
+- **`/vibe` (no argument)**: Call the `status` MCP tool and report current
   `vibe_mode`, `vibe`, and `vibe_tags`
 
 After changing, confirm: `Vibe: <mood> → <tags> [mode]` or `Vibe off.`

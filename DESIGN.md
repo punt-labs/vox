@@ -734,3 +734,71 @@ Updated in `punt-kit/standards/plugins.md` — the standard now mandates diff-an
 ### Rule
 
 **SessionStart command deployment must always update stale files.** Never skip-if-exists for command deployment. The cost of an unnecessary copy is zero. The cost of a stale command is a broken user experience that persists across every session until the user manually deletes the file.
+
+---
+
+## DES-017: Call Path Performance — MCP over Bash, Hooks over LLM
+
+**Date:** 2026-03-05
+**Status:** SETTLED
+**Topic:** Which call paths perform best for LLM-initiated and event-driven operations
+
+### Benchmark
+
+Measured 10 sequential calls through each path (apples-to-apples, one model
+round-trip per call):
+
+| Path | Avg per call | Why |
+|------|-------------|-----|
+| **LLM → MCP tool** | ~3.2s | Persistent stdio server, no process spawn. Response is structured JSON. |
+| **LLM → Bash → CLI** | ~4.6s | Model round-trip + Python process spawn (~110ms) + text parsing. |
+| **Shell hook → CLI** | ~110ms | No model involvement. Direct process execution. |
+
+The model round-trip dominates both LLM paths (~3s of inference per call).
+MCP wins over Bash because the server is already running (no spawn cost) and
+returns structured data. Shell hooks calling CLI directly are ~30x faster
+because they bypass the model entirely.
+
+### Two fast paths
+
+```text
+Model-initiated:    LLM ──► MCP server (persistent, structured)
+Event-driven:       Hook ──► CLI (no LLM, direct execution)
+```
+
+**LLM → MCP** for operations the model initiates: synthesis, voice queries,
+config changes. The MCP server is a long-running process — zero startup cost,
+structured JSON responses, PostToolUse hooks for UI formatting.
+
+**Hook → CLI** for event-driven operations: stop notifications, permission
+chimes, signal tracking. Shell hooks call `vox` CLI directly — no model
+round-trip, no inference latency. The hook reads config with grep/sed and
+calls the CLI in ~110ms total.
+
+### The slow path (avoid)
+
+```text
+LLM ──► Bash ──► CLI    (worst of both worlds)
+```
+
+LLM → Bash → CLI combines model round-trip overhead with process spawn
+overhead. Every Bash call spawns a fresh Python process (~110ms), and the
+model still pays ~3s of inference to generate and parse the call. Use this
+only when no MCP tool exists for the operation.
+
+### The Read/Write antipattern (never)
+
+```text
+LLM ──► Read(.vox/config.md)    (file I/O through the model layer)
+```
+
+Never instruct the model to Read or Write config files directly. This
+couples the model to file format details, bypasses the CLI's validation
+logic, and is no faster than an MCP call. If the model needs config state,
+either pass it in hook context (zero cost) or expose it via an MCP tool.
+
+### Rule
+
+**Model-initiated operations go through MCP. Event-driven operations go
+through shell hooks calling CLI. The model should never touch config files
+directly — use the CLI or MCP layer.**

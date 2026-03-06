@@ -11,7 +11,7 @@ import pytest
 
 from punt_vox.config import write_field, write_fields
 from punt_vox.resolve import apply_vibe
-from punt_vox.server import record, unmute, vibe, who
+from punt_vox.server import notify, record, speak, status, unmute, vibe, who
 from punt_vox.types import AudioProviderId, VoiceNotFoundError
 from punt_vox.voices import voice_not_found_message
 
@@ -599,3 +599,103 @@ class TestWho:
         assert result["provider"] == "say"
         assert result["featured"] == []
         assert result["all"] == ["samantha", "alex"]
+
+
+# ---------------------------------------------------------------------------
+# notify tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyTool:
+    """Tests for the notify MCP tool."""
+
+    def test_set_mode_y(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="y"))
+        assert result["notify"]["notify"] == "y"
+        assert 'notify: "y"' in _patch_config.read_text()
+
+    def test_set_mode_n(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="n"))
+        assert result["notify"]["notify"] == "n"
+
+    def test_set_mode_c_sets_speak(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="c"))
+        assert result["notify"]["notify"] == "c"
+        assert result["notify"]["speak"] == "y"
+
+    def test_first_init_y_sets_speak(self, _patch_config: Path) -> None:
+        # Config file does not exist — first init
+        result = json.loads(notify(mode="y"))
+        assert result["notify"]["speak"] == "y"
+
+    def test_set_voice(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="c", voice="matilda"))
+        assert result["notify"]["voice"] == "matilda"
+        assert 'voice: "matilda"' in _patch_config.read_text()
+
+    def test_invalid_mode(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="x"))
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# speak tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestSpeakTool:
+    """Tests for the speak MCP tool."""
+
+    def test_set_speak_y(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(speak(mode="y"))
+        assert result["speak"] == "y"
+
+    def test_set_speak_n(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(speak(mode="n"))
+        assert result["speak"] == "n"
+        assert 'speak: "n"' in _patch_config.read_text()
+
+    def test_invalid_mode(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(speak(mode="x"))
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# status tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestStatusTool:
+    """Tests for the status MCP tool."""
+
+    def test_returns_config_fields(self, _patch_config: Path) -> None:
+        _patch_config.write_text(
+            '---\nnotify: "c"\nspeak: "y"\nvoice: "sarah"\nvibe_mode: "auto"\n---\n'
+        )
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        provider.default_voice = "sarah"
+        with patch("punt_vox.server.get_provider", return_value=provider):
+            result = json.loads(status())
+        assert result["provider"] == "elevenlabs"
+        assert result["voice"] == "sarah"
+        assert result["notify"] == "c"
+        assert result["speak"] == "y"
+        assert result["vibe_mode"] == "auto"
+
+    def test_falls_back_to_provider_default_voice(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        provider = MagicMock()
+        provider.name = "polly"
+        provider.default_voice = "Joanna"
+        with patch("punt_vox.server.get_provider", return_value=provider):
+            result = json.loads(status())
+        assert result["voice"] == "Joanna"
