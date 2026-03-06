@@ -42,14 +42,10 @@ mcp = FastMCP(
     instructions=(
         "Vox is a text-to-speech engine. Use these tools to speak text aloud "
         "and generate audio files.\n\n"
-        "When a stop hook blocks with a ♪ phrase, the block reason includes "
-        "vibe fields (vibe_mode, vibe, vibe_signals) after a | delimiter. "
-        "If vibe_mode is 'manual', treat vibe as your primary mood hint. "
-        "If vibe_mode is 'auto' and vibe_signals is non-empty, interpret "
-        "those signals to pick mood. Then write 1-2 sentences summarizing "
-        "what you completed and call the unmute tool with ephemeral=true and "
-        'vibe_tags="[tag1] [tag2]" to set mood and speak in one call. '
-        "No other output.\n\n"
+        "When a stop hook blocks with a \u266a phrase, write 1-2 sentences "
+        "summarizing what you completed and call the unmute tool with "
+        "ephemeral=true. Mood tags are pre-resolved in config — do not "
+        "pass vibe_tags. No other output.\n\n"
         "Do NOT use Read, Write, or Bash tools to access .vox/config.md. "
         "All config state is available through MCP tools or hook context."
     ),

@@ -16,6 +16,6 @@ Enable voice mode (continuous spoken notifications). Optionally set a session vo
 
 ## Implementation
 
-- **(no argument)**: Call the `notify` MCP tool with `mode="c"`. Confirm: "Voice on."
-- **`@<name>`**: Call the `notify` MCP tool with `mode="c"` and `voice="<name>"`. Confirm warmly — voices are people: "matilda's here" not "Session voice set to matilda."
+- **(no argument)**: Call the `notify` MCP tool with `mode="c"`. No text output — the panel confirms.
+- **`@<name>`**: Call the `notify` MCP tool with `mode="c"` and `voice="<name>"`. No text output — the panel confirms.
 - **`@`** (bare @): Call the `who` MCP tool to list voices. Display featured voices with blurbs in a casual "who's around" format. Tell the user to pick with `/unmute @<name>`.
