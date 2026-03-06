@@ -664,3 +664,43 @@ class TestInstallDesktopCommand:
         data = json.loads(config_path.read_text())
         assert "other-server" in data["mcpServers"]
         assert "tts" in data["mcpServers"]
+
+
+# ---------------------------------------------------------------------------
+# Global flag tests
+# ---------------------------------------------------------------------------
+
+
+class TestGlobalFlags:
+    def test_short_help_flag(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["-h"])
+        assert result.exit_code == 0
+        assert "Text-to-speech CLI." in result.output
+
+    def test_quiet_suppresses_version(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["-q", "version"])
+        assert result.exit_code == 0
+        assert result.output.strip() == ""
+
+    def test_quiet_suppresses_status(self) -> None:
+        runner = CliRunner()
+        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
+            result = runner.invoke(app, ["-q", "status"])
+        assert result.exit_code == 0
+        assert result.output.strip() == ""
+
+    def test_json_still_emits_with_quiet(self) -> None:
+        runner = CliRunner()
+        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
+            result = runner.invoke(app, ["--json", "-q", "status"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "provider" in data
+
+    def test_verbose_quiet_mutual_exclusion(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["-v", "-q", "version"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
