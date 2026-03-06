@@ -214,7 +214,11 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
     # Resolve tags and write to config so apply_vibe picks them up
     # automatically — no data in the user-visible reason string.
     phrase = random.choice(STOP_PHRASES)
-    if not (config.vibe_mode == "manual" and config.vibe_tags):
+    if config.vibe_mode == "off":
+        pass  # User disabled vibe — don't write tags
+    elif config.vibe_mode == "manual" and config.vibe_tags:
+        pass  # Manual mode with existing tags — already set
+    else:
         tags = resolve_tags_from_signals(config.vibe_signals)
         config_path = resolve_config_path()
         write_field("vibe_tags", tags, config_path)

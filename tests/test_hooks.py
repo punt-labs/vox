@@ -181,6 +181,24 @@ class TestHandleStop:
         # Manual mode with existing tags — no write needed
         mock_write.assert_not_called()
 
+    def test_vibe_off_skips_config_write(self) -> None:
+        config = VoxConfig(
+            notify="y",
+            speak="y",
+            voice_enabled="true",
+            vibe_mode="off",
+            voice=None,
+            vibe=None,
+            vibe_tags=None,
+            vibe_signals="tests-pass@12:00",
+        )
+        with patch("punt_vox.hooks.write_field") as mock_write:
+            result = handle_stop({}, config)
+        assert result is not None
+        assert result["decision"] == "block"
+        # Vibe off — must not write tags to config
+        mock_write.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # resolve_tags_from_signals tests
