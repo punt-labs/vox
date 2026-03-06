@@ -678,7 +678,14 @@ class TestStatusTool:
 
     def test_returns_config_fields(self, _patch_config: Path) -> None:
         _patch_config.write_text(
-            '---\nnotify: "c"\nspeak: "y"\nvoice: "sarah"\nvibe_mode: "auto"\n---\n'
+            "---\n"
+            'notify: "c"\n'
+            'speak: "y"\n'
+            'voice: "sarah"\n'
+            'vibe_mode: "auto"\n'
+            'vibe_tags: "[excited]"\n'
+            'vibe_signals: "tests-pass@12:00"\n'
+            "---\n"
         )
         provider = MagicMock()
         provider.name = "elevenlabs"
@@ -690,6 +697,8 @@ class TestStatusTool:
         assert result["notify"] == "c"
         assert result["speak"] == "y"
         assert result["vibe_mode"] == "auto"
+        assert result["vibe_tags"] == "[excited]"
+        assert result["vibe_signals"] == "tests-pass@12:00"
 
     def test_falls_back_to_provider_default_voice(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\n---\n")

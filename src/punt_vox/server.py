@@ -462,11 +462,13 @@ def notify(
 ) -> str:
     """Set notification mode and optionally the session voice.
 
-    Controls whether vox plays chimes, speaks summaries, or stays silent.
+    Controls whether vox sends notification events. Whether notifications
+    are heard as chimes or TTS speech is controlled by the separate
+    ``speak`` field (see the ``speak`` tool).
 
     Args:
-        mode: Notification mode — "y" (chimes on), "n" (off),
-            or "c" (continuous spoken summaries).
+        mode: Notification mode — "y" (notifications on), "n" (off),
+            or "c" (continuous with spoken summaries; forces speak="y").
         voice: Optional session voice to set (e.g. "matilda", "roger").
 
     Returns:
@@ -524,6 +526,8 @@ def status() -> str:
             "speak": cfg.speak,
             "vibe_mode": cfg.vibe_mode,
             "vibe": cfg.vibe,
+            "vibe_tags": cfg.vibe_tags,
+            "vibe_signals": cfg.vibe_signals,
         }
     )
 
