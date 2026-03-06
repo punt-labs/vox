@@ -671,3 +671,66 @@ This uses `claude plugin marketplace update` rather than operating on the clone 
 5. Added `source.ref: "v0.4.0"` to marketplace, nuked cache, reinstalled → `name: "tts"`, correct commit
 6. Discovered stale clone problem: existing users whose clone predates the ref pin still get HEAD
 7. Added `_refresh_marketplace()` to installer — pulls latest marketplace.json before install
+
+---
+
+## DES-016: Command Deployment Must Update, Not Skip-If-Exists
+
+**Date:** 2026-03-05
+**Status:** SETTLED
+**Topic:** How SessionStart hook deploys top-level commands to `~/.claude/commands/`
+
+### Problem
+
+The SessionStart hook deployed commands with a skip-if-exists guard:
+
+```bash
+# WRONG: stale commands persist forever
+if [[ ! -f "$dest" ]]; then
+  cp "$cmd_file" "$dest"
+fi
+```
+
+This meant that once a command file was deployed, it **never updated** — even across plugin upgrades and releases. Users accumulated stale command files with:
+
+- Old `allowed-tools` (e.g., `Read`, `Write`, `Edit` instead of `Bash`)
+- Old MCP tool names (e.g., `mcp__plugin_tts_vox__speak` from before the rename)
+- Old implementation logic (prompt-driven config file editing instead of CLI calls)
+
+The `/vox`, `/unmute`, `/mute`, `/vibe`, and `/recap` commands were all stale. Some still referenced tool names from 3+ releases ago.
+
+### Why This Wasn't Caught
+
+1. The developer uses `--plugin-dir .` (dev mode), which skips command deployment entirely
+2. Editable install means the developer's `vox` binary runs working-tree code
+3. The stale commands still "worked" — Claude could figure out the intent even with wrong tools — just not correctly
+4. No integration test for "install plugin, upgrade, verify commands updated"
+
+### Root Cause
+
+The original skip-if-exists logic was written to be idempotent for first-run setup. The assumption was that commands don't change across releases. That assumption was wrong from day one — commands have changed in almost every release since the plugin launched.
+
+### Fix
+
+Compare content with `diff -q` and overwrite when different:
+
+```bash
+# CORRECT: update changed commands
+mkdir -p "$COMMANDS_DIR"
+if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
+  cp "$cmd_file" "$dest"
+fi
+```
+
+### Scope
+
+Fixed in all Punt Labs plugins:
+- `vox/hooks/session-start.sh`
+- `biff/hooks/session-start.sh`
+- `dungeon/hooks/session-start.sh`
+
+Updated in `punt-kit/standards/plugins.md` — the standard now mandates diff-and-update with correct/incorrect code examples.
+
+### Rule
+
+**SessionStart command deployment must always update stale files.** Never skip-if-exists for command deployment. The cost of an unnecessary copy is zero. The cost of a stale command is a broken user experience that persists across every session until the user manually deletes the file.

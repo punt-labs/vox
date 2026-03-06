@@ -47,8 +47,8 @@ if [[ "$DEV_MODE" == "false" ]]; then
     name="$(basename "$cmd_file")"
     [[ "$name" == *-dev.md ]] && continue
     dest="$COMMANDS_DIR/$name"
-    if [[ ! -f "$dest" ]]; then
-      mkdir -p "$COMMANDS_DIR"
+    mkdir -p "$COMMANDS_DIR"
+    if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
       cp "$cmd_file" "$dest"
       DEPLOYED+=("/${name%.md}")
     fi
