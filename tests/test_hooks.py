@@ -130,7 +130,10 @@ class TestHandleStop:
         result = handle_stop({}, config)
         assert result is not None
         assert result["decision"] == "block"
-        assert result["reason"] in STOP_PHRASES
+        reason = str(result["reason"])
+        assert any(reason.startswith(phrase) for phrase in STOP_PHRASES)
+        assert "| vibe_mode=" in reason
+        assert "vibe_signals=tests-pass@12:00" in reason
 
     def test_continuous_mode_blocks(self) -> None:
         config = _make_config(notify="c")

@@ -1,7 +1,7 @@
 ---
 description: "Enable or disable vox"
 argument-hint: "y | n | c"
-allowed-tools: ["Bash", "mcp__plugin_vox_mic__who"]
+allowed-tools: ["mcp__plugin_vox_mic__notify", "mcp__plugin_vox_mic__who"]
 ---
 
 # /vox command
@@ -20,17 +20,17 @@ Parse `$ARGUMENTS`:
 
 ### `y`
 
-1. Run: `vox notify y`
+1. Call the `notify` MCP tool with `mode="y"`.
 2. Confirm: "Vox enabled."
 
 ### `n`
 
-1. Run: `vox notify n`
+1. Call the `notify` MCP tool with `mode="n"`.
 2. Confirm: "Vox disabled."
 
 ### `c`
 
-1. Run: `vox notify c`
+1. Call the `notify` MCP tool with `mode="c"`.
 2. Call the `who` MCP tool to list voices.
 3. Display featured voices with blurbs. Tell user they can pick with `/unmute @<name>`.
 4. Confirm: "Continuous mode on. You'll hear spoken summaries when tasks finish."

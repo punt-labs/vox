@@ -11,7 +11,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from punt_vox import __version__
-from punt_vox.config import read_field, write_fields
+from punt_vox.config import read_config, read_field, write_fields
 from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.logging_config import configure_logging
 from punt_vox.playback import enqueue as _enqueue_audio
@@ -41,14 +41,16 @@ mcp = FastMCP(
     instructions=(
         "Vox is a text-to-speech engine. Use these tools to speak text aloud "
         "and generate audio files.\n\n"
-        "When a stop hook blocks with a ♪ phrase (e.g. '♪ Speaking my thoughts...'), "
-        "first use the Read tool to read .vox/config.md and check the vibe, "
-        "vibe_mode, and vibe_signals fields. If vibe_mode is 'manual', treat "
-        "vibe as your primary mood hint. If vibe_mode is 'auto' and "
-        "vibe_signals is non-empty, interpret those signals to pick mood. Then "
-        "write 1-2 sentences summarizing what you completed and call the unmute "
-        'tool with ephemeral=true and vibe_tags="[tag1] [tag2]" to set mood '
-        "and speak in one call. No other output."
+        "When a stop hook blocks with a ♪ phrase, the block reason includes "
+        "vibe fields (vibe_mode, vibe, vibe_signals) after a | delimiter. "
+        "If vibe_mode is 'manual', treat vibe as your primary mood hint. "
+        "If vibe_mode is 'auto' and vibe_signals is non-empty, interpret "
+        "those signals to pick mood. Then write 1-2 sentences summarizing "
+        "what you completed and call the unmute tool with ephemeral=true and "
+        'vibe_tags="[tag1] [tag2]" to set mood and speak in one call. '
+        "No other output.\n\n"
+        "Do NOT use Read, Write, or Bash tools to access .vox/config.md. "
+        "All config state is available through MCP tools or hook context."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
@@ -449,6 +451,83 @@ def who(language: str | None = None) -> str:
             "current": current,
             "featured": featured,
             "all": all_voices,
+        }
+    )
+
+
+@mcp.tool()
+def notify(
+    mode: str,
+    voice: str | None = None,
+) -> str:
+    """Set notification mode and optionally the session voice.
+
+    Controls whether vox sends notification events. Whether notifications
+    are heard as chimes or TTS speech is controlled by the separate
+    ``speak`` field (see the ``speak`` tool).
+
+    Args:
+        mode: Notification mode — "y" (notifications on), "n" (off),
+            or "c" (continuous with spoken summaries; forces speak="y").
+        voice: Optional session voice to set (e.g. "matilda", "roger").
+
+    Returns:
+        JSON string with the updated config fields.
+    """
+    if mode not in ("y", "n", "c"):
+        return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n/c."})
+
+    config_path = _CONFIG_PATH
+    first_init = not config_path.exists()
+    updates: dict[str, str] = {"notify": mode}
+    if mode == "c" or (first_init and mode == "y"):
+        updates["speak"] = "y"
+    if voice is not None:
+        updates["voice"] = voice
+    write_fields(updates, config_path=config_path)
+    return json.dumps({"notify": updates})
+
+
+@mcp.tool()
+def speak(
+    mode: str,
+) -> str:
+    """Toggle spoken notifications on or off.
+
+    Args:
+        mode: "y" for voice (TTS speech) or "n" for chimes only.
+
+    Returns:
+        JSON string with the updated speak field.
+    """
+    if mode not in ("y", "n"):
+        return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n."})
+
+    write_fields({"speak": mode}, config_path=_CONFIG_PATH)
+    return json.dumps({"speak": mode})
+
+
+@mcp.tool()
+def status() -> str:
+    """Show current vox state (provider, voice, notify, vibe).
+
+    Returns:
+        JSON string with provider, voice, notify mode, speak mode,
+        vibe mode, and current vibe.
+    """
+    provider = get_provider()
+    cfg = read_config(config_path=_CONFIG_PATH)
+
+    return json.dumps(
+        {
+            "provider": provider.name,
+            "voice": cfg.voice or provider.default_voice,
+            "notify": cfg.notify,
+            "speak": cfg.speak,
+            "vibe_mode": cfg.vibe_mode,
+            "vibe": cfg.vibe,
+            "vibe_tags": cfg.vibe_tags,
+            "vibe_signals": cfg.vibe_signals,
         }
     )
 

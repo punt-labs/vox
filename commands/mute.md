@@ -1,6 +1,6 @@
 ---
 description: "Chimes only — disable spoken notifications"
-allowed-tools: ["Bash"]
+allowed-tools: ["mcp__plugin_vox_mic__speak"]
 ---
 
 # /mute command
@@ -9,6 +9,6 @@ Disable spoken notifications. Chime sounds still play on task completion and per
 
 ## Implementation
 
-Run: `vox speak n`
+Call the `speak` MCP tool with `mode="n"`.
 
 Confirm: "Muted — chimes only."

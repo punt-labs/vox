@@ -1,7 +1,7 @@
 ---
 description: "Enable voice mode or set session voice"
 argument-hint: "[@voice-name]"
-allowed-tools: ["Bash", "mcp__plugin_vox_mic__who"]
+allowed-tools: ["mcp__plugin_vox_mic__notify", "mcp__plugin_vox_mic__who"]
 ---
 
 # /unmute command
@@ -16,6 +16,6 @@ Enable voice mode (continuous spoken notifications). Optionally set a session vo
 
 ## Implementation
 
-- **(no argument)**: Run `vox notify c`. Confirm: "Voice on."
-- **`@<name>`**: Run `vox notify c --voice <name>`. Confirm warmly — voices are people: "matilda's here" not "Session voice set to matilda."
+- **(no argument)**: Call the `notify` MCP tool with `mode="c"`. Confirm: "Voice on."
+- **`@<name>`**: Call the `notify` MCP tool with `mode="c"` and `voice="<name>"`. Confirm warmly — voices are people: "matilda's here" not "Session voice set to matilda."
 - **`@`** (bare @): Call the `who` MCP tool to list voices. Display featured voices with blurbs in a casual "who's around" format. Tell the user to pick with `/unmute @<name>`.

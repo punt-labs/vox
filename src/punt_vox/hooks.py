@@ -162,9 +162,15 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
             _enqueue_audio(chime)
         return None
 
-    # Voice mode: block the stop, ask Claude to summarize and speak
-    reason = random.choice(STOP_PHRASES)
-    return {"decision": "block", "reason": reason}
+    # Voice mode: block the stop, ask Claude to summarize and speak.
+    # Embed vibe fields so the LLM has mood context without a Read call.
+    phrase = random.choice(STOP_PHRASES)
+    vibe_context = (
+        f" | vibe_mode={config.vibe_mode or 'auto'}"
+        f" vibe={config.vibe or ''}"
+        f" vibe_signals={config.vibe_signals or ''}"
+    )
+    return {"decision": "block", "reason": phrase + vibe_context}
 
 
 # ---------------------------------------------------------------------------
