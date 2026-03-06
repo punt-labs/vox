@@ -37,3 +37,6 @@ research/
 *.log
 *.out
 *.run.xml
+
+# Scratch/temp directory (TMPDIR set via .envrc)
+.tmp/
