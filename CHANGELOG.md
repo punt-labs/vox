@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-03-05
+
+### Fixed
+
+- SessionStart hook now updates stale commands on plugin upgrade — previously deployed commands in `~/.claude/commands/` were never refreshed, leaving users with old allowed-tools, old MCP tool names, and prompt-driven logic instead of CLI calls
+
 ## [1.0.2] - 2026-03-05
 
 ### Fixed
