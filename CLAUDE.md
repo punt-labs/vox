@@ -29,23 +29,9 @@ Use `.tmp/` at the project root for scratch and temporary files — never `/tmp`
 
 ## Quality Gates
 
-Run after every code change. All must pass with zero violations.
+Run before every commit:
 
-```bash
-uv run ruff check src/ tests/        # Lint
-uv run ruff format --check src/ tests/ # Format check
-uv run mypy src/ tests/               # Type check (strict)
-uv run pyright src/ tests/            # Type check (strict)
-uv run pytest tests/ -v               # All tests pass
-shellcheck -x hooks/*.sh scripts/*.sh install.sh  # Shell lint
-```
-
-Build validation:
-
-```bash
-uv build
-uvx twine check dist/*
-```
+    make check
 
 ## Architecture
 
