@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-03-07
+
+### Fixed
+
+- Clean stop hook reason — no internal data leak (#75)
+- Align CLI with punt-kit standards (#76)
+- Address Copilot review feedback from PR #76 (#77)
+- Remove `[skip ci]` from release-plugin.sh (suppressed tag-triggered releases)
+
+### Changed
+
+- Add Makefile per makefile.md standard (#78)
+
 ## [1.2.0] - 2026-03-05
 
 ### Added

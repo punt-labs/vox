@@ -40,3 +40,7 @@ research/
 
 # Scratch/temp directory (TMPDIR set via .envrc)
 .tmp/
+
+# Dev scratch files
+*.tmp
+METHOD.md

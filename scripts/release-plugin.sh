@@ -49,4 +49,4 @@ else
 fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
-git -C "$REPO_ROOT" commit --no-verify -m "chore: prepare plugin for release [skip ci]"
+git -C "$REPO_ROOT" commit --no-verify -m "chore: prepare plugin for release"
