@@ -1,6 +1,6 @@
 # Testing
 
-519 tests, zero external dependencies at runtime. Every test runs offline — no API keys, no network, no audio hardware.
+No network or API dependencies. Every test runs fully offline — no API keys, no network, no audio hardware — but they do rely on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng).
 
 ## Philosophy
 
@@ -13,7 +13,7 @@ Vox has five TTS providers (ElevenLabs, OpenAI, Polly, macOS Say, espeak-ng), a 
 ```
 tests/
   conftest.py               # Shared fixtures: mock clients, voice caches, valid MP3 bytes
-  test_types.py              # Domain types: AudioRequest, AudioResult, MergeStrategy
+  test_types.py              # Domain types: SynthesisRequest, SynthesisResult, MergeStrategy
   test_core.py               # TTSClient orchestration: batching, SSML, stitching, merge
   test_output.py             # Output path resolution
   test_ephemeral.py          # Ephemeral .vox/ directory lifecycle
@@ -48,7 +48,7 @@ def _generate_valid_mp3_bytes() -> bytes:
 
 ## Voice Cache Isolation
 
-Every provider has a module-level voice cache (`VOICES` dict + `_voices_loaded` flag) that's populated on first use by calling the provider API. Three `autouse=True` fixtures in `conftest.py` pre-populate these caches before every test and restore them after:
+Every provider has a module-level voice cache (`VOICES` dict + `_voices_loaded` flag) that's populated on first use by calling the provider API. Four `autouse=True` fixtures in `conftest.py` pre-populate these caches before every test and restore them after:
 
 - `_populate_voice_cache` — Polly voices (Joanna, Hans, Tatyana, Seoyeon)
 - `_populate_elevenlabs_voice_cache` — ElevenLabs voices (Matilda, Drew)
