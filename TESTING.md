@@ -132,15 +132,8 @@ Tests requiring real API credentials are marked `@pytest.mark.integration` and e
 
 ## Quality Gates
 
-Tests are one of six gates that must pass before every commit:
+Tests are one of the gates in `make check`, which must pass before every commit:
 
-```bash
-uv run ruff check src/ tests/        # Lint
-uv run ruff format --check src/ tests/ # Format
-uv run mypy src/ tests/               # Type check (mypy strict)
-uv run pyright src/ tests/            # Type check (pyright strict)
-uv run pytest tests/ -v               # Tests
-shellcheck -x hooks/*.sh scripts/*.sh install.sh  # Shell lint
-```
+    make check
 
-All six must show zero errors. No exceptions for "pre-existing failures."
+All gates must show zero errors. No exceptions for "pre-existing failures."

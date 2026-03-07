@@ -189,12 +189,8 @@ vox mcp                                        # Start MCP server (stdio)
 ## Development
 
 ```bash
-uv sync --all-extras                           # Install dependencies
-uv run ruff check src/ tests/                  # Lint
-uv run ruff format --check src/ tests/         # Format
-uv run mypy src/ tests/                        # Type check (mypy)
-uv run pyright src/ tests/                     # Type check (pyright)
-uv run pytest tests/ -v                        # Test
+uv sync --all-extras    # Install dependencies
+make check              # Run all quality gates
 ```
 
 ## License
