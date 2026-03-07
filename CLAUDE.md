@@ -62,13 +62,15 @@ Module structure under `src/punt_vox/`:
 | `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()`, `resolve_config_path()` |
 | `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `resolve_output_dir()`, `apply_vibe()` |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
-| `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `classify_signal()`, `resolve_chime()` |
+| `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()` |
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, hook |
 | `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`. Reads `.vox/config.md` for session state. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
 | `providers/elevenlabs.py` | `ElevenLabsProvider` — ElevenLabs synthesis, voice settings, voice resolution, health checks. Only file with elevenlabs |
+| `providers/say.py` | `SayProvider` — macOS `say` synthesis, voice resolution. Zero-config offline fallback |
+| `providers/espeak.py` | `EspeakProvider` — Linux `espeak-ng` synthesis, voice resolution. Zero-config offline fallback |
 
 Plugin structure (Claude Code hooks and commands):
 
@@ -88,7 +90,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py` plus `conftest.py` for shared fixtures.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
 ## Python Coding Standards
 
@@ -211,6 +213,8 @@ gh pr checks <number> --watch          # BLOCKING: polls until all checks pass o
 gh pr view <number> --comments         # Read Copilot feedback — address before merging
 ```
 
+**Wait for Copilot review before merging.** After CI passes, use `mcp__github__pull_request_read` with `get_reviews` and `get_review_comments` methods to check for Copilot feedback. Address all findings before merging. Never merge a PR before Copilot has reviewed it — Copilot may take 1-3 minutes to post after CI completes.
+
 **Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). `gh pr merge` tries to checkout main locally, which fails inside a worktree. After merging, pull main to stay ready for the next PR.
 
 ```bash
@@ -247,7 +251,7 @@ git checkout -b feat/next-thing                     # New branch from latest mai
 
 Every release follows this exact sequence. No steps skipped.
 
-1. **Bump version** in `pyproject.toml`, `src/punt_vox/__init__.py`, and `.claude-plugin/plugin.json` (keep in sync)
+1. **Bump version** in `pyproject.toml`, `src/punt_vox/__init__.py`, `.claude-plugin/plugin.json`, and `install.sh` `VERSION=` constant (keep all four in sync)
 2. **Move `[Unreleased]`** entries in `CHANGELOG.md` to new version section with date
 3. **Run all quality gates** — ruff, mypy, pyright, pytest
 4. **Commit**: `chore: release vX.Y.Z`

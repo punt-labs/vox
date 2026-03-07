@@ -15,7 +15,7 @@ When Claude Code finishes a task, hits an error, or needs your approval --- you 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b99c750/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/fc3083c/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -40,7 +40,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b99c750/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/fc3083c/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh
@@ -183,6 +183,7 @@ vox mcp                                        # Start MCP server (stdio)
 ## Documentation
 
 [Design Log](DESIGN.md) |
+[Testing](TESTING.md) |
 [Changelog](CHANGELOG.md)
 
 ## Development

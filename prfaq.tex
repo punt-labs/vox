@@ -77,7 +77,7 @@
 
 % ── Document version ─────────────────────────────────────────────────────────
 \newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
-\prfaqversion{1}{1}
+\prfaqversion{1}{2}
 
 % ── Header/footer ────────────────────────────────────────────────────────────
 \usepackage{fancyhdr}
@@ -590,11 +590,12 @@ Restart Claude Code and type \texttt{/vox y}.
   checks for audio playback capability at install time. Graceful absence: if
   audio is unavailable, notifications fail silently rather than crashing.
 
-  The remaining unknowns are in application integration, not core technology.
-  The TTS engine (synthesis, batching, merging) is built and tested. The
-  hardest open question is how to generate concise spoken summaries from
-  Claude's output --- the Stop hook payload format and summary generation
-  strategy need experimentation (see \faqref{faq:timeline}).
+  All core technical risks have been resolved. The TTS engine (synthesis,
+  batching, merging) is built and tested. The Stop hook uses a decision-block
+  pattern where the model generates a 1-2 sentence summary and calls the TTS
+  tool. Vibe tags are resolved deterministically from accumulated session
+  signals, written to config, and picked up automatically by the TTS tool ---
+  no data passes through user-visible output.
 \end{faqpair}
 
 \begin{faqpair}{What dependencies exist on external systems?}
@@ -626,10 +627,14 @@ Restart Claude Code and type \texttt{/vox y}.
   \texttt{/vox y|n|c} toggle. \texttt{/unmute}/\texttt{/mute} for voice
   vs.\ chime. Permission-blocked notification via \texttt{Notification}
   hook. \texttt{/recap} command (agent-executed spoken summary).
-  \texttt{/vibe} with auto-detection and manual modes. Five providers
-  (ElevenLabs, OpenAI, Polly, macOS \texttt{say}, Linux \texttt{espeak-ng}).
-  Mood-aware chimes with pitch shifting (8 signals $\times$ 3 moods).
-  Non-blocking MCP tools (v1.2.0). Claude Code plugin on marketplace.
+  \texttt{/vibe} with auto-detection and manual modes --- auto-vibe uses
+  deterministic signal-to-tag mapping (no LLM needed) to resolve
+  ElevenLabs expressive tags from accumulated session signals.
+  Five providers (ElevenLabs, OpenAI, Polly, macOS \texttt{say}, Linux
+  \texttt{espeak-ng}). Mood-aware chimes with pitch shifting
+  (8 signals $\times$ 3 moods). Non-blocking MCP tools (v1.2.0).
+  Claude Code plugin on marketplace. CLI global flags
+  (\texttt{-{}-json}, \texttt{-{}-verbose}, \texttt{-{}-quiet}).
 
   \textbf{Next:} Continuous mode milestone updates during long-running tasks.
   Downstream library adoption beyond langlearn-tts.
@@ -785,9 +790,10 @@ Usability  & \textcolor{RiskAmber}{\textbf{Medium}} &
   and environment variable configuration. For developers without an existing
   key, the real onboarding is 5--10 steps, not one. \\
 Feasibility & \textcolor{RiskGreen}{\textbf{Low}} &
-  The TTS engine is built. Remaining work is hooks integration and command
-  implementation. Open question: summary generation strategy for Stop hook
-  (see timeline FAQ). \\
+  The TTS engine, hooks integration, and all commands are built and shipped.
+  The summary generation strategy uses a decision-block Stop hook that asks
+  the model to summarize and speak. Vibe tags are resolved deterministically
+  from session signals --- no open technical questions remain. \\
 Viability  & \textcolor{RiskGreen}{\textbf{Low}} &
   No revenue model to validate. Zero infrastructure cost. MIT license.
   The only cost is maintainer time. \\

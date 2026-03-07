@@ -802,3 +802,56 @@ either pass it in hook context (zero cost) or expose it via an MCP tool.
 **Model-initiated operations go through MCP. Event-driven operations go
 through shell hooks calling CLI. The model should never touch config files
 directly — use the CLI or MCP layer.**
+
+---
+
+## DES-018: Clean Stop Hook Reason — No Internal Data in User-Visible Output
+
+**Date:** 2026-03-06
+**Status:** SETTLED
+**Topic:** What the Stop hook's `reason` field contains
+
+### Problem
+
+The Stop hook's `decision: "block"` response includes a `reason` field that Claude shows to the user as assistant output. Early implementations leaked internal state into this field:
+
+```json
+{"decision": "block", "reason": "♪ Saying my piece... | vibe_mode=auto vibe_tags=[calm] vibe_signals=tests-pass@14:32,lint-pass@14:33"}
+```
+
+The pipe-separated metadata was intended for the model to thread through to the `unmute` MCP tool. But the entire reason string is displayed in the chat, so users saw raw config data after every task completion.
+
+### Design
+
+The `reason` field contains **only** a `♪`-prefixed phrase — nothing else:
+
+```json
+{"decision": "block", "reason": "♪ Saying my piece..."}
+```
+
+Vibe tags are resolved deterministically from accumulated signals and written to `.vox/config.md` **before** the block response. When Claude calls `unmute` in the continuation turn, `apply_vibe()` reads tags from config automatically. No data passes through the reason string.
+
+```text
+Stop hook fires →
+  1. resolve_tags_from_signals(config.vibe_signals) → "[relieved]"
+  2. write_fields({"vibe_tags": "[relieved]", "vibe_signals": ""})  # atomic
+  3. return {"decision": "block", "reason": "♪ Saying my piece..."}
+
+Claude continues →
+  4. Generates 1-2 sentence summary
+  5. Calls unmute MCP tool → apply_vibe() reads vibe_tags from config
+```
+
+### Key Details
+
+- **`resolve_tags_from_signals()`** maps signal counts and trajectory to 1-2 ElevenLabs expressive tags without LLM involvement. Deterministic: same signals always produce the same tags.
+- **Signal consumption**: `write_fields()` atomically writes resolved tags AND clears `vibe_signals` in a single config update. This prevents signals from accumulating across stop cycles.
+- **Vibe mode gating**: Auto mode resolves and writes tags. Manual mode with existing tags skips (user's choice preserved). Off mode skips entirely.
+
+### Why Config-Mediated Tag Passing
+
+The alternative — embedding tags in the reason string for Claude to extract and pass to the MCP tool — couples the user-visible output to internal data. Any change to tag format or signal structure changes what users see. Config-mediated passing decouples them completely: the hook writes to config, the MCP tool reads from config, and the reason string is free to be a simple human-friendly phrase.
+
+### Rule
+
+**The Stop hook `reason` field must contain only a user-friendly phrase.** No config data, no metadata, no pipe-separated fields. If the continuation turn needs data, write it to config before returning the block response.
