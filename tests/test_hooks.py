@@ -315,7 +315,8 @@ class TestHandleNotification:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "vox"
-        assert cmd[1] == "unmute"
+        assert cmd[1] == "--json"
+        assert cmd[2] == "unmute"
         assert "--voice" in cmd
         assert "matilda" in cmd
 
@@ -441,11 +442,12 @@ class TestHandlePreCompact:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "vox"
-        assert cmd[1] == "unmute"
+        assert cmd[1] == "--json"
+        assert cmd[2] == "unmute"
         assert "--voice" in cmd
         assert "matilda" in cmd
         # Phrase should be from the pool
-        spoken_text = cmd[2]
+        spoken_text = cmd[3]
         assert spoken_text in PRE_COMPACT_PHRASES
 
     @patch("punt_vox.hooks.subprocess.run")

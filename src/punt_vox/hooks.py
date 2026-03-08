@@ -394,7 +394,7 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 
     with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
         subprocess.run(
-            ["vox", "unmute", text, *voice_args, "--json"],
+            ["vox", "--json", "unmute", text, *voice_args],
             check=False,
             capture_output=True,
             timeout=30,
@@ -432,6 +432,8 @@ def handle_pre_compact(config: VoxConfig) -> None:
         if chime.exists():
             logger.info("PreCompact hook: chime mode, playing %s", chime.name)
             _enqueue_audio(chime)
+        else:
+            logger.info("PreCompact hook: chime mode, missing %s", chime.name)
         return
 
     # Voice mode: speak a playful phrase
@@ -444,7 +446,7 @@ def handle_pre_compact(config: VoxConfig) -> None:
 
     with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
         subprocess.run(
-            ["vox", "unmute", text, *voice_args, "--json"],
+            ["vox", "--json", "unmute", text, *voice_args],
             check=False,
             capture_output=True,
             timeout=30,
@@ -501,4 +503,5 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
+    _read_hook_input()  # drain stdin to avoid pipe backpressure
     handle_pre_compact(config)
