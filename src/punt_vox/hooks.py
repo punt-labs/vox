@@ -216,9 +216,11 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
     # Chime mode: play chime, let Claude stop
     if config.speak == "n":
         chime = resolve_chime("done", config.vibe)
-        logger.info("Stop hook: chime mode, playing %s", chime.name)
         if chime.exists():
+            logger.info("Stop hook: chime mode, playing %s", chime.name)
             _enqueue_audio(chime)
+        else:
+            logger.info("Stop hook: chime mode, missing %s", chime.name)
         return None
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
@@ -375,9 +377,11 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
     # Chime mode
     if config.speak == "n":
         chime = resolve_chime("prompt", config.vibe)
-        logger.info("Notification hook: chime mode, playing %s", chime.name)
         if chime.exists():
+            logger.info("Notification hook: chime mode, playing %s", chime.name)
             _enqueue_audio(chime)
+        else:
+            logger.info("Notification hook: chime mode, missing %s", chime.name)
         return
 
     # Voice mode: synthesize and play via vox unmute (ephemeral mode)
