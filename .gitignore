@@ -44,3 +44,11 @@ research/
 # Dev scratch files
 *.tmp
 METHOD.md
+docs/fuzz.sty
+docs/*.mf
+docs/*.pk
+docs/*.tfm
+docs/*.aux
+docs/*.log
+docs/*.fuzz
+docs/*.toc
