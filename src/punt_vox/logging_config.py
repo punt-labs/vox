@@ -27,7 +27,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
     File handler is always active at INFO level.
     Stderr handler level is controlled by the caller.
     """
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     logging.config.dictConfig(
         {

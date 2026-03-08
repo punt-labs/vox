@@ -48,9 +48,10 @@ def resolve_player() -> list[str]:
 def play_audio(path: Path) -> None:
     """Acquire flock, play audio, release. Blocking."""
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Waiting for playback lock: %s", path.name)
     with LOCK_FILE.open("w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        logger.debug("Acquired playback lock, playing %s", path)
+        logger.info("Acquired playback lock, playing %s", path.name)
         try:
             cmd = resolve_player()
         except FileNotFoundError:
@@ -82,6 +83,11 @@ def enqueue(path: Path) -> None:
     except OSError:
         logger.warning("Failed to copy %s for playback", path)
         return
+    logger.info(
+        "Enqueue playback: %s → %s",
+        path.name,
+        pending.name,
+    )
     try:
         subprocess.Popen(
             [sys.executable, "-m", "punt_vox.playback", str(pending)],
