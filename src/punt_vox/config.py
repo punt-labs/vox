@@ -9,6 +9,7 @@ the file is missing.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import subprocess
@@ -20,12 +21,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(".vox/config.md")
 
 
+@functools.lru_cache(maxsize=1)
 def resolve_config_path() -> Path:
     """Resolve .vox/config.md at the main repo root (worktree-safe).
 
     Uses ``git rev-parse --git-common-dir`` to find the shared git
     directory, then resolves to its parent.  Falls back to cwd-relative
     ``.vox/config.md`` when git is unavailable or not in a repo.
+
+    Result is cached for the process lifetime — the git root does not
+    change during a session.
     """
     try:
         result = subprocess.run(
