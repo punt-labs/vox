@@ -59,11 +59,20 @@ ZSPEC = docs/vox-notify.tex
 
 zspec: ## Type-check and compile Z spec
 	fuzz -t $(ZSPEC)
-	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex > /dev/null 2>&1
-	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex > /dev/null 2>&1
-	@echo "  docs/vox-notify.pdf"
+	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex > vox-notify.log 2>&1
+	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex >> vox-notify.log 2>&1
+	@if [ -f docs/vox-notify.pdf ]; then \
+		echo "  docs/vox-notify.pdf"; \
+	else \
+		echo "Error: docs/vox-notify.pdf was not produced; see docs/vox-notify.log for details." >&2; \
+		exit 1; \
+	fi
 
 zspec-test: zspec ## Animate and model-check Z spec with ProB
+	@if [ ! -x "$$(command -v probcli 2>/dev/null || echo "$(PROBCLI)")" ] && [ ! -x "$(PROBCLI)" ]; then \
+		echo "Error: probcli not found. Set PROBCLI or install ProB." >&2; \
+		exit 1; \
+	fi
 	$(PROBCLI) $(ZSPEC) -init
 	$(PROBCLI) $(ZSPEC) -animate 20
 	$(PROBCLI) $(ZSPEC) -cbc_assertions

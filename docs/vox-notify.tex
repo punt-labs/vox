@@ -2,7 +2,7 @@
 % vox-notify.tex
 %
 % Z Specification for vox notification state machine.
-% Formal model of the notify/speak/voice\_enabled configuration
+% Formal model of the notify/speak configuration
 % and the commands that transition between states.
 %
 
@@ -43,7 +43,7 @@ feedback during a Claude Code session:
     chime ($sChime$) or voice ($sVoice$, synthesized speech).
 \end{itemize}
 
-The specification models the six-cell state space, the commands
+The specification models the nine-cell state space (seven reachable), the commands
 that transition between states, and the constraints imposed by
 the current implementation. Its purpose is to identify
 unreachable states and missing commands.
