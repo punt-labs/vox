@@ -279,7 +279,7 @@ class TestElevenLabsProviderRateMessage:
 class TestElevenLabsProviderDefaultModel:
     def test_default_model(self) -> None:
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "eleven_flash_v2_5"  # pyright: ignore[reportPrivateUsage]
 
     def test_explicit_model(self) -> None:
         provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
