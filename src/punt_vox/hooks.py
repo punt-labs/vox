@@ -428,7 +428,7 @@ def handle_pre_compact(config: VoxConfig) -> None:
 
     # Chime mode: play chime, no speech
     if config.speak == "n":
-        chime = resolve_chime("done", config.vibe)
+        chime = resolve_chime("compact", config.vibe)
         if chime.exists():
             logger.info("PreCompact hook: chime mode, playing %s", chime.name)
             _enqueue_audio(chime)
