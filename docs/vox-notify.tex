@@ -1,0 +1,348 @@
+%
+% vox-notify.tex
+%
+% Z Specification for vox notification state machine.
+% Formal model of the notify/speak/voice\_enabled configuration
+% and the commands that transition between states.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\newcommand{\ok}{$\surd$}
+
+\begin{document}
+
+\title{Vox Notification State Machine: A Z Specification}
+\author{Formal Model of notify/speak Configuration}
+\date{March 2026}
+\hypersetup{
+  pdftitle={Vox Notification State Machine: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+% ===================================================================
+\section{Introduction}
+% ===================================================================
+
+Vox has two independent configuration axes that control audio
+feedback during a Claude Code session:
+
+\begin{itemize}
+  \item \textbf{notify} --- which events trigger feedback:
+    off ($nOff$), on-demand ($nOn$, stop and prompts only),
+    or continuous ($nCont$, real-time signals too).
+  \item \textbf{speak} --- what form feedback takes:
+    chime ($sChime$) or voice ($sVoice$, synthesized speech).
+\end{itemize}
+
+The specification models the six-cell state space, the commands
+that transition between states, and the constraints imposed by
+the current implementation. Its purpose is to identify
+unreachable states and missing commands.
+
+% ===================================================================
+\section{Basic Types}
+% ===================================================================
+
+\begin{zed}
+  [VOICE]
+\end{zed}
+
+$VOICE$ represents a voice identifier (e.g.\ ``matilda'', ``roger'').
+It has no internal structure in this model.
+
+% ===================================================================
+\section{Free Types}
+% ===================================================================
+
+\begin{zed}
+  NotifyMode ::= nOff | nOn | nCont
+\end{zed}
+
+\begin{zed}
+  SpeakMode ::= sUnset | sChime | sVoice
+\end{zed}
+
+$sUnset$ represents the state before the user has made an
+explicit choice. Commands that enable notifications initialize
+$speak$ to $sVoice$ when it is $sUnset$, but preserve the
+user's choice once set.
+
+% ===================================================================
+\section{State}
+% ===================================================================
+
+\begin{schema}{VoxState}
+  notify : NotifyMode \\
+  speak : SpeakMode \\
+  voice : \power VOICE
+  \where
+  \# voice \leq 1
+\end{schema}
+
+The $voice$ field is modeled as a set of at most one element ---
+an optional value. When empty, the provider default is used.
+
+% ===================================================================
+\section{Initialization}
+% ===================================================================
+
+\begin{schema}{Init}
+  VoxState'
+  \where
+  notify' = nOff \\
+  speak' = sUnset \\
+  voice' = \emptyset
+\end{schema}
+
+The initial state has notifications off and speak uninitialized.
+The first command that enables notifications will initialize
+$speak$ to $sVoice$.
+
+% ===================================================================
+\section{Observations}
+% ===================================================================
+
+These schemas model the three feedback consumers. They do not
+change state --- they observe it.
+
+\subsection{Stop/prompt feedback}
+
+Fires when $notify \neq nOff$. Output depends on $speak$.
+When $speak = sUnset$, the system behaves as $sVoice$
+(voice is the default).
+
+\begin{schema}{StopFires}
+  \Xi VoxState
+  \where
+  notify \neq nOff
+\end{schema}
+
+\begin{schema}{StopChime}
+  \Xi VoxState
+  \where
+  notify \neq nOff \\
+  speak = sChime
+\end{schema}
+
+\begin{schema}{StopVoice}
+  \Xi VoxState
+  \where
+  notify \neq nOff \\
+  speak \neq sChime
+\end{schema}
+
+\subsection{Watcher (real-time signals)}
+
+Fires only when $notify = nCont$. Output depends on $speak$.
+
+\begin{schema}{WatcherFires}
+  \Xi VoxState
+  \where
+  notify = nCont
+\end{schema}
+
+\begin{schema}{WatcherChime}
+  \Xi VoxState
+  \where
+  notify = nCont \\
+  speak = sChime
+\end{schema}
+
+\begin{schema}{WatcherVoice}
+  \Xi VoxState
+  \where
+  notify = nCont \\
+  speak \neq sChime
+\end{schema}
+
+% ===================================================================
+\section{Commands}
+% ===================================================================
+
+These are the state transitions triggered by user commands.
+
+\begin{center}
+\begin{tabular}{l|l|l}
+\textbf{User command} & \textbf{Operation} & \textbf{Effect} \\
+\hline
+\texttt{/vox y}          & $VoxOn$   & $notify \to nOn$; $speak \to sVoice$ if $sUnset$ \\
+\texttt{/vox n}          & $VoxOff$  & $notify \to nOff$; $speak$ unchanged \\
+\texttt{/vox c}          & $VoxCont$ & $notify \to nCont$; $speak \to sVoice$ if $sUnset$ \\
+\texttt{/unmute}         & $Unmute$  & $speak \to sVoice$; $notify$ unchanged; optional voice \\
+\texttt{/unmute @name}   & $Unmute$  & Same as \texttt{/unmute} with $v? = \{name\}$ \\
+\texttt{/mute}           & $Mute$    & $speak \to sChime$; $notify$ unchanged \\
+\end{tabular}
+\end{center}
+
+The two axes are controlled by separate commands.
+\texttt{/vox y\textbar n\textbar c} controls the $notify$ axis
+and initializes $speak \to sVoice$ on first use (when $sUnset$),
+but preserves the user's explicit choice thereafter.
+\texttt{/unmute} and \texttt{/mute} control the $speak$ axis
+independently. Chime-only states require an explicit
+\texttt{/mute}. The design invariant: \textbf{first activation
+implies voice; subsequent activations respect the user's choice}.
+
+The observation schemas are triggered by system events, not
+user commands:
+
+\begin{center}
+\begin{tabular}{l|l|l}
+\textbf{System event} & \textbf{Observation} & \textbf{When it fires} \\
+\hline
+Task completion      & $StopChime$ / $StopVoice$       & $notify \neq nOff$ \\
+Permission prompt    & $StopChime$ / $StopVoice$       & $notify \neq nOff$ \\
+Real-time signal     & $WatcherChime$ / $WatcherVoice$ & $notify = nCont$ only \\
+\end{tabular}
+\end{center}
+
+\subsection{VoxOn ($\mathord{/vox~y}$)}
+
+Sets $notify = nOn$. Initializes $speak$ to $sVoice$ if
+unset; preserves the user's choice otherwise.
+
+\begin{schema}{VoxOn}
+  \Delta VoxState
+  \where
+  notify' = nOn \\
+  speak' = \IF speak = sUnset \THEN sVoice \ELSE speak \\
+  voice' = voice
+\end{schema}
+
+\subsection{VoxOff ($\mathord{/vox~n}$)}
+
+Disables all notifications.
+
+\begin{schema}{VoxOff}
+  \Delta VoxState
+  \where
+  notify' = nOff \\
+  speak' = speak \\
+  voice' = voice
+\end{schema}
+
+\subsection{VoxCont ($\mathord{/vox~c}$)}
+
+Enables continuous mode. Initializes $speak$ to $sVoice$
+if unset; preserves the user's choice otherwise.
+
+\begin{schema}{VoxCont}
+  \Delta VoxState
+  \where
+  notify' = nCont \\
+  speak' = \IF speak = sUnset \THEN sVoice \ELSE speak \\
+  voice' = voice
+\end{schema}
+
+\subsection{Unmute ($\mathord{/unmute}$)}
+
+Sets $speak = sVoice$ without changing $notify$.
+Optionally sets a session voice. Symmetric inverse
+of $Mute$.
+
+\begin{schema}{Unmute}
+  \Delta VoxState \\
+  v? : \power VOICE
+  \where
+  \# v? \leq 1 \\
+  notify' = notify \\
+  speak' = sVoice \\
+  voice' = \IF v? = \emptyset \THEN voice \ELSE v?
+\end{schema}
+
+\subsection{Mute ($\mathord{/mute}$)}
+
+Switches to chime mode. Does not change $notify$.
+
+\begin{schema}{Mute}
+  \Delta VoxState
+  \where
+  notify' = notify \\
+  speak' = sChime \\
+  voice' = voice
+\end{schema}
+
+% ===================================================================
+\section{Reachability Analysis}
+% ===================================================================
+
+The state space has nine cells (3 notify $\times$ 3 speak),
+but $sUnset$ is a transient initial state --- any command that
+touches the $speak$ axis or enables notifications moves out of
+it permanently.
+
+\begin{center}
+  \begin{tabular}{l|c|c|c}
+    & $sUnset$ & $sChime$ & $sVoice$ \\
+    \hline
+    $nOff$  & cell 0 & cell 1 & cell 2 \\
+    $nOn$   & --- & cell 3 & cell 4 \\
+    $nCont$ & --- & cell 5 & cell 6 \\
+  \end{tabular}
+\end{center}
+
+Cells marked --- are unreachable: enabling notifications ($nOn$
+or $nCont$) initializes $sUnset \to sVoice$, so $speak$ is never
+$sUnset$ when notifications are active.
+
+\subsection{Full transition table}
+
+Every cell lists the target cell for each command.
+
+\begin{center}
+  \begin{tabular}{l|c|c|c|c|c}
+    \textbf{From} & \texttt{/vox y} & \texttt{/vox n} & \texttt{/vox c} & \texttt{/unmute} & \texttt{/mute} \\
+    \hline
+    0 ($nOff/sUnset$)  & 4 & 0 & 6 & 2 & 1 \\
+    1 ($nOff/sChime$)  & 3 & 1 & 5 & 2 & 1 \\
+    2 ($nOff/sVoice$)  & 4 & 2 & 6 & 2 & 1 \\
+    3 ($nOn/sChime$)   & 3 & 1 & 5 & 4 & 3 \\
+    4 ($nOn/sVoice$)   & 4 & 2 & 6 & 4 & 3 \\
+    5 ($nCont/sChime$) & 3 & 1 & 5 & 6 & 5 \\
+    6 ($nCont/sVoice$) & 4 & 2 & 6 & 6 & 5 \\
+  \end{tabular}
+\end{center}
+
+Note: from cells 1, 3, 5 (chime), \texttt{/vox y} and \texttt{/vox c}
+preserve $sChime$ because $speak \neq sUnset$. This is the key
+design property: once the user has muted, enabling notifications
+does not re-unmute them.
+
+\subsection{Reachability}
+
+Starting from $Init$ ($nOff$, $sUnset$ = cell 0):
+
+\begin{itemize}
+  \item \textbf{Cell 4} ($nOn/sVoice$): $VoxOn$ from cell 0. \ok{}
+  \item \textbf{Cell 6} ($nCont/sVoice$): $VoxCont$ from cell 0. \ok{}
+  \item \textbf{Cell 2} ($nOff/sVoice$): $Unmute$ from cell 0. \ok{}
+  \item \textbf{Cell 1} ($nOff/sChime$): $Mute$ from cell 0. \ok{}
+  \item \textbf{Cell 3} ($nOn/sChime$): $Mute$ then $VoxOn$. \ok{}
+  \item \textbf{Cell 5} ($nCont/sChime$): $Mute$ then $VoxCont$. \ok{}
+\end{itemize}
+
+All seven reachable cells are accessible from $Init$ in at most
+two commands. The $sUnset$ state is left on the first command
+that touches either axis and is never re-entered.
+
+The design has two invariants:
+\begin{enumerate}
+  \item \textbf{First activation implies voice}: $sUnset$ resolves
+    to $sVoice$ on first enable.
+  \item \textbf{User choice is sticky}: once $speak$ is $sChime$ or
+    $sVoice$, only \texttt{/mute} and \texttt{/unmute} change it.
+    Enabling notifications preserves the user's explicit choice.
+\end{enumerate}
+
+No missing commands.
+
+\end{document}

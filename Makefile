@@ -1,4 +1,4 @@
-.PHONY: help test lint type check format build prfaq clean-tex
+.PHONY: help test lint type check format build prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -52,3 +52,24 @@ prfaq: ## Compile .tex to .pdf and clean artifacts
 
 clean-tex: ## Remove LaTeX intermediate files
 	@rm -f $(LATEX_ARTIFACTS)
+
+# Z specification targets
+PROBCLI ?= $(HOME)/Applications/ProB/probcli
+ZSPEC = docs/vox-notify.tex
+
+zspec: ## Type-check and compile Z spec
+	fuzz -t $(ZSPEC)
+	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex > /dev/null 2>&1
+	cd docs && pdflatex -interaction=nonstopmode vox-notify.tex > /dev/null 2>&1
+	@echo "  docs/vox-notify.pdf"
+
+zspec-test: zspec ## Animate and model-check Z spec with ProB
+	$(PROBCLI) $(ZSPEC) -init
+	$(PROBCLI) $(ZSPEC) -animate 20
+	$(PROBCLI) $(ZSPEC) -cbc_assertions
+	$(PROBCLI) $(ZSPEC) -cbc_deadlock
+	$(PROBCLI) $(ZSPEC) -model_check \
+		-p DEFAULT_SETSIZE 2 \
+		-p MAX_INITIALISATIONS 100 \
+		-p MAX_OPERATIONS 1000 \
+		-p TIME_OUT 30000
