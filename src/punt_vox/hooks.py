@@ -116,6 +116,7 @@ def resolve_chime(signal: str, vibe: str | None) -> Path:
 
 def _enqueue_audio(path: Path) -> None:
     """Play audio via flock-serialized queue (non-blocking)."""
+    logger.info("Hook enqueue: %s (pid=%d)", path.name, os.getpid())
     try:
         subprocess.Popen(
             ["vox", "play", str(path)],
@@ -124,7 +125,7 @@ def _enqueue_audio(path: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError:
-        logger.debug("vox binary not found, skipping audio")
+        logger.warning("vox binary not found, skipping audio")
 
 
 # ---------------------------------------------------------------------------
@@ -198,20 +199,24 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
     """
     # Not enabled
     if config.notify == "n":
+        logger.info("Stop hook: skip (notify=n)")
         return None
 
     # Already continuing from a previous Stop hook — prevent infinite loop
     stop_active = data.get("stop_hook_active", False)
     if stop_active is True:
+        logger.info("Stop hook: skip (stop_hook_active=True, preventing loop)")
         return None
 
     # No signals = no meaningful work to summarize
     if not config.vibe_signals:
+        logger.info("Stop hook: skip (no vibe_signals)")
         return None
 
     # Chime mode: play chime, let Claude stop
     if config.speak == "n":
         chime = resolve_chime("done", config.vibe)
+        logger.info("Stop hook: chime mode, playing %s", chime.name)
         if chime.exists():
             _enqueue_audio(chime)
         return None
@@ -220,6 +225,10 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
     # Resolve tags and write to config so apply_vibe picks them up
     # automatically — no data in the user-visible reason string.
     phrase = random.choice(STOP_PHRASES)
+    logger.info(
+        "Stop hook: blocking for voice summary (signals=%s)",
+        config.vibe_signals,
+    )
     if config.vibe_mode == "off":
         pass  # User disabled vibe — don't write tags
     elif config.vibe_mode == "manual" and config.vibe_tags:
@@ -350,6 +359,7 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
     """
     # Not enabled
     if config.notify == "n":
+        logger.info("Notification hook: skip (notify=n)")
         return
 
     notification_type = data.get("notification_type", "unknown")
@@ -360,9 +370,12 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
     if not isinstance(message, str):
         message = "Needs your attention"
 
+    logger.info("Notification hook: type=%s", notification_type)
+
     # Chime mode
     if config.speak == "n":
         chime = resolve_chime("prompt", config.vibe)
+        logger.info("Notification hook: chime mode, playing %s", chime.name)
         if chime.exists():
             _enqueue_audio(chime)
         return

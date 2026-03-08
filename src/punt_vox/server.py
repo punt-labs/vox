@@ -208,8 +208,14 @@ def _synthesize_and_enqueue(
 ) -> None:
     """Background worker: synthesize segments and enqueue for playback."""
     try:
+        logger.info(
+            "Synthesis started: %d segment(s), dir=%s",
+            len(requests),
+            output_dir,
+        )
         results = _synthesize_segments(requests, provider, output_dir, pause_ms)
         for r in results:
+            logger.info("Synthesis done, enqueuing: %s", r.path.name)
             _enqueue_audio(r.path)
     except Exception:
         logger.exception("Background synthesis failed")
