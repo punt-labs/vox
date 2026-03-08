@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-03-08
+
+### Fixed
+
+- `vox install` used wrong plugin ID (`tts@punt-labs` instead of `vox@punt-labs`)
+- `install.sh` pinned to stale version 1.2.0 instead of current release
+
 ## [1.2.2] - 2026-03-08
 
 ### Added
