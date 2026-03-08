@@ -752,7 +752,7 @@ def doctor(
 # install / uninstall (Claude Code marketplace)
 # ---------------------------------------------------------------------------
 
-_PLUGIN_ID = "tts@punt-labs"
+_PLUGIN_ID = "vox@punt-labs"
 
 
 @app.command()
