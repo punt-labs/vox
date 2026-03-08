@@ -7,6 +7,7 @@ Events:
 - **stop**: task-completion notification (decision-block pattern)
 - **post-bash**: signal accumulator for auto-vibe
 - **notification**: permission/idle prompt audio alerts
+- **pre-compact**: playful 'be right back' before context compaction
 """
 
 from __future__ import annotations
@@ -401,6 +402,56 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PreCompact — playful 'be right back' before context compaction
+# ---------------------------------------------------------------------------
+
+PRE_COMPACT_PHRASES = [
+    "Grabbing a snack, be right back.",
+    "Quick bathroom break, one sec.",
+    "Stretching my legs for a moment.",
+    "Hold that thought — reorganizing my notes.",
+    "Tidying up my desk, back in a flash.",
+    "Refilling my coffee, don't go anywhere.",
+    "Let me gather my thoughts real quick.",
+]
+
+
+def handle_pre_compact(config: VoxConfig) -> None:
+    """Play a playful message before context compaction.
+
+    Only fires in continuous mode (notify=c). In on-demand (y) or
+    off (n), compaction happens silently.
+    """
+    if config.notify != "c":
+        logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
+        return
+
+    # Chime mode: play chime, no speech
+    if config.speak == "n":
+        chime = resolve_chime("done", config.vibe)
+        if chime.exists():
+            logger.info("PreCompact hook: chime mode, playing %s", chime.name)
+            _enqueue_audio(chime)
+        return
+
+    # Voice mode: speak a playful phrase
+    text = random.choice(PRE_COMPACT_PHRASES)
+    logger.info("PreCompact hook: speaking '%s'", text)
+
+    voice_args: list[str] = []
+    if config.voice:
+        voice_args = ["--voice", config.voice]
+
+    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
+        subprocess.run(
+            ["vox", "unmute", text, *voice_args, "--json"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+
+
+# ---------------------------------------------------------------------------
 # CLI commands
 # ---------------------------------------------------------------------------
 
@@ -440,3 +491,14 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config = read_config(config_path)
     data = _read_hook_input()
     handle_notification(data, config)
+
+
+@hook_app.command("pre-compact")
+def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """PreCompact hook: playful 'be right back' message."""
+    config_path = resolve_config_path()
+    if not config_path.exists():
+        return
+
+    config = read_config(config_path)
+    handle_pre_compact(config)

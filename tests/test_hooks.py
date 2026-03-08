@@ -7,9 +7,11 @@ from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
+    PRE_COMPACT_PHRASES,
     STOP_PHRASES,
     classify_signal,
     handle_notification,
+    handle_pre_compact,
     handle_stop,
     resolve_chime,
     resolve_tags_from_signals,
@@ -394,3 +396,63 @@ class TestHandlePostBash:
 
         text = config_path.read_text()
         assert "vibe_signals" not in text
+
+
+# ---------------------------------------------------------------------------
+# handle_pre_compact tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandlePreCompact:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_n(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """PreCompact does nothing when notify=n."""
+        config = _make_config(notify="n")
+        handle_pre_compact(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_y(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """PreCompact does nothing when notify=y (on-demand only)."""
+        config = _make_config(notify="y")
+        handle_pre_compact(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode_plays_chime(self, mock_enqueue: MagicMock) -> None:
+        """PreCompact plays chime when notify=c and speak=n."""
+        config = _make_config(notify="c", speak="n")
+        handle_pre_compact(config)
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_speaks(self, mock_run: MagicMock) -> None:
+        """PreCompact speaks a phrase when notify=c and speak=y."""
+        config = _make_config(notify="c", speak="y", voice="matilda")
+        handle_pre_compact(config)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "vox"
+        assert cmd[1] == "unmute"
+        assert "--voice" in cmd
+        assert "matilda" in cmd
+        # Phrase should be from the pool
+        spoken_text = cmd[2]
+        assert spoken_text in PRE_COMPACT_PHRASES
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_no_voice_config(self, mock_run: MagicMock) -> None:
+        """PreCompact works without explicit voice config."""
+        config = _make_config(notify="c", speak="y")
+        handle_pre_compact(config)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "--voice" not in cmd
