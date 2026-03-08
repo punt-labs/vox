@@ -536,9 +536,14 @@ def notify(
     are heard as chimes or TTS speech is controlled by the separate
     ``speak`` field (see the ``speak`` tool).
 
+    When enabling notifications (mode "y" or "c"), initializes speak to
+    "y" (voice) if the user has not yet made an explicit speak choice.
+    Once the user has set speak via ``/mute`` or ``/unmute``, enabling
+    notifications preserves that choice.
+
     Args:
         mode: Notification mode — "y" (notifications on), "n" (off),
-            or "c" (continuous with spoken summaries; forces speak="y").
+            or "c" (continuous with real-time signal announcements).
         voice: Optional session voice to set (e.g. "matilda", "roger").
 
     Returns:
@@ -548,9 +553,8 @@ def notify(
         return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n/c."})
 
     config_path = _CONFIG_PATH
-    first_init = not config_path.exists()
     updates: dict[str, str] = {"notify": mode}
-    if mode == "c" or (first_init and mode == "y"):
+    if mode in ("y", "c") and read_field("speak", config_path) is None:
         updates["speak"] = "y"
     if voice is not None:
         updates["voice"] = voice
@@ -561,20 +565,25 @@ def notify(
 @mcp.tool()
 def speak(
     mode: str,
+    voice: str | None = None,
 ) -> str:
     """Toggle spoken notifications on or off.
 
     Args:
         mode: "y" for voice (TTS speech) or "n" for chimes only.
+        voice: Optional session voice to set (e.g. "matilda", "roger").
 
     Returns:
-        JSON string with the updated speak field.
+        JSON string with the updated fields.
     """
     if mode not in ("y", "n"):
         return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n."})
 
-    write_fields({"speak": mode}, config_path=_CONFIG_PATH)
-    return json.dumps({"speak": mode})
+    updates: dict[str, str] = {"speak": mode}
+    if voice is not None:
+        updates["voice"] = voice
+    write_fields(updates, config_path=_CONFIG_PATH)
+    return json.dumps(updates)
 
 
 @mcp.tool()

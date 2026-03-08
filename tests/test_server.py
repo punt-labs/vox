@@ -636,16 +636,38 @@ class TestNotifyTool:
         result = json.loads(notify(mode="n"))
         assert result["notify"]["notify"] == "n"
 
-    def test_set_mode_c_sets_speak(self, _patch_config: Path) -> None:
+    def test_speak_unset_c_inits_voice(self, _patch_config: Path) -> None:
+        # speak not yet in config — mode=c should initialize it
         _patch_config.write_text("---\n---\n")
         result = json.loads(notify(mode="c"))
         assert result["notify"]["notify"] == "c"
         assert result["notify"]["speak"] == "y"
 
-    def test_first_init_y_sets_speak(self, _patch_config: Path) -> None:
+    def test_speak_unset_y_inits_voice(self, _patch_config: Path) -> None:
+        # speak not yet in config — mode=y should also initialize it
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(notify(mode="y"))
+        assert result["notify"]["speak"] == "y"
+
+    def test_speak_unset_first_init_inits_voice(self, _patch_config: Path) -> None:
         # Config file does not exist — first init
         result = json.loads(notify(mode="y"))
         assert result["notify"]["speak"] == "y"
+
+    def test_speak_set_preserved_by_c(self, _patch_config: Path) -> None:
+        # User explicitly muted — mode=c should not re-enable voice
+        _patch_config.write_text('---\nspeak: "n"\n---\n')
+        result = json.loads(notify(mode="c"))
+        assert result["notify"]["notify"] == "c"
+        assert "speak" not in result["notify"]
+        assert 'speak: "n"' in _patch_config.read_text()
+
+    def test_speak_set_preserved_by_y(self, _patch_config: Path) -> None:
+        # User explicitly muted — mode=y should not re-enable voice
+        _patch_config.write_text('---\nspeak: "n"\n---\n')
+        result = json.loads(notify(mode="y"))
+        assert "speak" not in result["notify"]
+        assert 'speak: "n"' in _patch_config.read_text()
 
     def test_set_voice(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\n---\n")
@@ -677,6 +699,13 @@ class TestSpeakTool:
         result = json.loads(speak(mode="n"))
         assert result["speak"] == "n"
         assert 'speak: "n"' in _patch_config.read_text()
+
+    def test_set_voice(self, _patch_config: Path) -> None:
+        _patch_config.write_text("---\n---\n")
+        result = json.loads(speak(mode="y", voice="matilda"))
+        assert result["speak"] == "y"
+        assert result["voice"] == "matilda"
+        assert 'voice: "matilda"' in _patch_config.read_text()
 
     def test_invalid_mode(self, _patch_config: Path) -> None:
         _patch_config.write_text("---\n---\n")
