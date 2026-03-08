@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.2] - 2026-03-08
 
+### Added
+
+- `/mute` replies with a random personality phrase instead of silent confirmation (#83)
+- PreCompact hook plays a playful "be right back" message before context compaction in continuous mode (#83)
+- Distinct `"compact"` chime signal for PreCompact (distinguishable from task-complete `"done"`)
+
+### Fixed
+
+- Global `--json` flag now placed before subcommand for correct typer parsing in hook subprocess calls
+- PreCompact CLI command drains stdin to prevent pipe backpressure
+- Z spec partition test coverage for notify/speak state machine (#82)
+
 ## [1.2.1] - 2026-03-06
 
 ## [1.2.1] - 2026-03-07
