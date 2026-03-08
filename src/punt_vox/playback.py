@@ -84,10 +84,9 @@ def enqueue(path: Path) -> None:
         logger.warning("Failed to copy %s for playback", path)
         return
     logger.info(
-        "Enqueue playback: %s → %s (pid=%d)",
+        "Enqueue playback: %s → %s",
         path.name,
         pending.name,
-        os.getpid(),
     )
     try:
         subprocess.Popen(
