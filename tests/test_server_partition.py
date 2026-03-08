@@ -334,13 +334,13 @@ class TestMute:
 
 # ---------------------------------------------------------------------------
 # Observation partitions — config-based guards
-# These verify that hook/watcher guard conditions are expressed correctly
-# in the config state produced by operations.
+# These verify hook/watcher guard predicates against static config state
+# (written via _write_state, not produced by notify/speak operations).
 # ---------------------------------------------------------------------------
 
 
 class TestStopObservations:
-    """Partitions 26-32: StopFires/StopChime/StopVoice observations."""
+    """Partitions 26-31: StopFires/StopChime/StopVoice observations."""
 
     def test_partition_26_stop_fires_non(self, _patch_config: Path) -> None:
         """P26: nOn/sVoice → stop fires (notify ≠ nOff)."""
