@@ -14,7 +14,7 @@ build/
 htmlcov/
 *.mp3
 !assets/chime_*.mp3
-!assets/samples/*.mp3
+!assets/samples/*.mp4
 *.wav
 *.ogg
 .venv/
