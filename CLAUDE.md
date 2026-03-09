@@ -192,10 +192,10 @@ git checkout -b feat/thing-two main
 # Session end: /exit cleans up the worktree
 ```
 
-**After creating a PR, watch CI and reviews in the background.** Run `gh pr checks <number> --watch` in the background so you are notified when checks complete. Do not stop waiting — CI, Copilot, and Bugbot all need time to post.
+**After creating a PR, watch CI and reviews without blocking your main shell.** Run `gh pr checks <number> --watch` in the background so you are notified when checks complete. Do not stop waiting — CI, Copilot, and Bugbot all need time to post.
 
 ```bash
-gh pr checks <number> --watch          # Run in background: polls until all checks resolve
+gh pr checks <number> --watch          # Run in background task: polls until all checks resolve
 ```
 
 **Expect 2-6 review cycles before merging.** Do not rush to merge after the first review. Each cycle: read feedback, fix, re-push, wait for new reviews. A PR is ready to merge ONLY when the most recent review cycle raised zero new issues — zero new comments, zero requested changes, all checks green.
