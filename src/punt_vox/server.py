@@ -268,6 +268,8 @@ def unmute(
     style: float | None = None,
     speaker_boost: bool | None = None,
     vibe_tags: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Synthesize and play audio sequentially.
 
@@ -297,27 +299,46 @@ def unmute(
         speaker_boost: ElevenLabs speaker boost toggle.
         vibe_tags: ElevenLabs expressive tags (e.g. "[warm] [satisfied]").
             When provided, writes tags to config and clears vibe_signals.
+        provider: TTS provider override (elevenlabs, openai, polly, say,
+            espeak). When provided, persists to session config for
+            subsequent calls.
+        model: TTS model override (e.g. eleven_v3, eleven_flash_v2_5,
+            tts-1). When provided, persists to session config for
+            subsequent calls.
 
     Returns:
         JSON string with synthesis results.
     """
     _validate_voice_settings(stability, similarity, style)
+
+    # Persist provider/model to session config when explicitly set.
+    config_updates: dict[str, str] = {}
+    if provider is not None:
+        config_updates["provider"] = provider
+    if model is not None:
+        config_updates["model"] = model
     if vibe_tags is not None:
-        write_fields({"vibe_tags": vibe_tags, "vibe_signals": ""}, _CONFIG_PATH)
+        config_updates["vibe_tags"] = vibe_tags
+        config_updates["vibe_signals"] = ""
+    if config_updates:
+        write_fields(config_updates, _CONFIG_PATH)
 
     # Normalize input: text → single segment
     if segments is None:
         if text is None:
+            if config_updates:
+                # Config-only call (no text to speak).
+                return json.dumps({"status": "config updated", **config_updates})
             return json.dumps({"error": "Provide text or segments."})
         segments = [{"text": text}]
 
-    provider = get_provider()
+    tts_provider = get_provider(provider, model=model)
     try:
         requests = _build_requests(
             segments,
             voice,
             language,
-            provider,
+            tts_provider,
             rate=rate,
             stability=stability,
             similarity=similarity,
@@ -332,12 +353,12 @@ def unmute(
         return json.dumps([])
 
     dir_path = resolve_output_dir(None, ephemeral=ephemeral)
-    predicted = _predict_results(requests, provider, dir_path)
+    predicted = _predict_results(requests, tts_provider, dir_path)
 
     # Synthesize and play in background — return immediately
     threading.Thread(
         target=_synthesize_and_enqueue,
-        args=(requests, provider, dir_path, pause_ms),
+        args=(requests, tts_provider, dir_path, pause_ms),
         daemon=True,
     ).start()
 

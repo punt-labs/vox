@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ElevenLabsProvider"]
 
-# Default model — 70+ languages, most expressive.
-_DEFAULT_MODEL = "eleven_v3"
+# Default model — low latency, 32 languages, half the cost of v3.
+_DEFAULT_MODEL = "eleven_flash_v2_5"
 
-# Character limits per model. eleven_v3 supports up to 40k; older models 10k.
+# Character limits per model (from ElevenLabs docs).
 _MODEL_CHAR_LIMITS: dict[str, int] = {
-    "eleven_v3": 40_000,
+    "eleven_v3": 5_000,
+    "eleven_flash_v2_5": 40_000,
     "eleven_turbo_v2_5": 10_000,
     "eleven_turbo_v2": 10_000,
     "eleven_multilingual_v2": 10_000,
@@ -88,7 +89,8 @@ class ElevenLabsProvider:
     """ElevenLabs TTS provider.
 
     Implements the TTSProvider protocol using the ElevenLabs SDK.
-    Supports the eleven_v3 model (70+ languages) and all ElevenLabs voices.
+    Defaults to eleven_flash_v2_5 (low latency, 32 languages).
+    Override with TTS_MODEL env var (e.g. eleven_v3 for 70+ languages).
     """
 
     def __init__(
@@ -113,9 +115,12 @@ class ElevenLabsProvider:
     def default_voice(self) -> str:
         return "matilda"
 
+    # Models that interpret bracket-style expressive tags (e.g. [excited]).
+    _EXPRESSIVE_MODELS: frozenset[str] = frozenset({"eleven_v3"})
+
     @property
     def supports_expressive_tags(self) -> bool:
-        return True
+        return self._model in self._EXPRESSIVE_MODELS
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
         output_path = resolve_output_path(request)

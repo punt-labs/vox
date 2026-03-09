@@ -279,7 +279,7 @@ class TestElevenLabsProviderRateMessage:
 class TestElevenLabsProviderDefaultModel:
     def test_default_model(self) -> None:
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "eleven_flash_v2_5"  # pyright: ignore[reportPrivateUsage]
 
     def test_explicit_model(self) -> None:
         provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
@@ -294,6 +294,44 @@ class TestElevenLabsProviderDefaultModel:
     def test_explicit_overrides_env(self) -> None:
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
+
+    def test_expressive_tags_supported_on_v3(self) -> None:
+        provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
+        assert provider.supports_expressive_tags is True
+
+    def test_expressive_tags_not_supported_on_flash(self) -> None:
+        provider = ElevenLabsProvider(client=MagicMock())
+        assert provider.supports_expressive_tags is False
+
+    def test_expressive_tags_not_supported_on_turbo(self) -> None:
+        provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
+        assert provider.supports_expressive_tags is False
+
+
+class TestElevenLabsProviderCharLimits:
+    def test_v3_chunks_above_5k(self) -> None:
+        """eleven_v3 should chunk text exceeding 5,000 chars."""
+        provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
+        text = "a" * 5_001
+        request = SynthesisRequest(text=text, voice="matilda")
+        with (
+            patch.object(provider, "_chunked_synthesize") as mock_chunked,
+            patch.object(provider, "_single_synthesize"),
+        ):
+            provider.synthesize(request, Path("/tmp/out.mp3"))
+            mock_chunked.assert_called_once()
+
+    def test_flash_single_call_under_40k(self) -> None:
+        """eleven_flash_v2_5 should use single call for text under 40k."""
+        provider = ElevenLabsProvider(client=MagicMock())
+        text = "a" * 10_000
+        request = SynthesisRequest(text=text, voice="matilda")
+        with (
+            patch.object(provider, "_single_synthesize") as mock_single,
+            patch.object(provider, "_chunked_synthesize"),
+        ):
+            provider.synthesize(request, Path("/tmp/out.mp3"))
+            mock_single.assert_called_once()
 
 
 class TestElevenLabsProviderLanguageSupport:
