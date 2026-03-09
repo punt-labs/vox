@@ -192,16 +192,32 @@ git checkout -b feat/thing-two main
 # Session end: /exit cleans up the worktree
 ```
 
-**After creating a PR, block until CI and Copilot finish.** Do not proceed to merge or start other work until these commands complete. `--watch` blocks the shell until all checks resolve — this is intentional.
+**After creating a PR, watch CI and reviews in the background.** Run `gh pr checks <number> --watch` in the background so you are notified when checks complete. Do not stop waiting — CI, Copilot, and Bugbot all need time to post.
 
 ```bash
-gh pr checks <number> --watch          # BLOCKING: polls until all checks pass or fail
-gh pr view <number> --comments         # Read Copilot feedback — address before merging
+gh pr checks <number> --watch          # Run in background: polls until all checks resolve
 ```
 
-**Wait for Copilot review before merging.** After CI passes, use `mcp__github__pull_request_read` with `get_reviews` and `get_review_comments` methods to check for Copilot feedback. Address all findings before merging. Never merge a PR before Copilot has reviewed it — Copilot may take 1-3 minutes to post after CI completes.
+**Expect 2-6 review cycles before merging.** Do not rush to merge after the first review. Each cycle: read feedback, fix, re-push, wait for new reviews. A PR is ready to merge ONLY when the most recent review cycle raised zero new issues — zero new comments, zero requested changes, all checks green.
 
-**Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). `gh pr merge` tries to checkout main locally, which fails inside a worktree. After merging, pull main to stay ready for the next PR.
+**Read feedback using MCP GitHub tools.** Prefer MCP over `gh` CLI for all PR interactions:
+
+```bash
+# Primary: MCP tools (richer data, no local side effects)
+mcp__github__pull_request_read  # method: get_reviews — review verdicts and bodies
+mcp__github__pull_request_read  # method: get_review_comments — inline code comments
+
+# Fallback only if MCP is unavailable
+gh pr view <number> --comments
+```
+
+**Take every comment seriously.** Do not dismiss feedback as "unrelated to the change" or "pre-existing." If a reviewer flags it, it matters. If you genuinely disagree, explain why in a reply — do not silently ignore. Copilot and Bugbot may take 1-3 minutes to post after CI completes; wait for them.
+
+**Fix, re-push, and repeat.** After addressing feedback, push the fixes and wait for the next review cycle. Continue until the last cycle is uneventful — no new comments, no requested changes, all checks green. Only then is the PR ready to merge.
+
+**Prefer MCP GitHub tools over `gh` CLI.** Use MCP tools for PR creation (`mcp__github__create_pull_request`), review reading (`mcp__github__pull_request_read`), and merging (`mcp__github__merge_pull_request`). MCP calls are API-only with no local git side effects. `gh pr merge` tries to checkout main locally, which fails inside a worktree.
+
+**Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). After merging, pull main to stay ready for the next PR.
 
 ```bash
 # mcp__github__merge_pull_request(owner="punt-labs", repo="vox", pullNumber=N, merge_method="squash")
@@ -282,6 +298,13 @@ git status                  # Must show "up to date with origin"
 ```
 
 Work is NOT complete until `git push` succeeds.
+
+## Pre-PR Checklist
+
+- [ ] **CHANGELOG entry included in the PR diff** under `## [Unreleased]` (not retroactively on main)
+- [ ] **README updated** if user-facing behavior changed (new commands, flags, providers, config)
+- [ ] **prfaq.tex updated** if the change shifts product direction or validates/invalidates a risk
+- [ ] **Quality gates pass** — `uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/ && uv run mypy src/ tests/ && uv run pyright src/ tests/ && uv run pytest tests/ -v && shellcheck -x hooks/*.sh scripts/*.sh install.sh`
 
 ## Known Type Checker Workarounds
 
