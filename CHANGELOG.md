@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Continuous mode hooks**: UserPromptSubmit acknowledgment, SubagentStart/Stop announcements, SessionEnd farewell speech — all fire only in continuous mode (`/vox c`) except SessionEnd which fires whenever notify != off
+- Centralized quip registry (`quips.py`) for all hook speech phrases — localization and theming ready
+- Shared `_speak_phrase()` helper eliminates duplication across continuous-mode hook handlers
+
 ## [1.3.0] - 2026-03-09
 
 ## [1.2.4] - 2026-03-08

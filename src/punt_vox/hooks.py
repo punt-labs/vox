@@ -8,6 +8,10 @@ Events:
 - **post-bash**: signal accumulator for auto-vibe
 - **notification**: permission/idle prompt audio alerts
 - **pre-compact**: playful 'be right back' before context compaction
+- **user-prompt-submit**: acknowledgment in continuous mode
+- **subagent-start**: subagent spawn announcement in continuous mode
+- **subagent-stop**: subagent completion announcement in continuous mode
+- **session-end**: farewell speech
 """
 
 from __future__ import annotations
@@ -31,6 +35,16 @@ from punt_vox.config import (
     write_fields,
 )
 from punt_vox.mood import classify_mood
+from punt_vox.quips import (
+    ACKNOWLEDGE_PHRASES,
+    FAREWELL_PHRASES,
+    IDLE_PHRASES,
+    PERMISSION_PHRASES,
+    PRE_COMPACT_PHRASES,
+    STOP_PHRASES,
+    SUBAGENT_START_PHRASES,
+    SUBAGENT_STOP_PHRASES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +146,6 @@ def _enqueue_audio(path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Stop handler — decision-block pattern
 # ---------------------------------------------------------------------------
-
-STOP_PHRASES = [
-    "\u266a Speaking my thoughts...",
-    "\u266a Putting my thoughts into words...",
-    "\u266a Summing it up aloud...",
-    "\u266a Saying my piece...",
-    "\u266a Voicing my closing remarks...",
-    "\u266a Letting you hear how it went...",
-    "\u266a Telling you what I did...",
-]
 
 
 def resolve_tags_from_signals(signals: str) -> str:
@@ -324,26 +328,6 @@ def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
 # Notification — permission/idle prompt audio alerts
 # ---------------------------------------------------------------------------
 
-PERMISSION_PHRASES = [
-    "Needs your approval.",
-    "Quick approval needed.",
-    "Need a green light here.",
-    "Got a question for you.",
-    "Your call on this one.",
-    "Mind taking a look?",
-    "Waiting on your go-ahead.",
-]
-
-IDLE_PHRASES = [
-    "Waiting for your input.",
-    "Ready when you are.",
-    "Over to you.",
-    "Standing by.",
-    "Your turn.",
-    "What do you think?",
-    "Need your thoughts on this.",
-]
-
 
 def _pick_notification_phrase(notification_type: str, message: str) -> str:
     """Pick a phrase for a notification type."""
@@ -405,16 +389,6 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 # PreCompact — playful 'be right back' before context compaction
 # ---------------------------------------------------------------------------
 
-PRE_COMPACT_PHRASES = [
-    "Grabbing a snack, be right back.",
-    "Quick bathroom break, one sec.",
-    "Stretching my legs for a moment.",
-    "Hold that thought — reorganizing my notes.",
-    "Tidying up my desk, back in a flash.",
-    "Refilling my coffee, don't go anywhere.",
-    "Let me gather my thoughts real quick.",
-]
-
 
 def handle_pre_compact(config: VoxConfig) -> None:
     """Play a playful message before context compaction.
@@ -426,20 +400,33 @@ def handle_pre_compact(config: VoxConfig) -> None:
         logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
         return
 
-    # Chime mode: play chime, no speech
+    logger.info("PreCompact hook: speaking")
+    _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
+
+
+# ---------------------------------------------------------------------------
+# Shared speech helper — used by continuous mode hooks
+# ---------------------------------------------------------------------------
+
+
+def _speak_phrase(
+    phrases: tuple[str, ...] | list[str],
+    config: VoxConfig,
+    *,
+    chime_signal: str = "done",
+) -> None:
+    """Pick a random phrase and speak or chime it.
+
+    Common pattern for async continuous-mode hooks: check speak mode,
+    play a chime or synthesize speech via ``vox unmute``.
+    """
     if config.speak == "n":
-        chime = resolve_chime("compact", config.vibe)
+        chime = resolve_chime(chime_signal, config.vibe)
         if chime.exists():
-            logger.info("PreCompact hook: chime mode, playing %s", chime.name)
             _enqueue_audio(chime)
-        else:
-            logger.info("PreCompact hook: chime mode, missing %s", chime.name)
         return
 
-    # Voice mode: speak a playful phrase
-    text = random.choice(PRE_COMPACT_PHRASES)
-    logger.info("PreCompact hook: speaking '%s'", text)
-
+    text = random.choice(phrases)
     voice_args: list[str] = []
     if config.voice:
         voice_args = ["--voice", config.voice]
@@ -451,6 +438,89 @@ def handle_pre_compact(config: VoxConfig) -> None:
             capture_output=True,
             timeout=30,
         )
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit — acknowledgment in continuous mode
+# ---------------------------------------------------------------------------
+
+
+def handle_user_prompt_submit(config: VoxConfig) -> None:
+    """Speak a short acknowledgment when the user submits a prompt.
+
+    Only fires in continuous mode (notify=c).  Async — does not block
+    prompt processing.
+    """
+    if config.notify != "c":
+        logger.info(
+            "UserPromptSubmit hook: skip (notify=%s, not continuous)",
+            config.notify,
+        )
+        return
+
+    logger.info("UserPromptSubmit hook: acknowledging")
+    _speak_phrase(ACKNOWLEDGE_PHRASES, config, chime_signal="acknowledge")
+
+
+# ---------------------------------------------------------------------------
+# SubagentStart / SubagentStop — continuous mode announcements
+# ---------------------------------------------------------------------------
+
+
+def handle_subagent_start(config: VoxConfig) -> None:
+    """Announce that a subagent is being spawned.
+
+    Only fires in continuous mode (notify=c).  Async.
+    """
+    if config.notify != "c":
+        logger.info(
+            "SubagentStart hook: skip (notify=%s, not continuous)",
+            config.notify,
+        )
+        return
+
+    logger.info("SubagentStart hook: announcing")
+    _speak_phrase(SUBAGENT_START_PHRASES, config, chime_signal="subagent")
+
+
+def handle_subagent_stop(config: VoxConfig) -> None:
+    """Announce that a subagent has completed.
+
+    Only fires in continuous mode (notify=c).  Async.
+    """
+    if config.notify != "c":
+        logger.info(
+            "SubagentStop hook: skip (notify=%s, not continuous)",
+            config.notify,
+        )
+        return
+
+    logger.info("SubagentStop hook: announcing")
+    _speak_phrase(SUBAGENT_STOP_PHRASES, config, chime_signal="subagent")
+
+
+# ---------------------------------------------------------------------------
+# SessionEnd — farewell speech
+# ---------------------------------------------------------------------------
+
+
+def handle_session_end(config: VoxConfig, config_path: Path) -> None:
+    """Speak a farewell and clean up session state.
+
+    Fires when notify != 'n' (both on-demand and continuous).
+    Clears vibe_signals to prevent stale signals leaking to the
+    next session.
+    """
+    if config.notify == "n":
+        logger.info("SessionEnd hook: skip (notify=n)")
+        return
+
+    logger.info("SessionEnd hook: farewell")
+    _speak_phrase(FAREWELL_PHRASES, config, chime_signal="farewell")
+
+    # Clean slate for next session
+    if config.vibe_signals:
+        write_field("vibe_signals", "", config_path)
 
 
 # ---------------------------------------------------------------------------
@@ -505,3 +575,51 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config = read_config(config_path)
     _read_hook_input()  # drain stdin to avoid pipe backpressure
     handle_pre_compact(config)
+
+
+@hook_app.command("user-prompt-submit")
+def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """UserPromptSubmit hook: acknowledgment in continuous mode."""
+    config_path = resolve_config_path()
+    if not config_path.exists():
+        return
+
+    config = read_config(config_path)
+    _read_hook_input()  # drain stdin
+    handle_user_prompt_submit(config)
+
+
+@hook_app.command("subagent-start")
+def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """SubagentStart hook: announce subagent spawn."""
+    config_path = resolve_config_path()
+    if not config_path.exists():
+        return
+
+    config = read_config(config_path)
+    _read_hook_input()  # drain stdin
+    handle_subagent_start(config)
+
+
+@hook_app.command("subagent-stop")
+def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """SubagentStop hook: announce subagent completion."""
+    config_path = resolve_config_path()
+    if not config_path.exists():
+        return
+
+    config = read_config(config_path)
+    _read_hook_input()  # drain stdin
+    handle_subagent_stop(config)
+
+
+@hook_app.command("session-end")
+def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """SessionEnd hook: farewell speech."""
+    config_path = resolve_config_path()
+    if not config_path.exists():
+        return
+
+    config = read_config(config_path)
+    _read_hook_input()  # drain stdin
+    handle_session_end(config, config_path)
