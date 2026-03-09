@@ -115,9 +115,12 @@ class ElevenLabsProvider:
     def default_voice(self) -> str:
         return "matilda"
 
+    # Models that interpret bracket-style expressive tags (e.g. [excited]).
+    _EXPRESSIVE_MODELS: frozenset[str] = frozenset({"eleven_v3"})
+
     @property
     def supports_expressive_tags(self) -> bool:
-        return True
+        return self._model in self._EXPRESSIVE_MODELS
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
         output_path = resolve_output_path(request)
