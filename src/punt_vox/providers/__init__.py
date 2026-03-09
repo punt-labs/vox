@@ -145,8 +145,19 @@ def auto_detect_provider() -> str:
 def get_provider(name: str | None = None, **kwargs: str | None) -> TTSProvider:
     """Look up a provider by name, or auto-detect.
 
+    Resolution priority for provider name:
+      1. Explicit ``name`` argument
+      2. Session config (``.vox/config.md`` provider field)
+      3. ``TTS_PROVIDER`` env var / API key auto-detection
+
+    Resolution priority for model (passed via kwargs):
+      1. Explicit ``model`` kwarg
+      2. Session config (``.vox/config.md`` model field)
+      3. ``TTS_MODEL`` env var / provider default
+
     Args:
-        name: Provider name (e.g. 'polly', 'openai'). If None, auto-detects.
+        name: Provider name (e.g. 'polly', 'openai'). If None, checks
+            session config then auto-detects.
         **kwargs: Provider-specific options (e.g. model='tts-1-hd').
 
     Returns:
@@ -155,7 +166,22 @@ def get_provider(name: str | None = None, **kwargs: str | None) -> TTSProvider:
     Raises:
         ValueError: If the provider name is not registered.
     """
-    resolved = name.lower() if name is not None else auto_detect_provider()
+    # Read session config for fallback values.
+    from punt_vox.config import read_config
+
+    config = read_config()
+
+    if name is not None:
+        resolved = name.lower()
+    elif config.provider:
+        resolved = config.provider.lower()
+    else:
+        resolved = auto_detect_provider()
+
+    # Fall back to config model if no explicit model given.
+    if kwargs.get("model") is None and config.model:
+        kwargs["model"] = config.model
+
     factory = PROVIDER_REGISTRY.get(resolved)
     if factory is None:
         available = ", ".join(sorted(PROVIDER_REGISTRY))

@@ -64,6 +64,8 @@ class VoxConfig:
     voice_enabled: str  # "true" | "false"
     vibe_mode: str  # "auto" | "manual" | "off"
     voice: str | None
+    provider: str | None
+    model: str | None
     vibe: str | None
     vibe_tags: str | None
     vibe_signals: str | None
@@ -116,6 +118,8 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
         voice_enabled=voice_enabled,
         vibe_mode=vibe_mode,
         voice=fields.get("voice"),
+        provider=fields.get("provider"),
+        model=fields.get("model"),
         vibe=fields.get("vibe"),
         vibe_tags=fields.get("vibe_tags"),
         vibe_signals=fields.get("vibe_signals"),
@@ -128,7 +132,9 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
 
 ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
     {
+        "model",
         "notify",
+        "provider",
         "speak",
         "voice",
         "voice_enabled",

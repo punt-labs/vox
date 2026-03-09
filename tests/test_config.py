@@ -48,6 +48,8 @@ class TestReadConfig:
             voice_enabled="true",
             vibe_mode="auto",
             voice=None,
+            provider=None,
+            model=None,
             vibe=None,
             vibe_tags=None,
             vibe_signals=None,
