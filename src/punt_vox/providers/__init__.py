@@ -178,9 +178,13 @@ def get_provider(name: str | None = None, **kwargs: str | None) -> TTSProvider:
     else:
         resolved = auto_detect_provider()
 
-    # Fall back to config model if no explicit model given.
+    # Fall back to config model only when the config provider matches the
+    # resolved provider.  An ElevenLabs model name passed to OpenAI (or
+    # vice-versa) would cause API errors.
     if kwargs.get("model") is None and config.model:
-        kwargs["model"] = config.model
+        config_provider = config.provider.lower() if config.provider else None
+        if config_provider is None or config_provider == resolved:
+            kwargs["model"] = config.model
 
     factory = PROVIDER_REGISTRY.get(resolved)
     if factory is None:
