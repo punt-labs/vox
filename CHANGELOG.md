@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.4] - 2026-03-08
 
+### Changed
+
+- Switch default ElevenLabs model from `eleven_v3` to `eleven_flash_v2_5` (~75ms latency, 40k char limit)
+- Correct `eleven_v3` per-request character limit to 5,000
+
+### Added
+
+- Mid-session model switching via `/vox model <name>` (shorthands: `v3`, `flash`, `turbo`, `multilingual`)
+- Mid-session provider switching via `/vox provider <name>` (`elevenlabs`, `openai`, `polly`, `say`, `espeak`)
+- `provider` and `model` fields in `.vox/config.md` session config
+- Expressive tags (`[excited]`, `[warm]`, etc.) are now model-aware — only applied on `eleven_v3`
+
+### Fixed
+
+- Config model no longer leaks across incompatible providers (e.g. ElevenLabs model passed to OpenAI)
+
 ## [1.2.3] - 2026-03-08
 
 ### Fixed
