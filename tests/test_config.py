@@ -45,7 +45,6 @@ class TestReadConfig:
         assert result == VoxConfig(
             notify="n",
             speak="y",
-            voice_enabled="true",
             vibe_mode="auto",
             voice=None,
             provider=None,
@@ -59,7 +58,6 @@ class TestReadConfig:
         cfg = tmp_path / "config.md"
         cfg.write_text(
             "---\n"
-            'voice_enabled: "true"\n'
             'notify: "c"\n'
             'speak: "y"\n'
             'vibe_tags: "[happy] [calm]"\n'
@@ -72,7 +70,6 @@ class TestReadConfig:
         result = read_config(cfg)
         assert result.notify == "c"
         assert result.speak == "y"
-        assert result.voice_enabled == "true"
         assert result.vibe_mode == "manual"
         assert result.voice == "charlie"
         assert result.vibe == "happy"

@@ -22,6 +22,8 @@ warnings.filterwarnings(
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from punt_vox.types import TTSProvider
 
 __all__ = [
@@ -142,7 +144,11 @@ def auto_detect_provider() -> str:
     return "polly"
 
 
-def get_provider(name: str | None = None, **kwargs: str | None) -> TTSProvider:
+def get_provider(
+    name: str | None = None,
+    config_path: Path | None = None,
+    **kwargs: str | None,
+) -> TTSProvider:
     """Look up a provider by name, or auto-detect.
 
     Resolution priority for provider name:
@@ -169,7 +175,7 @@ def get_provider(name: str | None = None, **kwargs: str | None) -> TTSProvider:
     # Read session config for fallback values.
     from punt_vox.config import read_config
 
-    config = read_config()
+    config = read_config(config_path=config_path)
 
     if name is not None:
         resolved = name.lower()

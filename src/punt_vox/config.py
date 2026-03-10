@@ -61,7 +61,6 @@ class VoxConfig:
 
     notify: str  # "y" | "c" | "n"
     speak: str  # "y" | "n"
-    voice_enabled: str  # "true" | "false"
     vibe_mode: str  # "auto" | "manual" | "off"
     voice: str | None
     provider: str | None
@@ -104,10 +103,6 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
     if speak not in ("y", "n"):
         speak = "y"
 
-    voice_enabled = fields.get("voice_enabled", "true")
-    if voice_enabled not in ("true", "false"):
-        voice_enabled = "true"
-
     vibe_mode = fields.get("vibe_mode", "auto")
     if vibe_mode not in ("auto", "manual", "off"):
         vibe_mode = "auto"
@@ -115,7 +110,6 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
     return VoxConfig(
         notify=notify,
         speak=speak,
-        voice_enabled=voice_enabled,
         vibe_mode=vibe_mode,
         voice=fields.get("voice"),
         provider=fields.get("provider"),
@@ -137,7 +131,6 @@ ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
         "provider",
         "speak",
         "voice",
-        "voice_enabled",
         "vibe",
         "vibe_tags",
         "vibe_mode",
