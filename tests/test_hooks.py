@@ -7,14 +7,25 @@ from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
-    PRE_COMPACT_PHRASES,
-    STOP_PHRASES,
+    _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
     handle_pre_compact,
+    handle_session_end,
     handle_stop,
+    handle_subagent_start,
+    handle_subagent_stop,
+    handle_user_prompt_submit,
     resolve_chime,
     resolve_tags_from_signals,
+)
+from punt_vox.quips import (
+    ACKNOWLEDGE_PHRASES,
+    FAREWELL_PHRASES,
+    PRE_COMPACT_PHRASES,
+    STOP_PHRASES,
+    SUBAGENT_START_PHRASES,
+    SUBAGENT_STOP_PHRASES,
 )
 
 # ---------------------------------------------------------------------------
@@ -464,3 +475,263 @@ class TestHandlePreCompact:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert "--voice" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# _speak_phrase tests
+# ---------------------------------------------------------------------------
+
+
+class TestSpeakPhrase:
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode_enqueues_audio(self, mock_enqueue: MagicMock) -> None:
+        """speak=n plays a chime instead of synthesizing speech."""
+        config = _make_config(notify="c", speak="n")
+        _speak_phrase(("Hello",), config, chime_signal="done")
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_calls_vox_unmute(self, mock_run: MagicMock) -> None:
+        """speak=y synthesizes speech via vox unmute."""
+        config = _make_config(notify="c", speak="y", voice="matilda")
+        _speak_phrase(("Hello there",), config, chime_signal="done")
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "vox"
+        assert cmd[1] == "--json"
+        assert cmd[2] == "unmute"
+        assert cmd[3] == "Hello there"
+        assert "--voice" in cmd
+        assert "matilda" in cmd
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_no_voice(self, mock_run: MagicMock) -> None:
+        """speak=y without voice config omits --voice flag."""
+        config = _make_config(notify="c", speak="y")
+        _speak_phrase(("Hey",), config, chime_signal="done")
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "--voice" not in cmd
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_picks_from_pool(self, mock_run: MagicMock) -> None:
+        """Spoken text is always drawn from the provided phrase pool."""
+        phrases = ("Alpha", "Bravo", "Charlie")
+        config = _make_config(notify="c", speak="y")
+        _speak_phrase(phrases, config, chime_signal="done")
+        cmd = mock_run.call_args[0][0]
+        assert cmd[3] in phrases
+
+
+# ---------------------------------------------------------------------------
+# handle_user_prompt_submit tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleUserPromptSubmit:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_n(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """Does nothing when notify=n."""
+        config = _make_config(notify="n")
+        handle_user_prompt_submit(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_y(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """Does nothing in on-demand mode (notify=y)."""
+        config = _make_config(notify="y")
+        handle_user_prompt_submit(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
+        """Plays chime when notify=c and speak=n."""
+        config = _make_config(notify="c", speak="n")
+        handle_user_prompt_submit(config)
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_speaks(self, mock_run: MagicMock) -> None:
+        """Speaks an acknowledgment phrase when notify=c and speak=y."""
+        config = _make_config(notify="c", speak="y", voice="matilda")
+        handle_user_prompt_submit(config)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "vox"
+        assert cmd[3] in ACKNOWLEDGE_PHRASES
+
+
+# ---------------------------------------------------------------------------
+# handle_subagent_start tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleSubagentStart:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_n(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        config = _make_config(notify="n")
+        handle_subagent_start(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_y(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        config = _make_config(notify="y")
+        handle_subagent_start(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
+        config = _make_config(notify="c", speak="n")
+        handle_subagent_start(config)
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_speaks(self, mock_run: MagicMock) -> None:
+        config = _make_config(notify="c", speak="y")
+        handle_subagent_start(config)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[3] in SUBAGENT_START_PHRASES
+
+
+# ---------------------------------------------------------------------------
+# handle_subagent_stop tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleSubagentStop:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_n(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        config = _make_config(notify="n")
+        handle_subagent_stop(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_y(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        config = _make_config(notify="y")
+        handle_subagent_stop(config)
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
+        config = _make_config(notify="c", speak="n")
+        handle_subagent_stop(config)
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_speaks(self, mock_run: MagicMock) -> None:
+        config = _make_config(notify="c", speak="y")
+        handle_subagent_stop(config)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[3] in SUBAGENT_STOP_PHRASES
+
+
+# ---------------------------------------------------------------------------
+# handle_session_end tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleSessionEnd:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_skip_when_notify_n(
+        self, mock_run: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        config = _make_config(notify="n")
+        handle_session_end(config, Path("/fake/.vox/config.md"))
+        mock_run.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
+        """Fires for notify=y (not just continuous)."""
+        config = _make_config(notify="y", speak="n", vibe_signals=None)
+        handle_session_end(config, Path("/fake/.vox/config.md"))
+        mock_enqueue.assert_called_once()
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_voice_mode_speaks(self, mock_run: MagicMock) -> None:
+        config = _make_config(notify="y", speak="y", vibe_signals=None)
+        handle_session_end(config, Path("/fake/.vox/config.md"))
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[3] in FAREWELL_PHRASES
+
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_continuous_mode_speaks(self, mock_run: MagicMock) -> None:
+        config = _make_config(notify="c", speak="y", vibe_signals=None)
+        handle_session_end(config, Path("/fake/.vox/config.md"))
+        mock_run.assert_called_once()
+
+    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_clears_vibe_signals(
+        self, _mock_run: MagicMock, mock_write: MagicMock
+    ) -> None:
+        """SessionEnd clears vibe_signals to prevent stale leakage."""
+        config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
+        config_path = Path("/fake/.vox/config.md")
+        handle_session_end(config, config_path)
+        mock_write.assert_called_once_with("vibe_signals", "", config_path)
+
+    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_no_write_when_no_signals(
+        self, _mock_run: MagicMock, mock_write: MagicMock
+    ) -> None:
+        """Does not write config if vibe_signals is already empty."""
+        config = _make_config(notify="y", speak="y", vibe_signals=None)
+        handle_session_end(config, Path("/fake/.vox/config.md"))
+        mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Quip pool size tests
+# ---------------------------------------------------------------------------
+
+
+class TestQuipPools:
+    """Verify all quip pools have at least 10 entries (user requirement)."""
+
+    def test_acknowledge_phrases_count(self) -> None:
+        assert len(ACKNOWLEDGE_PHRASES) >= 10
+
+    def test_subagent_start_phrases_count(self) -> None:
+        assert len(SUBAGENT_START_PHRASES) >= 10
+
+    def test_subagent_stop_phrases_count(self) -> None:
+        assert len(SUBAGENT_STOP_PHRASES) >= 10
+
+    def test_farewell_phrases_count(self) -> None:
+        assert len(FAREWELL_PHRASES) >= 10
+
+    def test_stop_phrases_count(self) -> None:
+        assert len(STOP_PHRASES) >= 7
+
+    def test_pre_compact_phrases_count(self) -> None:
+        assert len(PRE_COMPACT_PHRASES) >= 7

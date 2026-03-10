@@ -48,7 +48,8 @@ Module structure under `src/punt_vox/`:
 | `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()`, `resolve_config_path()` |
 | `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `resolve_output_dir()`, `apply_vibe()` |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
-| `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()` |
+| `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples, grouped by event |
+| `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `handle_pre_compact()`, `handle_user_prompt_submit()`, `handle_subagent_start()`, `handle_subagent_stop()`, `handle_session_end()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()` |
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, hook |
 | `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`. Reads `.vox/config.md` for session state. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
