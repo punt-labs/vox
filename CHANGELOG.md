@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.1] - 2026-03-10
-
 ### Added
 
 - Technical architecture specification (`docs/architecture.tex`) — 15-page
@@ -19,11 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Hook stdin hang** — `_read_hook_input()` used blocking
-  `sys.stdin.read()` which hangs when Claude Code does not close the
-  pipe. Replaced with non-blocking `os.read()` in a `select` loop.
-  Also removed unnecessary stdin drain calls from 5 handlers that
-  never used the data. See DES-027.
 - MCP server now uses worktree-safe `resolve_config_path()` instead of
   hardcoded CWD-relative path — voice mode no longer silently fails in
   git worktrees
@@ -37,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `remove_ephemeral_dir()` from `ephemeral.py` — dead code that would have
   destroyed session config via `shutil.rmtree(.vox/)`
 - Dead `voice_enabled` field from `VoxConfig` and `ALLOWED_CONFIG_KEYS`
+
+## [1.4.1] - 2026-03-10
+
+### Fixed
+
+- **Hook stdin hang** — `_read_hook_input()` used blocking
+  `sys.stdin.read()` which hangs when Claude Code does not close the
+  pipe. Replaced with non-blocking `os.read()` in a `select` loop.
+  Also removed unnecessary stdin drain calls from 5 handlers that
+  never used the data. See DES-027.
 
 ## [1.4.0] - 2026-03-09
 
