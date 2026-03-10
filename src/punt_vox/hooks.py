@@ -386,25 +386,6 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
-# PreCompact — playful 'be right back' before context compaction
-# ---------------------------------------------------------------------------
-
-
-def handle_pre_compact(config: VoxConfig) -> None:
-    """Play a playful message before context compaction.
-
-    Only fires in continuous mode (notify=c). In on-demand (y) or
-    off (n), compaction happens silently.
-    """
-    if config.notify != "c":
-        logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
-        return
-
-    logger.info("PreCompact hook: speaking")
-    _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
-
-
-# ---------------------------------------------------------------------------
 # Shared speech helper — used by continuous mode hooks
 # ---------------------------------------------------------------------------
 
@@ -438,6 +419,25 @@ def _speak_phrase(
             capture_output=True,
             timeout=30,
         )
+
+
+# ---------------------------------------------------------------------------
+# PreCompact — playful 'be right back' before context compaction
+# ---------------------------------------------------------------------------
+
+
+def handle_pre_compact(config: VoxConfig) -> None:
+    """Play a playful message before context compaction.
+
+    Only fires in continuous mode (notify=c). In on-demand (y) or
+    off (n), compaction happens silently.
+    """
+    if config.notify != "c":
+        logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
+        return
+
+    logger.info("PreCompact hook: speaking")
+    _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
 
 
 # ---------------------------------------------------------------------------
