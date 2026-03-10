@@ -136,6 +136,10 @@ Mood       & \modpath{mood.py}       & Mood family classification
              (bright/dark/neutral) \\
 Logging    & \modpath{logging\_config.py} & Rotating file log to
              \texttt{\~{}/.punt-vox/logs/tts.log} \\
+Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
+             tailing Claude session JSONL files for real-time
+             signal classification and autonomous chime/speech
+             in continuous mode \\
 Providers  & \modpath{providers/}    & Five backends: ElevenLabs, OpenAI,
              Polly, \texttt{say}, \texttt{espeak-ng} \\
 Server     & \modpath{server.py}     & FastMCP server (key: \texttt{mic}):
@@ -195,9 +199,12 @@ asynchronously.  The agent never blocks on synthesis or playback.
   \item If \field{notify} is \texttt{"n"}: no-op, immediate return.
   \item If \field{speak} is \texttt{"n"} (chime mode): resolves
     mood-aware chime file, enqueues playback.
-  \item If \field{speak} is \texttt{"y"} (voice mode): selects a
-    random phrase from the relevant quip pool, calls
-    \texttt{vox unmute} to synthesize and play.
+  \item If \field{speak} is \texttt{"y"} (voice mode) and
+    \field{vibe\_signals} is non-empty: selects a random phrase
+    from the relevant quip pool, calls \texttt{vox unmute} to
+    synthesize and play.  If \field{vibe\_signals} is empty
+    (no bash commands have run yet), the Stop hook is a no-op
+    even with voice enabled.
   \item For Stop hooks: returns
     \texttt{\{"decision": "block", "reason": phrase\}} to halt
     Claude's output while audio plays.
@@ -233,7 +240,8 @@ asynchronously.  The agent never blocks on synthesis or playback.
 \subsection{Provider Protocol}
 
 All providers implement \texttt{TTSProvider}, a Python
-\texttt{Protocol} class with nine required members:
+\texttt{Protocol} class extending \texttt{AudioProvider}.  Eleven
+required members:
 
 \begin{center}
 \begin{tabular}{lp{8cm}}
@@ -257,12 +265,19 @@ All providers implement \texttt{TTSProvider}, a Python
   --- Reverse lookup (best-effort) \\
 \texttt{check\_health} & \texttt{() -> list[HealthCheck]} ---
   Provider-specific diagnostics \\
+\texttt{generate\_audio} & \texttt{(text, voice?, ...) -> AudioResult}
+  --- Convenience wrapper (inherited from \texttt{AudioProvider}) \\
+\texttt{generate\_audios} & \texttt{(texts, voice?, ...) -> list[AudioResult]}
+  --- Batch convenience wrapper \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-No provider imports appear outside its own file.  The core module
-depends only on the protocol.
+No provider SDK imports appear outside the provider's own file.
+Providers do import shared utilities from \texttt{core.py}
+(\texttt{split\_text}, \texttt{stitch\_audio}) for chunking, but
+the SDK libraries (\texttt{elevenlabs}, \texttt{openai},
+\texttt{boto3}) are confined to their respective files.
 
 \subsection{ElevenLabs}
 
@@ -303,7 +318,7 @@ Chunking        & Auto-split at 4\,096 chars, stitch \\
 Voices          & 9 static: alloy, ash, coral, echo, fable, nova,
   onyx, sage, shimmer \\
 Rate mapping    & CLI percentage $\to$ OpenAI speed float
-  (0.25--4.0, inverse linear) \\
+  (0.25--4.0, direct linear: rate/100) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -339,8 +354,8 @@ know Polly's multi-parameter API.
 \textbf{Provider} & \textbf{Platform} & \textbf{Notes} \\
 \midrule
 \texttt{say}     & macOS & System \texttt{say} command.  Default voice:
-  \texttt{samantha}.  Output: LEF32 at 22\,050\,Hz.  No API key
-  required.  No expressive tags. \\
+  \texttt{samantha}.  Output: AIFF converted to MP3 via ffmpeg.
+  No API key required.  No expressive tags. \\
 \texttt{espeak}  & Linux & \texttt{espeak-ng} command.  Voice is the
   language code (e.g., \texttt{en}).  No API key required.  No
   expressive tags. \\
@@ -437,7 +452,7 @@ tools.  All tools return JSON strings.
 
 Both \tool{unmute} and \tool{record} return immediately with
 \emph{predicted} results.  The server computes deterministic output
-paths (MD5 hash of text $\to$ 8-hex-char filename) and returns
+paths (MD5 hash of text $\to$ 12-hex-char filename) and returns
 metadata before synthesis begins.  A daemon thread performs the
 actual provider API call and playback.
 
@@ -562,18 +577,13 @@ goes to \texttt{\~{}/vox-output/} or a user-specified directory.
 
 \subsection{Format Handling}
 
-All cloud providers output MP3.  There is no format conversion,
-no WAV intermediate, and no codec selection.  The \texttt{say}
-provider outputs LEF32 at 22\,050\,Hz via macOS, then the file is
-used as-is (not re-encoded to MP3).  This means \texttt{say}
-output is technically not MP3---it is a raw audio file that
-\texttt{afplay} handles natively but other players may reject.
-
-\textbf{Known limitation:} the \texttt{say} provider's output
-format is incompatible with \texttt{stitch\_audio()}, which
-assumes MP3 input.  Multi-segment synthesis with the \texttt{say}
-provider will fail at the stitching step if pydub cannot decode
-the LEF32 format.
+All providers output MP3.  Cloud providers (ElevenLabs, OpenAI,
+Polly) produce MP3 natively.  The \texttt{say} provider produces
+AIFF via the macOS \texttt{say} command, then converts to MP3
+via ffmpeg.  The \texttt{espeak} provider writes WAV directly.
+This means all providers produce files that pydub can decode,
+and multi-segment stitching works across all backends when
+ffmpeg is available.
 
 
 % ===================================================================
@@ -731,10 +741,14 @@ unbounded if other audio is playing).
 
 \subsection{Caching}
 
-There is no audio caching.  Every synthesis call hits the
-provider API, even for identical text.  Deterministic filenames
-(MD5 hash of text) mean that re-synthesizing the same text
-overwrites the previous file rather than reusing it.
+There is no intentional audio caching.  Deterministic filenames
+(MD5 hash of text) mean that repeated calls for the same text
+produce the same output path.  The MCP server's
+\texttt{\_synthesize\_segments()} skips synthesis when the output
+file already exists, which provides incidental caching for
+non-ephemeral calls.  In ephemeral mode,
+\texttt{clean\_ephemeral()} deletes prior MP3 files before each
+call, so the skip rarely triggers.
 
 Voice lists are cached globally per provider (populated on first
 call, never refreshed within a process).  Config path resolution
@@ -945,8 +959,12 @@ Three notification states control audio behavior:
 
 \subsection{Signal Classification}
 
-The \hook{PostToolUse} (Bash) hook classifies command output
-against eight regex-based signal patterns:
+Signal classification has two implementations.  The
+\hook{PostToolUse} (Bash) hook in \texttt{hooks.py} classifies
+command output against eight regex-based signal patterns.  The
+session watcher in \texttt{watcher.py} independently classifies
+JSONL-tailed output against a separate pattern set with partial
+overlap.  The hook-side patterns are the authoritative set:
 
 \begin{center}
 \begin{tabular}{lp{7cm}}
@@ -1012,13 +1030,15 @@ complete.  ElevenLabs returns a streaming response, but Vox
 buffers it entirely.  True streaming playback (play the first
 chunk while subsequent chunks synthesize) is not implemented.
 
-\subsection{No Audio Caching}
+\subsection{No Intentional Audio Caching}
 
-Every synthesis call hits the provider API.  Identical text
-re-synthesized with the same voice produces a new API call and
-overwrites the previous file.  For use patterns with repetitive
-text (e.g., the same status message spoken every minute), this
-wastes provider quota and adds unnecessary latency.
+The MCP server skips synthesis when the output file already exists
+at the deterministic path, but ephemeral cleanup deletes prior
+files before most calls.  There is no cache layer, no TTL, and
+no cache invalidation.  For non-ephemeral use patterns with
+repetitive text, the file-exists check provides incidental
+reuse.  For ephemeral calls (the common path), every synthesis
+hits the provider API.
 
 \subsection{No Provider Failover}
 
@@ -1041,15 +1061,20 @@ results before synthesis completes.  If synthesis fails in the
 background thread (provider error, network timeout, disk full),
 the error is logged to stderr but not reported to the agent.  The
 agent has no mechanism to detect or recover from synthesis
-failures after the tool call returns.
+failures after the tool call returns.  The session watcher's
+autonomous speech also fails silently (bare
+\texttt{except Exception} with logging).
 
-\subsection{Say Provider Format Incompatibility}
+\subsection{Concurrent Config Writes}
 
-The macOS \texttt{say} provider outputs LEF32 at 22\,050\,Hz, not
-MP3.  This works for single-segment playback via \texttt{afplay}
-but is incompatible with \texttt{stitch\_audio()}, which assumes
-MP3 input via pydub.  Multi-segment synthesis with the
-\texttt{say} provider may fail at the stitching step.
+\texttt{write\_fields()} in \texttt{config.py} performs a
+read-then-write with no file-level lock.  The MCP server's
+background synthesis thread and \hook{PostToolUse} hook handlers
+can write \field{vibe\_signals} concurrently.  Both paths do
+unguarded read-modify-write on the same file.  The race window
+is narrow but real in continuous mode with fast bash commands.
+The playback lock (\texttt{playback.lock}) governs audio
+playback, not config writes.
 
 \subsection{NFS File Locking}
 
