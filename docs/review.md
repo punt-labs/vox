@@ -210,20 +210,20 @@ would mean rate=50 → speed=2.0.
 
 ## Priority Resolution Order
 
-| Priority | Finding | Fix |
-|----------|---------|-----|
-| P0 | F7, F8 | Replace `_CONFIG_PATH` in `server.py` with `resolve_config_path()` |
-| P1 | F2 | Reconcile watcher and hook signal classifiers into shared pattern table |
-| P1 | F3 | Remove dead `voice_enabled` from config |
-| P2 | F4 | Correct spec: 12-hex-char, not 8 |
-| P2 | F5 | Remove stale `say` format limitation from spec |
-| P2 | F13 | Correct spec: direct linear, not inverse |
-| P2 | F11 | Correct spec: note synthesis-skip behavior |
-| P2 | F1 | Add `watcher.py` to spec Component Map |
-| P2 | F6 | Document stop-hook guard in spec |
-| P2 | F10 | Add `generate_audio`/`generate_audios` to spec protocol table |
-| P3 | F9 | Document concurrent write risk as known limitation (or add flock) |
-| P3 | F12 | Document voice list filtering in spec |
+| Priority | Finding | Status |
+|----------|---------|--------|
+| P0 | F7, F8 | **Resolved** — `_CONFIG_PATH` replaced with `_config_path()` → `resolve_config_path()`; `get_provider()` accepts `config_path` |
+| P1 | F2 | **Resolved** — watcher delegates to `hooks.classify_signal()`; pattern tightened (`[0-9]+ passed`) |
+| P1 | F3 | **Resolved** — `voice_enabled` removed from `VoxConfig`, `ALLOWED_CONFIG_KEYS`, and all tests |
+| P2 | F4 | **Resolved** — spec corrected to 12-hex-char |
+| P2 | F5 | **Resolved** — spec updated: say outputs MP3 via ffmpeg, compatible with `stitch_audio()` |
+| P2 | F13 | **Resolved** — spec corrected to direct linear |
+| P2 | F11 | **Resolved** — spec notes synthesis-skip behavior |
+| P2 | F1 | **Resolved** — watcher added to spec Component Map |
+| P2 | F6 | **Resolved** — stop-hook guard documented in spec |
+| P2 | F10 | **Resolved** — `generate_audio`/`generate_audios` added to spec protocol table |
+| P3 | F9 | Open — concurrent write risk (narrow window, documented as known limitation) |
+| P3 | F12 | Open — voice list filtering (minor, undocumented behavior) |
 
 ## File Reference Index
 

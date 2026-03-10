@@ -158,6 +158,8 @@ _SIGNAL_PHRASES: dict[str, str] = {
     "lint-fail": "Lint errors found.",
     "git-push-ok": "Code pushed.",
     "merge-conflict": "Merge conflict detected.",
+    "git-commit": "Commit complete.",
+    "pr-created": "Pull request created.",
 }
 
 
