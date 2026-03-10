@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import tempfile
 import threading
 import time
@@ -44,36 +43,20 @@ SessionEventConsumer = Callable[[SessionEvent], None]
 
 
 # ---------------------------------------------------------------------------
-# Classification (mirrors hooks/signal.sh patterns)
+# Classification — delegates to hooks.classify_signal (single source of truth)
 # ---------------------------------------------------------------------------
-
-_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # Tests (pytest-specific — require numeric prefix or pytest markers)
-    ("tests-pass", re.compile(r"\d+ passed|tests? ok|✓.*passed", re.IGNORECASE)),
-    (
-        "tests-fail",
-        re.compile(r"FAILED |AssertionError|\d+ errors? during", re.IGNORECASE),
-    ),
-    # Lint (ruff-specific)
-    ("lint-fail", re.compile(r"Found \d+ error", re.IGNORECASE)),
-    ("lint-pass", re.compile(r"All checks passed|0 errors", re.IGNORECASE)),
-    # Git
-    ("merge-conflict", re.compile(r"CONFLICT", re.IGNORECASE)),
-    ("git-push-ok", re.compile(r"Everything up-to-date|->.*main", re.IGNORECASE)),
-]
 
 
 def classify_output(text: str) -> str | None:
     """Classify bash output into a signal name, or None if unrecognized.
 
-    Patterns are tighter than hooks/signal.sh to avoid misclassification
-    between test and lint signals. Order: tests before lint, specific
-    before generic.
+    Delegates to :func:`punt_vox.hooks.classify_signal` which owns the
+    canonical pattern table.  Passes ``exit_code=None`` since the watcher
+    only has text, not exit codes.
     """
-    for signal, pattern in _PATTERNS:
-        if pattern.search(text):
-            return signal
-    return None
+    from punt_vox.hooks import classify_signal
+
+    return classify_signal(exit_code=None, stdout=text)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +158,8 @@ _SIGNAL_PHRASES: dict[str, str] = {
     "lint-fail": "Lint errors found.",
     "git-push-ok": "Code pushed.",
     "merge-conflict": "Merge conflict detected.",
+    "git-commit": "Commit complete.",
+    "pr-created": "Pull request created.",
 }
 
 
@@ -257,6 +242,8 @@ _SIGNAL_CHIMES: dict[str, str] = {
     "lint-fail": "chime_lint_fail.mp3",
     "git-push-ok": "chime_git_push_ok.mp3",
     "merge-conflict": "chime_merge_conflict.mp3",
+    "git-commit": "chime_git_commit.mp3",
+    "pr-created": "chime_pr_created.mp3",
 }
 
 _DEFAULT_CHIME = "chime_done.mp3"

@@ -47,7 +47,6 @@ def _make_config(
     return VoxConfig(
         notify=notify,
         speak=speak,
-        voice_enabled="true",
         vibe_mode="auto",
         voice=voice,
         provider=None,
@@ -187,7 +186,6 @@ class TestHandleStop:
         config = VoxConfig(
             notify="y",
             speak="y",
-            voice_enabled="true",
             vibe_mode="manual",
             voice=None,
             provider=None,
@@ -206,7 +204,6 @@ class TestHandleStop:
         config = VoxConfig(
             notify="y",
             speak="y",
-            voice_enabled="true",
             vibe_mode="off",
             voice=None,
             provider=None,

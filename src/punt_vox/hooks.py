@@ -271,8 +271,8 @@ _SIGNAL_PATTERNS: list[tuple[str, list[str]]] = [
     # Lint patterns before tests — "errors" appears in both contexts,
     # so the more specific "Found N error" and "0 errors" must match first.
     ("lint-fail", [r"Found [0-9]+ error"]),
-    ("lint-pass", [r"0 errors"]),
-    ("tests-pass", [r"passed", r"tests? ok", "\u2713.*passed"]),
+    ("lint-pass", [r"All checks passed", r"0 errors"]),
+    ("tests-pass", [r"[0-9]+ passed", r"tests? ok", "\u2713.*passed"]),
     ("tests-fail", [r"FAILED", r"AssertionError", r"ERRORS?\b"]),
     ("merge-conflict", [r"CONFLICT"]),
     ("git-push-ok", [r"Everything up-to-date", r"->.*main"]),

@@ -1,0 +1,1152 @@
+%
+% architecture.tex
+%
+% Vox Technical Architecture Specification
+% Written for principal engineers evaluating the system.
+%
+% Compile: pdflatex architecture.tex
+%
+
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!80!black},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!60!black},
+  breaklines=true,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{gray!50},
+  backgroundcolor=\color{gray!5},
+  columns=fullflexible,
+}
+
+\newcommand{\modpath}[1]{\texttt{src/punt\_vox/#1}}
+\newcommand{\tool}[1]{\texttt{#1}}
+\newcommand{\field}[1]{\texttt{#1}}
+\newcommand{\hook}[1]{\texttt{#1}}
+\newcommand{\cmd}[1]{\texttt{/#1}}
+
+\begin{document}
+
+\title{Vox: Technical Architecture Specification}
+\author{Text-to-Speech Engine for AI Agents}
+\date{March 2026 --- v1.4.0}
+\hypersetup{
+  pdftitle={Vox: Technical Architecture Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Architecture},
+  pdfcreator={pdflatex}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+% ===================================================================
+\section{Overview}
+% ===================================================================
+
+Vox is a text-to-speech engine with three projection surfaces from a
+single codebase: Python CLI, MCP server, and Claude Code plugin.  It
+supports five synthesis backends (ElevenLabs, OpenAI, AWS Polly, macOS
+\texttt{say}, Linux \texttt{espeak-ng}) behind a provider-agnostic
+orchestration layer.  Audio playback is serialized via file locking.
+Session state lives in a YAML frontmatter config file.
+
+The system does \emph{not} stream audio.  Every synthesis call produces
+a complete MP3 file before playback begins.  There is no audio mixing,
+no real-time pitch manipulation, and no WebSocket transport.  Vox is a
+batch synthesizer with a playback queue.
+
+\subsection{Design Principles}
+
+\begin{enumerate}[label=\textbf{P\arabic*}.]
+  \item \textbf{Provider-agnostic orchestration.}  The core module
+    knows nothing about any specific TTS API.  Providers implement
+    a \texttt{TTSProvider} protocol; the core synthesizes, splits,
+    stitches, and plays without knowing which backend produced the
+    audio.
+  \item \textbf{No audio until opt-in.}  Vox is silent by default.
+    The \field{notify} config field defaults to \texttt{"n"}.  No
+    hooks produce sound, no chimes play, and no synthesis calls fire
+    until the user explicitly enables notifications via \cmd{unmute}
+    or \cmd{vox}.
+  \item \textbf{Session-scoped state.}  All mutable state (voice,
+    provider, mood, signal history) lives in a single config file
+    (\texttt{.vox/config.md}) scoped to the working directory.
+    No global state, no daemon process, no database.
+  \item \textbf{Fail fast.}  Invalid input raises exceptions.
+    No defensive fallbacks, no silent degradation.  If a voice
+    doesn't exist, the call fails with a
+    \texttt{VoiceNotFoundError}---it does not silently substitute
+    another voice.
+  \item \textbf{Serialized playback.}  Concurrent synthesis calls
+    never overlap audio output.  A file lock
+    (\texttt{\~{}/.punt\discretionary{-}{}{-}vox/playback.lock})
+    serializes all playback across all processes on the machine.
+\end{enumerate}
+
+\subsection{Component Map}
+
+\begin{center}
+\begin{longtable}{llp{6.5cm}}
+\toprule
+\textbf{Module} & \textbf{File} & \textbf{Responsibility} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{File} & \textbf{Responsibility} \\
+\midrule
+\endhead
+Types      & \modpath{types.py}      & Domain types: \texttt{TTSProvider}
+             protocol, \texttt{AudioRequest}, \texttt{AudioResult},
+             \texttt{HealthCheck}, \texttt{MergeStrategy} enum \\
+Core       & \modpath{core.py}       & \texttt{TTSClient}---provider-agnostic
+             orchestration: text splitting, batch synthesis, pair
+             stitching, audio merge \\
+Config     & \modpath{config.py}     & Read/write \texttt{.vox/config.md}
+             YAML frontmatter; worktree-safe path resolution \\
+Resolve    & \modpath{resolve.py}    & Voice/language resolution, output
+             directory resolution, vibe tag application \\
+Output     & \modpath{output.py}     & Output path resolution:
+             \texttt{VOX\_OUTPUT\_DIR} env, \texttt{\~{}/vox-output}
+             fallback \\
+Ephemeral  & \modpath{ephemeral.py}  & \texttt{.vox/} temp directory:
+             create, clean \\
+Playback   & \modpath{playback.py}   & \texttt{flock}-serialized playback:
+             \texttt{play\_audio()} (blocking),
+             \texttt{enqueue()} (detached subprocess) \\
+Hooks      & \modpath{hooks.py}      & Claude Code hook dispatchers: Stop,
+             PostToolUse, Notification, PreCompact,
+             UserPromptSubmit, SubagentStart/Stop, SessionEnd \\
+Voices     & \modpath{voices.py}     & Voice personality blurbs for roster
+             display \\
+Quips      & \modpath{quips.py}      & Immutable phrase pools for hook
+             speech (stop, permission, idle, farewell, etc.) \\
+Mood       & \modpath{mood.py}       & Mood family classification
+             (bright/dark/neutral) \\
+Logging    & \modpath{logging\_config.py} & Rotating file log to
+             \texttt{\~{}/.punt-vox/logs/tts.log} \\
+Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
+             tailing Claude session JSONL files for real-time
+             signal classification and autonomous chime/speech
+             in continuous mode \\
+Providers  & \modpath{providers/}    & Five backends: ElevenLabs, OpenAI,
+             Polly, \texttt{say}, \texttt{espeak-ng} \\
+Server     & \modpath{server.py}     & FastMCP server (key: \texttt{mic}):
+             \tool{unmute}, \tool{record}, \tool{vibe}, \tool{who},
+             \tool{notify}, \tool{speak}, \tool{status} \\
+CLI        & \modpath{\_\_main\_\_.py} & Typer CLI: unmute, record, vibe,
+             notify, speak, voice, status, doctor, version, hook
+             subcommands \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+
+% ===================================================================
+\section{System Architecture}
+% ===================================================================
+
+Three primary data paths define the system's runtime behavior.
+
+\subsection{TTS Request Path (Text $\to$ Audio File $\to$ Playback)}
+
+\begin{enumerate}
+  \item Agent calls MCP tool (e.g., \tool{unmute(text="Hello")}).
+  \item Server resolves provider: explicit parameter $\to$ session
+    config $\to$ auto-detection (environment variable $\to$ API key
+    probe $\to$ platform fallback).
+  \item Server resolves voice: explicit parameter $\to$ session config
+    $\to$ language-aware default $\to$ provider default.
+  \item Server builds \texttt{AudioRequest} list (one per segment).
+  \item Server predicts output paths and returns immediately to the
+    agent with predicted \texttt{AudioResult} metadata.
+  \item Background daemon thread: \texttt{TTSClient.synthesize\_batch()}
+    calls the provider's \texttt{synthesize()} for each request.
+  \item If multiple segments: \texttt{stitch\_audio()} concatenates
+    MP3 files with configurable inter-segment silence (default
+    500\,ms) plus 150\,ms trailing silence.
+  \item \texttt{enqueue(path)} copies the file to
+    \texttt{\~{}/.punt-vox/pending/}, spawns a detached subprocess.
+  \item Subprocess acquires \texttt{flock(LOCK\_EX)} on
+    \texttt{\~{}/.punt-vox/playback.lock}, plays via
+    \texttt{afplay} (macOS) or \texttt{ffplay} (cross-platform),
+    deletes the pending copy on completion.
+\end{enumerate}
+
+The agent receives the MCP response at step~5.  Steps~6--9 happen
+asynchronously.  The agent never blocks on synthesis or playback.
+
+\subsection{Notification Path (Hook Event $\to$ Audio)}
+
+\begin{enumerate}
+  \item Claude Code fires a lifecycle hook (Stop, Notification,
+    PreCompact, etc.).
+  \item Shell script dispatcher (e.g., \texttt{hooks/notify.sh})
+    invokes \texttt{vox hook stop} with JSON on stdin.
+  \item Python hook handler reads session config, checks
+    \field{notify} and \field{speak} fields.
+  \item If \field{notify} is \texttt{"n"}: no-op, immediate return.
+  \item If \field{speak} is \texttt{"n"} (chime mode): resolves
+    mood-aware chime file, enqueues playback.
+  \item If \field{speak} is \texttt{"y"} (voice mode) and
+    \field{vibe\_signals} is non-empty: selects a random phrase
+    from the relevant quip pool, calls \texttt{vox unmute} to
+    synthesize and play.  If \field{vibe\_signals} is empty
+    (no bash commands have run yet), the Stop hook is a no-op
+    even with voice enabled.
+  \item For Stop hooks: returns
+    \texttt{\{"decision": "block", "reason": phrase\}} to halt
+    Claude's output while audio plays.
+\end{enumerate}
+
+\subsection{Session Lifecycle}
+
+\begin{enumerate}
+  \item \textbf{Session start.}  \hook{SessionStart} hook runs
+    \texttt{session-start.sh}: deploys slash commands, cleans
+    retired commands, auto-allows MCP tools.  No audio plays.
+  \item \textbf{User enables voice.}  \cmd{unmute} or \cmd{vox}
+    sets \field{notify} to \texttt{"y"} or \texttt{"c"}.  This
+    is the first moment audio becomes possible.
+  \item \textbf{Signal accumulation.}  Each \hook{PostToolUse}
+    (Bash) event classifies stdout against regex patterns and
+    appends a timestamped signal (e.g.,
+    \texttt{tests-pass@10:45}) to \field{vibe\_signals} in
+    config.
+  \item \textbf{Mood inference.}  On Stop hooks, the signal
+    history is deterministically mapped to ElevenLabs expressive
+    tags (e.g., \texttt{[relieved] [satisfied]}) without any
+    LLM call.
+  \item \textbf{Session end.}  \hook{SessionEnd} hook speaks a
+    farewell phrase and clears \field{vibe\_signals}.
+\end{enumerate}
+
+
+% ===================================================================
+\section{Provider Architecture}
+% ===================================================================
+
+\subsection{Provider Protocol}
+
+All providers implement \texttt{TTSProvider}, a Python
+\texttt{Protocol} class extending \texttt{AudioProvider}.  Eleven
+required members:
+
+\begin{center}
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Member} & \textbf{Signature and Purpose} \\
+\midrule
+\field{name}           & \texttt{str} --- Short identifier
+  (e.g., \texttt{"elevenlabs"}) \\
+\field{default\_voice} & \texttt{str} --- Fallback voice name \\
+\field{supports\_expressive\_tags} & \texttt{bool} --- Whether the
+  provider interprets \texttt{[bracketed]} tags in text \\
+\texttt{synthesize}    & \texttt{(request, output\_path) -> AudioResult}
+  --- Core synthesis \\
+\texttt{resolve\_voice} & \texttt{(name, language?) -> str} --- Voice
+  validation and normalization \\
+\texttt{get\_default\_voice} & \texttt{(language) -> str} ---
+  Language-aware default \\
+\texttt{list\_voices}  & \texttt{(language?) -> list[str]} ---
+  Available voices \\
+\texttt{infer\_language\_from\_voice} & \texttt{(voice) -> str | None}
+  --- Reverse lookup (best-effort) \\
+\texttt{check\_health} & \texttt{() -> list[HealthCheck]} ---
+  Provider-specific diagnostics \\
+\texttt{generate\_audio} & \texttt{(text, voice?, ...) -> AudioResult}
+  --- Convenience wrapper (inherited from \texttt{AudioProvider}) \\
+\texttt{generate\_audios} & \texttt{(texts, voice?, ...) -> list[AudioResult]}
+  --- Batch convenience wrapper \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+No provider SDK imports appear outside the provider's own file.
+Providers do import shared utilities from \texttt{core.py}
+(\texttt{split\_text}, \texttt{stitch\_audio}) for chunking, but
+the SDK libraries (\texttt{elevenlabs}, \texttt{openai},
+\texttt{boto3}) are confined to their respective files.
+
+\subsection{ElevenLabs}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Default model   & \texttt{eleven\_flash\_v2\_5} (low latency, 32 languages) \\
+Expressive tags & Only on \texttt{eleven\_v3} \\
+Output format   & MP3 44.1\,kHz 128\,kbps \\
+Char limits     & 5\,000--40\,000 depending on model \\
+Chunking        & Auto-split at limit, stitch with 0\,ms pause \\
+Voice resolution & API fetch (cached globally), match by lowercase name
+  or raw 20-char voice ID \\
+Voice settings  & stability, similarity\_boost, style, speaker\_boost
+  (all optional floats 0.0--1.0) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Streaming: the SDK returns a generator of audio chunks.  Vox
+iterates the generator to completion and writes the full file.
+There is no incremental playback---the entire response is
+buffered to disk before \texttt{enqueue()} is called.
+
+\subsection{OpenAI}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Default model   & \texttt{tts-1} (\texttt{tts-1-hd} available) \\
+Expressive tags & Not supported \\
+Max chars/call  & 4\,096 (hard API limit) \\
+Chunking        & Auto-split at 4\,096 chars, stitch \\
+Voices          & 9 static: alloy, ash, coral, echo, fable, nova,
+  onyx, sage, shimmer \\
+Rate mapping    & CLI percentage $\to$ OpenAI speed float
+  (0.25--4.0, direct linear: rate/100) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{AWS Polly}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Output format   & MP3 \\
+Engine preference & neural $>$ generative $>$ long-form $>$ standard \\
+Voice resolution & API fetch (paginated \texttt{DescribeVoices}, cached) \\
+Language mapping & ISO 639-1 $\to$ BCP 47 (e.g., \texttt{de} $\to$
+  \texttt{de-DE}) \\
+Auth            & AWS credential chain (\texttt{aws sts
+  get-caller-identity}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Voice resolution bundles three Polly parameters
+(\field{voice\_id}, \field{language\_code}, \field{engine}) into
+a frozen \texttt{VoiceConfig} dataclass, so callers never need to
+know Polly's multi-parameter API.
+
+\subsection{Offline Fallbacks}
+
+\begin{center}
+\begin{tabular}{llp{6cm}}
+\toprule
+\textbf{Provider} & \textbf{Platform} & \textbf{Notes} \\
+\midrule
+\texttt{say}     & macOS & System \texttt{say} command.  Default voice:
+  \texttt{samantha}.  Output: AIFF converted to MP3 via ffmpeg.
+  No API key required.  No expressive tags. \\
+\texttt{espeak}  & Linux & \texttt{espeak-ng} command.  Voice is the
+  language code (e.g., \texttt{en}).  No API key required.  No
+  expressive tags. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These exist so \texttt{vox doctor} and basic functionality work
+on machines with no cloud credentials.  Audio quality is
+noticeably lower than cloud providers.
+
+\subsection{Provider Selection}
+
+Auto-detection follows a strict priority chain:
+
+\begin{enumerate}
+  \item \texttt{TTS\_PROVIDER} environment variable (explicit
+    override).
+  \item \texttt{ELEVENLABS\_API\_KEY} present $\to$
+    \texttt{elevenlabs}.
+  \item \texttt{OPENAI\_API\_KEY} present $\to$ \texttt{openai}.
+  \item \texttt{aws sts get-caller-identity} succeeds $\to$
+    \texttt{polly}.
+  \item macOS with \texttt{say} binary $\to$ \texttt{say}.
+  \item Linux with \texttt{espeak-ng} or \texttt{espeak} $\to$
+    \texttt{espeak}.
+  \item Fallback: \texttt{polly} with a warning (will fail at
+    synthesis time if no credentials).
+\end{enumerate}
+
+Session-level overrides persist to \texttt{.vox/config.md} when
+set via MCP tools.  The \texttt{get\_provider()} factory checks:
+explicit parameter $\to$ session config provider $\to$
+auto-detect.  Model resolution follows the same cascade:
+explicit $\to$ session config (only if provider matches) $\to$
+\texttt{TTS\_MODEL} env $\to$ provider default.
+
+\textbf{What this does not do:} there is no failover.  If the
+selected provider's API call fails, the error propagates.  There
+is no automatic retry, no fallback to a cheaper provider, and no
+circuit breaker.
+
+
+% ===================================================================
+\section{MCP Tool Surface}
+% ===================================================================
+
+The MCP server registers as key \texttt{mic} and exposes seven
+tools.  All tools return JSON strings.
+
+\begin{center}
+\begin{longtable}{lp{8.5cm}}
+\toprule
+\textbf{Tool} & \textbf{Signature and Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Tool} & \textbf{Signature and Purpose} \\
+\midrule
+\endhead
+\tool{unmute} & \texttt{(text?, voice?, language?, segments?,
+  rate=90, pause\_ms=500, ephemeral=true, stability?, similarity?,
+  style?, speaker\_boost?, vibe\_tags?, provider?, model?)} ---
+  Synthesize and play audio.  \field{segments} is a list of
+  \texttt{\{text, voice?, language?, vibe\_tags?\}} dicts for
+  multi-voice sequential playback.  Returns immediately; synthesis
+  and playback happen in a background daemon thread.  Persists
+  provider, model, and vibe\_tags to session config. \\
+\tool{record} & \texttt{(text?, voice?, language?, segments?,
+  rate=90, pause\_ms=500, output\_path?, output\_dir?,
+  stability?, similarity?, style?, speaker\_boost?)} --- Like
+  \tool{unmute} but writes to persistent path (default
+  \texttt{\~{}/vox-output/}), no playback. \\
+\tool{vibe}   & \texttt{(mood?, tags?, mode?)} --- Set session
+  mood, expressive tags, or vibe mode
+  (\texttt{auto}/\texttt{manual}/\texttt{off}). \\
+\tool{who}    & \texttt{(language?)} --- List available voices:
+  6 random featured voices with personality blurbs, plus full
+  roster.  Filters by language if provided. \\
+\tool{notify} & \texttt{(mode?, voice?)} --- Set notification
+  mode: \texttt{y} (on-demand), \texttt{n} (off), \texttt{c}
+  (continuous).  First enable auto-sets \field{speak} to
+  \texttt{"y"}. \\
+\tool{speak}  & \texttt{(mode?, voice?)} --- Set speech mode:
+  \texttt{y} (voiced) or \texttt{n} (chimes only). \\
+\tool{status} & \texttt{()} --- Returns full session state:
+  provider, voice, notify, speak, vibe\_mode, vibe, vibe\_tags,
+  vibe\_signals. \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection{Background Synthesis Pattern}
+
+Both \tool{unmute} and \tool{record} return immediately with
+\emph{predicted} results.  The server computes deterministic output
+paths (MD5 hash of text $\to$ 12-hex-char filename) and returns
+metadata before synthesis begins.  A daemon thread performs the
+actual provider API call and playback.
+
+This means the agent sees the response in milliseconds, but audio
+may not play for several seconds (depending on provider latency).
+If synthesis fails in the background thread, the error is logged
+but not reported to the agent.  The agent has no mechanism to
+detect synthesis failure after the tool call returns.
+
+\subsection{Transport}
+
+The MCP server runs on stdio transport (\texttt{stdin}/\texttt{stdout}).
+Logs go to stderr only.  The server is started by Claude Code via
+\texttt{vox mcp} and communicates using the MCP JSON-RPC protocol.
+There is no HTTP transport, no WebSocket, and no persistent daemon.
+Each Claude Code session spawns its own server process.
+
+
+% ===================================================================
+\section{Audio Pipeline}
+% ===================================================================
+
+\subsection{Text Splitting}
+
+\texttt{split\_text(text, max\_chars)} guarantees every chunk is
+$\leq$ \texttt{max\_chars}:
+
+\begin{enumerate}
+  \item If text fits: return as-is.
+  \item Split at sentence boundaries (regex
+    \texttt{(?<=[.!?])\textbackslash{}s+}).
+  \item Accumulate sentences into chunks up to the limit.
+  \item If a sentence exceeds the limit: split at word boundaries.
+  \item If a word exceeds the limit: split at character boundaries.
+\end{enumerate}
+
+Whitespace between sentences is normalized to a single space.
+This function is provider-agnostic and used by both ElevenLabs
+(5\,000--40\,000 char models) and OpenAI (4\,096 char hard limit).
+
+\subsection{Segment Processing}
+
+Multi-segment requests (via the \field{segments} parameter) are
+processed sequentially:
+
+\begin{enumerate}
+  \item Each segment resolves its own voice and language
+    independently, with per-segment overrides falling back to
+    top-level defaults.
+  \item Per-segment \field{vibe\_tags} override the top-level
+    default (only for providers that support expressive tags).
+  \item Segments are synthesized to individual temp files.
+  \item \texttt{stitch\_audio()} concatenates all segment files
+    with \field{pause\_ms} silence between each (default 500\,ms).
+  \item 150\,ms trailing silence is appended to prevent MP3 frame
+    truncation artifacts.
+\end{enumerate}
+
+\subsection{Audio Stitching}
+
+\texttt{stitch\_audio(segments, output\_path, pause\_ms)} uses
+pydub's \texttt{AudioSegment}:
+
+\begin{itemize}
+  \item Loads each MP3 segment file.
+  \item Inserts \texttt{AudioSegment.silent(duration=pause\_ms)}
+    between segments.
+  \item Appends 150\,ms trailing silence.
+  \item Exports as MP3 to \field{output\_path}.
+  \item Raises \texttt{FileNotFoundError} if any segment is
+    missing; \texttt{ValueError} if the segment list is empty.
+\end{itemize}
+
+pydub delegates to ffmpeg for MP3 decode/encode.  This is the only
+place in the system that requires ffmpeg at runtime (playback uses
+\texttt{afplay} or \texttt{ffplay}, but stitching uses ffmpeg
+via pydub).
+
+\subsection{Playback Queue}
+
+Playback is serialized across all concurrent callers via POSIX
+file locking:
+
+\begin{center}
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Component} & \textbf{Details} \\
+\midrule
+Lock file      & \texttt{\~{}/.punt-vox/playback.lock} \\
+Lock type      & \texttt{fcntl.flock(fd, LOCK\_EX)} (blocking) \\
+Timeout        & 120 seconds \\
+Player (macOS) & \texttt{afplay} \\
+Player (other) & \texttt{ffplay -nodisp -autoexit -loglevel quiet} \\
+Pending dir    & \texttt{\~{}/.punt-vox/pending/} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+{\emergencystretch=3em\relax
+\texttt{enqueue(path)} copies the audio file to the pending
+directory (preventing deletion races with ephemeral cleanup), then
+spawns a fully detached subprocess that acquires the lock, plays,
+and deletes the pending copy.  The parent returns immediately.\par}
+
+\textbf{What this does not do:} there is no priority queue, no
+cancellation, no skip-ahead.  If three audio files are enqueued,
+they play in FIFO order.  There is no way to interrupt a playing
+file or flush the queue.
+
+\subsection{Ephemeral Mode}
+
+When \field{ephemeral=true} (the default for \tool{unmute}),
+output files go to \texttt{.vox/} in the current working
+directory---the same directory that holds \texttt{config.md}.
+Before each synthesis, previous ephemeral files are cleaned up
+(\texttt{clean\_ephemeral()} deletes only \texttt{.mp3} files
+in \texttt{.vox/}, preserving \texttt{config.md} and any other
+non-MP3 files).
+
+Persistent output (via \tool{record} or \field{ephemeral=false})
+goes to \texttt{\~{}/vox-output/} or a user-specified directory.
+
+\subsection{Format Handling}
+
+All providers output MP3.  Cloud providers (ElevenLabs, OpenAI,
+Polly) produce MP3 natively.  The \texttt{say} provider produces
+AIFF via the macOS \texttt{say} command, then converts to MP3
+via ffmpeg.  The \texttt{espeak} provider writes WAV via
+\texttt{espeak-ng}, then converts to MP3 via ffmpeg.
+This means all providers produce files that pydub can decode,
+and multi-segment stitching works across all backends when
+ffmpeg is available.
+
+
+% ===================================================================
+\section{CLI and Config}
+% ===================================================================
+
+\subsection{CLI Commands}
+
+\begin{center}
+\begin{longtable}{lp{8cm}}
+\toprule
+\textbf{Command} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Command} & \textbf{Purpose} \\
+\midrule
+\endhead
+\texttt{vox unmute [TEXT]} & Synthesize and play.
+  \texttt{-{}-from FILE} for batch input (JSON array).
+  Ephemeral output to \texttt{.vox/}. \\
+\texttt{vox record [TEXT]} & Synthesize and save.
+  \texttt{-{}-output PATH} or \texttt{-{}-output-dir DIR}.
+  No playback. \\
+\texttt{vox vibe MOOD}     & Set session mood.  Special values:
+  \texttt{auto} (infer from signals), \texttt{off} (disable). \\
+\texttt{vox notify [y|n|c]} & Set notification mode.
+  \texttt{y} = on-demand, \texttt{n} = off, \texttt{c} = continuous.
+  Optional \texttt{-{}-voice}. \\
+\texttt{vox speak [y|n]}   & \texttt{y} = voiced, \texttt{n} = chimes
+  only. \\
+\texttt{vox voice NAME}    & Set session voice. \\
+\texttt{vox status}        & Show session state (provider, voice,
+  mood, signals). \\
+\texttt{vox doctor}        & Health checks: Python version,
+  player binary, provider API keys, provider-specific checks. \\
+\texttt{vox version}       & Print version string. \\
+\texttt{vox mcp}           & Start MCP server on stdio. \\
+\texttt{vox hook <event>}  & Dispatch hook handler (stop,
+  post-bash, notification, pre-compact, user-prompt-submit,
+  subagent-start, subagent-stop, session-end). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+Global flags: \texttt{-{}-json} (JSON output), \texttt{-{}-verbose}
+(debug logging), \texttt{-{}-quiet} (suppress non-JSON output).
+\texttt{-{}-verbose} and \texttt{-{}-quiet} are mutually exclusive.
+
+\subsection{Config File Format}
+
+Session state is stored in \texttt{.vox/config.md} as YAML
+frontmatter:
+
+\begin{lstlisting}
+---
+notify: "y"
+speak: "y"
+voice: "matilda"
+provider: "elevenlabs"
+model: "eleven_flash_v2_5"
+vibe_mode: "auto"
+vibe: "focused coding session"
+vibe_tags: "[calm] [focused]"
+vibe_signals: "tests-pass@10:45,git-commit@10:47"
+---
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{llp{5cm}}
+\toprule
+\textbf{Field} & \textbf{Values} & \textbf{Purpose} \\
+\midrule
+\field{notify}       & \texttt{y}, \texttt{n}, \texttt{c} &
+  Notification mode \\
+\field{speak}        & \texttt{y}, \texttt{n} &
+  Voice vs.\ chime mode \\
+\field{voice}        & string or null &
+  Session voice name \\
+\field{provider}     & string or null &
+  TTS provider override \\
+\field{model}        & string or null &
+  TTS model override \\
+\field{vibe\_mode}   & \texttt{auto}, \texttt{manual}, \texttt{off} &
+  Mood tracking mode \\
+\field{vibe}         & string or null &
+  Human-readable mood \\
+\field{vibe\_tags}   & string or null &
+  ElevenLabs expressive tags \\
+\field{vibe\_signals} & string or null &
+  Timestamped signal history \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{resolve\_config\_path()} uses
+\texttt{git rev-parse -{}-git-common-dir} to locate the config
+file in worktree setups, ensuring all worktrees sharing a
+repository share the same session state.  The result is cached
+via \texttt{functools.lru\_cache(maxsize=1)}.
+
+\texttt{write\_field()} and \texttt{write\_fields()} validate
+keys against an allowlist before writing.  Unknown keys raise
+\texttt{ValueError}.  If the config file does not exist, a
+minimal file is created with YAML frontmatter delimiters.
+
+\subsection{Credential Management}
+
+Vox does not store credentials.  Provider API keys are read from
+environment variables:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Variable} & \textbf{Provider} \\
+\midrule
+\texttt{ELEVENLABS\_API\_KEY} & ElevenLabs \\
+\texttt{OPENAI\_API\_KEY}     & OpenAI \\
+AWS credential chain           & Polly (via boto3) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There is no credential file, no keychain integration, and no
+encrypted storage.  \texttt{vox doctor} checks for the presence
+of these variables and reports their status.
+
+
+% ===================================================================
+\section{Performance}
+% ===================================================================
+
+\subsection{Latency Characteristics}
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+\textbf{Provider} & \textbf{Typical Latency} & \textbf{Notes} \\
+\midrule
+ElevenLabs (flash) & 200--800\,ms & Streaming API, buffered to disk \\
+ElevenLabs (v3)    & 500--2\,000\,ms & Higher quality, higher latency \\
+OpenAI (tts-1)     & 300--1\,000\,ms & No streaming, single HTTP call \\
+OpenAI (tts-1-hd)  & 500--1\,500\,ms & Higher quality variant \\
+Polly (neural)     & 200--600\,ms & AWS region-dependent \\
+macOS \texttt{say} & 50--200\,ms & Local, no network \\
+\texttt{espeak-ng} & 20--100\,ms & Local, no network \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are synthesis latencies (time to first byte from provider).
+Total time-to-audio includes stitching (10--50\,ms for pydub
+operations) and playback queue wait (0\,ms if queue is empty,
+unbounded if other audio is playing).
+
+\subsection{Caching}
+
+There is no intentional audio caching.  Deterministic filenames
+(MD5 hash of text) mean that repeated calls for the same text
+produce the same output path.  The MCP server's
+\texttt{\_synthesize\_segments()} skips synthesis when the output
+file already exists, which provides incidental caching for
+non-ephemeral calls.  In ephemeral mode,
+\texttt{clean\_ephemeral()} deletes prior MP3 files before each
+call, so the skip rarely triggers.
+
+Voice lists are cached globally per provider (populated on first
+call, never refreshed within a process).  Config path resolution
+is cached via \texttt{lru\_cache(maxsize=1)}.
+
+\subsection{Streaming vs.\ Batch}
+
+ElevenLabs returns a streaming response (chunk generator).  Vox
+iterates the generator to completion and writes the full file
+before playback.  This adds latency equal to the full synthesis
+time but simplifies the pipeline: every provider produces a
+complete file, and the playback system has a single code path.
+
+\textbf{What this means:} for a 30-second audio clip, the user
+waits for the full 30 seconds of synthesis before hearing anything.
+True streaming playback (play while synthesizing) is not
+implemented.
+
+
+% ===================================================================
+\section{Security}
+% ===================================================================
+
+\subsection{Threat Model}
+
+Vox runs in the user's process space with the user's credentials.
+The primary trust boundary is the MCP tool interface: Claude Code
+can call any tool, but tools only perform synthesis and
+configuration---no file deletion, no network access beyond
+provider APIs, no shell execution.
+
+\begin{center}
+\begin{tabular}{lp{5.5cm}p{4cm}}
+\toprule
+\textbf{Threat} & \textbf{Description} & \textbf{Mitigation} \\
+\midrule
+API key exposure & Provider keys in env vars visible to any
+  process in the session. & Standard env var practice.  No
+  logging of key values.  \texttt{doctor} reports presence, not
+  content. \\
+Unintended audio & Audio plays without user consent, e.g.,
+  during a meeting. & Default \field{notify=n}.  No audio until
+  explicit opt-in.  \cmd{mute} immediately silences. \\
+Cost accumulation & Rapid synthesis calls exhaust provider
+  quotas. & No rate limiting in Vox.  Provider-side quotas are
+  the only protection. \\
+Pending file race & Concurrent processes write to
+  \texttt{pending/} with colliding filenames. & Filenames include
+  PID prefix.  \texttt{flock} serializes playback. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{No Audio Until Opt-In}
+
+This is the system's primary safety property.  On fresh install:
+
+\begin{itemize}
+  \item \texttt{.vox/config.md} does not exist.
+  \item \field{notify} defaults to \texttt{"n"}.
+  \item All hook handlers check \field{notify} first and return
+    immediately if \texttt{"n"}.
+  \item The \hook{SessionStart} hook deploys commands but
+    produces no audio.
+  \item No MCP tool produces audio unless the agent explicitly
+    calls \tool{unmute}.
+\end{itemize}
+
+The user must take an affirmative action (\cmd{unmute},
+\cmd{vox~y}, or the agent calling \tool{notify(mode="y")}) to
+enable any audio output.
+
+\subsection{Credential Isolation}
+
+Each provider file is the only file that imports its SDK:
+
+\begin{itemize}
+  \item \modpath{providers/elevenlabs.py} --- only file importing
+    \texttt{elevenlabs}
+  \item \modpath{providers/openai.py} --- only file importing
+    \texttt{openai}
+  \item \modpath{providers/polly.py} --- only file importing
+    \texttt{boto3}
+\end{itemize}
+
+API clients are instantiated inside provider constructors.  No
+client objects are passed between modules.  No credentials are
+logged at any level.
+
+
+% ===================================================================
+\section{Platform Integration}
+% ===================================================================
+
+\subsection{macOS}
+
+\begin{itemize}
+  \item \textbf{Playback.}  \texttt{afplay} is the primary
+    player, available on all macOS installations.
+    \texttt{ffplay} is the fallback (requires Homebrew ffmpeg).
+  \item \textbf{Offline fallback.}  The \texttt{say} provider
+    uses the system's built-in speech synthesis.  Voice names
+    are macOS-specific (e.g., \texttt{samantha}, \texttt{alex}).
+  \item \textbf{File locking.}  \texttt{fcntl.flock()} works
+    correctly on APFS and HFS+.
+  \item \textbf{Temp directory.}  \texttt{.envrc} sets
+    \texttt{TMPDIR} to \texttt{.tmp/} in the project root,
+    keeping temp files workspace-local.
+\end{itemize}
+
+\subsection{Linux}
+
+\begin{itemize}
+  \item \textbf{Playback.}  \texttt{ffplay} from the
+    \texttt{ffmpeg} package.  No \texttt{afplay} equivalent.
+    \texttt{resolve\_player()} raises \texttt{FileNotFoundError}
+    if neither is available.
+  \item \textbf{Offline fallback.}  The \texttt{espeak} provider
+    wraps \texttt{espeak-ng} (preferred) or \texttt{espeak}.
+  \item \textbf{File locking.}  \texttt{fcntl.flock()} works on
+    ext4, btrfs, and most Linux filesystems.  NFS mounts may not
+    honor \texttt{flock}; this is not handled.
+  \item \textbf{No headless mode.}  Playback requires an audio
+    device.  Running in a headless container or SSH session
+    without PulseAudio/ALSA will cause \texttt{ffplay} to fail.
+    There is no detection or graceful degradation for this case.
+\end{itemize}
+
+
+% ===================================================================
+\section{Plugin and Hook Integration}
+% ===================================================================
+
+Vox integrates with Claude Code through a plugin manifest
+(\texttt{plugin.json}) and a hook registration file
+(\texttt{hooks.json}).  The plugin registers an MCP server
+(key: \texttt{mic}) and nine lifecycle hooks.
+
+\subsection{Hook Registration}
+
+\begin{center}
+\begin{longtable}{llp{5.5cm}}
+\toprule
+\textbf{Event} & \textbf{Script} & \textbf{Behavior} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Event} & \textbf{Script} & \textbf{Behavior} \\
+\midrule
+\endhead
+\hook{SessionStart}       & \texttt{session-start.sh} &
+  Deploy slash commands, clean retired commands, auto-allow MCP
+  tools.  No audio. \\
+\hook{PostToolUse} (MCP)  & \texttt{suppress-output.sh} &
+  Format MCP tool output as compact UI panel text. \\
+\hook{PostToolUse} (Bash) & \texttt{signal.sh} &
+  Classify stdout, append signal to
+  \field{vibe\_signals}. \\
+\hook{Stop}               & \texttt{notify.sh} &
+  Block with speech phrase or play chime.  Returns
+  \texttt{\{decision: "block"\}} to pause Claude while audio
+  plays. \\
+\hook{Notification}       & \texttt{notify-permission.sh} &
+  Play chime or speak permission/idle phrase (async). \\
+\hook{PreCompact}         & \texttt{pre-compact.sh} &
+  Speak ``grabbing a snack'' phrase (continuous mode only,
+  async). \\
+\hook{UserPromptSubmit}   & \texttt{acknowledge.sh} &
+  Speak acknowledgment phrase (continuous mode only, async). \\
+\hook{SubagentStart/Stop} & \texttt{subagent.sh} &
+  Announce subagent spawn/completion (continuous mode only,
+  async). \\
+\hook{SessionEnd}         & \texttt{farewell.sh} &
+  Speak farewell, clear \field{vibe\_signals} (async). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection{Mute/Unmute Lifecycle}
+
+Three notification states control audio behavior:
+
+\begin{center}
+\begin{tabular}{lp{4cm}p{4cm}}
+\toprule
+\textbf{State} & \textbf{Hooks Fire?} & \textbf{Audio?} \\
+\midrule
+\field{notify=n} & All hooks return immediately &
+  No audio from hooks.  Agent can still call \tool{unmute}
+  directly. \\
+\field{notify=y} & Stop, Notification, SessionEnd &
+  Chimes (\field{speak=n}) or speech (\field{speak=y}) on
+  task completion and permission requests. \\
+\field{notify=c} & All hooks fire &
+  Continuous narration: acknowledgments, subagent
+  announcements, pre-compact phrases, farewells. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\field{speak} is orthogonal to \field{notify}:
+
+\begin{itemize}
+  \item \field{speak=y}: hooks synthesize speech via provider.
+  \item \field{speak=n}: hooks play pre-recorded chime MP3 files
+    from \texttt{assets/} (no provider API call).
+\end{itemize}
+
+\subsection{Signal Classification}
+
+Signal classification uses a single canonical pattern table in
+\texttt{hooks.py}.  The \hook{PostToolUse} (Bash) hook calls
+\texttt{classify\_signal()} directly.  The session watcher in
+\texttt{watcher.py} delegates to the same function via
+\texttt{classify\_output()}, passing \texttt{exit\_code=None}.
+The eight regex-based signal patterns are:
+
+\begin{center}
+\begin{tabular}{lp{7cm}}
+\toprule
+\textbf{Signal} & \textbf{Detection Patterns} \\
+\midrule
+\texttt{lint-fail}     & \texttt{Found [0-9]+ error} \\
+\texttt{lint-pass}     & \texttt{All checks passed}, \texttt{0 errors} \\
+\texttt{tests-pass}    & \texttt{[0-9]+ passed}, \texttt{tests? ok},
+  \texttt{$\checkmark$.*passed} \\
+\texttt{tests-fail}    & \texttt{FAILED}, \texttt{AssertionError},
+  \texttt{ERRORS?\textbackslash{}b} \\
+\texttt{merge-conflict} & \texttt{CONFLICT} \\
+\texttt{git-push-ok}   & \texttt{Everything up-to-date},
+  \texttt{->.*main} \\
+\texttt{git-commit}    & \texttt{\^{}[.+] .+}, \texttt{\^{}create mode} \\
+\texttt{pr-created}    & \texttt{pull/[0-9]+},
+  \texttt{created pull request} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+If no pattern matches but exit code is non-zero, the signal is
+\texttt{cmd-fail}.  Signals are appended as
+\texttt{\{signal\}@\{HH:MM\}} to the comma-separated
+\field{vibe\_signals} config field.
+
+\subsection{Mood Inference}
+
+On Stop hooks, accumulated signals are deterministically mapped
+to ElevenLabs expressive tags.  No LLM call is involved:
+
+\begin{center}
+\begin{tabular}{lp{6cm}}
+\toprule
+\textbf{Signal Trajectory} & \textbf{Tags} \\
+\midrule
+Recovery (fail $\to$ pass) & \texttt{[relieved]} \\
+Shipped, no failures       & \texttt{[satisfied]} \\
+Shipped after failures     & \texttt{[relieved] [satisfied]} \\
+Ended with failure, many fails & \texttt{[frustrated] [sighs]} \\
+Many passes, no failures   & \texttt{[excited]} \\
+Some passes                & \texttt{[calm]} \\
+Default                    & \texttt{[calm]} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This only affects audio when the provider supports expressive
+tags (\texttt{eleven\_v3} model only).  All other providers
+ignore the tags silently.
+
+
+% ===================================================================
+\section{Known Limitations}
+% ===================================================================
+
+\subsection{No Streaming Playback}
+
+Audio is fully synthesized to disk before playback begins.  For
+long texts, this means the user waits for the entire synthesis to
+complete.  ElevenLabs returns a streaming response, but Vox
+buffers it entirely.  True streaming playback (play the first
+chunk while subsequent chunks synthesize) is not implemented.
+
+\subsection{No Intentional Audio Caching}
+
+The MCP server skips synthesis when the output file already exists
+at the deterministic path, but ephemeral cleanup deletes prior
+files before most calls.  There is no cache layer, no TTL, and
+no cache invalidation.  For non-ephemeral use patterns with
+repetitive text, the file-exists check provides incidental
+reuse.  For ephemeral calls (the common path), every synthesis
+hits the provider API.
+
+\subsection{No Provider Failover}
+
+If the selected provider fails (API error, rate limit,
+credentials expired), the error propagates to the caller.  There
+is no automatic fallback to a lower-tier provider, no retry with
+exponential backoff, and no circuit breaker.
+
+\subsection{No Playback Cancellation}
+
+Once audio is enqueued, it plays to completion.  There is no skip,
+pause, cancel, or flush-queue mechanism.  If three long audio
+clips are enqueued, they play sequentially with no way to
+interrupt.
+
+\subsection{Background Failure Opacity}
+
+The \tool{unmute} and \tool{record} MCP tools return predicted
+results before synthesis completes.  If synthesis fails in the
+background thread (provider error, network timeout, disk full),
+the error is logged to stderr but not reported to the agent.  The
+agent has no mechanism to detect or recover from synthesis
+failures after the tool call returns.  The session watcher's
+autonomous speech also fails silently (bare
+\texttt{except Exception} with logging).
+
+\subsection{Concurrent Config Writes}
+
+\texttt{write\_fields()} in \texttt{config.py} performs a
+read-then-write with no file-level lock.  The MCP server's
+background synthesis thread and \hook{PostToolUse} hook handlers
+can write \field{vibe\_signals} concurrently.  Both paths do
+unguarded read-modify-write on the same file.  The race window
+is narrow but real in continuous mode with fast bash commands.
+The playback lock (\texttt{playback.lock}) governs audio
+playback, not config writes.
+
+\subsection{NFS File Locking}
+
+The playback serialization relies on \texttt{fcntl.flock()}.  On
+NFS mounts, \texttt{flock} may not provide mutual exclusion.  If
+\texttt{\~{}/.punt-vox/} is on an NFS filesystem, concurrent
+playback from multiple machines could overlap.
+
+\subsection{No Headless Audio Detection}
+
+On Linux, if no audio output device is available (headless
+container, SSH without PulseAudio), \texttt{ffplay} fails
+silently or with an error.  Vox does not detect this condition
+and does not warn the user.
+
+\subsection{Voice List Staleness}
+
+Provider voice lists are cached globally on first access and
+never refreshed within a process lifetime.  If a voice is added
+or removed on the provider side, the change is invisible until
+the process restarts (next Claude Code session).
+
+
+% ===================================================================
+\section{Test Architecture}
+% ===================================================================
+
+\begin{center}
+\begin{tabular}{lp{7cm}}
+\toprule
+\textbf{Test File} & \textbf{What It Tests} \\
+\midrule
+\texttt{test\_types.py}             & Domain type validation,
+  \texttt{generate\_filename()} determinism \\
+\texttt{test\_core.py}              & Text splitting edge cases,
+  \texttt{TTSClient} batch/pair synthesis, stitching \\
+\texttt{test\_config.py}            & Config read/write, worktree
+  resolution, field validation \\
+\texttt{test\_output.py}            & Output path resolution, env
+  var handling \\
+\texttt{test\_ephemeral.py}         & \texttt{.vox/} cleanup, file
+  retention \\
+\texttt{test\_playback.py}          & \texttt{flock} serialization,
+  \texttt{enqueue()} subprocess lifecycle \\
+\texttt{test\_hooks.py}             & Signal classification, mood
+  inference, hook handler dispatch \\
+\texttt{test\_cli.py}               & CLI command smoke tests \\
+\texttt{test\_server.py}            & MCP tool behavior with mocked
+  providers \\
+\texttt{test\_elevenlabs\_provider.py} & Voice resolution, chunking,
+  voice settings, health checks \\
+\texttt{test\_openai\_provider.py}  & Rate mapping, chunking at 4\,096
+  chars \\
+\texttt{test\_polly\_provider.py}   & VoiceConfig bundling, engine
+  preference, Polly API mocks \\
+\texttt{test\_say\_provider.py}     & macOS say command construction \\
+\texttt{test\_espeak\_provider.py}  & espeak-ng command construction \\
+\texttt{test\_installer.py}         & Install/uninstall workflow \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Quality gates: \texttt{ruff} (lint + format), \texttt{mypy} (strict),
+\texttt{pyright} (strict), \texttt{pytest}, \texttt{shellcheck}
+(all shell scripts in \texttt{hooks/} and \texttt{scripts/}).
+Zero violations required.
+
+Polly test fixtures use \texttt{AudioSegment.silent(duration=50)}
+to generate valid MP3 bytes, because pydub delegates to ffmpeg
+which rejects fake byte sequences.  Provider mocks use
+\texttt{side\_effect=lambda} rather than \texttt{return\_value} to
+produce fresh mock objects per call.
+
+\end{document}

@@ -193,6 +193,7 @@ vox mcp                                        # Start MCP server (stdio)
 
 ## Documentation
 
+[Architecture (PDF)](docs/architecture.pdf) |
 [Design Log](DESIGN.md) |
 [Testing](TESTING.md) |
 [Changelog](CHANGELOG.md)

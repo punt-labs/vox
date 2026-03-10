@@ -17,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also removed unnecessary stdin drain calls from 5 handlers that
   never used the data. See biff DES-027.
 
+### Added
+
+- Technical architecture specification (`docs/architecture.tex`) — 15-page LaTeX document covering provider architecture, audio pipeline, hook integration, security model, and known limitations
+- Chime mappings and voice phrases for `git-commit` and `pr-created` signals
+- `All checks passed` pattern to lint-pass signal detection
+
+### Fixed
+
+- MCP server now uses worktree-safe `resolve_config_path()` instead of hardcoded CWD-relative path — voice mode no longer silently fails in git worktrees (F7/F8)
+- Signal classification unified: watcher delegates to `hooks.classify_signal()` instead of maintaining a separate pattern table (F2)
+- `tests-pass` pattern tightened from bare `passed` to `[0-9]+ passed` to prevent false positives on prose text
+
+### Removed
+
+- `remove_ephemeral_dir()` from `ephemeral.py` — dead code that would have destroyed session config via `shutil.rmtree(.vox/)`
+- Dead `voice_enabled` field from `VoxConfig` and `ALLOWED_CONFIG_KEYS` (F3)
+
 ## [1.4.0] - 2026-03-09
 
 ### Added

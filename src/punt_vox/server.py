@@ -69,7 +69,11 @@ def _validate_voice_settings(
             raise ValueError(msg)
 
 
-_CONFIG_PATH = Path(".vox/config.md")
+def _config_path() -> Path:
+    """Worktree-safe config path (cached after first call)."""
+    from punt_vox.config import resolve_config_path
+
+    return resolve_config_path()
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +325,7 @@ def unmute(
         config_updates["vibe_tags"] = vibe_tags
         config_updates["vibe_signals"] = ""
     if config_updates:
-        write_fields(config_updates, _CONFIG_PATH)
+        write_fields(config_updates, _config_path())
 
     # Normalize input: text → single segment
     if segments is None:
@@ -332,7 +336,7 @@ def unmute(
             return json.dumps({"error": "Provide text or segments."})
         segments = [{"text": text}]
 
-    tts_provider = get_provider(provider, model=model)
+    tts_provider = get_provider(provider, config_path=_config_path(), model=model)
     try:
         requests = _build_requests(
             segments,
@@ -415,7 +419,7 @@ def record(
             return json.dumps({"error": "Provide text or segments."})
         segments = [{"text": text}]
 
-    provider = get_provider()
+    provider = get_provider(config_path=_config_path())
     try:
         requests = _build_requests(
             segments,
@@ -504,7 +508,7 @@ def vibe(
     if not updates:
         return json.dumps({"error": "Provide at least one of: mood, tags, mode."})
 
-    write_fields(updates, _CONFIG_PATH)
+    write_fields(updates, _config_path())
     return json.dumps({"vibe": updates})
 
 
@@ -524,9 +528,9 @@ def who(language: str | None = None) -> str:
     """
     if language is not None:
         language = validate_language(language)
-    provider = get_provider()
+    provider = get_provider(config_path=_config_path())
     all_voices = provider.list_voices(language)
-    current = read_field("voice", _CONFIG_PATH)
+    current = read_field("voice", _config_path())
 
     featured = [
         {"name": name, "blurb": blurb}
@@ -573,7 +577,7 @@ def notify(
     if mode not in ("y", "n", "c"):
         return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n/c."})
 
-    config_path = _CONFIG_PATH
+    config_path = _config_path()
     updates: dict[str, str] = {"notify": mode}
     if mode in ("y", "c") and read_field("speak", config_path) is None:
         updates["speak"] = "y"
@@ -603,7 +607,7 @@ def speak(
     updates: dict[str, str] = {"speak": mode}
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_path=_CONFIG_PATH)
+    write_fields(updates, config_path=_config_path())
     return json.dumps(updates)
 
 
@@ -615,8 +619,8 @@ def status() -> str:
         JSON string with provider, voice, notify mode, speak mode,
         vibe mode, and current vibe.
     """
-    provider = get_provider()
-    cfg = read_config(config_path=_CONFIG_PATH)
+    provider = get_provider(config_path=_config_path())
+    cfg = read_config(config_path=_config_path())
 
     return json.dumps(
         {

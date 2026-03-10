@@ -25,7 +25,7 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     import punt_vox.server as srv
 
     config = tmp_path / "config.md"
-    monkeypatch.setattr(srv, "_CONFIG_PATH", config)
+    monkeypatch.setattr(srv, "_config_path", lambda: config)
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
     return config
 

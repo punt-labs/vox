@@ -337,9 +337,11 @@ class TestResolveChimePath:
 
     def test_all_signals_have_mapping(self) -> None:
         """Every classified signal has a chime filename entry."""
-        from punt_vox.watcher import _PATTERNS  # pyright: ignore[reportPrivateUsage]
+        from punt_vox.hooks import (
+            _SIGNAL_PATTERNS,  # pyright: ignore[reportPrivateUsage]
+        )
 
-        signal_names = {name for name, _ in _PATTERNS}
+        signal_names = {name for name, _ in _SIGNAL_PATTERNS}
         assert signal_names == set(_SIGNAL_CHIMES.keys())
 
     def test_returns_none_when_no_assets_dir(
