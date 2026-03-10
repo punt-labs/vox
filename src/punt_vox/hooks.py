@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import random
+import select
 import subprocess
 import sys
 from pathlib import Path
@@ -72,13 +73,28 @@ def _resolve_assets_dir() -> Path:
 
 
 def _read_hook_input() -> dict[str, object]:
-    """Read JSON hook payload from stdin."""
-    raw = sys.stdin.read()
-    if not raw.strip():
-        return {}
+    """Read JSON hook payload from stdin (non-blocking).
+
+    Uses ``select`` + ``os.read`` to avoid blocking forever when
+    Claude Code does not close the stdin pipe.  See biff DES-027.
+    """
     try:
+        fd = sys.stdin.fileno()
+        if not select.select([fd], [], [], 0.1)[0]:
+            return {}
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if not select.select([fd], [], [], 0.05)[0]:
+                break
+        raw = b"".join(chunks).decode()
+        if not raw.strip():
+            return {}
         data: object = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, OSError, ValueError):
         return {}
     if not isinstance(data, dict):
         return {}
@@ -573,7 +589,6 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
-    _read_hook_input()  # drain stdin to avoid pipe backpressure
     handle_pre_compact(config)
 
 
@@ -585,7 +600,6 @@ def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
-    _read_hook_input()  # drain stdin
     handle_user_prompt_submit(config)
 
 
@@ -597,7 +611,6 @@ def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
-    _read_hook_input()  # drain stdin
     handle_subagent_start(config)
 
 
@@ -609,7 +622,6 @@ def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
-    _read_hook_input()  # drain stdin
     handle_subagent_stop(config)
 
 
@@ -621,5 +633,4 @@ def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
 
     config = read_config(config_path)
-    _read_hook_input()  # drain stdin
     handle_session_end(config, config_path)
