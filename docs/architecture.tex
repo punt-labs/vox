@@ -959,12 +959,12 @@ Three notification states control audio behavior:
 
 \subsection{Signal Classification}
 
-Signal classification has two implementations.  The
-\hook{PostToolUse} (Bash) hook in \texttt{hooks.py} classifies
-command output against eight regex-based signal patterns.  The
-session watcher in \texttt{watcher.py} independently classifies
-JSONL-tailed output against a separate pattern set with partial
-overlap.  The hook-side patterns are the authoritative set:
+Signal classification uses a single canonical pattern table in
+\texttt{hooks.py}.  The \hook{PostToolUse} (Bash) hook calls
+\texttt{classify\_signal()} directly.  The session watcher in
+\texttt{watcher.py} delegates to the same function via
+\texttt{classify\_output()}, passing \texttt{exit\_code=None}.
+The eight regex-based signal patterns are:
 
 \begin{center}
 \begin{tabular}{lp{7cm}}
@@ -972,7 +972,7 @@ overlap.  The hook-side patterns are the authoritative set:
 \textbf{Signal} & \textbf{Detection Patterns} \\
 \midrule
 \texttt{lint-fail}     & \texttt{Found [0-9]+ error} \\
-\texttt{lint-pass}     & \texttt{0 errors} \\
+\texttt{lint-pass}     & \texttt{All checks passed}, \texttt{0 errors} \\
 \texttt{tests-pass}    & \texttt{passed}, \texttt{tests? ok},
   \texttt{$\checkmark$.*passed} \\
 \texttt{tests-fail}    & \texttt{FAILED}, \texttt{AssertionError},
