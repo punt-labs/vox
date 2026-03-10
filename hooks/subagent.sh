@@ -15,7 +15,7 @@ _stdin=$(cat)
 if command -v jq >/dev/null 2>&1; then
   _event=$(printf '%s' "$_stdin" | jq -r '.hook_event_name // empty' 2>/dev/null)
 else
-  _event=$(printf '%s' "$_stdin" | grep -o '"hook_event_name":"[^"]*"' | head -1 | sed 's/.*:"//;s/"//')
+  _event=$(printf '%s' "$_stdin" | grep -oE '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
 fi
 
 case "${_event}" in
