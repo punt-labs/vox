@@ -8,7 +8,6 @@ from pathlib import Path
 from punt_vox.ephemeral import (
     clean_ephemeral,
     ephemeral_output_dir,
-    remove_ephemeral_dir,
 )
 
 
@@ -76,20 +75,3 @@ class TestCleanEphemeral:
         os.chdir(tmp_path)
         (tmp_path / ".vox").mkdir()
         assert clean_ephemeral() == 0
-
-
-class TestRemoveEphemeralDir:
-    def test_removes_directory(self, tmp_path: Path) -> None:
-        os.chdir(tmp_path)
-        eph = tmp_path / ".vox"
-        eph.mkdir()
-        (eph / "file.mp3").write_text("audio")
-
-        result = remove_ephemeral_dir()
-
-        assert result is True
-        assert not eph.exists()
-
-    def test_no_directory_returns_false(self, tmp_path: Path) -> None:
-        os.chdir(tmp_path)
-        assert remove_ephemeral_dir() is False

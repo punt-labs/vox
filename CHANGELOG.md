@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also removed unnecessary stdin drain calls from 5 handlers that
   never used the data. See biff DES-027.
 
+### Added
+
+- Technical architecture specification (`docs/architecture.tex`) — 15-page LaTeX document covering provider architecture, audio pipeline, hook integration, security model, and known limitations
+
+### Removed
+
+- `remove_ephemeral_dir()` from `ephemeral.py` — dead code that would have destroyed session config via `shutil.rmtree(.vox/)`
+
 ## [1.4.0] - 2026-03-09
 
 ### Added

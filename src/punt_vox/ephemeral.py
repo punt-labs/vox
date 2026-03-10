@@ -8,7 +8,6 @@ each synthesis to prevent accumulation.
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -48,17 +47,3 @@ def clean_ephemeral(*, keep: Path | None = None) -> int:
     if deleted:
         logger.debug("Cleaned %d ephemeral file(s) from %s", deleted, eph_dir)
     return deleted
-
-
-def remove_ephemeral_dir() -> bool:
-    """Remove the entire ephemeral directory.
-
-    Returns:
-        True if the directory existed and was removed, False otherwise.
-    """
-    eph_dir = Path.cwd() / _EPHEMERAL_DIR_NAME
-    if eph_dir.is_dir():
-        shutil.rmtree(eph_dir)
-        logger.debug("Removed ephemeral directory %s", eph_dir)
-        return True
-    return False
