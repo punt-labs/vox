@@ -580,7 +580,8 @@ goes to \texttt{\~{}/vox-output/} or a user-specified directory.
 All providers output MP3.  Cloud providers (ElevenLabs, OpenAI,
 Polly) produce MP3 natively.  The \texttt{say} provider produces
 AIFF via the macOS \texttt{say} command, then converts to MP3
-via ffmpeg.  The \texttt{espeak} provider writes WAV directly.
+via ffmpeg.  The \texttt{espeak} provider writes WAV via
+\texttt{espeak-ng}, then converts to MP3 via ffmpeg.
 This means all providers produce files that pydub can decode,
 and multi-segment stitching works across all backends when
 ffmpeg is available.
