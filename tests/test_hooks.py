@@ -753,9 +753,11 @@ class TestReadHookInput:
         r_fd, w_fd = os.pipe()
         os.close(w_fd)
         r = os.fdopen(r_fd, "r")
-        with patch.object(sys, "stdin", r):
-            result = _read_hook_input()
-        r.close()
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
         assert result == {}
 
     def test_valid_json_parsed(self) -> None:
@@ -764,9 +766,11 @@ class TestReadHookInput:
         os.write(w_fd, b'{"tool_name": "Bash"}\n')
         os.close(w_fd)
         r = os.fdopen(r_fd, "r")
-        with patch.object(sys, "stdin", r):
-            result = _read_hook_input()
-        r.close()
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
         assert result == {"tool_name": "Bash"}
 
     def test_no_eof_does_not_hang(self) -> None:
@@ -804,7 +808,9 @@ class TestReadHookInput:
         os.write(w_fd, b"not json\n")
         os.close(w_fd)
         r = os.fdopen(r_fd, "r")
-        with patch.object(sys, "stdin", r):
-            result = _read_hook_input()
-        r.close()
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
         assert result == {}
