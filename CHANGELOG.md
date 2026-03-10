@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hook stdin hang** — `_read_hook_input()` used blocking
+  `sys.stdin.read()` which hangs when Claude Code does not close the
+  pipe. Replaced with non-blocking `os.read()` in a `select` loop.
+  Also removed unnecessary stdin drain calls from 5 handlers that
+  never used the data. See biff DES-027.
+
 ## [1.4.0] - 2026-03-09
 
 ### Added

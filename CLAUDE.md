@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## No "Pre-existing" Excuse
+
+There is no such thing as a "pre-existing" issue. If you see a problem — in code you wrote, code a reviewer flagged, or code you happen to be reading — you fix it. Do not classify issues as "pre-existing" to justify ignoring them. Do not suggest that something is "outside the scope of this change." If it is broken and you can see it, it is your problem now.
+
 ## Project Overview
 
 Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (premium), AWS Polly, and OpenAI TTS.
@@ -31,7 +35,9 @@ Use `.tmp/` at the project root for scratch and temporary files — never `/tmp`
 
 Run before every commit:
 
-    make check
+```bash
+make check
+```
 
 ## Architecture
 
@@ -121,7 +127,7 @@ Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ep
 
 ## Testing
 
-- **All tests must pass.** No exceptions for "pre-existing failures."
+- **All tests must pass.** If a test is failing, fix it.
 - If a test fails, fix it. Do not skip, ignore, or work around it.
 - Mock Polly responses need valid MP3 bytes — pydub hands files to ffmpeg which rejects fake data. Use `AudioSegment.silent(duration=50)` in fixtures.
 - Use `side_effect=lambda` instead of `return_value` for fresh mocks per call.
@@ -212,7 +218,7 @@ mcp__github__pull_request_read  # method: get_review_comments — inline code co
 gh pr view <number> --comments
 ```
 
-**Take every comment seriously.** Do not dismiss feedback as "unrelated to the change" or "pre-existing." If a reviewer flags it, it matters. If you genuinely disagree, explain why in a reply — do not silently ignore. Copilot and Bugbot may take 1-3 minutes to post after CI completes; wait for them.
+**Take every comment seriously.** There is no such thing as "pre-existing" or "unrelated to this change" — if you can see it, you own it. If a reviewer flags it, it matters. If you genuinely disagree, explain why in a reply — do not silently ignore. Copilot and Bugbot may take 1-3 minutes to post after CI completes; wait for them.
 
 **Fix, re-push, and repeat.** After addressing feedback, push the fixes and wait for the next review cycle. Continue until the last cycle is uneventful — no new comments, no requested changes, all checks green. Only then is the PR ready to merge.
 

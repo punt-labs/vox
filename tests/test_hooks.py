@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
+    _read_hook_input,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
@@ -735,3 +738,79 @@ class TestQuipPools:
 
     def test_pre_compact_phrases_count(self) -> None:
         assert len(PRE_COMPACT_PHRASES) >= 7
+
+
+# ---------------------------------------------------------------------------
+# _read_hook_input (non-blocking stdin, DES-027)
+# ---------------------------------------------------------------------------
+
+
+class TestReadHookInput:
+    """Verify _read_hook_input doesn't block on open pipes."""
+
+    def test_empty_stdin_returns_empty(self) -> None:
+        """EOF with no data returns {}."""
+        r_fd, w_fd = os.pipe()
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
+        assert result == {}
+
+    def test_valid_json_parsed(self) -> None:
+        """Valid JSON on stdin is parsed and returned."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"tool_name": "Bash"}\n')
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
+        assert result == {"tool_name": "Bash"}
+
+    def test_no_eof_does_not_hang(self) -> None:
+        """Stdin with data but no EOF returns data without blocking.
+
+        Regression test for the session resume hang (DES-027).
+        """
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"event": "stop"}\n')
+        # Do NOT close w_fd — simulates open pipe without EOF.
+        r = os.fdopen(r_fd, "r")
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {"event": "stop"}
+
+    def test_no_data_no_eof_returns_empty(self) -> None:
+        """Open pipe with no data returns {} without blocking."""
+        r_fd, w_fd = os.pipe()
+        r = os.fdopen(r_fd, "r")
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {}
+
+    def test_invalid_json_returns_empty(self) -> None:
+        """Invalid JSON on stdin returns {} gracefully."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b"not json\n")
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with patch.object(sys, "stdin", r):
+                result = _read_hook_input()
+        finally:
+            r.close()
+        assert result == {}
