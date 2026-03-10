@@ -121,7 +121,7 @@ Output     & \modpath{output.py}     & Output path resolution:
              \texttt{VOX\_OUTPUT\_DIR} env, \texttt{\~{}/vox-output}
              fallback \\
 Ephemeral  & \modpath{ephemeral.py}  & \texttt{.vox/} temp directory:
-             create, clean, remove \\
+             create, clean \\
 Playback   & \modpath{playback.py}   & \texttt{flock}-serialized playback:
              \texttt{play\_audio()} (blocking),
              \texttt{enqueue()} (detached subprocess) \\
@@ -973,7 +973,7 @@ The eight regex-based signal patterns are:
 \midrule
 \texttt{lint-fail}     & \texttt{Found [0-9]+ error} \\
 \texttt{lint-pass}     & \texttt{All checks passed}, \texttt{0 errors} \\
-\texttt{tests-pass}    & \texttt{passed}, \texttt{tests? ok},
+\texttt{tests-pass}    & \texttt{[0-9]+ passed}, \texttt{tests? ok},
   \texttt{$\checkmark$.*passed} \\
 \texttt{tests-fail}    & \texttt{FAILED}, \texttt{AssertionError},
   \texttt{ERRORS?\textbackslash{}b} \\
