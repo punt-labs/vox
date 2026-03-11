@@ -229,7 +229,7 @@ would mean rate=50 → speed=2.0.
 
 | Finding | File | Lines |
 |---------|------|-------|
-| F1 | `src/punt_vox/watcher.py` | 1–484 |
+| F1 | `src/punt_vox/watcher.py` | 1–485 |
 | F1 | `src/punt_vox/server.py` | 644–659 |
 | F2 | `src/punt_vox/hooks.py` | 254–265 |
 | F2 | `src/punt_vox/watcher.py` | 50–63 |
