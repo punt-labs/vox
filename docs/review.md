@@ -229,8 +229,8 @@ would mean rate=50 → speed=2.0.
 
 | Finding | File | Lines |
 |---------|------|-------|
-| F1 | `src/punt_vox/watcher.py` | 1–498 |
-| F1 | `src/punt_vox/server.py` | 640–663 |
+| F1 | `src/punt_vox/watcher.py` | 1–484 |
+| F1 | `src/punt_vox/server.py` | 644–659 |
 | F2 | `src/punt_vox/hooks.py` | 254–265 |
 | F2 | `src/punt_vox/watcher.py` | 50–63 |
 | F3 | `src/punt_vox/config.py` | 64, 107–109, 140 |
