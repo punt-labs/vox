@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Text normalization for natural speech: snake_case, camelCase, and programmer abbreviations (stderr, stdout, eof, etc.) are converted to spoken English before synthesis
+
 ## [1.8.0] - 2026-03-12
 
 ### Added
