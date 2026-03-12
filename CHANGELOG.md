@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Strip leading expressive tags (e.g. `[serious]`) from text when the provider does not support them, preventing literal bracket words in speech
+- Prune `vibe_signals` to the most recent 20 entries, preventing unbounded growth in long sessions
+
 ## [1.7.0] - 2026-03-12
 
 ### Added

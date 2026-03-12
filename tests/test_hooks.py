@@ -415,6 +415,35 @@ class TestHandlePostBash:
         text = config_path.read_text()
         assert "vibe_signals" not in text
 
+    def test_prunes_signals_at_max(self, tmp_path: Path) -> None:
+        from punt_vox.hooks import MAX_VIBE_SIGNALS, handle_post_bash
+
+        config_path = tmp_path / ".vox" / "config.md"
+        config_path.parent.mkdir(parents=True)
+        # Seed with exactly MAX signals already present
+        existing = ",".join(f"old-{i}@00:00" for i in range(MAX_VIBE_SIGNALS))
+        config_path.write_text(f'---\nnotify: "y"\nvibe_signals: "{existing}"\n---\n')
+
+        data: dict[str, object] = {
+            "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
+        }
+        handle_post_bash(data, config_path)
+
+        text = config_path.read_text()
+        # Extract the vibe_signals value
+        for line in text.splitlines():
+            if "vibe_signals" in line:
+                signals = line.split(":", 1)[1].strip().strip('"')
+                parts = signals.split(",")
+                assert len(parts) == MAX_VIBE_SIGNALS
+                # Oldest signal should have been pruned
+                assert "old-0@00:00" not in signals
+                # New signal should be present
+                assert "tests-pass@" in signals
+                break
+        else:
+            raise AssertionError("vibe_signals not found in config")
+
 
 # ---------------------------------------------------------------------------
 # handle_pre_compact tests

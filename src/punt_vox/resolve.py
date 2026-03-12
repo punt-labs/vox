@@ -19,6 +19,7 @@ from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
 logger = logging.getLogger(__name__)
 
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
+_LEADING_TAGS_RE = re.compile(r"^(\s*\[[^\]\n]+\]\s*)+")  # one-or-more tags
 
 
 def resolve_voice_and_language(
@@ -101,15 +102,18 @@ def apply_vibe(
     """Prepend vibe tags to text if the provider supports them.
 
     Only providers whose ``supports_expressive_tags`` is True interpret
-    bracketed tags as performance cues. Other providers would speak
-    them as literal words.
+    bracketed tags as performance cues.  When ``expressive_tags`` is
+    False, any leading bracket tags are stripped so non-supporting
+    providers don't speak them as literal words.  If stripping would
+    leave the text empty, the original text is returned unchanged.
 
     Per-segment ``override_tags`` take priority over the session-level
     config tags.  Skips prepending when the text already starts with an
     expression tag (e.g. ``[calm]``) to avoid doubling.
     """
     if not expressive_tags:
-        return text
+        stripped = _LEADING_TAGS_RE.sub("", text)
+        return stripped if stripped.strip() else text
     tags = override_tags or _config.read_field(
         "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
     )
