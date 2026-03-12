@@ -26,6 +26,7 @@ lancedb/
 !.claude/settings.json
 .vox/
 .lux/
+Lux.ini
 research/
 .biff.local
 .entire/
