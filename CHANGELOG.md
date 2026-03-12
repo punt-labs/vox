@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-03-12
+
 ### Added
 
 - `/unmute` voice picker: shows AskUserQuestion dialog with featured voices when no argument is given (providers with 2+ voices only)
