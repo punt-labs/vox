@@ -19,6 +19,7 @@ from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
 logger = logging.getLogger(__name__)
 
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
+_LEADING_TAGS_RE = re.compile(r"^(\s*\[[^\]\n]+\]\s*)+")  # one-or-more tags
 
 
 def resolve_voice_and_language(
@@ -109,7 +110,7 @@ def apply_vibe(
     expression tag (e.g. ``[calm]``) to avoid doubling.
     """
     if not expressive_tags:
-        return text
+        return _LEADING_TAGS_RE.sub("", text)
     tags = override_tags or _config.read_field(
         "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
     )

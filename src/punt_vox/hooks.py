@@ -49,6 +49,8 @@ from punt_vox.quips import (
 
 logger = logging.getLogger(__name__)
 
+MAX_VIBE_SIGNALS = 20
+
 hook_app = typer.Typer(
     help="Hook dispatchers (called by hook scripts).",
     no_args_is_help=True,
@@ -336,6 +338,10 @@ def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
 
     current = read_config(config_path).vibe_signals or ""
     new_signals = f"{current},{token}" if current else token
+
+    parts = new_signals.split(",")
+    if len(parts) > MAX_VIBE_SIGNALS:
+        new_signals = ",".join(parts[-MAX_VIBE_SIGNALS:])
 
     write_field("vibe_signals", new_signals, config_path)
 
