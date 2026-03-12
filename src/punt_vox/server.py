@@ -15,6 +15,7 @@ from punt_vox import __version__
 from punt_vox.config import read_config, read_field, write_fields
 from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.logging_config import configure_logging
+from punt_vox.normalize import normalize_for_speech
 from punt_vox.playback import enqueue as _enqueue_audio
 from punt_vox.providers import get_provider
 from punt_vox.resolve import (
@@ -116,6 +117,7 @@ def _build_requests(
             provider, seg_voice, seg_language
         )
 
+        seg_text = normalize_for_speech(seg_text)
         seg_text = apply_vibe(
             seg_text,
             expressive_tags=provider.supports_expressive_tags,

@@ -19,6 +19,7 @@ from punt_vox import __version__
 from punt_vox.config import read_config, resolve_config_path, write_field, write_fields
 from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.hooks import hook_app
+from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
 from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
 from punt_vox.resolve import resolve_voice_and_language
@@ -366,6 +367,7 @@ def _build_cli_requests(
         raise typer.Exit(code=1)
 
     resolved_voice, resolved_lang = resolve_voice_and_language(prov, voice, language)
+    text = normalize_for_speech(text)
     return [
         SynthesisRequest(
             text=text,
@@ -419,6 +421,7 @@ def _requests_from_file(
         if not seg_text:
             continue
 
+        seg_text = normalize_for_speech(seg_text)
         resolved_voice, resolved_lang = resolve_voice_and_language(
             prov, seg_voice, language
         )
