@@ -89,6 +89,10 @@ class TestApplyVibe:
         result = apply_vibe("[serious] [calm] Hello world", expressive_tags=False)
         assert result == "Hello world"
 
+    def test_preserves_text_when_only_tags(self, _patch_config: Path) -> None:
+        result = apply_vibe("[serious]", expressive_tags=False)
+        assert result == "[serious]"
+
     def test_override_tags_win_over_config(self, _patch_config: Path) -> None:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe(
