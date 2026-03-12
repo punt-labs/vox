@@ -31,6 +31,12 @@ class TestSnakeCase:
     def test_all_caps_snake(self) -> None:
         assert normalize_for_speech("MAX_RETRY_COUNT") == "MAX RETRY COUNT"
 
+    def test_mixed_snake_camel(self) -> None:
+        assert normalize_for_speech("get_fileName") == "get file name"
+
+    def test_mixed_snake_camel_with_abbreviation(self) -> None:
+        assert normalize_for_speech("read_stdin") == "read standard input"
+
 
 # ---------------------------------------------------------------------------
 # camelCase / PascalCase splitting

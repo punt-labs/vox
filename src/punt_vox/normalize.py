@@ -133,10 +133,19 @@ def _normalize_token(token: str) -> str:
 
 
 def _expand_part(part: str) -> str:
-    """Expand a single sub-token (after snake/camel splitting)."""
+    """Expand a single sub-token (after snake/camel splitting).
+
+    Also applies camelCase splitting so that mixed identifiers like
+    ``get_fileName`` fully normalize to ``get file name``.
+    """
     expanded = _expand_abbreviation(part)
     if expanded != part:
         return expanded
+    # camelCase within a snake_case part (e.g. "fileName" from "get_fileName")
+    if _HAS_CAMEL.search(part):
+        split = _CAMEL_BOUNDARY.sub(" ", part)
+        sub_parts = split.split()
+        return " ".join(_expand_part(p) for p in sub_parts)
     # ALL_CAPS stays uppercase (TTS spells acronyms)
     if part.isupper() and len(part) > 1:
         return part
