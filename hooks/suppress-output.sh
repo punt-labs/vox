@@ -127,8 +127,15 @@ fi
 
 if [[ "$TOOL_NAME" == "speak" ]]; then
   MODE=$(echo "$RESULT" | jq -r '.speak // empty' 2>/dev/null)
+  VOICE=$(echo "$RESULT" | jq -r '.voice // empty' 2>/dev/null)
   case "$MODE" in
-    y) MSG="♪ voice on" ;;
+    y)
+      if [[ -n "$VOICE" ]]; then
+        MSG="♪ ${VOICE} at the mic"
+      else
+        MSG="♪ voice on"
+      fi
+      ;;
     n) MSG="♪ chimes only" ;;
     *) MSG="♪ speak updated" ;;
   esac
@@ -146,7 +153,7 @@ fi
 if [[ "$TOOL_NAME" == "who" ]]; then
   COUNT=$(echo "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
   PHRASES=(
-    "♪ ${COUNT} voices checked in"
+    "♪ ${COUNT} agents standing by"
     "♪ here's who's around"
   )
   emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
