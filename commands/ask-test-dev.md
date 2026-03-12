@@ -1,5 +1,6 @@
 ---
 description: "Test AskUserQuestion inside a command"
+allowed-tools: ["AskUserQuestion"]
 ---
 
 # /ask-test-dev
