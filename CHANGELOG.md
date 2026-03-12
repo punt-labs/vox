@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `show_vox` MCP tool to display status widget in Lux display window (notifications, voice, vibe, engine)
+- `applet.py` module for Lux element tree construction and display server connection
+- `punt-lux` as optional dependency (`uv add punt-vox[lux]`)
+
 ## [1.6.0] - 2026-03-10
 
 ## [1.5.0] - 2026-03-10

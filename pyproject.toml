@@ -50,6 +50,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
 ]
+lux = ["punt-lux>=0.9.0"]
 
 [build-system]
 requires = ["uv_build>=0.9.14,<0.10.0"]
@@ -117,6 +118,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "elevenlabs.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "punt_lux.*"
 ignore_missing_imports = true
 
 [tool.pyright]

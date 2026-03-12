@@ -57,7 +57,8 @@ Module structure under `src/punt_vox/`:
 | `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples, grouped by event |
 | `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `handle_pre_compact()`, `handle_user_prompt_submit()`, `handle_subagent_start()`, `handle_subagent_stop()`, `handle_session_end()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()` |
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, hook |
-| `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`. Reads `.vox/config.md` for session state. |
+| `applet.py` | Lux display applet: builds element tree, connects to display server |
+| `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`, `show_vox`. Reads `.vox/config.md` for session state. |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
