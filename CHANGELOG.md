@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/unmute` voice picker: shows AskUserQuestion dialog with featured voices when no argument is given (providers with 2+ voices only)
+- `/ask-test-dev` command for testing AskUserQuestion inside command execution
+
+### Changed
+
+- Hook output: `speak` with voice shows "sarah at the mic" instead of generic "voice on"
+- Hook output: `who` shows "25 agents standing by" instead of "25 voices checked in"
+
 ### Fixed
 
 - Strip leading expressive tags (e.g. `[serious]`) from text when the provider does not support them, preventing literal bracket words in speech
