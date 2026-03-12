@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import inspect
-import logging
 from typing import Any
 
 from punt_vox.config import VoxConfig
-
-logger = logging.getLogger(__name__)
 
 # Mood presets offered in the vibe combo.
 _MOOD_PRESETS: list[str] = [
