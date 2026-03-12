@@ -649,8 +649,9 @@ def show_vox() -> str:
     """
     from punt_vox.applet import show_applet
 
-    cfg = read_config(config_path=_config_path())
-    provider = get_provider(config_path=_config_path())
+    config_path = _config_path()
+    cfg = read_config(config_path=config_path)
+    provider = get_provider(config_path=config_path)
     voice_roster = provider.list_voices()
     return json.dumps(show_applet(cfg, provider.name, voice_roster))
 

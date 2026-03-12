@@ -125,12 +125,14 @@ class TestBuildVoxElements:
         cfg = _default_config(notify="y", speak="y")
         elements = build_vox_elements(cfg, "polly", ROSTER)
         tooltip = elements[0].tooltip
-        # Active: SessionStart, Stop, Notification, PreCompact, SessionEnd
+        # Active: SessionStart, Post-Bash (always), Stop, Notification,
+        # SessionEnd (notify)
         assert "SessionStart" in tooltip
         assert "Stop" in tooltip
-        # Inactive (continuous-only): Post-Bash, UserPromptSubmit, etc.
-        assert "Post-Bash" not in tooltip
+        assert "Post-Bash" in tooltip
+        # Inactive (continuous-only): UserPromptSubmit, PreCompact, etc.
         assert "UserPromptSubmit" not in tooltip
+        assert "PreCompact" not in tooltip
 
 
 class TestShowApplet:
@@ -245,22 +247,15 @@ class TestHooksActivation:
         cfg = _default_config(notify="n")
         assert _is_hook_active(cfg, "continuous") is False
 
-    def test_notify_speak_active(self) -> None:
+    def test_unknown_rule_inactive(self) -> None:
         cfg = _default_config(notify="y", speak="y")
-        assert _is_hook_active(cfg, "notify+speak") is True
-
-    def test_notify_speak_inactive_muted(self) -> None:
-        cfg = _default_config(notify="y", speak="n")
-        assert _is_hook_active(cfg, "notify+speak") is False
-
-    def test_notify_speak_inactive_notify_off(self) -> None:
-        cfg = _default_config(notify="n", speak="y")
-        assert _is_hook_active(cfg, "notify+speak") is False
+        assert _is_hook_active(cfg, "unknown_rule") is False
 
     def test_info_tooltip_only_active_when_off(self) -> None:
         cfg = _default_config(notify="n")
         elements = build_vox_elements(cfg, "polly", ROSTER)
         tooltip = elements[0].tooltip
-        # Only SessionStart is active
+        # Only always-active hooks: SessionStart, Post-Bash
         assert "SessionStart" in tooltip
+        assert "Post-Bash" in tooltip
         assert "Stop" not in tooltip

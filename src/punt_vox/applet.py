@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -22,18 +23,18 @@ _MOOD_PRESETS: list[str] = [
 
 
 # Hook events and their activation rules.
-# Each tuple: (display_label, script_name, activator_fn)
-# activator_fn takes VoxConfig → bool
+# Each tuple: (display_label, script_name, activation_rule)
+# activation_rule is a string interpreted by _is_hook_active.
 _HOOK_EVENTS: list[tuple[str, str, str]] = [
     ("SessionStart", "session-start.sh", "always"),
     ("Stop", "notify.sh", "notify"),
-    ("Post-Bash", "signal.sh", "continuous"),
+    ("Post-Bash", "signal.sh", "always"),
     ("Notification", "notify-permission.sh", "notify"),
     ("UserPromptSubmit", "acknowledge.sh", "continuous"),
     ("SubagentStart", "subagent.sh", "continuous"),
     ("SubagentStop", "subagent.sh", "continuous"),
-    ("PreCompact", "pre-compact.sh", "notify"),
-    ("SessionEnd", "farewell.sh", "notify+speak"),
+    ("PreCompact", "pre-compact.sh", "continuous"),
+    ("SessionEnd", "farewell.sh", "notify"),
 ]
 
 
@@ -45,8 +46,6 @@ def _is_hook_active(cfg: VoxConfig, rule: str) -> bool:
         return cfg.notify in ("y", "c")
     if rule == "continuous":
         return cfg.notify == "c"
-    if rule == "notify+speak":
-        return cfg.notify in ("y", "c") and cfg.speak == "y"
     return False
 
 
@@ -157,24 +156,19 @@ def show_applet(
 
     try:
         with LuxClient(name="vox-applet") as client:
-            # frame_size and frame_flags require punt-lux >=0.10
             show_kwargs: dict[str, Any] = {
                 "frame_id": "vox",
                 "frame_title": "Vox",
             }
-            try:
-                client.show(  # type: ignore[call-arg]
-                    "vox-status",
-                    elements,
-                    frame_size=(340, 120),  # pyright: ignore[reportCallIssue]
-                    frame_flags={  # pyright: ignore[reportCallIssue]
-                        "auto_resize": True,
-                        "no_collapse": True,
-                    },
-                    **show_kwargs,
-                )
-            except TypeError:
-                client.show("vox-status", elements, **show_kwargs)
+            # frame_size and frame_flags require punt-lux >=0.10
+            sig = inspect.signature(client.show)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            if "frame_size" in sig.parameters:
+                show_kwargs["frame_size"] = (340, 120)
+                show_kwargs["frame_flags"] = {
+                    "auto_resize": True,
+                    "no_collapse": True,
+                }
+            client.show("vox-status", elements, **show_kwargs)
     except OSError as exc:
         return {"status": "error", "message": f"Lux display not available: {exc}"}
     except RuntimeError as exc:
