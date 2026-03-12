@@ -636,6 +636,26 @@ def status() -> str:
     )
 
 
+@mcp.tool()
+def show_vox() -> str:
+    """Display the Vox status widget in the Lux window.
+
+    Shows notification mode, voice/mute state, voice picker, vibe,
+    and engine in a compact display panel. Call again to refresh
+    after changing settings.
+
+    Returns:
+        JSON string with status ("ok" or "error" with message).
+    """
+    from punt_vox.applet import show_applet
+
+    config_path = _config_path()
+    cfg = read_config(config_path=config_path)
+    provider = get_provider(config_path=config_path)
+    voice_roster = provider.list_voices()
+    return json.dumps(show_applet(cfg, provider.name, voice_roster))
+
+
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------

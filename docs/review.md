@@ -231,7 +231,7 @@ would mean rate=50 → speed=2.0.
 |---------|------|-------|
 | F1 | `src/punt_vox/watcher.py` | 1–485 |
 | F1 | `src/punt_vox/server.py` | 644–659 |
-| F2 | `src/punt_vox/hooks.py` | 254–265 |
+| F2 | `src/punt_vox/hooks.py` | 270–281 |
 | F2 | `src/punt_vox/watcher.py` | 50–63 |
 | F3 | `src/punt_vox/config.py` | 64, 107–109, 140 |
 | F4 | `src/punt_vox/types.py` | 296 |
