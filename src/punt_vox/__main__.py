@@ -41,6 +41,16 @@ app = typer.Typer(
 app.add_typer(hook_app, name="hook", hidden=True)
 
 # ---------------------------------------------------------------------------
+# cache subcommand group
+# ---------------------------------------------------------------------------
+
+cache_app = typer.Typer(
+    help="Manage the MP3 quip cache.",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+# ---------------------------------------------------------------------------
 # Display constants
 # ---------------------------------------------------------------------------
 
@@ -922,6 +932,36 @@ def play(
     from punt_vox.playback import play_audio
 
     play_audio(audio_file)
+
+
+# ---------------------------------------------------------------------------
+# cache commands
+# ---------------------------------------------------------------------------
+
+
+@cache_app.command("status")
+def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Show cache entry count, size, and path."""
+    from punt_vox.cache import cache_status
+
+    info = cache_status()
+    size_kb = info.size_bytes / 1024
+    payload = {
+        "entries": info.entries,
+        "size_bytes": info.size_bytes,
+        "path": str(info.path),
+    }
+    text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
+    _emit(payload, text)
+
+
+@cache_app.command("clear")
+def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Delete all cached MP3 files."""
+    from punt_vox.cache import cache_clear
+
+    count = cache_clear()
+    _emit({"cleared": count}, f"Cleared {count} cached files.")
 
 
 # ---------------------------------------------------------------------------

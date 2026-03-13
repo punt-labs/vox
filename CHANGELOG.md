@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MP3 caching for quip phrases: hook speech is cached by (text, voice, provider) in `~/.punt-vox/cache/`, eliminating redundant TTS API calls and reducing latency on repeated quips
+- `vox cache status` and `vox cache clear` CLI commands for cache management
 - Text normalization for natural speech: snake_case, camelCase, and programmer abbreviations (stderr, stdout, eof, etc.) are converted to spoken English before synthesis
 
 ## [1.8.0] - 2026-03-12

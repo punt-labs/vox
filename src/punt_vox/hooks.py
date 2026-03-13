@@ -391,20 +391,63 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
             logger.info("Notification hook: chime mode, missing %s", chime.name)
         return
 
-    # Voice mode: synthesize and play via vox unmute (ephemeral mode)
+    # Voice mode: synthesize and play (with cache for known phrases)
     text = _pick_notification_phrase(notification_type, message)
+    _speak_with_cache(text, config)
 
+
+# ---------------------------------------------------------------------------
+# Cached speech helper
+# ---------------------------------------------------------------------------
+
+
+def _speak_with_cache(text: str, config: VoxConfig) -> None:
+    """Synthesize and play a phrase, using the MP3 cache when possible.
+
+    On cache hit: plays the cached file directly — no subprocess, no API call.
+    On cache miss: runs ``vox --json unmute``, then copies the result to cache.
+    All cache operations are wrapped in try/except so failures fall through
+    to normal synthesis without breaking speech.
+    """
+    from punt_vox.cache import cache_get, cache_put
+
+    voice = config.voice
+    provider = config.provider
+
+    # Cache hit — play directly, skip subprocess entirely
+    try:
+        cached = cache_get(text, voice, provider)
+        if cached is not None:
+            logger.debug("Cache hit for %r, playing %s", text, cached.name)
+            _enqueue_audio(cached)
+            return
+    except Exception:
+        logger.debug("Cache lookup failed, falling through to synthesis", exc_info=True)
+
+    # Cache miss — synthesize via subprocess
     voice_args: list[str] = []
-    if config.voice:
-        voice_args = ["--voice", config.voice]
+    if voice:
+        voice_args = ["--voice", voice]
 
-    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
-        subprocess.run(
+    try:
+        result = subprocess.run(
             ["vox", "--json", "unmute", text, *voice_args],
             check=False,
             capture_output=True,
             timeout=30,
         )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
+
+    # Populate cache from subprocess output
+    try:
+        if result.returncode == 0 and result.stdout:
+            data = json.loads(result.stdout)
+            if isinstance(data, dict) and "path" in data:
+                source = Path(str(data["path"]))  # pyright: ignore[reportUnknownArgumentType]
+                cache_put(text, voice, provider, source)
+    except Exception:
+        logger.debug("Cache put failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -430,17 +473,7 @@ def _speak_phrase(
         return
 
     text = random.choice(phrases)
-    voice_args: list[str] = []
-    if config.voice:
-        voice_args = ["--voice", config.voice]
-
-    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
-        subprocess.run(
-            ["vox", "--json", "unmute", text, *voice_args],
-            check=False,
-            capture_output=True,
-            timeout=30,
-        )
+    _speak_with_cache(text, config)
 
 
 # ---------------------------------------------------------------------------

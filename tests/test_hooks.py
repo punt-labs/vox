@@ -11,6 +11,7 @@ from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
+    _speak_with_cache,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
     handle_pre_compact,
@@ -840,3 +841,93 @@ class TestReadHookInput:
         finally:
             r.close()
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# _speak_with_cache tests
+# ---------------------------------------------------------------------------
+
+
+class TestSpeakWithCache:
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.cache.cache_get")
+    def test_cache_hit_skips_subprocess(
+        self, mock_get: MagicMock, mock_enqueue: MagicMock
+    ) -> None:
+        """On cache hit, plays cached file without spawning subprocess."""
+        cached_path = Path("/fake/cache/abc123.mp3")
+        mock_get.return_value = cached_path
+        config = _make_config(speak="y", voice="matilda")
+
+        with patch("punt_vox.hooks.subprocess.run") as mock_run:
+            _speak_with_cache("On it.", config)
+            mock_run.assert_not_called()
+
+        mock_enqueue.assert_called_once_with(cached_path)
+
+    @patch("punt_vox.cache.cache_put")
+    @patch("punt_vox.cache.cache_get", return_value=None)
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_cache_miss_runs_subprocess_and_populates(
+        self,
+        mock_run: MagicMock,
+        _mock_get: MagicMock,
+        mock_put: MagicMock,
+    ) -> None:
+        """On cache miss, runs subprocess and copies result to cache."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=b'{"path": "/tmp/vox/output.mp3", "text": "On it."}',
+        )
+        config = _make_config(speak="y", voice="matilda")
+
+        _speak_with_cache("On it.", config)
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "vox"
+        assert cmd[1] == "--json"
+        assert cmd[2] == "unmute"
+        assert cmd[3] == "On it."
+        assert "--voice" in cmd
+        assert "matilda" in cmd
+
+        mock_put.assert_called_once_with(
+            "On it.", "matilda", None, Path("/tmp/vox/output.mp3")
+        )
+
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.cache.cache_get", side_effect=OSError("disk error"))
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_cache_failure_falls_through(
+        self,
+        mock_run: MagicMock,
+        _mock_get: MagicMock,
+        _mock_enqueue: MagicMock,
+    ) -> None:
+        """Cache failures are silent — synthesis proceeds normally."""
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")
+        config = _make_config(speak="y")
+
+        _speak_with_cache("On it.", config)
+
+        # Subprocess should still run despite cache error
+        mock_run.assert_called_once()
+
+    @patch("punt_vox.cache.cache_put")
+    @patch("punt_vox.cache.cache_get", return_value=None)
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_no_voice_omits_flag(
+        self,
+        mock_run: MagicMock,
+        _mock_get: MagicMock,
+        _mock_put: MagicMock,
+    ) -> None:
+        """Without voice config, --voice flag is omitted."""
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")
+        config = _make_config(speak="y")
+
+        _speak_with_cache("hello", config)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--voice" not in cmd
