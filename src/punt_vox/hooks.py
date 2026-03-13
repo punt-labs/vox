@@ -439,14 +439,15 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
     except OSError:
         logger.debug("Cache lookup failed, falling through to synthesis", exc_info=True)
 
-    # Cache miss — synthesize via subprocess (subprocess owns playback)
-    voice_args: list[str] = []
+    # Cache miss — synthesize via subprocess (subprocess owns playback).
+    # Pass --provider so the subprocess uses the same provider as the cache key.
+    extra_args: list[str] = ["--provider", provider]
     if voice:
-        voice_args = ["--voice", voice]
+        extra_args.extend(["--voice", voice])
 
     try:
         result = subprocess.run(
-            ["vox", "--json", "unmute", text, *voice_args],
+            ["vox", "--json", "unmute", text, *extra_args],
             check=False,
             capture_output=True,
             timeout=30,

@@ -338,6 +338,8 @@ class TestHandleNotification:
         assert cmd[0] == "vox"
         assert cmd[1] == "--json"
         assert cmd[2] == "unmute"
+        assert "--provider" in cmd
+        assert "elevenlabs" in cmd
         assert "--voice" in cmd
         assert "matilda" in cmd
 
@@ -915,6 +917,8 @@ class TestSpeakWithCache:
         assert cmd[1] == "--json"
         assert cmd[2] == "unmute"
         assert cmd[3] == "On it."
+        assert "--provider" in cmd
+        assert "elevenlabs" in cmd
         assert "--voice" in cmd
         assert "matilda" in cmd
 
@@ -986,3 +990,6 @@ class TestSpeakWithCache:
 
         cmd = mock_run.call_args[0][0]
         assert "--voice" not in cmd
+        # --provider is always passed to keep cache key and subprocess in sync
+        assert "--provider" in cmd
+        assert "elevenlabs" in cmd
