@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-03-13
+
 ### Added
 
 - MP3 caching for quip phrases: hook speech is cached by (text, voice, provider) in `~/.punt-vox/cache/`, eliminating redundant TTS API calls and reducing latency on repeated quips
