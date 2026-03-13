@@ -391,9 +391,87 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
             logger.info("Notification hook: chime mode, missing %s", chime.name)
         return
 
-    # Voice mode: synthesize and play via vox unmute (ephemeral mode)
+    # Voice mode: synthesize and play
     text = _pick_notification_phrase(notification_type, message)
+    if notification_type in ("permission_prompt", "idle_prompt"):
+        # Known quip pool — safe to cache
+        _speak_with_cache(text, config)
+    else:
+        # Dynamic text from notification message — bypass cache
+        _speak_uncached(text, config)
 
+
+# ---------------------------------------------------------------------------
+# Cached speech helper
+# ---------------------------------------------------------------------------
+
+
+def _speak_with_cache(text: str, config: VoxConfig) -> None:
+    """Synthesize and play a phrase, using the MP3 cache when possible.
+
+    On cache hit: plays the cached file directly via ``_enqueue_audio`` —
+    no subprocess, no API call.
+
+    On cache miss: runs ``vox --json unmute`` which handles both synthesis
+    and playback internally (its ``enqueue()`` call spawns a detached
+    player).  The result is then copied to cache for future hits.
+    ``_enqueue_audio`` is intentionally NOT called on miss — the subprocess
+    already enqueued playback.
+
+    Cache I/O failures (``OSError``) are caught so a broken cache never
+    prevents speech.
+    """
+    from punt_vox.cache import cache_get, cache_put
+    from punt_vox.providers import auto_detect_provider
+
+    voice = config.voice
+    # Always resolve to an actual provider name so cache keys are
+    # stable regardless of whether config.provider is set or auto-detected.
+    provider = config.provider or auto_detect_provider()
+
+    # Cache hit — play directly, skip subprocess entirely
+    try:
+        cached = cache_get(text, voice, provider)
+        if cached is not None:
+            logger.debug("Cache hit for %r, playing %s", text, cached.name)
+            _enqueue_audio(cached)
+            return
+    except OSError:
+        logger.debug("Cache lookup failed, falling through to synthesis", exc_info=True)
+
+    # Cache miss — synthesize via subprocess (subprocess owns playback).
+    # Pass --provider so the subprocess uses the same provider as the cache key.
+    extra_args: list[str] = ["--provider", provider]
+    if voice:
+        extra_args.extend(["--voice", voice])
+
+    try:
+        result = subprocess.run(
+            ["vox", "--json", "unmute", text, *extra_args],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
+
+    # Populate cache from subprocess output.
+    try:
+        if result.returncode == 0 and result.stdout:
+            data = json.loads(result.stdout)
+            if isinstance(data, dict) and "path" in data:
+                source = Path(str(data["path"]))  # pyright: ignore[reportUnknownArgumentType]
+                cache_put(text, voice, provider, source)
+    except (OSError, ValueError):
+        logger.debug("Cache put failed", exc_info=True)
+
+
+def _speak_uncached(text: str, config: VoxConfig) -> None:
+    """Synthesize and play a phrase without caching.
+
+    Used for dynamic text (e.g. unknown notification types) that should
+    not pollute the cache.
+    """
     voice_args: list[str] = []
     if config.voice:
         voice_args = ["--voice", config.voice]
@@ -430,17 +508,7 @@ def _speak_phrase(
         return
 
     text = random.choice(phrases)
-    voice_args: list[str] = []
-    if config.voice:
-        voice_args = ["--voice", config.voice]
-
-    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
-        subprocess.run(
-            ["vox", "--json", "unmute", text, *voice_args],
-            check=False,
-            capture_output=True,
-            timeout=30,
-        )
+    _speak_with_cache(text, config)
 
 
 # ---------------------------------------------------------------------------
