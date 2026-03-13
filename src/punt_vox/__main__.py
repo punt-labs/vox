@@ -947,6 +947,7 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         info = cache_status()
     except OSError as exc:
+        typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     size_kb = info.size_bytes / 1024
     payload = {
@@ -966,6 +967,7 @@ def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         count = cache_clear()
     except OSError as exc:
+        typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     _emit({"cleared": count}, f"Cleared {count} cached files.")
 
