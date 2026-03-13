@@ -849,10 +849,14 @@ class TestReadHookInput:
 
 
 class TestSpeakWithCache:
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.hooks._enqueue_audio")
     @patch("punt_vox.cache.cache_get")
     def test_cache_hit_skips_subprocess(
-        self, mock_get: MagicMock, mock_enqueue: MagicMock
+        self,
+        mock_get: MagicMock,
+        mock_enqueue: MagicMock,
+        _mock_detect: MagicMock,
     ) -> None:
         """On cache hit, plays cached file without spawning subprocess."""
         cached_path = Path("/fake/cache/abc123.mp3")
@@ -865,6 +869,7 @@ class TestSpeakWithCache:
 
         mock_enqueue.assert_called_once_with(cached_path)
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.cache.cache_put")
     @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks.subprocess.run")
@@ -873,6 +878,7 @@ class TestSpeakWithCache:
         mock_run: MagicMock,
         _mock_get: MagicMock,
         mock_put: MagicMock,
+        _mock_detect: MagicMock,
     ) -> None:
         """On cache miss, runs subprocess and copies result to cache."""
         mock_run.return_value = MagicMock(
@@ -893,9 +899,10 @@ class TestSpeakWithCache:
         assert "matilda" in cmd
 
         mock_put.assert_called_once_with(
-            "On it.", "matilda", None, Path("/tmp/vox/output.mp3")
+            "On it.", "matilda", "elevenlabs", Path("/tmp/vox/output.mp3")
         )
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.hooks._enqueue_audio")
     @patch("punt_vox.cache.cache_get", side_effect=OSError("disk error"))
     @patch("punt_vox.hooks.subprocess.run")
@@ -904,6 +911,7 @@ class TestSpeakWithCache:
         mock_run: MagicMock,
         _mock_get: MagicMock,
         _mock_enqueue: MagicMock,
+        _mock_detect: MagicMock,
     ) -> None:
         """Cache failures are silent — synthesis proceeds normally."""
         mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")
@@ -914,6 +922,7 @@ class TestSpeakWithCache:
         # Subprocess should still run despite cache error
         mock_run.assert_called_once()
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.hooks._enqueue_audio")
     @patch("punt_vox.cache.cache_put")
     @patch("punt_vox.cache.cache_get", return_value=None)
@@ -924,6 +933,7 @@ class TestSpeakWithCache:
         _mock_get: MagicMock,
         _mock_put: MagicMock,
         mock_enqueue: MagicMock,
+        _mock_detect: MagicMock,
     ) -> None:
         """On miss, subprocess owns playback — _enqueue_audio is not called."""
         mock_run.return_value = MagicMock(
@@ -937,6 +947,7 @@ class TestSpeakWithCache:
         mock_run.assert_called_once()
         mock_enqueue.assert_not_called()
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.cache.cache_put")
     @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks.subprocess.run")
@@ -945,6 +956,7 @@ class TestSpeakWithCache:
         mock_run: MagicMock,
         _mock_get: MagicMock,
         _mock_put: MagicMock,
+        _mock_detect: MagicMock,
     ) -> None:
         """Without voice config, --voice flag is omitted."""
         mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")

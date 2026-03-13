@@ -417,9 +417,12 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
     prevents speech.
     """
     from punt_vox.cache import cache_get, cache_put
+    from punt_vox.providers import auto_detect_provider
 
     voice = config.voice
-    provider = config.provider
+    # Always resolve to an actual provider name so cache keys are
+    # stable regardless of whether config.provider is set or auto-detected.
+    provider = config.provider or auto_detect_provider()
 
     # Cache hit — play directly, skip subprocess entirely
     try:
@@ -447,10 +450,6 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
         return
 
     # Populate cache from subprocess output.
-    # Both get and put use config.provider (which may be None for
-    # auto-detect).  When provider=None, the cache key is stable as
-    # long as auto-detection picks the same provider.  If the user
-    # changes providers, old entries simply miss — correct behavior.
     try:
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
