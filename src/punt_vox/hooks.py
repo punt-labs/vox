@@ -446,14 +446,18 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return
 
-    # Populate cache from subprocess output
+    # Populate cache from subprocess output.
+    # Both get and put use config.provider (which may be None for
+    # auto-detect).  When provider=None, the cache key is stable as
+    # long as auto-detection picks the same provider.  If the user
+    # changes providers, old entries simply miss — correct behavior.
     try:
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
             if isinstance(data, dict) and "path" in data:
                 source = Path(str(data["path"]))  # pyright: ignore[reportUnknownArgumentType]
                 cache_put(text, voice, provider, source)
-    except OSError:
+    except (OSError, ValueError):
         logger.debug("Cache put failed", exc_info=True)
 
 

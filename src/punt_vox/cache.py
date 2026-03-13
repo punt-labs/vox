@@ -24,9 +24,9 @@ MAX_ENTRIES = 500
 def cache_key(text: str, voice: str | None, provider: str | None) -> str:
     """Compute a deterministic cache filename from synthesis parameters.
 
-    Returns an MD5-based filename like ``a1b2c3d4e5f67890.mp3``.
-    The null byte separator ensures ``("ab", "c")`` and ``("a", "bc")``
-    produce different keys.
+    Returns an MD5-based filename like ``a1b2c3d4e5f6789012345678abcdef01.mp3``
+    (32 hex characters).  The null byte separator ensures ``("ab", "c")``
+    and ``("a", "bc")`` produce different keys.
     """
     payload = f"{text}\0{voice or ''}\0{provider or ''}"
     digest = hashlib.md5(payload.encode()).hexdigest()
@@ -64,9 +64,18 @@ def cache_put(
     if not source.exists() or source.stat().st_size == 0:
         return None
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     dest = CACHE_DIR / cache_key(text, voice, provider)
-    shutil.copy2(source, dest)
+
+    # Reject symlinks to prevent local symlink attacks
+    if dest.is_symlink():
+        logger.warning("Cache put: refusing symlink target %s", dest)
+        return None
+
+    # Atomic write: copy to temp, then rename into place
+    tmp = dest.with_suffix(".tmp")
+    shutil.copy2(source, tmp)
+    tmp.rename(dest)
     logger.debug("Cache put: %s -> %s", source.name, dest.name)
 
     _evict_if_needed()
