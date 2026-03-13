@@ -38,4 +38,4 @@ fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
 git -C "$REPO_ROOT" add .claude/commands/ 2>/dev/null || true
-git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state"
+git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state [skip ci]"
