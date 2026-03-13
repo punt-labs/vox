@@ -39,7 +39,7 @@ class TestCacheKey:
     def test_hex_prefix_length(self) -> None:
         key = cache_key("text", "voice", "provider")
         stem = key.removesuffix(".mp3")
-        assert len(stem) == 16
+        assert len(stem) == 32
         # All hex chars
         int(stem, 16)
 

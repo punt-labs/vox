@@ -404,10 +404,17 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 def _speak_with_cache(text: str, config: VoxConfig) -> None:
     """Synthesize and play a phrase, using the MP3 cache when possible.
 
-    On cache hit: plays the cached file directly — no subprocess, no API call.
-    On cache miss: runs ``vox --json unmute``, then copies the result to cache.
-    All cache operations are wrapped in try/except so failures fall through
-    to normal synthesis without breaking speech.
+    On cache hit: plays the cached file directly via ``_enqueue_audio`` —
+    no subprocess, no API call.
+
+    On cache miss: runs ``vox --json unmute`` which handles both synthesis
+    and playback internally (its ``enqueue()`` call spawns a detached
+    player).  The result is then copied to cache for future hits.
+    ``_enqueue_audio`` is intentionally NOT called on miss — the subprocess
+    already enqueued playback.
+
+    Cache I/O failures (``OSError``) are caught so a broken cache never
+    prevents speech.
     """
     from punt_vox.cache import cache_get, cache_put
 
@@ -421,10 +428,10 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
             logger.debug("Cache hit for %r, playing %s", text, cached.name)
             _enqueue_audio(cached)
             return
-    except Exception:
+    except OSError:
         logger.debug("Cache lookup failed, falling through to synthesis", exc_info=True)
 
-    # Cache miss — synthesize via subprocess
+    # Cache miss — synthesize via subprocess (subprocess owns playback)
     voice_args: list[str] = []
     if voice:
         voice_args = ["--voice", voice]
@@ -446,7 +453,7 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
             if isinstance(data, dict) and "path" in data:
                 source = Path(str(data["path"]))  # pyright: ignore[reportUnknownArgumentType]
                 cache_put(text, voice, provider, source)
-    except Exception:
+    except OSError:
         logger.debug("Cache put failed", exc_info=True)
 
 

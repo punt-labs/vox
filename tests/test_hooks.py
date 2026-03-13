@@ -914,6 +914,29 @@ class TestSpeakWithCache:
         # Subprocess should still run despite cache error
         mock_run.assert_called_once()
 
+    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.cache.cache_put")
+    @patch("punt_vox.cache.cache_get", return_value=None)
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_cache_miss_does_not_enqueue_directly(
+        self,
+        mock_run: MagicMock,
+        _mock_get: MagicMock,
+        _mock_put: MagicMock,
+        mock_enqueue: MagicMock,
+    ) -> None:
+        """On miss, subprocess owns playback — _enqueue_audio is not called."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=b'{"path": "/tmp/vox/output.mp3"}',
+        )
+        config = _make_config(speak="y")
+
+        _speak_with_cache("On it.", config)
+
+        mock_run.assert_called_once()
+        mock_enqueue.assert_not_called()
+
     @patch("punt_vox.cache.cache_put")
     @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks.subprocess.run")

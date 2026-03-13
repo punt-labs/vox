@@ -29,7 +29,7 @@ def cache_key(text: str, voice: str | None, provider: str | None) -> str:
     produce different keys.
     """
     payload = f"{text}\0{voice or ''}\0{provider or ''}"
-    digest = hashlib.md5(payload.encode()).hexdigest()[:16]
+    digest = hashlib.md5(payload.encode()).hexdigest()
     return f"{digest}.mp3"
 
 
