@@ -944,7 +944,10 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Show cache entry count, size, and path."""
     from punt_vox.cache import cache_status
 
-    info = cache_status()
+    try:
+        info = cache_status()
+    except OSError as exc:
+        raise typer.Exit(1) from exc
     size_kb = info.size_bytes / 1024
     payload = {
         "entries": info.entries,
@@ -960,7 +963,10 @@ def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Delete all cached MP3 files."""
     from punt_vox.cache import cache_clear
 
-    count = cache_clear()
+    try:
+        count = cache_clear()
+    except OSError as exc:
+        raise typer.Exit(1) from exc
     _emit({"cleared": count}, f"Cleared {count} cached files.")
 
 

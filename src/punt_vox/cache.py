@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,10 +74,17 @@ def cache_put(
         logger.warning("Cache put: refusing symlink target %s", dest)
         return None
 
-    # Atomic write: copy to temp, then rename into place
-    tmp = dest.with_suffix(".tmp")
-    shutil.copy2(source, tmp)
-    tmp.rename(dest)
+    # Atomic write: copy to unique temp, then rename into place.
+    # mkstemp guarantees no race if multiple processes cache concurrently.
+    fd, tmp_str = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tmp")
+    tmp = Path(tmp_str)
+    try:
+        os.close(fd)
+        shutil.copy2(source, tmp)
+        tmp.rename(dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     logger.debug("Cache put: %s -> %s", source.name, dest.name)
 
     _evict_if_needed()
@@ -96,13 +105,13 @@ def _evict_if_needed() -> None:
 
 
 def cache_clear() -> int:
-    """Delete all cached MP3 files.
+    """Delete all cached MP3 and orphaned temp files.
 
     Returns the number of files deleted.
     """
     if not CACHE_DIR.exists():
         return 0
-    files = list(CACHE_DIR.glob("*.mp3"))
+    files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
     for f in files:
         f.unlink(missing_ok=True)
     logger.info("Cache cleared: %d files", len(files))
@@ -119,9 +128,9 @@ class CacheInfo:
 
 
 def cache_status() -> CacheInfo:
-    """Return current cache statistics."""
+    """Return current cache statistics (includes orphaned .tmp files)."""
     if not CACHE_DIR.exists():
         return CacheInfo(entries=0, size_bytes=0, path=CACHE_DIR)
-    files = list(CACHE_DIR.glob("*.mp3"))
+    files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
     total_size = sum(f.stat().st_size for f in files)
     return CacheInfo(entries=len(files), size_bytes=total_size, path=CACHE_DIR)

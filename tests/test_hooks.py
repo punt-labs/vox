@@ -323,8 +323,11 @@ class TestHandleNotification:
         chime_path = mock_enqueue.call_args[0][0]
         assert "chime_prompt" in chime_path.name
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_calls_vox_unmute(self, mock_run: object) -> None:
+    def test_voice_mode_calls_vox_unmute(
+        self, mock_run: object, _mock_detect: object
+    ) -> None:
         config = _make_config(speak="y", voice="matilda")
         handle_notification({"notification_type": "permission_prompt"}, config)
         from unittest.mock import MagicMock
@@ -338,13 +341,30 @@ class TestHandleNotification:
         assert "--voice" in cmd
         assert "matilda" in cmd
 
+    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
     @patch("punt_vox.hooks.subprocess.run")
-    def test_idle_prompt_calls_vox(self, mock_run: object) -> None:
+    def test_idle_prompt_calls_vox(
+        self, mock_run: object, _mock_detect: object
+    ) -> None:
         config = _make_config(speak="y")
         handle_notification({"notification_type": "idle_prompt"}, config)
         from unittest.mock import MagicMock
 
         assert isinstance(mock_run, MagicMock)
+        mock_run.assert_called_once()
+
+    @patch("punt_vox.hooks._speak_with_cache")
+    @patch("punt_vox.hooks.subprocess.run")
+    def test_unknown_type_bypasses_cache(
+        self, mock_run: object, mock_cached: object
+    ) -> None:
+        config = _make_config(speak="y")
+        handle_notification({"notification_type": "unknown"}, config)
+        from unittest.mock import MagicMock
+
+        assert isinstance(mock_cached, MagicMock)
+        assert isinstance(mock_run, MagicMock)
+        mock_cached.assert_not_called()
         mock_run.assert_called_once()
 
 

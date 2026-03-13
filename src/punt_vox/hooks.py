@@ -391,9 +391,14 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
             logger.info("Notification hook: chime mode, missing %s", chime.name)
         return
 
-    # Voice mode: synthesize and play (with cache for known phrases)
+    # Voice mode: synthesize and play
     text = _pick_notification_phrase(notification_type, message)
-    _speak_with_cache(text, config)
+    if notification_type in ("permission_prompt", "idle_prompt"):
+        # Known quip pool — safe to cache
+        _speak_with_cache(text, config)
+    else:
+        # Dynamic text from notification message — bypass cache
+        _speak_uncached(text, config)
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +463,25 @@ def _speak_with_cache(text: str, config: VoxConfig) -> None:
                 cache_put(text, voice, provider, source)
     except (OSError, ValueError):
         logger.debug("Cache put failed", exc_info=True)
+
+
+def _speak_uncached(text: str, config: VoxConfig) -> None:
+    """Synthesize and play a phrase without caching.
+
+    Used for dynamic text (e.g. unknown notification types) that should
+    not pollute the cache.
+    """
+    voice_args: list[str] = []
+    if config.voice:
+        voice_args = ["--voice", config.voice]
+
+    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
+        subprocess.run(
+            ["vox", "--json", "unmute", text, *voice_args],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
 
 
 # ---------------------------------------------------------------------------

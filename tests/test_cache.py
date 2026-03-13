@@ -206,6 +206,15 @@ class TestCacheClear:
             cache_clear()
             assert list(tmp_path.glob("*.mp3")) == []
 
+    def test_clear_includes_tmp_files(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cache.CACHE_DIR", tmp_path):
+            _fake_mp3(tmp_path / "file.mp3")
+            (tmp_path / "orphan.tmp").write_bytes(b"\x00" * 10)
+            count = cache_clear()
+            assert count == 2
+            assert list(tmp_path.glob("*.mp3")) == []
+            assert list(tmp_path.glob("*.tmp")) == []
+
     def test_clear_empty_cache(self, tmp_path: Path) -> None:
         with patch("punt_vox.cache.CACHE_DIR", tmp_path):
             assert cache_clear() == 0
@@ -237,6 +246,14 @@ class TestCacheStatus:
             assert info.entries == 2
             assert info.size_bytes == 300
             assert isinstance(info, CacheInfo)
+
+    def test_status_includes_tmp_files(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cache.CACHE_DIR", tmp_path):
+            _fake_mp3(tmp_path / "a.mp3", size=100)
+            (tmp_path / "orphan.tmp").write_bytes(b"\x00" * 50)
+            info = cache_status()
+            assert info.entries == 2
+            assert info.size_bytes == 150
 
     def test_status_nonexistent_dir(self, tmp_path: Path) -> None:
         nonexistent = tmp_path / "nope"
