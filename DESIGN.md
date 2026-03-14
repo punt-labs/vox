@@ -48,9 +48,15 @@ This file is the authoritative record of design decisions, prior approaches, and
 ┌─────────▼────────────────────────────────────▼───────────────┐
 │                    punt-vox Engine                            │
 │                                                              │
-│  MCP Server (speak, chorus, duet, ensemble)                  │
-│  CLI (vox synthesize "text" --ephemeral --auto-play)         │
-│  Providers: ElevenLabs > OpenAI > Polly (auto-detect)        │
+│  With daemon (DES-021):                                      │
+│    mcp-proxy (stdio↔WS) → vox serve :8421/mcp              │
+│    mcp-proxy (--hook)   → vox serve :8421/hook              │
+│                                                              │
+│  Without daemon (fallback):                                  │
+│    vox mcp (stdio, per-session)                              │
+│    vox hook <event> (subprocess, per-hook)                   │
+│                                                              │
+│  Providers: ElevenLabs > OpenAI > Polly > say > espeak      │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -855,3 +861,260 @@ The alternative — embedding tags in the reason string for Claude to extract an
 ### Rule
 
 **The Stop hook `reason` field must contain only a user-friendly phrase.** No config data, no metadata, no pipe-separated fields. If the continuation turn needs data, write it to config before returning the block response.
+
+---
+
+## DES-019: Bluetooth Audio Lead-In Silence
+
+**Date:** 2026-03-13
+**Status:** SETTLED (current solution adequate; alternatives documented for future)
+**Topic:** First syllable clipped on Bluetooth audio devices (AirPods)
+
+### Problem
+
+When playing TTS audio after a period of silence (2+ seconds), Bluetooth headphones (AirPods, others) clip the first ~300-500ms of audio. The user hears "...esting one two three" instead of "Testing one two three."
+
+### Root Cause
+
+Bluetooth A2DP audio devices enter a low-power state when no audio is playing. When audio suddenly starts, the Bluetooth controller needs ~300-500ms to:
+
+1. Wake the radio from low-power mode
+2. Re-negotiate the audio codec (AAC/SBC)
+3. Fill the jitter buffer before playback begins
+
+Audio frames transmitted during this wake-up window are dropped by the device. This is Bluetooth hardware behavior — not fixable in software without compensating for it.
+
+### Why Vox Normally Masks This
+
+In typical sessions, hooks fire frequently enough (chimes on permission prompts, quips on task completion, acknowledgment beeps) that the Bluetooth link stays in active mode. The gap between audio events is usually under 2 seconds — not long enough to trigger low-power transition.
+
+The problem surfaces when there's a deliberate gap: recording → Scribe STT (~700ms) → TTS synthesis (~1000ms) → playback. That ~2 second silence is enough for AirPods to sleep.
+
+### Current Solution
+
+Prepend 500ms of silence to audio before playback:
+
+```python
+from pydub import AudioSegment
+silence = AudioSegment.silent(duration=500)
+speech = AudioSegment.from_mp3(audio_path)
+combined = silence + speech
+combined.export(padded_path, format="mp3")
+```
+
+The silence gives the Bluetooth controller something disposable to drop during wake-up. The user perceives no added latency because the 500ms would have been silent anyway (device was waking up).
+
+### Scope
+
+Currently applied only in the voice-loop spike script (`.tmp/spike-voice-loop.py`). Not yet integrated into the main playback pipeline (`playback.py`), which doesn't have this problem in normal usage because hooks keep the link warm.
+
+### Future Alternatives
+
+If the current approach proves insufficient or the problem surfaces in main playback:
+
+| Approach | Mechanism | Trade-off |
+|----------|-----------|-----------|
+| **Inaudible keepalive** | Play sub-perceptible tone (~20Hz, -60dB) during synthesis gaps to keep the Bluetooth link active | Prevents the problem entirely; requires background audio thread; may affect battery |
+| **CoreAudio device latency query** | Read `kAudioDevicePropertyLatency` and `kAudioDevicePropertySafetyOffset` via CoreAudio API to get actual device latency dynamically | Exact padding per device; macOS-only; requires PyObjC or ctypes bindings |
+| **Bluetooth detection** | Query output device type via `sounddevice.query_devices()` or `system_profiler SPBluetoothDataType`; only pad when output is Bluetooth | No wasted silence on wired/built-in speakers; adds platform-specific detection logic |
+| **Adaptive padding** | Start with 500ms, measure whether the first syllable is audible (via loopback or user feedback), adjust dynamically | Self-tuning; complex to implement; hard to measure "audibility" programmatically |
+
+### Rule
+
+**When playing audio after a gap of 2+ seconds, assume Bluetooth devices may need wake-up time.** The 500ms silence prefix is the simplest correct solution. Do not reduce it below 500ms without testing on AirPods.
+
+---
+
+## DES-020: Turn-Based Voice Conversation with Claude Code
+
+**Date:** 2026-03-13
+**Status:** PROPOSED
+**Topic:** Architecture for voice input/output conversation loop in Claude Code
+
+### Goal
+
+Enable turn-based voice conversation with Claude: the user speaks instead of typing, Claude speaks its responses (already works via Stop hook + `/unmute`), and the loop repeats. Voice and keyboard coexist — the user can type a prompt at any time instead of speaking.
+
+### The "Who Presses Enter?" Problem
+
+Claude Code's turn model is user-initiated. Only the user typing and pressing Enter starts a new model turn. No plugin API exists to inject a user prompt programmatically. The voice transcript must somehow trigger Claude to start a new turn.
+
+### Rejected Approaches
+
+| Approach | Why Not |
+|----------|---------|
+| **Blocking MCP tool** (`listen` tool blocks until user speaks) | MCP tools shouldn't block indefinitely; ties up the tool call; doesn't fit the MCP interaction model |
+| **`tools/list_changed` notification** | Delivers the transcript to Claude's tool list, but Claude is idle waiting for user input — the notification doesn't trigger a new turn |
+| **User types "go" after speaking** | Defeats the purpose — speaking AND typing is worse than just typing |
+| **Stop hook injects transcript as reason** | Only works at task completion boundaries; can't start a cold conversation with voice |
+
+### Proposed Design: Background Task Notification Loop
+
+The solution uses Claude Code's existing background task mechanism (`run_in_background`). A background process blocks until voice input is ready, then exits. Claude receives a `<task-notification>` with the transcript — this triggers a new model turn.
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ Conversation Loop                                               │
+│                                                                 │
+│  Claude finishes task                                           │
+│    → Stop hook: speaks summary (existing behavior)              │
+│    → Claude spawns: `vox listen --wait` (run_in_background)     │
+│    → Claude stops                                               │
+│                                                                 │
+│  User speaks in Lux panel whenever ready                        │
+│    → Daemon: mic capture → Scribe STT → transcript ready        │
+│    → `vox listen --wait` detects ready → prints transcript      │
+│    → exits                                                      │
+│                                                                 │
+│  Claude receives <task-notification>                            │
+│    → reads transcript from task output                          │
+│    → acts on the instruction                                    │
+│    → spawns next `vox listen --wait`                            │
+│    → loop continues                                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Properties
+
+- **No new Claude Code APIs.** Background tasks and task notifications are existing, proven mechanisms.
+- **No timeout pressure.** The listener blocks until the user speaks — 5 seconds or 5 minutes.
+- **Self-sustaining loop.** Each task completion spawns the next listener. Stops when voice mode is disabled.
+- **Keyboard coexists.** If the user types a prompt before speaking, the background listener is killed or ignored. No conflict.
+- **Only when enabled.** The listener is spawned only when voice input mode is active. Normal sessions are unaffected.
+
+### Components
+
+```text
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│   Lux Panel      │     │   Vox Daemon     │     │   Claude Code    │
+│                  │     │   (mcp-proxy)    │     │                  │
+│ [🎤 Record]      │────▶│ mic capture      │     │                  │
+│ [⏹ Stop]        │     │ Scribe STT       │     │                  │
+│                  │     │ transcript store  │     │                  │
+│ Transcript:      │◀────│                  │     │                  │
+│ "refactor auth"  │     │                  │     │                  │
+│                  │     │                  │     │                  │
+│ [Send] [Discard] │────▶│ ready=true       │     │                  │
+│                  │     │                  │────▶│ task-notification │
+└──────────────────┘     │                  │     │ "refactor auth"  │
+                         │ `listen --wait`  │     │                  │
+                         │ (blocks, then    │     │ → acts on it     │
+                         │  prints + exits) │     │ → spawns next    │
+                         └──────────────────┘     │   listener       │
+                                                  └──────────────────┘
+```
+
+### `vox listen --wait` Command
+
+Thin CLI command that:
+
+1. Connects to the vox daemon (WebSocket or polling)
+2. Blocks until a transcript is marked ready
+3. Prints the transcript to stdout
+4. Exits with code 0
+
+If the daemon is unreachable or voice mode is disabled, exits immediately with code 1. No retry, no backoff — the caller (Claude) decides whether to respawn.
+
+### Lux Voice Panel
+
+The Lux window provides the visual interface for recording:
+
+- **Record button** — starts mic capture via the daemon
+- **Stop button** — ends recording, triggers Scribe transcription
+- **Transcript display** — shows the transcribed text for review
+- **Edit field** — user can correct Scribe mistakes before sending
+- **Send button** — marks transcript as ready (unblocks `listen --wait`)
+- **Discard button** — clears transcript, returns to idle state
+
+### Prerequisites
+
+| Dependency | Status |
+|------------|--------|
+| ElevenLabs Scribe STT | Proven in spike (700ms latency for 5s clip) |
+| ElevenLabs TTS playback | Shipping (existing provider) |
+| Bluetooth lead-in silence (DES-019) | Proven in spike (500ms padding) |
+| Mic capture (`sounddevice`) | Proven in spike |
+| Lux interactive elements | Available (buttons, text inputs, recv) |
+| mcp-proxy daemon model | Shipped (DES-021) |
+| `vox listen --wait` CLI command | Not built |
+| Daemon-side transcript store | Not built |
+
+### Phasing
+
+1. **Spike (done):** Prove mic → Scribe → TTS round-trip works (`.tmp/spike-voice-loop.py`)
+2. **mcp-proxy migration (done, DES-021):** Move vox to the daemon model so the daemon can own the mic, Scribe client, Lux connection, and transcript store
+3. **`listen --wait` command:** CLI that blocks on the daemon's transcript-ready signal
+4. **Lux voice panel:** Record/stop/send UI in the Lux window
+5. **Conversation loop integration:** Stop hook spawns `listen --wait` in background when voice mode is active
+
+### Open Questions
+
+1. **How does the first turn start?** The loop is self-sustaining once running, but the initial `listen --wait` needs to be spawned. A `/voice` command could spawn the first listener.
+2. **Concurrent listeners:** If the user types a prompt while `listen --wait` is running, the background task should be killed or its result ignored. How does Claude handle a stale task notification that arrives after a typed prompt?
+3. **VAD vs button:** The Lux panel uses explicit Record/Stop buttons. Future enhancement: VAD-based auto-detection (start recording on speech, stop on silence) for hands-free operation.
+4. **Error recovery:** If Scribe fails or returns garbage, the user sees it in the Lux panel and can discard. But `listen --wait` should also handle daemon disconnection gracefully.
+5. **Multi-session:** With the daemon model, multiple Claude Code sessions could have voice mode enabled. The daemon needs per-session transcript state (keyed by session_key from mcp-proxy).
+
+---
+
+## DES-021: Daemon Mode — Single Process with mcp-proxy
+
+**Date:** 2026-03-14
+**Status:** SETTLED
+**Topic:** Convert vox from per-session MCP processes to a single daemon
+
+### Problem
+
+Each Claude Code session spawns its own `vox mcp` process (~19MB each). With 10+ sessions, that's 10+ independent processes, each with its own TTS provider, playback queue, and hook handlers. Three concrete problems:
+
+1. **Duplicate audio**: `biff wall` sends the same notification to all sessions → each synthesizes and plays identical TTS independently
+2. **Resource waste**: 10+ Python processes doing the same work
+3. **Hook latency**: Each hook invocation cold-starts Python (~500ms) to call `vox hook <event>`
+
+### Design
+
+Single long-running daemon fronted by mcp-proxy (same pattern as quarry, DES-020 prerequisite):
+
+```text
+MCP bridge (long-lived, per-session):
+                    stdio                      WebSocket
+Claude Code ◄──────────────► mcp-proxy ◄──────────────────────► vox serve
+             MCP JSON-RPC    (~6MB Go)       ws://localhost:8421  (one daemon)
+                                              /mcp
+
+Hook relay (one-shot, per-event):
+                    stdin/stdout                WebSocket
+Hook script ──────────────────► mcp-proxy ──────────────────────► vox serve
+             JSON payload       (~15ms)        ws://localhost:8421  (same daemon)
+                                               /hook
+```
+
+Falls back to `vox mcp` (stdio) and `vox hook <event>` (subprocess) when daemon/mcp-proxy unavailable.
+
+### Key decisions
+
+**Starlette ASGI over plain WebSocket server** — Reuses the pattern from quarry's `http_server.py`. Starlette provides routing, lifespan management, and test client support. uvicorn handles signal handling and graceful shutdown.
+
+**ContextVar for per-session config isolation** — Each MCP WebSocket connection sets `_config_path_override` via ContextVar so `resolve_config_path()` returns the correct project's `.vox/config.md` without passing paths through every function. The ContextVar is reset when the connection closes.
+
+**CWD resolution from PID** — When a session connects with `?session_key=<pid>`, the daemon looks up the process's cwd via `lsof` (macOS) or `/proc/<pid>/cwd` (Linux) to find the right `.vox/config.md`. This is resolved once and cached in the session registry.
+
+**Audio deduplication** — `DaemonContext.should_play(cache_key)` returns False if the same text+voice+provider was played within 5 seconds. Prevents biff-wall duplicate audio across sessions.
+
+**Graceful fallback** — Plugin.json uses `sh -c "if command -v mcp-proxy; then exec mcp-proxy ws://...; else exec vox mcp; fi"`. Hook scripts try `mcp-proxy --hook` first, fall back to `vox hook <event>`. Users without mcp-proxy or without the daemon running get identical behavior to before.
+
+### Alternatives considered
+
+1. **Unix domain socket instead of WebSocket** — Simpler but mcp-proxy speaks WebSocket natively. UDS would require a custom transport.
+2. **Shared process group** — Use multiprocessing to share state. Too fragile across crash/restart cycles.
+3. **Redis/IPC for dedup** — Over-engineered. The daemon is single-process; a dict with monotonic timestamps is sufficient.
+
+### Files
+
+- `src/punt_vox/daemon.py` — Starlette app with /mcp, /hook, /health
+- `src/punt_vox/service.py` — launchd/systemd service management
+- `src/punt_vox/config.py` — Added `_config_path_override` ContextVar
+- `src/punt_vox/server.py` — Added `run_mcp_session()` for WebSocket transport
+- `src/punt_vox/__main__.py` — `vox serve`, `vox daemon install/uninstall/status`
+- `.claude-plugin/plugin.json` — mcp-proxy fallback
+- `hooks/*.sh` — Daemon-first relay with subprocess fallback
