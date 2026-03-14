@@ -14,6 +14,7 @@ Lifecycle:
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -423,7 +424,9 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
         # Set ContextVar for this hook dispatch
         token = _config_path_override.set(config_path)
         try:
-            result = _dispatch_hook(event, params, config_path, ctx)
+            result = await asyncio.to_thread(
+                _dispatch_hook, event, params, config_path, ctx
+            )
         finally:
             _config_path_override.reset(token)
 

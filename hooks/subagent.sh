@@ -21,7 +21,7 @@ fi
 _token_file="${HOME}/.punt-vox/serve.token"
 if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]]; then
   _token=$(cat "$_token_file")
-  _encoded_dir="${_repo_root// /%20}"
+  _encoded_dir=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$_repo_root" 2>/dev/null || printf '%s' "$_repo_root")
   _url="ws://localhost:8421/hook?config_dir=${_encoded_dir}&token=${_token}"
   case "${_event}" in
     SubagentStop)  echo "$_stdin" | mcp-proxy "$_url" --hook --async SubagentStop 2>/dev/null && exit 0 ;;
