@@ -861,7 +861,7 @@ def install() -> None:
 
         msg = svc_install()
         typer.echo(f"  \u2713 {msg}")
-    except BaseException as exc:
+    except (Exception, SystemExit) as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 
