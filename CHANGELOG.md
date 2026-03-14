@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-03-13
+
 ### Fixed
 
 - Flaky hook tests: tests that mock `subprocess.run` now also mock `cache_get` to prevent cache hits from bypassing the mocked call path
