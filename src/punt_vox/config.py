@@ -13,6 +13,7 @@ import functools
 import logging
 import re
 import subprocess
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,18 +21,18 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(".vox/config.md")
 
+# Daemon-mode override: when set, resolve_config_path() returns this
+# value instead of running git rev-parse.  Each WebSocket session sets
+# this via ContextVar so concurrent sessions resolve to their own
+# project's config.
+_config_path_override: ContextVar[Path | None] = ContextVar(
+    "_config_path_override", default=None
+)
+
 
 @functools.lru_cache(maxsize=1)
-def resolve_config_path() -> Path:
-    """Resolve .vox/config.md at the main repo root (worktree-safe).
-
-    Uses ``git rev-parse --git-common-dir`` to find the shared git
-    directory, then resolves to its parent.  Falls back to cwd-relative
-    ``.vox/config.md`` when git is unavailable or not in a repo.
-
-    Result is cached for the process lifetime — the git root does not
-    change during a session.
-    """
+def _git_config_path() -> Path:
+    """Resolve .vox/config.md via git rev-parse (cached for process lifetime)."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--git-common-dir"],
@@ -50,6 +51,25 @@ def resolve_config_path() -> Path:
     ):
         pass
     return DEFAULT_CONFIG_PATH
+
+
+def resolve_config_path(cwd: Path | None = None) -> Path:
+    """Resolve .vox/config.md at the main repo root (worktree-safe).
+
+    Resolution order:
+    1. ContextVar override (set by daemon for per-session isolation)
+    2. Explicit *cwd* parameter (for daemon CWD-based resolution)
+    3. ``git rev-parse --git-common-dir`` (cached for process lifetime)
+    4. Fallback to cwd-relative ``.vox/config.md``
+    """
+    override = _config_path_override.get()
+    if override is not None:
+        return override
+
+    if cwd is not None:
+        return cwd / ".vox" / "config.md"
+
+    return _git_config_path()
 
 
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)

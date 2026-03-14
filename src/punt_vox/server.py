@@ -8,8 +8,16 @@ import random
 import tempfile
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
+
+if TYPE_CHECKING:
+    from anyio.streams.memory import (
+        MemoryObjectReceiveStream,
+        MemoryObjectSendStream,
+    )
+    from mcp.shared.message import SessionMessage
 
 from punt_vox import __version__
 from punt_vox.config import read_config, read_field, write_fields
@@ -679,6 +687,23 @@ def _start_watcher() -> None:
     consumer = make_notification_consumer()
     watcher = SessionWatcher(session_dir=session_dir, consumers=[consumer])
     watcher.start()
+
+
+async def run_mcp_session(
+    read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
+    write_stream: MemoryObjectSendStream[SessionMessage],
+) -> None:
+    """Run an MCP session on the given streams (WebSocket, stdio, etc.).
+
+    Public entry point for non-stdio transports (daemon WebSocket).
+    Each call gets its own ``ServerSession`` with isolated ContextVar state.
+    """
+    server = mcp._mcp_server  # pyright: ignore[reportPrivateUsage]
+    await server.run(
+        read_stream,
+        write_stream,
+        server.create_initialization_options(),
+    )
 
 
 def run_server() -> None:
