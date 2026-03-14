@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Flaky hook tests: 11 tests that mock `subprocess.run` now also mock `cache_get` to prevent cache hits from bypassing the mocked call path
+- Flaky hook tests: tests that mock `subprocess.run` now also mock `cache_get` to prevent cache hits from bypassing the mocked call path
 - README install.sh SHA checksum was stale after v1.9.0 release (57334a4→40c3769)
 
 ## [1.9.0] - 2026-03-13
