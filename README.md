@@ -68,6 +68,7 @@ sh install.sh
 - **Voice or chime** --- `/mute` switches to audio tones, no TTS API calls
 - **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
+- **Daemon mode** --- optional single-process daemon (`vox serve`) fronted by mcp-proxy. Eliminates per-session overhead, deduplicates audio across sessions, and drops hook latency from ~500ms to ~15ms
 
 ## What It Looks Like
 
@@ -158,6 +159,9 @@ vox version                                    # Print version
 vox doctor                                     # Check setup
 vox install                                    # Install Claude Code plugin
 vox mcp                                        # Start MCP server (stdio)
+vox serve                                      # Start daemon (HTTP + WebSocket)
+vox daemon install                             # Register as system service
+vox daemon status                              # Check if daemon is running
 ```
 
 ## Environment Variables
@@ -184,6 +188,7 @@ vox mcp                                        # Start MCP server (stdio)
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
 - Per-signal chime assets and vibe-driven chimes with mood-aware pitch shifting
+- Daemon mode: single `vox serve` process with mcp-proxy, audio deduplication, launchd/systemd service management
 
 ### Coming Soon
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Daemon mode (`vox serve`): single long-running process serving MCP-over-WebSocket and hook relay, fronted by mcp-proxy for sub-10ms session startup and hook dispatch
+- Audio deduplication: prevents duplicate playback when multiple sessions receive the same notification (e.g. biff wall)
+- Service management (`vox daemon install/uninstall/status`): registers launchd (macOS) or systemd (Linux) service for auto-start at login
+- mcp-proxy integration: plugin.json falls back to `vox mcp` (stdio) when mcp-proxy is unavailable
+- Hook scripts use daemon relay (~15ms) with subprocess fallback (~500ms)
+
 ## [1.9.1] - 2026-03-13
 
 ### Fixed

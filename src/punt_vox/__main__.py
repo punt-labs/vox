@@ -983,3 +983,94 @@ def mcp() -> None:
     from punt_vox.server import run_server
 
     run_server()
+
+
+# ---------------------------------------------------------------------------
+# serve (daemon mode)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def serve(
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Port to bind."),
+    ] = 8421,  # daemon.DEFAULT_PORT (can't import at module level)
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Host to bind."),
+    ] = "127.0.0.1",
+) -> None:
+    """Start the vox daemon (HTTP + WebSocket server)."""
+    from punt_vox.daemon import serve as daemon_serve
+
+    daemon_serve(port=port, host=host)
+
+
+# ---------------------------------------------------------------------------
+# daemon subcommand group
+# ---------------------------------------------------------------------------
+
+daemon_app = typer.Typer(
+    help="Manage the vox daemon service.",
+    no_args_is_help=True,
+)
+app.add_typer(daemon_app, name="daemon")
+
+
+@daemon_app.command("install")
+def daemon_install_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Register vox as a system service (launchd/systemd)."""
+    from punt_vox.service import install as svc_install
+
+    result = svc_install()
+    typer.echo(result)
+
+
+@daemon_app.command("uninstall")
+def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Remove the vox system service."""
+    from punt_vox.service import uninstall as svc_uninstall
+
+    result = svc_uninstall()
+    typer.echo(result)
+
+
+@daemon_app.command("status")
+def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Check if the vox daemon is reachable."""
+    import urllib.error
+    import urllib.request
+
+    from punt_vox.daemon import read_port_file
+
+    port = read_port_file()
+    if port is None:
+        typer.echo("Daemon: not running (no port file)")
+        raise typer.Exit(code=1)
+
+    try:
+        url = f"http://127.0.0.1:{port}/health"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+        uptime = data.get("uptime_seconds", "?")
+        sessions = data.get("active_sessions", "?")
+        typer.echo(f"Daemon: running on port {port}")
+        typer.echo(f"  Uptime:   {uptime}s")
+        typer.echo(f"  Sessions: {sessions}")
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ConnectionRefusedError):
+            typer.echo(f"Daemon: not running (port {port} refused)")
+        elif isinstance(reason, TimeoutError):
+            typer.echo(f"Daemon: not responding on port {port} (timeout)")
+        else:
+            typer.echo(f"Daemon: cannot reach port {port}: {reason}")
+        raise typer.Exit(code=1) from exc
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Daemon: port {port} responded but not valid JSON (wrong process?)")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        typer.echo(f"Daemon: cannot reach port {port}: {exc}")
+        raise typer.Exit(code=1) from exc

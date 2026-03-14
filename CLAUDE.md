@@ -58,9 +58,11 @@ Module structure under `src/punt_vox/`:
 | `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples, grouped by event |
 | `cache.py` | MP3 cache for quip phrases: `cache_get()`, `cache_put()`, `cache_clear()`, `cache_status()`. Content-addressed by (text, voice, provider) via MD5. `~/.punt-vox/cache/` |
 | `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `handle_pre_compact()`, `handle_user_prompt_submit()`, `handle_subagent_start()`, `handle_subagent_stop()`, `handle_session_end()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()`, `_speak_with_cache()` |
-| `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, hook, cache |
+| `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, serve, daemon, hook, cache |
 | `applet.py` | Lux display applet: builds element tree, connects to display server |
-| `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`, `show_vox`. Reads `.vox/config.md` for session state. |
+| `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`, `show_vox`. `run_mcp_session()` for WebSocket transport. |
+| `daemon.py` | Starlette ASGI daemon: `/mcp` (MCP-over-WebSocket), `/hook` (hook relay), `/health`. Session registry, audio dedup, CWD resolution. `DEFAULT_PORT = 8421` |
+| `service.py` | Daemon lifecycle: launchd (macOS) / systemd (Linux) service management. `install()`, `uninstall()`, `is_running()` |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
 | `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
 | `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
@@ -86,7 +88,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_installer.py`, `test_server.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_installer.py`, `test_server.py`, `test_daemon.py`, `test_service.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
 ## Python Coding Standards
 
