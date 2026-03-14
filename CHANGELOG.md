@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Service management (`vox daemon install/uninstall/status`): registers launchd (macOS) or systemd (Linux) service for auto-start at login
 - mcp-proxy integration: plugin.json falls back to `vox mcp` (stdio) when mcp-proxy is unavailable
 - Hook scripts use daemon relay (~15ms) with subprocess fallback (~500ms)
+- `vox install` now installs mcp-proxy binary and registers daemon service
+- `vox doctor` checks mcp-proxy and daemon status
 
 ## [1.9.1] - 2026-03-13
 

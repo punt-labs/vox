@@ -61,6 +61,7 @@ Module structure under `src/punt_vox/`:
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, serve, daemon, hook, cache |
 | `applet.py` | Lux display applet: builds element tree, connects to display server |
 | `server.py` | FastMCP server (key: `mic`) — MCP tools: `unmute`, `record`, `vibe`, `who`, `show_vox`. `run_mcp_session()` for WebSocket transport. |
+| `proxy.py` | Download and install `mcp-proxy` binary from GitHub Releases: `install()`, `installed_path()` |
 | `daemon.py` | Starlette ASGI daemon: `/mcp` (MCP-over-WebSocket), `/hook` (hook relay), `/health`. Session registry, audio dedup, CWD resolution. `DEFAULT_PORT = 8421` |
 | `service.py` | Daemon lifecycle: launchd (macOS) / systemd (Linux) service management. `install()`, `uninstall()`, `is_running()` |
 | `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |

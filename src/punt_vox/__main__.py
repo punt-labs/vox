@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Annotated
 
@@ -695,12 +697,60 @@ def doctor(
                 required=False,
             )
 
+    # mcp-proxy (optional)
+    from punt_vox.proxy import installed_path as proxy_path
+
+    proxy = proxy_path()
+    if proxy:
+        _check(_PASS, f"mcp-proxy: {proxy}", required=False)
+    else:
+        _check(
+            _OPTIONAL,
+            "mcp-proxy: not found (run 'vox install')",
+            required=False,
+        )
+
+    # Daemon (optional)
+    from punt_vox.daemon import read_port_file
+
+    daemon_port = read_port_file()
+    if daemon_port is not None:
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{daemon_port}/health",
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                health = json.loads(resp.read())
+            sessions = health.get("active_sessions", "?")
+            _check(
+                _PASS,
+                f"Daemon: running on port {daemon_port} ({sessions} sessions)",
+                required=False,
+            )
+        except Exception:
+            _check(
+                _OPTIONAL,
+                f"Daemon: port file says {daemon_port} but not reachable",
+                required=False,
+            )
+    else:
+        _check(
+            _OPTIONAL,
+            "Daemon: not running (run 'vox daemon install')",
+            required=False,
+        )
+
     # uvx (optional)
     uvx = shutil.which("uvx")
     if uvx:
         _check(_PASS, f"uvx: {uvx}", required=False)
     else:
-        _check(_OPTIONAL, "uvx: not found (needed for MCP server)", required=False)
+        _check(
+            _OPTIONAL,
+            "uvx: not found (needed for MCP server)",
+            required=False,
+        )
 
     # Claude Desktop config (optional)
     config_path = _claude_desktop_config_path()
@@ -770,7 +820,9 @@ _PLUGIN_ID = "vox@punt-labs"
 
 @app.command()
 def install() -> None:
-    """Install the Claude Code plugin via the punt-labs marketplace."""
+    """Install the Claude Code plugin, mcp-proxy, and daemon service."""
+    # Step 1: Claude Code plugin
+    typer.echo("[1/3] Installing Claude Code plugin...")
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
@@ -783,7 +835,35 @@ def install() -> None:
     if result.returncode != 0:
         typer.echo("Error: plugin install failed", err=True)
         raise typer.Exit(code=1)
-    _emit({"installed": True}, "Installed. Restart Claude Code to activate.")
+    typer.echo("  \u2713 plugin installed")
+
+    # Step 2: mcp-proxy (best-effort — optional, falls back to vox mcp)
+    typer.echo("[2/3] Installing mcp-proxy...")
+    try:
+        from punt_vox.proxy import install as proxy_install
+
+        msg = proxy_install()
+        typer.echo(f"  \u2713 {msg}")
+    except Exception as exc:
+        typer.echo(f"  \u2022 Skipped: {exc}")
+        typer.echo("    mcp-proxy is optional — vox works without it.")
+
+    # Step 3: daemon service (best-effort — not available in CI/containers)
+    typer.echo("[3/3] Registering vox daemon...")
+    try:
+        from punt_vox.service import install as svc_install
+
+        msg = svc_install()
+        typer.echo(f"  \u2713 {msg}")
+    except Exception as exc:
+        typer.echo(f"  \u2022 Skipped: {exc}")
+        typer.echo("    Daemon registration is optional — vox works without it.")
+
+    typer.echo()
+    _emit(
+        {"installed": True},
+        "Installed. Restart Claude Code to activate.",
+    )
 
 
 @app.command()
@@ -1039,9 +1119,6 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @daemon_app.command("status")
 def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check if the vox daemon is reachable."""
-    import urllib.error
-    import urllib.request
-
     from punt_vox.daemon import read_port_file
 
     port = read_port_file()
