@@ -263,22 +263,20 @@ git checkout -b feat/next-thing                     # New branch from latest mai
 
 ### Release Workflow
 
-Every release follows this exact sequence. No steps skipped.
+Run `punt release` from the repo root. It handles all 11 phases automatically:
+preflight, version bump, build, release PR, tag, CI wait, GitHub release,
+PyPI verify, post-release (README SHA bump), cross-repo propagation
+(install-all.sh, marketplace, website), and verification.
 
-1. **Bump version** in `pyproject.toml`, `src/punt_vox/__init__.py`, `.claude-plugin/plugin.json`, and `install.sh` `VERSION=` constant (keep all four in sync)
-2. **Move `[Unreleased]`** entries in `CHANGELOG.md` to new version section with date
-3. **Run all quality gates** — ruff, mypy, pyright, pytest
-4. **Commit**: `chore: release vX.Y.Z`
-5. **Build locally**: `rm -rf dist/ && uv build && uvx twine check dist/*` (validation only — do NOT upload)
-6. **Tag**: `git tag vX.Y.Z`
-7. **Push**: `git push origin main vX.Y.Z` (triggers GH Actions release workflow)
-8. **Wait for GH Actions**: `gh run watch` — workflow builds, publishes to TestPyPI, verifies install, then publishes to PyPI
-9. **GitHub release**: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file -` (use CHANGELOG entry)
-10. **Verify**: `uv tool install --force --refresh punt-vox==X.Y.Z && vox doctor`
-11. **Restore editable**: `uv tool install --force --editable .` (for local dev)
-12. **Marketplace**: bump both `version` and `source.ref` in `claude-plugins/.claude-plugin/marketplace.json`, PR + merge (ref MUST point to tag — see DES-015)
+```bash
+punt release <version>        # Full release
+punt release --dry-run        # Preview without changes
+punt release --resume-from ci # Resume from a specific phase
+```
 
-A release is not complete until all 12 steps are done. PyPI publishing is owned by GH Actions — never upload manually.
+See [release-process.md](https://github.com/punt-labs/punt-kit/blob/main/standards/release-process.md) for
+the full 11-phase specification. PyPI publishing is owned by the
+tag-triggered `release.yml` workflow — never upload manually.
 
 ### Dev Plugin Testing
 
