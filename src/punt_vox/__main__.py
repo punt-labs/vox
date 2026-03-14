@@ -840,22 +840,28 @@ def install() -> None:
     # Step 2: mcp-proxy (best-effort — optional, falls back to vox mcp)
     typer.echo("[2/3] Installing mcp-proxy...")
     try:
-        from punt_vox.proxy import install as proxy_install
+        from punt_vox.proxy import install as proxy_install, installed_path
 
-        msg = proxy_install()
-        typer.echo(f"  \u2713 {msg}")
+        existing = installed_path()
+        if existing:
+            typer.echo(f"  \u2713 mcp-proxy already installed at {existing}")
+        else:
+            msg = proxy_install()
+            typer.echo(f"  \u2713 {msg}")
     except Exception as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    mcp-proxy is optional — vox works without it.")
 
     # Step 3: daemon service (best-effort — not available in CI/containers)
+    # Catch BaseException because service.detect_platform() raises
+    # SystemExit on unsupported platforms (not a subclass of Exception).
     typer.echo("[3/3] Registering vox daemon...")
     try:
         from punt_vox.service import install as svc_install
 
         msg = svc_install()
         typer.echo(f"  \u2713 {msg}")
-    except Exception as exc:
+    except BaseException as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 

@@ -87,7 +87,12 @@ def _verify_checksum(
 
     expected = None
     for line in checksums_text.strip().splitlines():
-        sha, name = line.split(None, 1)
+        if not line.strip():
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        sha, name = parts
         if name.strip() == asset:
             expected = sha
             break
@@ -105,9 +110,18 @@ def _verify_checksum(
 
 
 def installed_path() -> str | None:
-    """Return the installed mcp-proxy path if on PATH, else None."""
+    """Return the installed mcp-proxy path, or None if not found.
+
+    Checks PATH first, then falls back to the default install
+    directory (~/.local/bin/) for cases where PATH isn't configured.
+    """
     path = shutil.which(_BINARY_NAME)
-    return path if path else None
+    if path:
+        return path
+    fallback = _INSTALL_DIR / _BINARY_NAME
+    if fallback.exists() and os.access(fallback, os.X_OK):
+        return str(fallback)
+    return None
 
 
 def install(*, version: str | None = None) -> str:
