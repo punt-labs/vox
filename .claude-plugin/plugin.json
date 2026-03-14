@@ -12,7 +12,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "if command -v mcp-proxy >/dev/null 2>&1; then exec mcp-proxy ws://localhost:8421/mcp; else exec vox mcp; fi"
+        "tf=\"$HOME/.punt-vox/serve.token\"; if command -v mcp-proxy >/dev/null 2>&1 && [ -f \"$tf\" ]; then exec mcp-proxy \"ws://localhost:8421/mcp?token=$(cat \"$tf\")\"; else exec vox mcp; fi"
       ]
     }
   }

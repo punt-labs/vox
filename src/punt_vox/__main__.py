@@ -995,7 +995,7 @@ def serve(
     port: Annotated[
         int,
         typer.Option("--port", help="Port to bind."),
-    ] = 8421,
+    ] = 8421,  # daemon.DEFAULT_PORT (can't import at module level)
     host: Annotated[
         str,
         typer.Option("--host", help="Host to bind."),
@@ -1039,6 +1039,7 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @daemon_app.command("status")
 def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check if the vox daemon is reachable."""
+    import urllib.error
     import urllib.request
 
     from punt_vox.daemon import read_port_file
@@ -1058,11 +1059,14 @@ def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         typer.echo(f"Daemon: running on port {port}")
         typer.echo(f"  Uptime:   {uptime}s")
         typer.echo(f"  Sessions: {sessions}")
-    except ConnectionRefusedError as exc:
-        typer.echo(f"Daemon: not running (port {port} refused)")
-        raise typer.Exit(code=1) from exc
-    except TimeoutError as exc:
-        typer.echo(f"Daemon: not responding on port {port} (timeout)")
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ConnectionRefusedError):
+            typer.echo(f"Daemon: not running (port {port} refused)")
+        elif isinstance(reason, TimeoutError):
+            typer.echo(f"Daemon: not responding on port {port} (timeout)")
+        else:
+            typer.echo(f"Daemon: cannot reach port {port}: {reason}")
         raise typer.Exit(code=1) from exc
     except json.JSONDecodeError as exc:
         typer.echo(f"Daemon: port {port} responded but not valid JSON (wrong process?)")

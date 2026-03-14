@@ -73,6 +73,9 @@ def _launchd_plist_content() -> str:
 
 def _launchd_install() -> None:
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
+    # Ensure log directory exists — launchd won't create it.
+    log_dir = Path.home() / ".punt-vox" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     _LAUNCHD_PLIST.write_text(_launchd_plist_content())
     logger.info("Wrote %s", _LAUNCHD_PLIST)
 
@@ -247,7 +250,8 @@ def _has_linger() -> bool:
             ["loginctl", "show-user", username, "--property=Linger"],
             capture_output=True,
             text=True,
+            timeout=5,
         )
         return "Linger=yes" in result.stdout
-    except (OSError, KeyError):
+    except (OSError, KeyError, subprocess.TimeoutExpired):
         return False

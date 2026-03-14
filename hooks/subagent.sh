@@ -18,10 +18,14 @@ else
 fi
 
 # Daemon relay (~15ms) — fall back to subprocess (~500ms)
-if command -v mcp-proxy >/dev/null 2>&1; then
+_token_file="${HOME}/.punt-vox/serve.token"
+if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]]; then
+  _token=$(cat "$_token_file")
+  _encoded_dir="${_repo_root// /%20}"
+  _url="ws://localhost:8421/hook?config_dir=${_encoded_dir}&token=${_token}"
   case "${_event}" in
-    SubagentStop)  echo "$_stdin" | mcp-proxy "ws://localhost:8421/hook?config_dir=${_repo_root}" --hook --async SubagentStop 2>/dev/null && exit 0 ;;
-    SubagentStart) echo "$_stdin" | mcp-proxy "ws://localhost:8421/hook?config_dir=${_repo_root}" --hook --async SubagentStart 2>/dev/null && exit 0 ;;
+    SubagentStop)  echo "$_stdin" | mcp-proxy "$_url" --hook --async SubagentStop 2>/dev/null && exit 0 ;;
+    SubagentStart) echo "$_stdin" | mcp-proxy "$_url" --hook --async SubagentStart 2>/dev/null && exit 0 ;;
   esac
 fi
 

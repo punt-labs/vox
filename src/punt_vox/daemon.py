@@ -14,10 +14,12 @@ Lifecycle:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import platform
 import re
+import secrets
 import subprocess
 import time
 from collections.abc import AsyncIterator, Callable
@@ -80,10 +82,11 @@ class SessionInfo:
 class DaemonContext:
     """Shared mutable state for the daemon process."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, auth_token: str | None = None) -> None:
         self.start_time: float = time.monotonic()
         self.sessions: dict[str, SessionInfo] = {}
         self._dedup: dict[str, float] = {}
+        self.auth_token: str | None = auth_token
 
     def should_play(self, cache_key: str) -> bool:
         """Return True if this audio should play (dedup check).
@@ -158,8 +161,8 @@ def resolve_cwd_from_pid(pid: int) -> Path | None:
 def _resolve_config_from_session_key(session_key: str) -> Path | None:
     """Resolve .vox/config.md from a session key (PID).
 
-    Walks the process tree starting from the session PID to find a cwd
-    containing .vox/config.md.
+    Looks up the PID's cwd and checks for .vox/config.md there,
+    falling back to git common dir for worktree support.
     """
     try:
         pid = int(session_key)
@@ -186,7 +189,9 @@ def _resolve_config_from_session_key(session_key: str) -> Path | None:
         )
         git_common = result.stdout.strip()
         if git_common:
-            repo_root = Path(git_common).resolve().parent
+            # git rev-parse may return a relative path (e.g. ".git");
+            # resolve relative to the session's cwd, not daemon's.
+            repo_root = (cwd / Path(git_common)).resolve().parent
             config = repo_root / ".vox" / "config.md"
             if config.exists():
                 return config
@@ -206,7 +211,10 @@ def _resolve_config_from_session_key(session_key: str) -> Path | None:
 
 
 def _dispatch_hook(
-    event: str, params: dict[str, object], config_path: Path
+    event: str,
+    params: dict[str, object],
+    config_path: Path,
+    ctx: DaemonContext | None = None,
 ) -> dict[str, object] | None:
     """Dispatch a hook event to the appropriate handler.
 
@@ -222,6 +230,14 @@ def _dispatch_hook(
         return None
 
     if event == "Notification":
+        # Audio dedup: skip if same notification was played recently
+        # across any session (prevents biff-wall duplicate audio).
+        if ctx is not None:
+            notification_type = params.get("notification_type", "")
+            dedup_key = f"notification:{notification_type}"
+            if not ctx.should_play(dedup_key):
+                logger.debug("Notification dedup: skipping %s", dedup_key)
+                return None
         handle_notification(params, config)
         return None
 
@@ -250,6 +266,19 @@ def _dispatch_hook(
 
 
 # ---------------------------------------------------------------------------
+# Auth helper
+# ---------------------------------------------------------------------------
+
+
+def _check_auth(websocket: WebSocket, ctx: DaemonContext) -> bool:
+    """Verify the auth token from query params.  Returns True if valid."""
+    if ctx.auth_token is None:
+        return True  # No auth configured (tests)
+    token = websocket.query_params.get("token", "")
+    return hmac.compare_digest(token, ctx.auth_token)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket routes
 # ---------------------------------------------------------------------------
 
@@ -261,6 +290,10 @@ async def _mcp_websocket_route(websocket: WebSocket) -> None:
     from punt_vox.server import run_mcp_session
 
     ctx: DaemonContext = websocket.app.state.ctx
+
+    if not _check_auth(websocket, ctx):
+        await websocket.close(code=1008)
+        return
 
     raw_key = websocket.query_params.get("session_key", "unknown")
     session_key = _CONTROL_CHAR_RE.sub("", raw_key)[:64]
@@ -299,6 +332,11 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
     returns results for sync hooks.
     """
     ctx: DaemonContext = websocket.app.state.ctx
+
+    if not _check_auth(websocket, ctx):
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
 
     msg_id: object = None
@@ -326,14 +364,24 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
 
         config_path: Path | None = None
         if raw_config_dir:
-            candidate = Path(raw_config_dir) / ".vox" / "config.md"
-            if candidate.exists():
-                config_path = candidate
+            # Canonicalize to prevent path traversal and symlink abuse.
+            try:
+                canon = Path(raw_config_dir).resolve(strict=True)
+            except OSError:
+                canon = None
+            if canon is not None and canon.is_dir():
+                candidate = canon / ".vox" / "config.md"
+                if candidate.exists() and not candidate.is_symlink():
+                    config_path = candidate
+                else:
+                    logger.debug(
+                        "Hook config_dir=%s: config not found or symlink",
+                        raw_config_dir,
+                    )
             else:
                 logger.debug(
-                    "Hook config_dir=%s but %s not found",
+                    "Hook config_dir=%s: not a valid directory",
                     raw_config_dir,
-                    candidate,
                 )
         elif session_key and session_key in ctx.sessions:
             config_path = ctx.sessions[session_key].config_path
@@ -355,7 +403,6 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
                     "result": None,
                 }
                 await websocket.send_text(json.dumps(response))
-            await websocket.close()
             return
 
         if not config_path.exists():
@@ -371,13 +418,12 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
                     "result": None,
                 }
                 await websocket.send_text(json.dumps(response))
-            await websocket.close()
             return
 
         # Set ContextVar for this hook dispatch
         token = _config_path_override.set(config_path)
         try:
-            result = _dispatch_hook(event, params, config_path)
+            result = _dispatch_hook(event, params, config_path, ctx)
         finally:
             _config_path_override.reset(token)
 
@@ -455,7 +501,9 @@ def build_app(
 # Port file helpers
 # ---------------------------------------------------------------------------
 
-_PORT_FILE = Path.home() / ".punt-vox" / "serve.port"
+_STATE_DIR = Path.home() / ".punt-vox"
+_PORT_FILE = _STATE_DIR / "serve.port"
+_TOKEN_FILE = _STATE_DIR / "serve.token"
 
 
 def _write_port_file(port: int) -> None:
@@ -464,12 +512,20 @@ def _write_port_file(port: int) -> None:
     logger.info("Wrote port file: %s (port %d)", _PORT_FILE, port)
 
 
+def _write_token_file(token: str) -> None:
+    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _TOKEN_FILE.write_text(token)
+    _TOKEN_FILE.chmod(0o600)
+    logger.info("Wrote token file: %s", _TOKEN_FILE)
+
+
 def _remove_port_file() -> None:
-    try:
-        _PORT_FILE.unlink(missing_ok=True)
-        logger.info("Removed port file: %s", _PORT_FILE)
-    except OSError:
-        logger.warning("Could not remove port file: %s", _PORT_FILE)
+    for path in (_PORT_FILE, _TOKEN_FILE):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove %s", path)
+    logger.info("Removed port/token files")
 
 
 def read_port_file() -> int | None:
@@ -477,6 +533,14 @@ def read_port_file() -> int | None:
     try:
         return int(_PORT_FILE.read_text().strip())
     except (FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def read_token_file() -> str | None:
+    """Read the daemon auth token. Returns None if missing."""
+    try:
+        return _TOKEN_FILE.read_text().strip()
+    except (FileNotFoundError, OSError):
         return None
 
 
@@ -494,7 +558,8 @@ def serve(
     configure_logging(stderr_level="INFO")
     logger.info("Starting vox daemon on %s:%d", host, port)
 
-    ctx = DaemonContext()
+    auth_token = secrets.token_urlsafe(32)
+    ctx = DaemonContext(auth_token=auth_token)
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
@@ -523,6 +588,7 @@ def serve(
         if server.servers and server.servers[0].sockets:
             actual_port = server.servers[0].sockets[0].getsockname()[1]
             _write_port_file(actual_port)
+            _write_token_file(auth_token)
             logger.info("Vox daemon listening on http://%s:%d", host, actual_port)
         else:
             logger.error("Server started but no bound sockets; shutting down")
