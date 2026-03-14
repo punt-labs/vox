@@ -1099,7 +1099,7 @@ Falls back to `vox mcp` (stdio) and `vox hook <event>` (subprocess) when daemon/
 
 **CWD resolution from PID** — When a session connects with `?session_key=<pid>`, the daemon looks up the process's cwd via `lsof` (macOS) or `/proc/<pid>/cwd` (Linux) to find the right `.vox/config.md`. This is resolved once and cached in the session registry.
 
-**Audio deduplication** — `DaemonContext.should_play(cache_key)` returns False if the same text+voice+provider was played within 5 seconds. Prevents biff-wall duplicate audio across sessions.
+**Audio deduplication** — `DaemonContext.should_play(cache_key)` returns False if the same notification type was played within 5 seconds. Checked on the event loop thread (before `asyncio.to_thread` dispatch) to avoid data races. Prevents biff-wall duplicate audio across sessions.
 
 **Graceful fallback** — Plugin.json uses `sh -c "if command -v mcp-proxy; then exec mcp-proxy ws://...; else exec vox mcp; fi"`. Hook scripts try `mcp-proxy --hook` first, fall back to `vox hook <event>`. Users without mcp-proxy or without the daemon running get identical behavior to before.
 

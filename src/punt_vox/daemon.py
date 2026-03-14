@@ -215,7 +215,6 @@ def _dispatch_hook(
     event: str,
     params: dict[str, object],
     config_path: Path,
-    ctx: DaemonContext | None = None,
 ) -> dict[str, object] | None:
     """Dispatch a hook event to the appropriate handler.
 
@@ -231,14 +230,6 @@ def _dispatch_hook(
         return None
 
     if event == "Notification":
-        # Audio dedup: skip if same notification was played recently
-        # across any session (prevents biff-wall duplicate audio).
-        if ctx is not None:
-            notification_type = params.get("notification_type", "")
-            dedup_key = f"notification:{notification_type}"
-            if not ctx.should_play(dedup_key):
-                logger.debug("Notification dedup: skipping %s", dedup_key)
-                return None
         handle_notification(params, config)
         return None
 
@@ -421,11 +412,28 @@ async def _hook_websocket_route(websocket: WebSocket) -> None:
                 await websocket.send_text(json.dumps(response))
             return
 
+        # Audio dedup for notifications — checked on the event loop
+        # thread (single-threaded, no race) before dispatching to
+        # a worker thread.
+        if event == "Notification":
+            notification_type = params.get("notification_type", "")
+            dedup_key = f"notification:{notification_type}"
+            if not ctx.should_play(dedup_key):
+                logger.debug("Notification dedup: skipping %s", dedup_key)
+                if msg_id is not None:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": None,
+                    }
+                    await websocket.send_text(json.dumps(response))
+                return
+
         # Set ContextVar for this hook dispatch
         token = _config_path_override.set(config_path)
         try:
             result = await asyncio.to_thread(
-                _dispatch_hook, event, params, config_path, ctx
+                _dispatch_hook, event, params, config_path
             )
         finally:
             _config_path_override.reset(token)

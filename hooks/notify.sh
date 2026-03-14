@@ -12,10 +12,13 @@ fi
 _stdin=$(cat)
 
 # Daemon relay (~15ms) — fall back to subprocess (~500ms)
-_token_file="${HOME}/.punt-vox/serve.token"
-if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]]; then
+_state_dir="${HOME}/.punt-vox"
+_token_file="${_state_dir}/serve.token"
+_port_file="${_state_dir}/serve.port"
+if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]] && [[ -f "$_port_file" ]]; then
   _token=$(cat "$_token_file")
+  _port=$(cat "$_port_file")
   _encoded_dir=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$_repo_root" 2>/dev/null || printf '%s' "$_repo_root")
-  echo "$_stdin" | mcp-proxy "ws://localhost:8421/hook?config_dir=${_encoded_dir}&token=${_token}" --hook Stop 2>/dev/null && exit 0
+  echo "$_stdin" | mcp-proxy "ws://localhost:${_port}/hook?config_dir=${_encoded_dir}&token=${_token}" --hook Stop 2>/dev/null && exit 0
 fi
 echo "$_stdin" | vox hook stop 2>/dev/null || true
