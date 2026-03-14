@@ -9,9 +9,10 @@
   "mcpServers": {
     "mic": {
       "type": "stdio",
-      "command": "vox",
+      "command": "sh",
       "args": [
-        "mcp"
+        "-c",
+        "if command -v mcp-proxy >/dev/null 2>&1; then exec mcp-proxy ws://localhost:8421/mcp; else exec vox mcp; fi"
       ]
     }
   }
