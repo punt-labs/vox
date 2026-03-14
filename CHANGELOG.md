@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-03-14
+
 ### Added
 
 - Daemon mode (`vox serve`): single long-running process serving MCP-over-WebSocket and hook relay, fronted by mcp-proxy for sub-10ms session startup and hook dispatch
