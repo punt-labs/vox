@@ -264,15 +264,14 @@ git checkout -b feat/next-thing                     # New branch from latest mai
 
 ### Release Workflow
 
-Run `punt release` from the repo root. It handles all 11 phases automatically:
-preflight, version bump, build, release PR, tag, CI wait, GitHub release,
-PyPI verify, post-release (README SHA bump), cross-repo propagation
+Use `/punt:auto release` (the slash command), which runs the `punt release` CLI
+through the playbook executor with LLM-driven error diagnosis. It handles all
+11 phases automatically: preflight, version bump, build, release PR, tag, CI wait,
+GitHub release, PyPI verify, post-release (README SHA bump), cross-repo propagation
 (install-all.sh, marketplace, website), and verification.
 
-```bash
-punt release <version>        # Full release
-punt release --dry-run        # Preview without changes
-punt release --resume-from ci # Resume from a specific phase
+```
+/punt:auto release [version=X.Y.Z]
 ```
 
 See [release-process.md](https://github.com/punt-labs/punt-kit/blob/main/standards/release-process.md) for
