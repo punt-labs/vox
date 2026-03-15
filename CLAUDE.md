@@ -270,7 +270,7 @@ through the playbook executor with LLM-driven error diagnosis. It handles all
 GitHub release, PyPI verify, post-release (README SHA bump), cross-repo propagation
 (install-all.sh, marketplace, website), and verification.
 
-```
+```text
 /punt:auto release [version=X.Y.Z]
 ```
 
