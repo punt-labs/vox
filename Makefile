@@ -1,4 +1,4 @@
-.PHONY: help test lint type check format build prfaq clean-tex zspec zspec-test
+.PHONY: help test lint type check format build clean prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -21,10 +21,13 @@ format: ## Auto-format code
 	uv run ruff format src/ tests/
 	uv run ruff check --fix src/ tests/
 
-build: ## Build and validate package
+build: ## Build wheel and sdist
 	rm -rf dist/
 	uv build
 	uvx twine check dist/*
+
+clean: ## Remove build artifacts
+	rm -rf dist/ .tmp/
 
 # LaTeX intermediate files to remove after compilation
 LATEX_ARTIFACTS = *.aux *.log *.out *.bbl *.bcf *.blg *.run.xml *.fls \
