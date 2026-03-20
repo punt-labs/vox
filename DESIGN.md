@@ -1118,3 +1118,19 @@ Falls back to `vox mcp` (stdio) and `vox hook <event>` (subprocess) when daemon/
 - `src/punt_vox/__main__.py` — `vox serve`, `vox daemon install/uninstall/status`
 - `.claude-plugin/plugin.json` — mcp-proxy fallback
 - `hooks/*.sh` — Daemon-first relay with subprocess fallback
+
+---
+
+## DES-022: AskUserQuestion Works Inside Slash Commands
+
+**Date:** 2026-03-20
+**Status:** SETTLED (verified, test artifact removed)
+**Topic:** Whether `AskUserQuestion` renders inside skill/command execution
+
+### Finding
+
+A test command (`commands/ask-test-dev.md`) verified that `AskUserQuestion` with options renders correctly inside a slash command. The tool presents a picker UI and returns the selected option. This confirms commands can use interactive prompts for user input, not just static instructions.
+
+### Outcome
+
+Test passed. The `ask-test-dev.md` scaffold was removed — it served its purpose and has no production value. Commands that need user choices (e.g., voice selection in `/unmute`) can use `AskUserQuestion` with confidence.

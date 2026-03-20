@@ -13,10 +13,8 @@ if grep -q '"vox-dev"' "$PLUGIN_JSON" 2>/dev/null; then
 fi
 
 if [[ "$DEV_MODE" == "true" ]]; then
-  TOOL_PATTERN="mcp__plugin_vox-dev_mic__"
   TOOL_GLOB="mcp__plugin_vox-dev_mic__*"
 else
-  TOOL_PATTERN="mcp__plugin_vox_mic__"
   TOOL_GLOB="mcp__plugin_vox_mic__*"
 fi
 
@@ -58,27 +56,72 @@ if [[ "$DEV_MODE" == "false" ]]; then
   fi
 fi
 
-# ── Allow MCP tools in user settings if not already allowed ──────────
-if command -v jq &>/dev/null && [[ -f "$SETTINGS" ]]; then
-  CHANGED=false
-
+# ── Auto-allow MCP tools and skills ───────────────────────────────────
+# Every MCP tool and every skill must be auto-approved so users never see
+# a permission prompt after enabling the plugin. Uses the PLUGIN_RULES
+# array pattern from punt-kit/standards/permissions.md § 6.
+#
+# Skill names must match deployed commands: unmute.md, mute.md, recap.md,
+# vibe.md, vox.md. If a command is added/renamed, update this list —
+# stale entries cause unexplained permission prompts.
+if ! command -v jq >/dev/null 2>&1; then
+  ACTIONS+=("jq not found, skipping permission setup")
+else
   # Remove legacy mcp__plugin_tts_* and mcp__plugin_vox*_vox__* patterns
   if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp)"
-    jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE"
-    mv "$TMPFILE" "$SETTINGS"
-    CHANGED=true
+    TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
+    if [[ -n "$TMPFILE" ]] && jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
+      ACTIONS+=("Removed legacy MCP permission patterns")
+    else
+      [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
+      ACTIONS+=("Failed to remove legacy MCP permission patterns")
+    fi
   fi
 
-  if ! jq -e ".permissions.allow // [] | map(select(contains(\"$TOOL_PATTERN\"))) | length > 0" "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp)"
-    jq --arg glob "$TOOL_GLOB" '.permissions.allow = (.permissions.allow // []) + [$glob]' "$SETTINGS" > "$TMPFILE"
-    mv "$TMPFILE" "$SETTINGS"
-    CHANGED=true
+  # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
+  PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)"]' 2>/dev/null) || {
+    ACTIONS+=("jq failed to build permission rules — skipping permission setup")
+    PLUGIN_RULES=""
+  }
+
+  if [[ -z "$PLUGIN_RULES" ]]; then
+    : # jq failed above, already logged
+  else
+    if [[ ! -f "$SETTINGS" ]]; then
+      if mkdir -p "$(dirname "$SETTINGS")" && printf '{}' > "$SETTINGS"; then
+        ACTIONS+=("Created ~/.claude/settings.json")
+      else
+        ACTIONS+=("Failed to create ~/.claude/settings.json — skipping permission setup")
+      fi
+    fi
   fi
 
-  if [[ "$CHANGED" == "true" ]]; then
-    ACTIONS+=("Auto-allowed vox MCP tools in permissions")
+  if [[ -n "$PLUGIN_RULES" ]] && [[ -f "$SETTINGS" ]]; then
+    ADDED=$(jq -r --argjson new "$PLUGIN_RULES" '
+      (.permissions.allow // []) as $orig
+      | [$new[] | select(. as $r | $orig | index($r) | not)] | length
+    ' "$SETTINGS" 2>/dev/null) || ADDED=""
+
+    if [[ -z "$ADDED" ]]; then
+      ACTIONS+=("Failed to read permissions from settings.json (file may be corrupt)")
+    elif [[ "$ADDED" =~ ^[0-9]+$ ]] && [[ "$ADDED" -gt 0 ]]; then
+      TMP=$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null) || {
+        ACTIONS+=("mktemp failed — skipped permission update")
+        TMP=""
+      }
+      if [[ -n "$TMP" ]] && jq --argjson new "$PLUGIN_RULES" '
+        (.permissions.allow // []) as $orig
+        | .permissions.allow = $orig + [$new[] | select(. as $r | $orig | index($r) | not)]
+      ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"; then
+        ACTIONS+=("Auto-allowed $ADDED permission rule(s) in settings.json")
+      else
+        if [[ -n "$TMP" ]]; then
+          rm -f "$TMP"
+          ACTIONS+=("Failed to update permissions in settings.json")
+        fi
+      fi
+    fi
   fi
 fi
 
@@ -88,14 +131,14 @@ if [[ ${#ACTIONS[@]} -gt 0 ]]; then
   for action in "${ACTIONS[@]}"; do
     MSG="$MSG $action."
   done
-  cat <<ENDJSON
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "$MSG"
-  }
-}
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg msg "$MSG" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}'
+  else
+    # Fallback: ACTIONS messages are ASCII literals, safe for heredoc
+    cat <<ENDJSON
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"$MSG"}}
 ENDJSON
+  fi
 fi
 
 exit 0
