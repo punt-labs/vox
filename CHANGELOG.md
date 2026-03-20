@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-03-20
+
 ### Changed
 
 - Session-start hook now auto-allows Skill permissions (`Skill(unmute)`, `Skill(mute)`, `Skill(recap)`, `Skill(vibe)`, `Skill(vox)`) alongside MCP tool globs, matching the beadle PLUGIN_RULES pattern
