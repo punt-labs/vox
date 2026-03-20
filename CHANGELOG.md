@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Session-start hook now auto-allows Skill permissions (`Skill(unmute)`, `Skill(mute)`, `Skill(recap)`, `Skill(vibe)`, `Skill(vox)`) alongside MCP tool globs, matching the beadle PLUGIN_RULES pattern
+- Session-start hook JSON output uses `jq -n --arg` instead of raw heredoc interpolation, preventing malformed JSON from special characters in action messages
+- Legacy MCP pattern removal now cleans up temp files on failure
+
+### Removed
+
+- `commands/ask-test-dev.md` — dev test artifact for AskUserQuestion; finding documented in DES-022
+
 ## [1.10.0] - 2026-03-14
 
 ### Added
