@@ -69,11 +69,11 @@ if ! command -v jq >/dev/null 2>&1; then
 else
   # Remove legacy mcp__plugin_tts_* and mcp__plugin_vox*_vox__* patterns
   if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp "$SETTINGS.XXXXXX")"
-    if jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
+    TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
+    if [[ -n "$TMPFILE" ]] && jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
       ACTIONS+=("Removed legacy MCP permission patterns")
     else
-      rm -f "$TMPFILE"
+      [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
       ACTIONS+=("Failed to remove legacy MCP permission patterns")
     fi
   fi
@@ -131,7 +131,14 @@ if [[ ${#ACTIONS[@]} -gt 0 ]]; then
   for action in "${ACTIONS[@]}"; do
     MSG="$MSG $action."
   done
-  jq -n --arg msg "$MSG" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}'
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg msg "$MSG" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}'
+  else
+    # Fallback: ACTIONS messages are ASCII literals, safe for heredoc
+    cat <<ENDJSON
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"$MSG"}}
+ENDJSON
+  fi
 fi
 
 exit 0
