@@ -10,7 +10,6 @@ that executed the install command, anchoring to the exact venv/installation.
 
 from __future__ import annotations
 
-import contextlib
 import html
 import logging
 import os
@@ -123,14 +122,33 @@ def _kill_pid(pid: int) -> bool:
         pid,
         _KILL_TIMEOUT_SECONDS,
     )
-    with contextlib.suppress(ProcessLookupError):
+    try:
         os.kill(pid, signal.SIGKILL)
-    return True
+    except ProcessLookupError:
+        logger.info("PID %d already gone before SIGKILL", pid)
+        return True
+    except PermissionError:
+        logger.warning("No permission to SIGKILL PID %d", pid)
+        return False
+
+    # Probe briefly to confirm SIGKILL took effect.
+    kill_deadline = time.monotonic() + 2
+    while time.monotonic() < kill_deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            logger.info("PID %d exited after SIGKILL", pid)
+            return True
+        time.sleep(0.25)
+    logger.warning("PID %d still alive after SIGKILL", pid)
+    return False
 
 
 def _kill_stale_daemon() -> bool:
     """Kill a daemon process occupying the port.  Returns True if killed."""
-    port = read_port_file() or DEFAULT_PORT
+    port = read_port_file()
+    if port is None:
+        port = DEFAULT_PORT
     pids = _find_pid_on_port(port)
     if not pids:
         return False
@@ -150,6 +168,18 @@ def _kill_stale_daemon() -> bool:
         return False
     logger.warning("No vox daemon found among PIDs %s on port %d", pids, port)
     return False
+
+
+def _ensure_port_free() -> None:
+    """Kill stale daemon if present; abort if port remains occupied."""
+    _kill_stale_daemon()
+    port = read_port_file()
+    if port is None:
+        port = DEFAULT_PORT
+    pids = _find_pid_on_port(port)
+    if pids:
+        msg = f"Port {port} is still in use (PIDs: {pids}). Stop the process and retry."
+        raise SystemExit(msg)
 
 
 def _vox_exec_args() -> list[str]:
@@ -197,7 +227,7 @@ def _launchd_plist_content() -> str:
 
 
 def _launchd_install() -> None:
-    _kill_stale_daemon()
+    _ensure_port_free()
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure log directory exists — launchd won't create it.
     log_dir = Path.home() / ".punt-vox" / "logs"
@@ -261,7 +291,7 @@ def _systemd_unit_content() -> str:
 
 
 def _systemd_install() -> None:
-    _kill_stale_daemon()
+    _ensure_port_free()
     _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT.write_text(_systemd_unit_content())
     logger.info("Wrote %s", _SYSTEMD_UNIT)

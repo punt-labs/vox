@@ -330,14 +330,16 @@ def test_kill_pid_permission_error(mock_kill: MagicMock) -> None:
 def test_kill_pid_sigkill_after_timeout(
     mock_kill: MagicMock, mock_monotonic: MagicMock, _mock_sleep: MagicMock
 ) -> None:
-    # SIGTERM succeeds, probes never raise (process alive), then SIGKILL.
-    mock_kill.side_effect = [None, None, None]  # SIGTERM, probe, SIGKILL
-    # monotonic: first call sets deadline, second is before deadline,
-    # third is past deadline.
-    mock_monotonic.side_effect = [0.0, 0.0, 6.0]
+    # SIGTERM succeeds, probes never raise (process alive), then SIGKILL,
+    # then post-SIGKILL probe raises ProcessLookupError (confirmed dead).
+    mock_kill.side_effect = [None, None, None, ProcessLookupError]
+    # monotonic: SIGTERM deadline (0.0), probe before deadline (0.0),
+    # past deadline (6.0), post-SIGKILL deadline (6.0), probe check (6.0).
+    mock_monotonic.side_effect = [0.0, 0.0, 6.0, 6.0, 6.0]
     assert _kill_pid(100) is True
     assert mock_kill.call_args_list == [
         call(100, signal.SIGTERM),
         call(100, 0),
         call(100, signal.SIGKILL),
+        call(100, 0),
     ]
