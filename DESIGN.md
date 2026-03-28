@@ -1172,3 +1172,44 @@ A symlink at repo root (`assets` → `src/punt_vox/assets`) preserves the `CLAUD
 | Copy assets at install time via post-install hook | `uv` doesn't support post-install hooks; fragile |
 | Resolve from Claude plugin installation directory | Fragile — depends on knowing the plugin install path, which varies |
 | Keep assets at repo root, fix `__file__` traversal | Three `.parent` calls is fragile and breaks when package layout changes |
+
+---
+
+## DES-024: Daemon Lifecycle — Kill Process on Uninstall, Detect Stale on Install
+
+**Date:** 2026-03-28
+**Status:** SETTLED
+**Topic:** How `vox daemon install` and `vox daemon uninstall` handle running processes
+
+### Problem
+
+Two lifecycle bugs discovered while deploying the DES-023 asset fix:
+
+1. **`vox daemon uninstall`** removed the launchd plist but left the daemon process running. The old process continued serving on port 8421 with pre-fix code, invisible to the user.
+
+2. **`vox daemon install`** did not detect a stale process occupying port 8421. `launchctl load` failed silently (or the new process couldn't bind), but `_launchd_status()` showed the service as "loaded" — so install reported success while the old process kept running.
+
+Both bugs compound: uninstall leaves a zombie, install doesn't detect it, user thinks they upgraded but nothing changed.
+
+### Design
+
+A shared `_kill_stale_daemon()` helper used by both install and uninstall:
+
+```text
+_kill_stale_daemon():
+  1. Read port from ~/.punt-vox/serve.port (fallback: DEFAULT_PORT)
+  2. Find PID via lsof -ti :<port> (macOS) or fuser <port>/tcp (Linux)
+  3. SIGTERM → wait up to 5s → SIGKILL if still alive
+  4. Remove serve.port and serve.token
+```
+
+- **Uninstall** calls `_kill_stale_daemon()` after removing the service config
+- **Install** calls `_kill_stale_daemon()` before registering the new service
+
+### Why SIGTERM-then-SIGKILL
+
+The daemon runs a Starlette ASGI server with active WebSocket connections. SIGTERM triggers uvicorn's graceful shutdown (closes connections, runs lifespan shutdown). SIGKILL is the fallback for hung processes — 5 seconds is generous for a local daemon with no persistent state.
+
+### Why Not Just `launchctl kickstart`
+
+`launchctl kickstart -k` can restart a service, but it requires the service to be loaded. If the plist was removed (uninstall) or never loaded (stale process from a previous install), kickstart has nothing to act on. Directly killing the process is the only reliable approach.

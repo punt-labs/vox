@@ -14,17 +14,172 @@ import html
 import logging
 import os
 import platform
+import re
 import shlex
+import signal
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
-from punt_vox.daemon import DEFAULT_PORT
+from punt_vox.daemon import (
+    DEFAULT_PORT,
+    _remove_port_file,  # pyright: ignore[reportPrivateUsage]
+    read_port_file,
+)
 
 logger = logging.getLogger(__name__)
 
 _LABEL = "com.punt-labs.vox"
+
+_KILL_TIMEOUT_SECONDS = 5
+_SUBPROCESS_TIMEOUT_SECONDS = 5
+
+
+def _find_pid_on_port(port: int) -> list[int]:
+    """Return all PIDs with connections to *port*.
+
+    On macOS ``lsof -ti :<port>`` returns one PID per line (daemon *and*
+    connected clients like mcp-proxy).  On Linux ``fuser <port>/tcp``
+    returns space-separated PIDs.  We return **all** of them so the caller
+    can check each for vox identity.
+    """
+    if platform.system() == "Darwin":
+        cmd = ["lsof", "-ti", f":{port}"]
+    else:
+        cmd = ["fuser", f"{port}/tcp"]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pids: list[int] = []
+            # lsof: one PID per line.  fuser: "8421/tcp:  6789 1234".
+            # Split the entire output on whitespace/colons and collect
+            # every purely numeric token.
+            for token in re.split(r"[\s:]+", result.stdout.strip()):
+                if token.isdigit():
+                    pids.append(int(token))
+            return pids
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return []
+
+
+def _is_vox_daemon_process(pid: int) -> bool:
+    """Check whether *pid* is a vox daemon process.
+
+    Uses ``ps`` to inspect the command line.  Returns False if the
+    process doesn't look like ``punt_vox … serve``.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+        cmd_line = result.stdout.strip()
+        if "punt_vox" in cmd_line and "serve" in cmd_line:
+            return True
+        logger.warning(
+            "PID %d is not a vox daemon (command: %s)", pid, cmd_line or "<empty>"
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning("Could not verify PID %d identity via ps", pid)
+    return False
+
+
+def _kill_pid(pid: int) -> bool:
+    """Send SIGTERM then SIGKILL after timeout.
+
+    Returns True if the process is confirmed gone (killed or was already
+    dead).  Returns False if the kill could not be performed (e.g.
+    PermissionError).
+    """
+    logger.info("Sending SIGTERM to PID %d", pid)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        logger.info("PID %d already gone", pid)
+        return True
+    except PermissionError:
+        logger.warning("No permission to signal PID %d — owned by another user?", pid)
+        return False
+
+    deadline = time.monotonic() + _KILL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)  # probe — raises if gone
+        except ProcessLookupError:
+            logger.info("PID %d exited after SIGTERM", pid)
+            return True
+        time.sleep(0.25)
+
+    logger.warning(
+        "PID %d did not exit after %ds — sending SIGKILL",
+        pid,
+        _KILL_TIMEOUT_SECONDS,
+    )
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        logger.info("PID %d already gone before SIGKILL", pid)
+        return True
+    except PermissionError:
+        logger.warning("No permission to SIGKILL PID %d", pid)
+        return False
+
+    # Probe briefly to confirm SIGKILL took effect.
+    kill_deadline = time.monotonic() + 2
+    while time.monotonic() < kill_deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            logger.info("PID %d exited after SIGKILL", pid)
+            return True
+        time.sleep(0.25)
+    logger.warning("PID %d still alive after SIGKILL", pid)
+    return False
+
+
+def _kill_stale_daemon() -> bool:
+    """Kill a daemon process occupying the port.  Returns True if killed."""
+    port = read_port_file()
+    if port is None:
+        port = DEFAULT_PORT
+    pids = _find_pid_on_port(port)
+    if not pids:
+        return False
+    for pid in pids:
+        if not _is_vox_daemon_process(pid):
+            logger.debug(
+                "PID %d on port %d is not a vox daemon — skipping",
+                pid,
+                port,
+            )
+            continue
+        logger.info("Found stale daemon PID %d on port %d", pid, port)
+        if _kill_pid(pid):
+            _remove_port_file()
+            return True
+        logger.warning("Failed to kill PID %d — leaving state files intact", pid)
+        return False
+    logger.warning("No vox daemon found among PIDs %s on port %d", pids, port)
+    return False
+
+
+def _ensure_port_free() -> None:
+    """Kill stale daemon if present; abort if port remains occupied."""
+    _kill_stale_daemon()
+    pids = _find_pid_on_port(DEFAULT_PORT)
+    if pids:
+        msg = (
+            f"Port {DEFAULT_PORT} is still in use (PIDs: {pids})."
+            " Stop the process and retry."
+        )
+        raise SystemExit(msg)
 
 
 def _vox_exec_args() -> list[str]:
@@ -72,6 +227,7 @@ def _launchd_plist_content() -> str:
 
 
 def _launchd_install() -> None:
+    _ensure_port_free()
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure log directory exists — launchd won't create it.
     log_dir = Path.home() / ".punt-vox" / "logs"
@@ -96,6 +252,7 @@ def _launchd_uninstall() -> None:
         logger.info("Removed %s", _LAUNCHD_PLIST)
     else:
         logger.info("No plist found at %s — nothing to uninstall", _LAUNCHD_PLIST)
+    _kill_stale_daemon()
 
 
 def _launchd_status() -> bool:
@@ -134,6 +291,7 @@ def _systemd_unit_content() -> str:
 
 
 def _systemd_install() -> None:
+    _ensure_port_free()
     _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT.write_text(_systemd_unit_content())
     logger.info("Wrote %s", _SYSTEMD_UNIT)
@@ -163,6 +321,7 @@ def _systemd_uninstall() -> None:
         logger.info("Removed %s", _SYSTEMD_UNIT)
     else:
         logger.info("No unit found at %s — nothing to uninstall", _SYSTEMD_UNIT)
+    _kill_stale_daemon()
 
 
 def _systemd_status() -> bool:
