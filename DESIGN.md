@@ -1134,3 +1134,41 @@ A test command (`commands/ask-test-dev.md`) verified that `AskUserQuestion` with
 ### Outcome
 
 Test passed. The `ask-test-dev.md` scaffold was removed — it served its purpose and has no production value. Commands that need user choices (e.g., voice selection in `/unmute`) can use `AskUserQuestion` with confidence.
+
+---
+
+## DES-023: Assets Bundled in Python Package
+
+**Date:** 2026-03-28
+**Status:** SETTLED
+**Topic:** How chime MP3 files are distributed and resolved at runtime
+
+### Problem
+
+Chime audio never played in daemon mode or from the installed `vox` binary. `_resolve_assets_dir()` had two strategies:
+
+1. `CLAUDE_PLUGIN_ROOT` env var → `$CLAUDE_PLUGIN_ROOT/assets/` — works for Claude Code hook scripts
+2. `Path(__file__).parent.parent.parent / "assets"` → walks up to repo root — works for editable installs from the source tree
+
+Strategy 2 fails for the installed package: `__file__` resolves to `site-packages/punt_vox/hooks.py`, so `.parent.parent.parent` = `site-packages/`, and `site-packages/assets/` doesn't exist. The daemon process runs from the installed binary with no `CLAUDE_PLUGIN_ROOT`, so every chime resolution failed silently ("missing chime_done.mp3" in logs).
+
+### Design
+
+Move canonical assets into the Python package: `assets/` → `src/punt_vox/assets/` (subpackage with `__init__.py`). `uv_build` auto-discovers and includes them in the wheel.
+
+Fallback path becomes `Path(__file__).resolve().parent / "assets"` — sibling to the module files. Works for editable installs, installed packages, and daemon mode.
+
+A symlink at repo root (`assets` → `src/punt_vox/assets`) preserves the `CLAUDE_PLUGIN_ROOT/assets/` resolution path for Claude Code hook scripts.
+
+### Why Subpackage, Not `data` Config
+
+`uv_build`'s `data` directive installs files into a platform-specific `.data/` directory in the wheel, not alongside the Python modules. Files there aren't findable via `__file__`-relative paths. Making `assets/` a subpackage (with `__init__.py`) puts the MP3s directly in `site-packages/punt_vox/assets/`, co-located and trivially resolvable.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| `importlib.resources` | Adds complexity; `Path(__file__).parent / "assets"` is simpler and works for all cases |
+| Copy assets at install time via post-install hook | `uv` doesn't support post-install hooks; fragile |
+| Resolve from Claude plugin installation directory | Fragile — depends on knowing the plugin install path, which varies |
+| Keep assets at repo root, fix `__file__` traversal | Three `.parent` calls is fragile and breaks when package layout changes |

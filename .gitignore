@@ -13,8 +13,8 @@ build/
 .coverage
 htmlcov/
 *.mp3
-!assets/chime_*.mp3
-!assets/samples/*.mp4
+!src/punt_vox/assets/chime_*.mp3
+!src/punt_vox/assets/samples/*.mp4
 *.wav
 *.ogg
 .venv/
