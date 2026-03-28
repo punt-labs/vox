@@ -38,8 +38,14 @@ _KILL_TIMEOUT_SECONDS = 5
 _SUBPROCESS_TIMEOUT_SECONDS = 5
 
 
-def _find_pid_on_port(port: int) -> int | None:
-    """Find the PID listening on *port*.  Returns ``None`` if nothing found."""
+def _find_pid_on_port(port: int) -> list[int]:
+    """Return all PIDs with connections to *port*.
+
+    On macOS ``lsof -ti :<port>`` returns one PID per line (daemon *and*
+    connected clients like mcp-proxy).  On Linux ``fuser <port>/tcp``
+    returns space-separated PIDs.  We return **all** of them so the caller
+    can check each for vox identity.
+    """
     if platform.system() == "Darwin":
         cmd = ["lsof", "-ti", f":{port}"]
     else:
@@ -49,15 +55,17 @@ def _find_pid_on_port(port: int) -> int | None:
             cmd, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS
         )
         if result.returncode == 0 and result.stdout.strip():
-            first_line = result.stdout.strip().splitlines()[0].strip()
-            # fuser returns "8421/tcp:  6789" — split on whitespace and
-            # colons, then find the first purely numeric token.
-            for token in re.split(r"[\s:]+", first_line):
+            pids: list[int] = []
+            # lsof: one PID per line.  fuser: "8421/tcp:  6789 1234".
+            # Split the entire output on whitespace/colons and collect
+            # every purely numeric token.
+            for token in re.split(r"[\s:]+", result.stdout.strip()):
                 if token.isdigit():
-                    return int(token)
+                    pids.append(int(token))
+            return pids
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
-    return None
+    return []
 
 
 def _is_vox_daemon_process(pid: int) -> bool:
@@ -84,17 +92,22 @@ def _is_vox_daemon_process(pid: int) -> bool:
     return False
 
 
-def _kill_pid(pid: int) -> None:
-    """Send SIGTERM then SIGKILL after timeout."""
+def _kill_pid(pid: int) -> bool:
+    """Send SIGTERM then SIGKILL after timeout.
+
+    Returns True if the process is confirmed gone (killed or was already
+    dead).  Returns False if the kill could not be performed (e.g.
+    PermissionError).
+    """
     logger.info("Sending SIGTERM to PID %d", pid)
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         logger.info("PID %d already gone", pid)
-        return
+        return True
     except PermissionError:
         logger.warning("No permission to signal PID %d — owned by another user?", pid)
-        return
+        return False
 
     deadline = time.monotonic() + _KILL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
@@ -102,7 +115,7 @@ def _kill_pid(pid: int) -> None:
             os.kill(pid, 0)  # probe — raises if gone
         except ProcessLookupError:
             logger.info("PID %d exited after SIGTERM", pid)
-            return
+            return True
         time.sleep(0.25)
 
     logger.warning(
@@ -112,25 +125,31 @@ def _kill_pid(pid: int) -> None:
     )
     with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
+    return True
 
 
 def _kill_stale_daemon() -> bool:
     """Kill a daemon process occupying the port.  Returns True if killed."""
     port = read_port_file() or DEFAULT_PORT
-    pid = _find_pid_on_port(port)
-    if pid is None:
+    pids = _find_pid_on_port(port)
+    if not pids:
         return False
-    if not _is_vox_daemon_process(pid):
-        logger.warning(
-            "PID %d on port %d is not a vox daemon — skipping kill",
-            pid,
-            port,
-        )
+    for pid in pids:
+        if not _is_vox_daemon_process(pid):
+            logger.debug(
+                "PID %d on port %d is not a vox daemon — skipping",
+                pid,
+                port,
+            )
+            continue
+        logger.info("Found stale daemon PID %d on port %d", pid, port)
+        if _kill_pid(pid):
+            _remove_port_file()
+            return True
+        logger.warning("Failed to kill PID %d — leaving state files intact", pid)
         return False
-    logger.info("Found stale daemon PID %d on port %d", pid, port)
-    _kill_pid(pid)
-    _remove_port_file()
-    return True
+    logger.warning("No vox daemon found among PIDs %s on port %d", pids, port)
+    return False
 
 
 def _vox_exec_args() -> list[str]:
