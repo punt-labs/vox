@@ -58,3 +58,4 @@ docs/*.toc
 
 # Local uv overrides (depot find-links, etc.)
 uv.toml
+.envrc.local
