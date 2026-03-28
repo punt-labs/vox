@@ -253,8 +253,8 @@ def _resolve_assets_dir() -> Path | None:
     """Find the assets directory.
 
     Checks ``CLAUDE_PLUGIN_ROOT`` env var first (set by Claude Code
-    for plugin processes), then falls back to a path relative to the
-    source tree (works for editable installs).
+    for plugin processes), then falls back to the ``assets/`` subpackage
+    next to this file (works for both editable and installed packages).
     """
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
@@ -262,9 +262,8 @@ def _resolve_assets_dir() -> Path | None:
         if candidate.is_dir():
             return candidate
 
-    # Editable install: watcher.py → punt_vox/ → src/ → project root
-    source_root = Path(__file__).resolve().parent.parent.parent
-    candidate = source_root / "assets"
+    # Package-relative: watcher.py sits alongside punt_vox/assets/
+    candidate = Path(__file__).resolve().parent / "assets"
     if candidate.is_dir():
         return candidate
 

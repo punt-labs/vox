@@ -65,13 +65,15 @@ def _resolve_assets_dir() -> Path:
     """Resolve the plugin assets directory.
 
     Uses ``CLAUDE_PLUGIN_ROOT`` (set by Claude Code when running hooks)
-    for pip-installed packages.  Falls back to source-tree-relative path
-    for local development.
+    first.  Falls back to the ``assets/`` subpackage next to this file,
+    which works for both editable and installed packages.
     """
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
-        return Path(plugin_root) / "assets"
-    return Path(__file__).resolve().parent.parent.parent / "assets"
+        candidate = Path(plugin_root) / "assets"
+        if candidate.is_dir():
+            return candidate
+    return Path(__file__).resolve().parent / "assets"
 
 
 def _read_hook_input() -> dict[str, object]:
