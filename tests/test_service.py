@@ -12,6 +12,7 @@ import pytest
 from punt_vox.daemon import DEFAULT_PORT
 from punt_vox.service import (
     _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
+    _is_vox_daemon_process,  # pyright: ignore[reportPrivateUsage]
     _kill_pid,  # pyright: ignore[reportPrivateUsage]
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
@@ -125,7 +126,8 @@ def test_find_pid_on_port_macos(mock_run: MagicMock, _mock_sys: MagicMock) -> No
 @patch("punt_vox.service.platform.system", return_value="Linux")
 @patch("punt_vox.service.subprocess.run")
 def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
-    mock_run.return_value = MagicMock(returncode=0, stdout="  6789\n")
+    # fuser returns "8421/tcp:  6789" — not a bare PID.
+    mock_run.return_value = MagicMock(returncode=0, stdout="8421/tcp:  6789\n")
     assert _find_pid_on_port(8421) == 6789
     mock_run.assert_called_once_with(
         ["fuser", "8421/tcp"], capture_output=True, text=True, timeout=5
@@ -176,13 +178,15 @@ def test_kill_pid_already_gone(mock_kill: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service._remove_state_files")
+@patch("punt_vox.service._remove_port_file")
 @patch("punt_vox.service._kill_pid")
+@patch("punt_vox.service._is_vox_daemon_process", return_value=True)
 @patch("punt_vox.service._find_pid_on_port", return_value=999)
 @patch("punt_vox.service.read_port_file", return_value=8421)
 def test_kill_stale_daemon_kills_process(
     _mock_port: MagicMock,
     mock_find: MagicMock,
+    _mock_is_vox: MagicMock,
     mock_kill: MagicMock,
     mock_remove: MagicMock,
 ) -> None:
@@ -200,15 +204,93 @@ def test_kill_stale_daemon_no_process(
     assert _kill_stale_daemon() is False
 
 
-@patch("punt_vox.service._remove_state_files")
+@patch("punt_vox.service._remove_port_file")
 @patch("punt_vox.service._kill_pid")
+@patch("punt_vox.service._is_vox_daemon_process", return_value=True)
 @patch("punt_vox.service._find_pid_on_port", return_value=555)
 @patch("punt_vox.service.read_port_file", return_value=None)
 def test_kill_stale_daemon_uses_default_port(
     _mock_port: MagicMock,
     mock_find: MagicMock,
+    _mock_is_vox: MagicMock,
     mock_kill: MagicMock,
     _mock_remove: MagicMock,
 ) -> None:
     assert _kill_stale_daemon() is True
     mock_find.assert_called_once_with(DEFAULT_PORT)
+
+
+@patch("punt_vox.service._kill_pid")
+@patch("punt_vox.service._is_vox_daemon_process", return_value=False)
+@patch("punt_vox.service._find_pid_on_port", return_value=999)
+@patch("punt_vox.service.read_port_file", return_value=8421)
+def test_kill_stale_daemon_skips_non_vox_process(
+    _mock_port: MagicMock,
+    _mock_find: MagicMock,
+    _mock_is_vox: MagicMock,
+    mock_kill: MagicMock,
+) -> None:
+    assert _kill_stale_daemon() is False
+    mock_kill.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _is_vox_daemon_process
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.subprocess.run")
+def test_is_vox_daemon_process_true(mock_run: MagicMock) -> None:
+    mock_run.return_value = MagicMock(
+        stdout="/usr/bin/python3 -m punt_vox serve --port 8421"
+    )
+    assert _is_vox_daemon_process(123) is True
+
+
+@patch("punt_vox.service.subprocess.run")
+def test_is_vox_daemon_process_false(mock_run: MagicMock) -> None:
+    mock_run.return_value = MagicMock(stdout="nginx: master process")
+    assert _is_vox_daemon_process(123) is False
+
+
+@patch(
+    "punt_vox.service.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="ps", timeout=5),
+)
+def test_is_vox_daemon_process_timeout(_mock_run: MagicMock) -> None:
+    assert _is_vox_daemon_process(123) is False
+
+
+# ---------------------------------------------------------------------------
+# _kill_pid — PermissionError
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.os.kill", side_effect=PermissionError)
+def test_kill_pid_permission_error(mock_kill: MagicMock) -> None:
+    _kill_pid(100)
+    mock_kill.assert_called_once_with(100, signal.SIGTERM)
+
+
+# ---------------------------------------------------------------------------
+# _kill_pid — SIGKILL fallback
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.time.sleep")
+@patch("punt_vox.service.time.monotonic")
+@patch("punt_vox.service.os.kill")
+def test_kill_pid_sigkill_after_timeout(
+    mock_kill: MagicMock, mock_monotonic: MagicMock, _mock_sleep: MagicMock
+) -> None:
+    # SIGTERM succeeds, probes never raise (process alive), then SIGKILL.
+    mock_kill.side_effect = [None, None, None]  # SIGTERM, probe, SIGKILL
+    # monotonic: first call sets deadline, second is before deadline,
+    # third is past deadline.
+    mock_monotonic.side_effect = [0.0, 0.0, 6.0]
+    _kill_pid(100)
+    assert mock_kill.call_args_list == [
+        call(100, signal.SIGTERM),
+        call(100, 0),
+        call(100, signal.SIGKILL),
+    ]

@@ -15,6 +15,7 @@ import html
 import logging
 import os
 import platform
+import re
 import shlex
 import signal
 import subprocess
@@ -23,17 +24,18 @@ import textwrap
 import time
 from pathlib import Path
 
-from punt_vox.daemon import DEFAULT_PORT, read_port_file
+from punt_vox.daemon import (
+    DEFAULT_PORT,
+    _remove_port_file,  # pyright: ignore[reportPrivateUsage]
+    read_port_file,
+)
 
 logger = logging.getLogger(__name__)
 
 _LABEL = "com.punt-labs.vox"
 
-_STATE_DIR = Path.home() / ".punt-vox"
-_PORT_FILE = _STATE_DIR / "serve.port"
-_TOKEN_FILE = _STATE_DIR / "serve.token"
-
 _KILL_TIMEOUT_SECONDS = 5
+_SUBPROCESS_TIMEOUT_SECONDS = 5
 
 
 def _find_pid_on_port(port: int) -> int | None:
@@ -43,13 +45,43 @@ def _find_pid_on_port(port: int) -> int | None:
     else:
         cmd = ["fuser", f"{port}/tcp"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS
+        )
         if result.returncode == 0 and result.stdout.strip():
-            # lsof/fuser may return multiple PIDs — take the first.
-            return int(result.stdout.strip().splitlines()[0].strip())
+            first_line = result.stdout.strip().splitlines()[0].strip()
+            # fuser returns "8421/tcp:  6789" — split on whitespace and
+            # colons, then find the first purely numeric token.
+            for token in re.split(r"[\s:]+", first_line):
+                if token.isdigit():
+                    return int(token)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
     return None
+
+
+def _is_vox_daemon_process(pid: int) -> bool:
+    """Check whether *pid* is a vox daemon process.
+
+    Uses ``ps`` to inspect the command line.  Returns False if the
+    process doesn't look like ``punt_vox … serve``.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+        cmd_line = result.stdout.strip()
+        if "punt_vox" in cmd_line and "serve" in cmd_line:
+            return True
+        logger.warning(
+            "PID %d is not a vox daemon (command: %s)", pid, cmd_line or "<empty>"
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning("Could not verify PID %d identity via ps", pid)
+    return False
 
 
 def _kill_pid(pid: int) -> None:
@@ -59,6 +91,9 @@ def _kill_pid(pid: int) -> None:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         logger.info("PID %d already gone", pid)
+        return
+    except PermissionError:
+        logger.warning("No permission to signal PID %d — owned by another user?", pid)
         return
 
     deadline = time.monotonic() + _KILL_TIMEOUT_SECONDS
@@ -79,24 +114,22 @@ def _kill_pid(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
 
 
-def _remove_state_files() -> None:
-    """Remove port and token files."""
-    for path in (_PORT_FILE, _TOKEN_FILE):
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Could not remove %s", path)
-
-
 def _kill_stale_daemon() -> bool:
     """Kill a daemon process occupying the port.  Returns True if killed."""
     port = read_port_file() or DEFAULT_PORT
     pid = _find_pid_on_port(port)
     if pid is None:
         return False
+    if not _is_vox_daemon_process(pid):
+        logger.warning(
+            "PID %d on port %d is not a vox daemon — skipping kill",
+            pid,
+            port,
+        )
+        return False
     logger.info("Found stale daemon PID %d on port %d", pid, port)
     _kill_pid(pid)
-    _remove_state_files()
+    _remove_port_file()
     return True
 
 
