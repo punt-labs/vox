@@ -173,12 +173,12 @@ def _kill_stale_daemon() -> bool:
 def _ensure_port_free() -> None:
     """Kill stale daemon if present; abort if port remains occupied."""
     _kill_stale_daemon()
-    port = read_port_file()
-    if port is None:
-        port = DEFAULT_PORT
-    pids = _find_pid_on_port(port)
+    pids = _find_pid_on_port(DEFAULT_PORT)
     if pids:
-        msg = f"Port {port} is still in use (PIDs: {pids}). Stop the process and retry."
+        msg = (
+            f"Port {DEFAULT_PORT} is still in use (PIDs: {pids})."
+            " Stop the process and retry."
+        )
         raise SystemExit(msg)
 
 
