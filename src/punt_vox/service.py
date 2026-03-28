@@ -10,21 +10,94 @@ that executed the install command, anchoring to the exact venv/installation.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import logging
 import os
 import platform
 import shlex
+import signal
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
-from punt_vox.daemon import DEFAULT_PORT
+from punt_vox.daemon import DEFAULT_PORT, read_port_file
 
 logger = logging.getLogger(__name__)
 
 _LABEL = "com.punt-labs.vox"
+
+_STATE_DIR = Path.home() / ".punt-vox"
+_PORT_FILE = _STATE_DIR / "serve.port"
+_TOKEN_FILE = _STATE_DIR / "serve.token"
+
+_KILL_TIMEOUT_SECONDS = 5
+
+
+def _find_pid_on_port(port: int) -> int | None:
+    """Find the PID listening on *port*.  Returns ``None`` if nothing found."""
+    if platform.system() == "Darwin":
+        cmd = ["lsof", "-ti", f":{port}"]
+    else:
+        cmd = ["fuser", f"{port}/tcp"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            # lsof/fuser may return multiple PIDs — take the first.
+            return int(result.stdout.strip().splitlines()[0].strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _kill_pid(pid: int) -> None:
+    """Send SIGTERM then SIGKILL after timeout."""
+    logger.info("Sending SIGTERM to PID %d", pid)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        logger.info("PID %d already gone", pid)
+        return
+
+    deadline = time.monotonic() + _KILL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)  # probe — raises if gone
+        except ProcessLookupError:
+            logger.info("PID %d exited after SIGTERM", pid)
+            return
+        time.sleep(0.25)
+
+    logger.warning(
+        "PID %d did not exit after %ds — sending SIGKILL",
+        pid,
+        _KILL_TIMEOUT_SECONDS,
+    )
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+
+
+def _remove_state_files() -> None:
+    """Remove port and token files."""
+    for path in (_PORT_FILE, _TOKEN_FILE):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove %s", path)
+
+
+def _kill_stale_daemon() -> bool:
+    """Kill a daemon process occupying the port.  Returns True if killed."""
+    port = read_port_file() or DEFAULT_PORT
+    pid = _find_pid_on_port(port)
+    if pid is None:
+        return False
+    logger.info("Found stale daemon PID %d on port %d", pid, port)
+    _kill_pid(pid)
+    _remove_state_files()
+    return True
 
 
 def _vox_exec_args() -> list[str]:
@@ -72,6 +145,7 @@ def _launchd_plist_content() -> str:
 
 
 def _launchd_install() -> None:
+    _kill_stale_daemon()
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure log directory exists — launchd won't create it.
     log_dir = Path.home() / ".punt-vox" / "logs"
@@ -96,6 +170,7 @@ def _launchd_uninstall() -> None:
         logger.info("Removed %s", _LAUNCHD_PLIST)
     else:
         logger.info("No plist found at %s — nothing to uninstall", _LAUNCHD_PLIST)
+    _kill_stale_daemon()
 
 
 def _launchd_status() -> bool:
@@ -134,6 +209,7 @@ def _systemd_unit_content() -> str:
 
 
 def _systemd_install() -> None:
+    _kill_stale_daemon()
     _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT.write_text(_systemd_unit_content())
     logger.info("Wrote %s", _SYSTEMD_UNIT)
@@ -163,6 +239,7 @@ def _systemd_uninstall() -> None:
         logger.info("Removed %s", _SYSTEMD_UNIT)
     else:
         logger.info("No unit found at %s — nothing to uninstall", _SYSTEMD_UNIT)
+    _kill_stale_daemon()
 
 
 def _systemd_status() -> bool:

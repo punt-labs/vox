@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Chime audio now plays in daemon and installed modes — assets are bundled inside the Python package (`src/punt_vox/assets/`) so `_resolve_assets_dir()` resolves correctly when `CLAUDE_PLUGIN_ROOT` is not set
+- `vox daemon uninstall` now kills the running daemon process instead of only removing the launchd/systemd config
+- `vox daemon install` detects and kills stale daemon processes occupying the port before installing
 
 ## [1.10.1] - 2026-03-20
 

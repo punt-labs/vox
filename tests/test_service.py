@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import signal
+import subprocess
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from punt_vox.daemon import DEFAULT_PORT
 from punt_vox.service import (
+    _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
+    _kill_pid,  # pyright: ignore[reportPrivateUsage]
+    _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
     _vox_exec_args,  # pyright: ignore[reportPrivateUsage]
@@ -100,3 +105,110 @@ def test_detect_platform_linux(_mock: MagicMock) -> None:
 def test_detect_platform_unsupported(_mock: MagicMock) -> None:
     with pytest.raises(SystemExit):
         detect_platform()
+
+
+# ---------------------------------------------------------------------------
+# _find_pid_on_port
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.platform.system", return_value="Darwin")
+@patch("punt_vox.service.subprocess.run")
+def test_find_pid_on_port_macos(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
+    mock_run.return_value = MagicMock(returncode=0, stdout="12345\n")
+    assert _find_pid_on_port(8421) == 12345
+    mock_run.assert_called_once_with(
+        ["lsof", "-ti", ":8421"], capture_output=True, text=True, timeout=5
+    )
+
+
+@patch("punt_vox.service.platform.system", return_value="Linux")
+@patch("punt_vox.service.subprocess.run")
+def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
+    mock_run.return_value = MagicMock(returncode=0, stdout="  6789\n")
+    assert _find_pid_on_port(8421) == 6789
+    mock_run.assert_called_once_with(
+        ["fuser", "8421/tcp"], capture_output=True, text=True, timeout=5
+    )
+
+
+@patch("punt_vox.service.platform.system", return_value="Darwin")
+@patch("punt_vox.service.subprocess.run")
+def test_find_pid_on_port_none_when_not_bound(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = MagicMock(returncode=1, stdout="")
+    assert _find_pid_on_port(8421) is None
+
+
+@patch("punt_vox.service.platform.system", return_value="Darwin")
+@patch(
+    "punt_vox.service.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="lsof", timeout=5),
+)
+def test_find_pid_on_port_timeout(_mock_run: MagicMock, _mock_sys: MagicMock) -> None:
+    assert _find_pid_on_port(8421) is None
+
+
+# ---------------------------------------------------------------------------
+# _kill_pid
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.os.kill")
+def test_kill_pid_exits_after_sigterm(mock_kill: MagicMock) -> None:
+    # First call: SIGTERM succeeds. Second call (probe): process gone.
+    mock_kill.side_effect = [None, ProcessLookupError]
+    _kill_pid(100)
+    assert mock_kill.call_args_list[0] == call(100, signal.SIGTERM)
+    assert mock_kill.call_args_list[1] == call(100, 0)
+
+
+@patch("punt_vox.service.os.kill")
+def test_kill_pid_already_gone(mock_kill: MagicMock) -> None:
+    mock_kill.side_effect = ProcessLookupError
+    _kill_pid(100)
+    mock_kill.assert_called_once_with(100, signal.SIGTERM)
+
+
+# ---------------------------------------------------------------------------
+# _kill_stale_daemon
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service._remove_state_files")
+@patch("punt_vox.service._kill_pid")
+@patch("punt_vox.service._find_pid_on_port", return_value=999)
+@patch("punt_vox.service.read_port_file", return_value=8421)
+def test_kill_stale_daemon_kills_process(
+    _mock_port: MagicMock,
+    mock_find: MagicMock,
+    mock_kill: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    assert _kill_stale_daemon() is True
+    mock_find.assert_called_once_with(8421)
+    mock_kill.assert_called_once_with(999)
+    mock_remove.assert_called_once()
+
+
+@patch("punt_vox.service._find_pid_on_port", return_value=None)
+@patch("punt_vox.service.read_port_file", return_value=None)
+def test_kill_stale_daemon_no_process(
+    _mock_port: MagicMock, _mock_find: MagicMock
+) -> None:
+    assert _kill_stale_daemon() is False
+
+
+@patch("punt_vox.service._remove_state_files")
+@patch("punt_vox.service._kill_pid")
+@patch("punt_vox.service._find_pid_on_port", return_value=555)
+@patch("punt_vox.service.read_port_file", return_value=None)
+def test_kill_stale_daemon_uses_default_port(
+    _mock_port: MagicMock,
+    mock_find: MagicMock,
+    mock_kill: MagicMock,
+    _mock_remove: MagicMock,
+) -> None:
+    assert _kill_stale_daemon() is True
+    mock_find.assert_called_once_with(DEFAULT_PORT)
