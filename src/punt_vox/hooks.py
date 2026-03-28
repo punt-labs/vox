@@ -70,7 +70,9 @@ def _resolve_assets_dir() -> Path:
     """
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
-        return Path(plugin_root) / "assets"
+        candidate = Path(plugin_root) / "assets"
+        if candidate.is_dir():
+            return candidate
     return Path(__file__).resolve().parent / "assets"
 
 
