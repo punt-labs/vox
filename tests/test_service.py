@@ -64,6 +64,14 @@ def test_launchd_plist_keepalive() -> None:
     assert "<true/>" in content
 
 
+@patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
+def test_launchd_plist_contains_path_from_env() -> None:
+    content = _launchd_plist_content()
+    assert "<key>EnvironmentVariables</key>" in content
+    assert "<key>PATH</key>" in content
+    assert "/opt/homebrew/bin:/usr/bin:/bin" in content
+
+
 # ---------------------------------------------------------------------------
 # systemd unit content
 # ---------------------------------------------------------------------------
@@ -80,6 +88,12 @@ def test_systemd_unit_restart_policy() -> None:
     content = _systemd_unit_content()
     assert "Restart=on-failure" in content
     assert "RestartSec=5" in content
+
+
+@patch.dict("os.environ", {"PATH": "/usr/local/bin:/usr/bin:/bin"})
+def test_systemd_unit_contains_path_from_env() -> None:
+    content = _systemd_unit_content()
+    assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
 
 
 def test_systemd_unit_description() -> None:
@@ -290,6 +304,23 @@ def test_kill_stale_daemon_no_cleanup_on_kill_failure(
 def test_is_vox_daemon_process_true(mock_run: MagicMock) -> None:
     mock_run.return_value = MagicMock(
         stdout="/usr/bin/python3 -m punt_vox serve --port 8421"
+    )
+    assert _is_vox_daemon_process(123) is True
+
+
+@patch("punt_vox.service.subprocess.run")
+def test_is_vox_daemon_process_hyphen_path(mock_run: MagicMock) -> None:
+    """Matches when cmd contains punt-vox (hyphen) but not punt_vox."""
+    cmd = "/home/user/.local/share/uv/tools/punt-vox/bin/vox serve --port 8421"
+    mock_run.return_value = MagicMock(stdout=cmd)
+    assert _is_vox_daemon_process(123) is True
+
+
+@patch("punt_vox.service.subprocess.run")
+def test_is_vox_daemon_process_bare_vox_binary(mock_run: MagicMock) -> None:
+    """Matches when started as bare ``vox serve`` without punt_vox in path."""
+    mock_run.return_value = MagicMock(
+        stdout="/Users/jfreeman/.local/bin/vox serve --port 8421"
     )
     assert _is_vox_daemon_process(123) is True
 
