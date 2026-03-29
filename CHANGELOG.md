@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Daemon provider key resolution via `~/.punt-vox/keys.env` — `vox daemon install` snapshots API keys (ELEVENLABS_API_KEY, OPENAI_API_KEY, AWS_*) from the caller's environment into a chmod 0600 config file; the daemon loads it at startup before provider auto-detection
+- `install.sh` now runs `vox daemon install` as part of installation, with graceful fallback
+
 ## [1.10.3] - 2026-03-28
 
 ### Fixed

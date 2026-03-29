@@ -113,6 +113,15 @@ fi
 
 ok "$BINARY $(command -v "$BINARY")"
 
+# --- Step 4b: Install daemon ---
+
+info "Installing vox daemon..."
+if "$BINARY" daemon install; then
+  ok "vox daemon installed"
+else
+  warn "Could not install vox daemon (run 'vox daemon install' manually)"
+fi
+
 # --- Step 4: Register marketplace ---
 
 info "Registering Punt Labs marketplace..."
