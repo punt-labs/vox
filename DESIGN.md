@@ -1200,7 +1200,7 @@ _kill_stale_daemon():
   1. Read port from ~/.punt-labs/vox/serve.port (fallback: DEFAULT_PORT)
   2. Find PID via lsof -ti :<port> (macOS) or fuser <port>/tcp (Linux)
   3. SIGTERM → wait up to 5s → SIGKILL if still alive
-  4. Remove serve.port and serve.token
+  4. Remove serve.port (serve.token is preserved for session continuity)
 ```
 
 - **Uninstall** calls `_kill_stale_daemon()` after removing the service config
