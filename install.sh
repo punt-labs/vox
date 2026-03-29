@@ -123,15 +123,10 @@ else
 fi
 
 info "Installing mcp-proxy..."
-VOX_PYTHON="$(dirname "$(command -v "$BINARY")")/python3"
-if [ -x "$VOX_PYTHON" ]; then
-  if "$VOX_PYTHON" -c "from punt_vox.proxy import install, installed_path; p = installed_path(); print(p) if p else print(install())" 2>/dev/null; then
-    ok "mcp-proxy installed"
-  else
-    warn "mcp-proxy install failed (hooks will use subprocess fallback)"
-  fi
+if uv tool run --from "$PACKAGE" python3 -c "from punt_vox.proxy import install, installed_path; p = installed_path(); print(p) if p else print(install())" 2>/dev/null; then
+  ok "mcp-proxy installed"
 else
-  warn "mcp-proxy install skipped (venv python not found)"
+  warn "mcp-proxy install skipped (hooks will use subprocess fallback)"
 fi
 
 # --- Step 6: Register marketplace ---
