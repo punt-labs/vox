@@ -943,5 +943,10 @@ def main(
     server.run()
 
 
+def entrypoint() -> None:
+    """Console script entry point — invokes the typer CLI."""
+    cli()
+
+
 if __name__ == "__main__":
     cli()

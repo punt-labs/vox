@@ -9,7 +9,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Annotated
 import typer
 
 from punt_vox import __version__
+from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
     DEFAULT_CONFIG_PATH,
     find_config,
@@ -25,18 +25,10 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
-from punt_vox.providers import DEFAULT_VOICES, auto_detect_provider, get_provider
-from punt_vox.resolve import resolve_voice_and_language
-from punt_vox.types import (
-    SynthesisRequest,
-    SynthesisResult,
-    TTSProvider,
-    result_to_dict,
-)
+from punt_vox.providers import auto_detect_provider
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +61,6 @@ _PROVIDER_DISPLAY = {
     "say": "Say",
     "espeak": "eSpeak",
 }
-_VOICE_DEFAULTS = ", ".join(
-    f"{DEFAULT_VOICES[k]} ({_PROVIDER_DISPLAY[k]})"
-    for k in ("elevenlabs", "polly", "openai", "say", "espeak")
-)
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -93,11 +81,6 @@ def _configure_logging(verbose: bool) -> None:
     from punt_vox.logging_config import configure_logging
 
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
-
-
-def _print_result(result: SynthesisResult) -> None:
-    payload = result_to_dict(result)
-    _emit(payload, f"{result.path}")
 
 
 def _validate_voice_settings(
@@ -152,7 +135,7 @@ ModelOpt = Annotated[
 ]
 VoiceOpt = Annotated[
     str | None,
-    typer.Option("--voice", help=f"Voice name. Default: {_VOICE_DEFAULTS}."),
+    typer.Option("--voice", help="Voice name. Default: provider-specific."),
 ]
 LanguageOpt = Annotated[
     str | None,
@@ -169,10 +152,6 @@ OutputOpt = Annotated[
 OutputDirOpt = Annotated[
     Path | None,
     typer.Option("--output-dir", "-d", help="Output directory. Default: ~/vox-output."),
-]
-PauseOpt = Annotated[
-    int,
-    typer.Option("--pause", help="Pause between segments in ms."),
 ]
 StabilityOpt = Annotated[
     float | None,
@@ -231,7 +210,6 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     voice: VoiceOpt = None,
     language: LanguageOpt = None,
     rate: RateOpt = 90,
-    pause: PauseOpt = 500,
     provider: ProviderOpt = None,
     model: ModelOpt = None,
     stability: StabilityOpt = None,
@@ -239,53 +217,35 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
 ) -> None:
-    """Synthesize and play audio."""
-    from punt_vox.playback import enqueue
-    from punt_vox.types import generate_filename
-
+    """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
-    prov = get_provider(provider, model=model)
+
+    segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
+    client = VoxClientSync()
 
-    requests = _build_cli_requests(
-        text,
-        from_file,
-        voice,
-        language,
-        prov,
-        rate,
-        stability,
-        similarity,
-        style,
-        boost,
-    )
-
-    out_dir = Path.cwd() / ".vox"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Clean old ephemeral MP3s before synthesizing new ones
-    for _mp3 in out_dir.glob("*.mp3"):
-        _mp3.unlink(missing_ok=True)
-    client = TTSClient(prov)
-
-    if len(requests) > 1:
-        combined_text = " | ".join(r.text for r in requests)
-        out_path = out_dir / generate_filename(combined_text, prefix="seg_")
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            tmp_paths: list[Path] = []
-            for i, req in enumerate(requests):
-                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
-                client.synthesize(req, seg_path)
-                tmp_paths.append(seg_path)
-            stitch_audio(tmp_paths, out_path, pause)
-        enqueue(out_path)
-        _emit({"path": str(out_path)}, str(out_path))
-    else:
-        for req in requests:
-            out_path = out_dir / generate_filename(req.text)
-            result = client.synthesize(req, out_path)
-            enqueue(result.path)
-            _print_result(result)
+    for seg_text in segments:
+        seg_text = normalize_for_speech(seg_text)
+        try:
+            request_id = client.synthesize(
+                seg_text,
+                voice=voice,
+                provider=provider,
+                model=model,
+                rate=rate,
+                language=language,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=boost,
+            )
+            _emit({"id": request_id}, seg_text)
+        except VoxdConnectionError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except VoxdProtocolError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +260,6 @@ def record(  # pyright: ignore[reportUnusedFunction]
     voice: VoiceOpt = None,
     language: LanguageOpt = None,
     rate: RateOpt = 90,
-    pause: PauseOpt = 500,
     output: OutputOpt = None,
     output_dir: OutputDirOpt = None,
     provider: ProviderOpt = None,
@@ -310,110 +269,80 @@ def record(  # pyright: ignore[reportUnusedFunction]
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
 ) -> None:
-    """Synthesize and save audio to file."""
-    _validate_voice_settings(stability, similarity, style)
-    prov = get_provider(provider, model=model)
-    boost = speaker_boost if speaker_boost else None
-
-    requests = _build_cli_requests(
-        text,
-        from_file,
-        voice,
-        language,
-        prov,
-        rate,
-        stability,
-        similarity,
-        style,
-        boost,
-    )
-
-    out_dir = output_dir if output_dir is not None else default_output_dir()
-    client = TTSClient(prov)
-
-    if output is not None and len(requests) == 1:
-        result = client.synthesize(requests[0], output)
-        _print_result(result)
-        return
-
-    if output is not None and len(requests) > 1:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            tmp_paths: list[Path] = []
-            for i, req in enumerate(requests):
-                seg_path = tmp_dir / f"seg_{i:04d}.mp3"
-                client.synthesize(req, seg_path)
-                tmp_paths.append(seg_path)
-            stitch_audio(tmp_paths, output, pause)
-        _emit({"path": str(output)}, str(output))
-        return
-
+    """Synthesize and save audio to file via voxd."""
     from punt_vox.types import generate_filename
 
-    for req in requests:
-        out_path = out_dir / generate_filename(req.text)
-        result = client.synthesize(req, out_path)
-        _print_result(result)
+    _validate_voice_settings(stability, similarity, style)
+
+    segments = _resolve_text_segments(text, from_file)
+    boost = speaker_boost if speaker_boost else None
+    out_dir = output_dir if output_dir is not None else default_output_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    client = VoxClientSync()
+
+    for i, seg_text in enumerate(segments):
+        seg_text = normalize_for_speech(seg_text)
+        # Determine output path
+        if output is not None and len(segments) == 1:
+            out_path = output
+        elif output is not None:
+            # Multiple segments with explicit --output: append index
+            stem = output.stem
+            out_path = output.parent / f"{stem}_{i:04d}{output.suffix}"
+        else:
+            out_path = out_dir / generate_filename(seg_text)
+
+        try:
+            mp3_bytes = client.record(
+                seg_text,
+                voice=voice,
+                provider=provider,
+                model=model,
+                rate=rate,
+                language=language,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=boost,
+            )
+        except VoxdConnectionError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        except VoxdProtocolError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(mp3_bytes)
+        _emit({"path": str(out_path)}, str(out_path))
 
 
-def _build_cli_requests(
+# ---------------------------------------------------------------------------
+# Text segment resolution (shared by unmute and record)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_text_segments(
     text: str | None,
     from_file: Path | None,
-    voice: str | None,
-    language: str | None,
-    prov: TTSProvider,
-    rate: int,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
-) -> list[SynthesisRequest]:
-    """Build SynthesisRequest list from CLI args."""
+) -> list[str]:
+    """Resolve text input into a list of segments.
+
+    Accepts either a direct text argument or a JSON file with an array of
+    strings or {voice, text} objects.
+    """
     if from_file is not None:
-        return _requests_from_file(
-            from_file,
-            voice,
-            language,
-            prov,
-            rate,
-            stability,
-            similarity,
-            style,
-            speaker_boost,
-        )
+        return _segments_from_file(from_file)
 
     if text is None:
         typer.echo("Error: provide TEXT argument or --from file.", err=True)
         raise typer.Exit(code=1)
 
-    resolved_voice, resolved_lang = resolve_voice_and_language(prov, voice, language)
-    text = normalize_for_speech(text)
-    return [
-        SynthesisRequest(
-            text=text,
-            voice=resolved_voice,
-            language=resolved_lang,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
-        )
-    ]
+    return [text]
 
 
-def _requests_from_file(
-    from_file: Path,
-    voice: str | None,
-    language: str | None,
-    prov: TTSProvider,
-    rate: int,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
-) -> list[SynthesisRequest]:
-    """Parse a JSON segments file into SynthesisRequest list."""
+def _segments_from_file(from_file: Path) -> list[str]:
+    """Parse a JSON segments file into a list of text strings."""
     try:
         raw = json.loads(from_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -422,42 +351,21 @@ def _requests_from_file(
     if not isinstance(raw, list):
         raise typer.BadParameter("--from file must contain a JSON array.")
 
-    requests: list[SynthesisRequest] = []
+    segments: list[str] = []
     for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        seg_voice: str | None
         seg_text: str
         if isinstance(item, str):
-            seg_voice = voice
             seg_text = item
         elif isinstance(item, dict):
-            seg_voice = str(item.get("voice") or voice or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             seg_text = str(item.get("text") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-            seg_voice = seg_voice or None
         else:
             raise typer.BadParameter(
                 f"Element {i} must be a string or {{voice, text}} object."
             )
 
-        if not seg_text:
-            continue
-
-        seg_text = normalize_for_speech(seg_text)
-        resolved_voice, resolved_lang = resolve_voice_and_language(
-            prov, seg_voice, language
-        )
-        requests.append(
-            SynthesisRequest(
-                text=seg_text,
-                voice=resolved_voice,
-                language=resolved_lang,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-            )
-        )
-    return requests
+        if seg_text:
+            segments.append(seg_text)
+    return segments
 
 
 # ---------------------------------------------------------------------------
@@ -575,17 +483,27 @@ def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command("status")
-def status_cmd(  # pyright: ignore[reportUnusedFunction]
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-) -> None:
-    """Show current state (provider, voice, vibe, notify)."""
-    prov = get_provider(provider, model=model)
+def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Show current state (daemon, voice, vibe, notify)."""
     cfg = read_config(config_path=find_config() or DEFAULT_CONFIG_PATH)
 
-    info = {
-        "provider": prov.name,
-        "voice": cfg.voice or prov.default_voice,
+    # Try to get provider from voxd health
+    daemon_provider: str | None = None
+    daemon_status = "not running"
+    try:
+        health = VoxClientSync().health()
+        daemon_provider = str(health.get("provider", ""))
+        daemon_status = "running"
+    except (VoxdConnectionError, VoxdProtocolError):
+        pass
+
+    provider_name = daemon_provider or "unknown"
+    display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
+
+    info: dict[str, str | None] = {
+        "daemon": daemon_status,
+        "provider": provider_name,
+        "voice": cfg.voice or None,
         "notify": cfg.notify,
         "speak": cfg.speak,
         "vibe_mode": cfg.vibe_mode,
@@ -594,10 +512,10 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         "vibe_signals": cfg.vibe_signals,
     }
 
-    display_name = _PROVIDER_DISPLAY.get(prov.name, prov.name)
     text_lines = [
+        f"Daemon:    {daemon_status}",
         f"Provider:  {display_name}",
-        f"Voice:     {info['voice']}",
+        f"Voice:     {info['voice'] or '(default)'}",
         f"Notify:    {info['notify']}",
         f"Speak:     {info['speak']}",
         f"Vibe mode: {info['vibe_mode']}",
@@ -631,12 +549,8 @@ def _claude_desktop_config_path() -> Path:
 
 
 @app.command()
-def doctor(
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-) -> None:
+def doctor() -> None:
     """Check system health for vox."""
-    prov = get_provider(provider, model=model)
     passed = 0
     failed = 0
     lines: list[str] = []
@@ -669,9 +583,6 @@ def doctor(
             " \u2014 install from https://www.python.org/downloads/",
         )
 
-    # Active provider
-    _check(_PASS, f"Provider: {prov.name}")
-
     # ffmpeg
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
@@ -683,11 +594,6 @@ def doctor(
             "Windows": "winget install --id Gyan.FFmpeg",
         }.get(platform.system(), "see https://ffmpeg.org/download.html")
         _check(_FAIL, f"ffmpeg: not found \u2014 {hint}")
-
-    # Provider-specific health checks
-    for check in prov.check_health():
-        symbol = _PASS if check.passed else _FAIL
-        _check(symbol, check.message, required=check.required)
 
     # System TTS fallback (Linux without API keys)
     if platform.system() == "Linux" and not any(
@@ -705,40 +611,26 @@ def doctor(
                 required=False,
             )
 
-    # Daemon (optional)
-    from punt_vox.logging_config import VOX_DATA_DIR
-
-    port_file = VOX_DATA_DIR / "serve.port"
-
+    # Daemon health (required -- all synthesis goes through voxd now)
     try:
-        daemon_port: int | None = int(port_file.read_text().strip())
-    except (FileNotFoundError, ValueError, OSError):
-        daemon_port = None
-    if daemon_port is not None:
-        try:
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{daemon_port}/health",
-                method="GET",
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                health = json.loads(resp.read())
-            sessions = health.get("active_sessions", "?")
-            _check(
-                _PASS,
-                f"Daemon: running on port {daemon_port} ({sessions} sessions)",
-                required=False,
-            )
-        except Exception:
-            _check(
-                _OPTIONAL,
-                f"Daemon: port file says {daemon_port} but not reachable",
-                required=False,
-            )
-    else:
+        health = VoxClientSync().health()
+        provider_name = str(health.get("provider", "unknown"))
+        sessions = health.get("active_sessions", "?")
+        port = health.get("port", "?")
         _check(
-            _OPTIONAL,
-            "Daemon: not running (run 'vox daemon install')",
-            required=False,
+            _PASS,
+            f"Daemon: running on port {port} ({sessions} sessions,"
+            f" provider: {provider_name})",
+        )
+    except VoxdConnectionError:
+        _check(
+            _FAIL,
+            "Daemon: not running \u2014 start with 'vox daemon install'",
+        )
+    except VoxdProtocolError as exc:
+        _check(
+            _FAIL,
+            f"Daemon: reachable but unhealthy \u2014 {exc}",
         )
 
     # uvx (optional)

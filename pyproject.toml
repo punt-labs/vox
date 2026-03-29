@@ -42,7 +42,7 @@ Repository = "https://github.com/punt-labs/vox"
 
 [project.scripts]
 vox = "punt_vox.__main__:app"
-voxd = "punt_vox.voxd:main"
+voxd = "punt_vox.voxd:entrypoint"
 
 [project.optional-dependencies]
 dev = [
