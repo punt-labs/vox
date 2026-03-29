@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `vox daemon install` now unloads the existing launchd plist before loading the new one, preventing `launchctl load` I/O errors on upgrades. Same fix for systemd: stops the service before writing the new unit.
+
 ## [1.11.0] - 2026-03-28
 
 ### Added

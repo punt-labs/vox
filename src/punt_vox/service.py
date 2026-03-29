@@ -238,11 +238,29 @@ def _launchd_plist_content() -> str:
 
 
 def _launchd_install() -> None:
-    _ensure_port_free()
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure log directory exists — launchd won't create it.
     log_dir = Path.home() / ".punt-vox" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Unload first if already loaded — launchctl load fails with I/O error
+    # if the plist is already loaded (happens on every upgrade).  Must happen
+    # BEFORE _ensure_port_free() so launchd doesn't restart the killed process.
+    if _LAUNCHD_PLIST.exists():
+        result = subprocess.run(
+            ["launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+            check=False,  # may not be loaded
+        )
+        if result.returncode == 0:
+            logger.info("Unloaded existing %s", _LABEL)
+        else:
+            logger.debug(
+                "launchctl unload exited %d (may not have been loaded)",
+                result.returncode,
+            )
+
+    _ensure_port_free()
+
     _LAUNCHD_PLIST.write_text(_launchd_plist_content())
     logger.info("Wrote %s", _LAUNCHD_PLIST)
 
@@ -305,8 +323,26 @@ def _systemd_unit_content() -> str:
 
 
 def _systemd_install() -> None:
-    _ensure_port_free()
     _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Stop if already running — systemd won't pick up new unit config
+    # from enable --now alone.  Must happen BEFORE _ensure_port_free()
+    # so systemd doesn't restart the killed process (Restart=on-failure).
+    if _SYSTEMD_UNIT.exists():
+        result = subprocess.run(
+            ["systemctl", "--user", "stop", "vox"],
+            check=False,  # may not be running
+        )
+        if result.returncode == 0:
+            logger.info("Stopped existing vox.service")
+        else:
+            logger.debug(
+                "systemctl stop exited %d (may not have been running)",
+                result.returncode,
+            )
+
+    _ensure_port_free()
+
     _SYSTEMD_UNIT.write_text(_systemd_unit_content())
     logger.info("Wrote %s", _SYSTEMD_UNIT)
 
