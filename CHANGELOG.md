@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Ephemeral output directory (`.vox/`) now derives project root from the daemon's per-session config path instead of `Path.cwd()`. Fixes `[Errno 30] Read-only file system: /.vox` when the daemon's working directory is `/` (launchd default).
+
 ## [2.0.0] - 2026-03-29
 
 ### Changed

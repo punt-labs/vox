@@ -315,6 +315,9 @@ Work is NOT complete until `git push` succeeds.
 - [ ] **README updated** if user-facing behavior changed (new commands, flags, providers, config)
 - [ ] **prfaq.tex updated** if the change shifts product direction or validates/invalidates a risk
 - [ ] **Quality gates pass** — `uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/ && uv run mypy src/ tests/ && uv run pyright src/ tests/ && uv run pytest tests/ -v && shellcheck -x hooks/*.sh scripts/*.sh install.sh`
+- [ ] **Open P0-P1 bugs in the same subsystem checked** — run `bd list --status=open` and include any P0-P1 bugs touching the same files/subsystem in this PR. Not optional — if you're rewriting daemon code and there's a P1 daemon bug, fix it now.
+- [ ] **System exercised end-to-end** (daemon/service/hook PRs only) — install, bounce daemon, trigger MCP tools, trigger hooks. Paste actual output into the PR body. `make check` passing is necessary but not sufficient. Not done until the system works as the user sees it.
+- [ ] **All test plan items checked** — unchecked items in the PR test plan block merge. No exceptions.
 
 ## Known Type Checker Workarounds
 
