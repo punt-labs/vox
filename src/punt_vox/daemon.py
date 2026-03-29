@@ -582,7 +582,8 @@ def serve(
         except (PermissionError, OSError) as exc:
             msg = (
                 f"Cannot read auth token from {_TOKEN_FILE}: {exc}. "
-                "Fix file permissions or remove the file, then re-run 'vox daemon install'."
+                "Fix file permissions or remove the file, "
+                "then re-run 'vox daemon install'."
             )
             raise SystemExit(msg) from exc
         if not auth_token:
