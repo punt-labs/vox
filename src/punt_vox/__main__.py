@@ -1157,3 +1157,7 @@ def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     except OSError as exc:
         typer.echo(f"Daemon: cannot reach port {port}: {exc}")
         raise typer.Exit(code=1) from exc
+
+
+if __name__ == "__main__":
+    app()

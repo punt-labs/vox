@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Daemon identity check (`_is_vox_daemon_process`) now matches all invocation patterns: `punt_vox` (underscore), `punt-vox` (hyphen in uv tool path), and bare `vox serve` binary
 - Daemon launchd plist and systemd unit now embed the user's `PATH` at install time so ffmpeg and other tools in `/opt/homebrew/bin` or `/usr/local/bin` are found
+- `python -m punt_vox` now works — added missing `if __name__ == "__main__"` guard to `__main__.py`, which caused the launchd-launched daemon to exit silently
 
 ## [1.10.2] - 2026-03-28
 
