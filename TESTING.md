@@ -12,18 +12,24 @@ Vox has five TTS providers (ElevenLabs, OpenAI, Polly, macOS Say, espeak-ng), a 
 
 ```
 tests/
-  conftest.py               # Shared fixtures: mock clients, voice caches, valid MP3 bytes
+  conftest.py                # Shared fixtures: mock clients, voice caches, valid MP3 bytes
   test_types.py              # Domain types: SynthesisRequest, SynthesisResult, MergeStrategy
   test_core.py               # TTSClient orchestration: batching, SSML, stitching, merge
   test_output.py             # Output path resolution
-  test_ephemeral.py          # Ephemeral .vox/ directory lifecycle
-  test_playback.py           # flock-serialized audio playback
+  test_playback.py           # Audio playback (afplay/ffplay)
   test_config.py             # .vox/config.md YAML frontmatter read/write
   test_mood.py               # Mood classification (bright/dark/neutral)
   test_hooks.py              # Claude Code hook dispatchers: stop, post-bash, notification
   test_cli.py                # Typer CLI invocations via CliRunner
+  test_client.py             # VoxClient/VoxClientSync WebSocket client for voxd
   test_server.py             # MCP server tools: unmute, record, vibe, notify, status
-  test_watcher.py            # File watcher for config hot-reload
+  test_server_partition.py   # Z-spec partition tests for MCP state transitions
+  test_service.py            # System service install/uninstall (launchd, systemd)
+  test_keys.py               # keys.env parsing and loading
+  test_normalize.py          # Text normalization for speech
+  test_cache.py              # MP3 synthesis cache
+  test_applet.py             # Lux display applet
+  test_watcher.py            # Session watcher for real-time signal classification
   test_polly_provider.py     # AWS Polly provider
   test_openai_provider.py    # OpenAI TTS provider
   test_elevenlabs_provider.py # ElevenLabs provider

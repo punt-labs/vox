@@ -68,7 +68,7 @@ sh install.sh
 - **Voice or chime** --- `/mute` switches to audio tones, no TTS API calls
 - **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
-- **Daemon mode** --- optional single-process daemon (`vox serve`) fronted by mcp-proxy. Eliminates per-session overhead, deduplicates audio across sessions, and drops hook latency from ~500ms to ~15ms
+- **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
 
 ## What It Looks Like
 
@@ -159,8 +159,8 @@ vox version                                    # Print version
 vox doctor                                     # Check setup
 vox install                                    # Install Claude Code plugin
 vox mcp                                        # Start MCP server (stdio)
-vox serve                                      # Start daemon (HTTP + WebSocket)
-vox daemon install                             # Register as system service + write API keys
+voxd                                           # Start audio daemon
+sudo vox daemon install                        # Register voxd as system service + write API keys
 vox daemon status                              # Check if daemon is running
 ```
 
@@ -172,7 +172,7 @@ vox daemon status                              # Check if daemon is running
 | `TTS_MODEL` | Model override | provider default |
 | `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
-**Daemon API keys:** Run `vox daemon install` from a shell where your API keys are set (e.g., a directory with `.envrc`). The command writes keys to `~/.punt-labs/vox/keys.env` (chmod 0600) so the daemon can use premium providers. Run `vox doctor` to verify which providers are active.
+**Daemon API keys:** Run `sudo vox daemon install` from a shell where your API keys are set (e.g., a directory with `.envrc`). The command writes keys to the system config directory (`$(brew --prefix)/etc/vox/keys.env` on macOS, `/etc/vox/keys.env` on Linux, chmod 0600) so the daemon can use premium providers. Run `vox doctor` to verify which providers are active.
 
 ## Roadmap
 

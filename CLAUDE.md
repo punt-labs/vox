@@ -88,7 +88,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_ephemeral.py`, `test_playback.py`, `test_cli.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_installer.py`, `test_server.py`, `test_daemon.py`, `test_service.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_playback.py`, `test_cli.py`, `test_client.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_keys.py`, `test_server.py`, `test_server_partition.py`, `test_service.py`, `test_applet.py`, `test_watcher.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
 ## Python Coding Standards
 
