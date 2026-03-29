@@ -423,7 +423,15 @@ def install() -> str:
     token_path = VOX_DATA_DIR / "serve.token"
     token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if token_path.exists():
-        existing = token_path.read_text().strip()
+        try:
+            existing = token_path.read_text().strip()
+        except (PermissionError, OSError) as exc:
+            msg = (
+                f"Cannot read existing auth token at {token_path}: {exc}. "
+                "Fix file permissions or remove the file, "
+                "then rerun 'vox daemon install'."
+            )
+            raise SystemExit(msg) from exc
         if existing:
             logger.info("Reusing existing auth token from %s", token_path)
         else:

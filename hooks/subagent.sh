@@ -23,7 +23,7 @@ _err_log="${_state_dir}/logs/hook-errors.log"
 mkdir -p "${_state_dir}/logs" 2>/dev/null
 _token_file="${_state_dir}/serve.token"
 _port_file="${_state_dir}/serve.port"
-if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]] && [[ -f "$_port_file" ]]; then
+if command -v mcp-proxy >/dev/null 2>&1 && [[ -s "$_token_file" ]] && [[ -s "$_port_file" ]]; then
   _token=$(cat "$_token_file")
   _port=$(cat "$_port_file")
   _encoded_dir=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$_repo_root" 2>/dev/null || printf '%s' "$_repo_root")
