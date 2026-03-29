@@ -16,9 +16,9 @@ import os
 import platform
 import re
 import shlex
+import shutil
 import signal
 import subprocess
-import sys
 import textwrap
 import time
 from pathlib import Path
@@ -29,6 +29,7 @@ from punt_vox.daemon import (
     read_port_file,
 )
 from punt_vox.keys import write_keys_env
+from punt_vox.logging_config import VOX_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +189,16 @@ def _ensure_port_free() -> None:
 
 
 def _vox_exec_args() -> list[str]:
-    """Return the command to invoke ``vox serve`` from the current Python."""
-    return [sys.executable, "-m", "punt_vox", "serve", "--port", str(DEFAULT_PORT)]
+    """Return the command to invoke ``vox serve`` via the uv tool shim."""
+    vox_path = shutil.which("vox")
+    if vox_path is None:
+        msg = (
+            "vox binary not found on PATH. "
+            "Install with 'uv tool install punt-vox' "
+            "or ensure ~/.local/bin is on your PATH."
+        )
+        raise SystemExit(msg)
+    return [vox_path, "serve", "--port", str(DEFAULT_PORT)]
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +214,7 @@ def _launchd_plist_content() -> str:
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
-    log_dir = html.escape(str(Path.home() / ".punt-vox" / "logs"))
+    log_dir = html.escape(str(VOX_DATA_DIR / "logs"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
@@ -240,7 +249,7 @@ def _launchd_plist_content() -> str:
 def _launchd_install() -> None:
     _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure log directory exists — launchd won't create it.
-    log_dir = Path.home() / ".punt-vox" / "logs"
+    log_dir = VOX_DATA_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Unload first if already loaded — launchctl load fails with I/O error
@@ -408,6 +417,31 @@ def install() -> str:
 
     keys_path = write_keys_env(dict(os.environ))
     logger.info("Wrote provider keys to %s", keys_path)
+
+    import secrets
+
+    token_path = VOX_DATA_DIR / "serve.token"
+    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if token_path.exists():
+        existing = token_path.read_text().strip()
+        if existing:
+            logger.info("Reusing existing auth token from %s", token_path)
+        else:
+            token = secrets.token_urlsafe(32)
+            fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, token.encode())
+            finally:
+                os.close(fd)
+            logger.info("Replaced empty auth token at %s", token_path)
+    else:
+        token = secrets.token_urlsafe(32)
+        fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, token.encode())
+        finally:
+            os.close(fd)
+        logger.info("Generated auth token at %s", token_path)
 
     if plat == "macos":
         _launchd_install()

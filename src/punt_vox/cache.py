@@ -17,9 +17,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from punt_vox.logging_config import VOX_DATA_DIR
+
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path.home() / ".punt-vox" / "cache"
+CACHE_DIR = VOX_DATA_DIR / "cache"
 MAX_ENTRIES = 500
 
 

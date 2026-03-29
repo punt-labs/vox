@@ -122,6 +122,9 @@ else
   warn "Could not install vox daemon (run 'vox daemon install' manually)"
 fi
 
+echo "Installing mcp-proxy..."
+vox proxy install || echo "⚠ mcp-proxy install failed (hooks will use subprocess fallback)"
+
 # --- Step 6: Register marketplace ---
 
 info "Registering Punt Labs marketplace..."

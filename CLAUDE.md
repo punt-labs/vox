@@ -48,7 +48,7 @@ Module structure under `src/punt_vox/`:
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
 | `output.py` | Output path resolution: `VOX_OUTPUT_DIR` env var, `~/vox-output` fallback |
-| `logging_config.py` | Rotating file logging to `~/.punt-vox/logs/tts.log` |
+| `logging_config.py` | `VOX_DATA_DIR` central constant (`~/.punt-labs/vox/`), rotating file logging to `~/.punt-labs/vox/logs/tts.log` |
 | `ephemeral.py` | Ephemeral output mode: `.vox/` in cwd, auto-cleanup |
 | `playback.py` | Serialized audio playback via `flock`: `play_audio()` (blocking), `enqueue()` (non-blocking detached) |
 | `config.py` | Centralized read/write for `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `write_fields()`, `resolve_config_path()` |
@@ -56,7 +56,7 @@ Module structure under `src/punt_vox/`:
 | `normalize.py` | Text normalization for speech: `normalize_for_speech()` — snake_case, camelCase, abbreviation expansion |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
 | `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples, grouped by event |
-| `cache.py` | MP3 cache for quip phrases: `cache_get()`, `cache_put()`, `cache_clear()`, `cache_status()`. Content-addressed by (text, voice, provider) via MD5. `~/.punt-vox/cache/` |
+| `cache.py` | MP3 cache for quip phrases: `cache_get()`, `cache_put()`, `cache_clear()`, `cache_status()`. Content-addressed by (text, voice, provider) via MD5. `~/.punt-labs/vox/cache/` |
 | `hooks.py` | Hook dispatchers for Claude Code events: `handle_stop()`, `handle_post_bash()`, `handle_notification()`, `handle_pre_compact()`, `handle_user_prompt_submit()`, `handle_subagent_start()`, `handle_subagent_stop()`, `handle_session_end()`, `classify_signal()`, `resolve_chime()`, `resolve_tags_from_signals()`, `_speak_with_cache()` |
 | `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, install-desktop, play, mcp, serve, daemon, hook, cache |
 | `applet.py` | Lux display applet: builds element tree, connects to display server |
