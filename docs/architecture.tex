@@ -9,6 +9,7 @@
 
 \documentclass[a4paper,10pt]{article}
 \usepackage[margin=1in]{geometry}
+\usepackage{amssymb}
 \usepackage{booktabs}
 \usepackage{listings}
 \usepackage{xcolor}
@@ -63,9 +64,10 @@ orchestration layer.  Audio playback is serialized via file locking.
 Session state lives in a YAML frontmatter config file.
 
 The system does \emph{not} stream audio.  Every synthesis call produces
-a complete MP3 file before playback begins.  There is no audio mixing,
-no real-time pitch manipulation, and no WebSocket transport.  Vox is a
-batch synthesizer with a playback queue.
+a complete MP3 file before playback begins.  There is no audio mixing and
+no real-time pitch manipulation.  Vox is a batch synthesizer with
+a playback queue.  The \texttt{voxd} daemon accepts requests over
+WebSocket and serializes playback.
 
 \subsection{Design Principles}
 
@@ -83,7 +85,8 @@ batch synthesizer with a playback queue.
   \item \textbf{Session-scoped state.}  All mutable state (voice,
     provider, mood, signal history) lives in a single config file
     (\texttt{.vox/config.md}) scoped to the working directory.
-    No global state, no daemon process, no database.
+    An optional daemon (\texttt{voxd}) handles synthesis and
+    playback; session config remains file-based.
   \item \textbf{Fail fast.}  Invalid input raises exceptions.
     No defensive fallbacks, no silent degradation.  If a voice
     doesn't exist, the call fails with a
@@ -120,8 +123,6 @@ Resolve    & \modpath{resolve.py}    & Voice/language resolution, output
 Output     & \modpath{output.py}     & Output path resolution:
              \texttt{VOX\_OUTPUT\_DIR} env, \texttt{\~{}/vox-output}
              fallback \\
-Ephemeral  & \modpath{ephemeral.py}  & \texttt{.vox/} temp directory:
-             create, clean \\
 Playback   & \modpath{playback.py}   & \texttt{flock}-serialized playback:
              \texttt{play\_audio()} (blocking),
              \texttt{enqueue()} (detached subprocess) \\
@@ -140,6 +141,12 @@ Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
              tailing Claude session JSONL files for real-time
              signal classification and autonomous chime/speech
              in continuous mode \\
+Daemon     & \modpath{voxd.py}       & Audio daemon (\texttt{voxd}):
+             WebSocket server for synthesize, chime, record, voices,
+             health.  Playback queue, dedup, cache.  No MCP, no sessions \\
+Client     & \modpath{client.py}     & WebSocket client for \texttt{voxd}.
+             \texttt{VoxClient} (async), \texttt{VoxClientSync} (sync).
+             Lightweight---stdlib + websockets only \\
 Providers  & \modpath{providers/}    & Five backends: ElevenLabs, OpenAI,
              Polly, \texttt{say}, \texttt{espeak-ng} \\
 Server     & \modpath{server.py}     & FastMCP server (key: \texttt{mic}):
@@ -467,8 +474,10 @@ detect synthesis failure after the tool call returns.
 The MCP server runs on stdio transport (\texttt{stdin}/\texttt{stdout}).
 Logs go to stderr only.  The server is started by Claude Code via
 \texttt{vox mcp} and communicates using the MCP JSON-RPC protocol.
-There is no HTTP transport, no WebSocket, and no persistent daemon.
-Each Claude Code session spawns its own server process.
+The MCP server delegates synthesis and playback to
+\texttt{voxd}, a persistent WebSocket daemon.  Each Claude Code
+session spawns its own MCP server process, but all sessions
+share a single \texttt{voxd} instance.
 
 
 % ===================================================================
@@ -568,9 +577,9 @@ When \field{ephemeral=true} (the default for \tool{unmute}),
 output files go to \texttt{.vox/} in the current working
 directory---the same directory that holds \texttt{config.md}.
 Before each synthesis, previous ephemeral files are cleaned up
-(\texttt{clean\_ephemeral()} deletes only \texttt{.mp3} files
-in \texttt{.vox/}, preserving \texttt{config.md} and any other
-non-MP3 files).
+by the client (the MCP server or CLI deletes only \texttt{.mp3}
+files in \texttt{.vox/}, preserving \texttt{config.md} and any
+other non-MP3 files).
 
 Persistent output (via \tool{record} or \field{ephemeral=false})
 goes to \texttt{\~{}/vox-output/} or a user-specified directory.
@@ -1116,8 +1125,8 @@ the process restarts (next Claude Code session).
   resolution, field validation \\
 \texttt{test\_output.py}            & Output path resolution, env
   var handling \\
-\texttt{test\_ephemeral.py}         & \texttt{.vox/} cleanup, file
-  retention \\
+\texttt{test\_normalize.py}          & Text normalization for speech \\
+\texttt{test\_cache.py}             & MP3 quip cache, content addressing \\
 \texttt{test\_playback.py}          & \texttt{flock} serialization,
   \texttt{enqueue()} subprocess lifecycle \\
 \texttt{test\_hooks.py}             & Signal classification, mood
@@ -1134,6 +1143,10 @@ the process restarts (next Claude Code session).
 \texttt{test\_say\_provider.py}     & macOS say command construction \\
 \texttt{test\_espeak\_provider.py}  & espeak-ng command construction \\
 \texttt{test\_installer.py}         & Install/uninstall workflow \\
+\texttt{test\_daemon.py}            & \texttt{voxd} WebSocket server,
+  playback queue, dedup \\
+\texttt{test\_service.py}           & System-level daemon lifecycle
+  (launchd, systemd) \\
 \bottomrule
 \end{tabular}
 \end{center}
