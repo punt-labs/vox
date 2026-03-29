@@ -41,24 +41,28 @@ def test_vox_exec_args() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_launchd_plist_contains_label() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_launchd_plist_contains_label(_mock_which: MagicMock) -> None:
     content = _launchd_plist_content()
     assert "com.punt-labs.vox" in content
 
 
-def test_launchd_plist_contains_args() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_launchd_plist_contains_args(_mock_which: MagicMock) -> None:
     content = _launchd_plist_content()
     assert "serve" in content
     assert str(DEFAULT_PORT) in content
 
 
-def test_launchd_plist_contains_log_paths() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_launchd_plist_contains_log_paths(_mock_which: MagicMock) -> None:
     content = _launchd_plist_content()
     assert "daemon-stdout.log" in content
     assert "daemon-stderr.log" in content
 
 
-def test_launchd_plist_keepalive() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_launchd_plist_keepalive(_mock_which: MagicMock) -> None:
     content = _launchd_plist_content()
     assert "<key>KeepAlive</key>" in content
     assert "<true/>" in content
@@ -78,14 +82,16 @@ def test_launchd_plist_contains_path_from_env(_mock_which: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_systemd_unit_contains_exec_start() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_systemd_unit_contains_exec_start(_mock_which: MagicMock) -> None:
     content = _systemd_unit_content()
     assert "ExecStart=" in content
     assert "serve" in content
     assert str(DEFAULT_PORT) in content
 
 
-def test_systemd_unit_restart_policy() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_systemd_unit_restart_policy(_mock_which: MagicMock) -> None:
     content = _systemd_unit_content()
     assert "Restart=on-failure" in content
     assert "RestartSec=5" in content
@@ -98,7 +104,8 @@ def test_systemd_unit_contains_path_from_env(_mock_which: MagicMock) -> None:
     assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
 
 
-def test_systemd_unit_description() -> None:
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+def test_systemd_unit_description(_mock_which: MagicMock) -> None:
     content = _systemd_unit_content()
     assert "Vox text-to-speech daemon" in content
 
