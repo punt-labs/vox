@@ -358,9 +358,15 @@ class AudioDedup:
 class DaemonContext:
     """Shared mutable state for the voxd process."""
 
-    def __init__(self, *, auth_token: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        auth_token: str | None = None,
+        port: int = DEFAULT_PORT,
+    ) -> None:
         self.start_time: float = time.monotonic()
         self.auth_token: str | None = auth_token
+        self.port: int = port
         self.dedup = AudioDedup()
         self.client_count: int = 0
 
@@ -744,6 +750,8 @@ async def _handle_health(
     ctx: DaemonContext,
 ) -> None:
     """Handle a 'health' message over WebSocket."""
+    from punt_vox.providers import auto_detect_provider
+
     uptime = time.monotonic() - ctx.start_time
     await websocket.send_json(
         {
@@ -751,6 +759,9 @@ async def _handle_health(
             "status": "ok",
             "uptime_seconds": round(uptime, 1),
             "queued": _playback_queue.qsize(),
+            "port": ctx.port,
+            "active_sessions": ctx.client_count,
+            "provider": auto_detect_provider(),
         }
     )
 
@@ -837,6 +848,8 @@ async def _ws_route(websocket: WebSocket) -> None:
 
 async def _health_route(request: Request) -> JSONResponse:
     """Health check endpoint."""
+    from punt_vox.providers import auto_detect_provider
+
     ctx: DaemonContext = request.app.state.ctx
     uptime = time.monotonic() - ctx.start_time
     return JSONResponse(
@@ -844,6 +857,9 @@ async def _health_route(request: Request) -> JSONResponse:
             "status": "ok",
             "uptime_seconds": round(uptime, 1),
             "queued": _playback_queue.qsize(),
+            "port": ctx.port,
+            "active_sessions": ctx.client_count,
+            "provider": auto_detect_provider(),
         }
     )
 
@@ -905,7 +921,7 @@ def main(
 
     # Auth token
     auth_token = _read_or_create_token(run_dir)
-    ctx = DaemonContext(auth_token=auth_token)
+    ctx = DaemonContext(auth_token=auth_token, port=port)
 
     logger.info("Starting voxd on %s:%d", host, port)
 
