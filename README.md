@@ -190,7 +190,7 @@ vox daemon status                              # Check if daemon is running
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
 - Per-signal chime assets and vibe-driven chimes with mood-aware pitch shifting
-- Daemon mode: single `vox serve` process with mcp-proxy, audio deduplication, launchd/systemd service management
+- Audio daemon (`voxd`): system-level audio server with playback queue, dedup, synthesis cache, launchd/systemd service management
 
 ### Coming Soon
 

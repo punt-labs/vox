@@ -48,14 +48,11 @@ This file is the authoritative record of design decisions, prior approaches, and
 ┌─────────▼────────────────────────────────────▼───────────────┐
 │                    punt-vox Engine                            │
 │                                                              │
-│  With daemon (DES-021):                                      │
-│    mcp-proxy (stdio↔WS) → vox serve :8421/mcp              │
-│    mcp-proxy (--hook)   → vox serve :8421/hook              │
+│  vox mcp (stdio, thin client) ──► voxd :8421/ws (WebSocket) │
+│  vox hook <event> (Python)   ──► voxd :8421/ws (WebSocket) │
+│  vox unmute (CLI)            ──► voxd :8421/ws (WebSocket) │
 │                                                              │
-│  Without daemon (fallback):                                  │
-│    vox mcp (stdio, per-session)                              │
-│    vox hook <event> (subprocess, per-hook)                   │
-│                                                              │
+│  voxd: synthesis, playback queue, dedup, cache (DES-028)    │
 │  Providers: ElevenLabs > OpenAI > Polly > say > espeak      │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
