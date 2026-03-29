@@ -1213,3 +1213,39 @@ The daemon runs a Starlette ASGI server with active WebSocket connections. SIGTE
 ### Why Not Just `launchctl kickstart`
 
 `launchctl kickstart -k` can restart a service, but it requires the service to be loaded. If the plist was removed (uninstall) or never loaded (stale process from a previous install), kickstart has nothing to act on. Directly killing the process is the only reliable approach.
+
+## DES-025: Daemon Provider Key Resolution via keys.env
+
+**Date:** 2026-03-28
+**Status:** SETTLED
+**Topic:** How the daemon gets API keys for TTS providers when launchd/systemd strip the shell environment
+
+### Problem
+
+The vox daemon runs as a launchd (macOS) or systemd (Linux) service. These init systems start processes with a minimal environment — no direnv, no shell profile, no API keys. Without `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`, the daemon falls back to `say` (macOS) or `espeak` (Linux) — system TTS that sounds terrible.
+
+Before the daemon existed, vox ran inside Claude Code's process and inherited the shell environment. The daemon broke that model.
+
+### Rejected Alternatives
+
+1. **Embed API keys in the launchd plist / systemd unit** — Keys would be visible in the service config file. More importantly, the plist is written at install time from whatever shell runs `vox daemon install`. If that shell doesn't have direnv loaded (e.g., running from a directory without `.envrc`), no keys get embedded. Fragile and non-obvious.
+
+2. **Pass keys per-request via MCP protocol** — Would preserve the "your shell controls your provider" model, but adds complexity to the MCP wire protocol, requires changes to every MCP tool, and means the daemon can't auto-detect providers at startup. Also raises questions about key transit security over localhost WebSocket.
+
+3. **Read keys from macOS Keychain / Linux secret-service** — Not portable. Keychain is user-specific setup, not something every vox user would have. Not a general solution.
+
+### Design
+
+A dedicated config file at `~/.punt-vox/keys.env` — a simple `KEY=VALUE` format, chmod 0600.
+
+**Write path:** `vox daemon install` calls `write_keys_env(dict(os.environ))`. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`) from the caller's shell into the file. Idempotent: re-running merges with existing keys (absent env vars preserve existing file values; empty env vars remove them).
+
+**Read path:** `vox serve` calls `load_keys_env()` as its very first statement, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
+- launchd/systemd daemon: loads all keys from file (nothing in env)
+- Manual `vox serve` from shell with direnv: env vars already set, file keys ignored
+
+**Resolution order:** shell env var > keys.env value > provider unavailable.
+
+### Why a Flat File, Not TOML/YAML
+
+The file is never sourced by a shell. It's parsed by a 15-line Python function. No quoting, no escaping, no schema. One `KEY=VALUE` per line, `#` comments, blank lines ignored. The simplest format that works.
