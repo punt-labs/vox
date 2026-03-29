@@ -293,8 +293,10 @@ async def _play_audio(path: Path) -> None:
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
     except FileNotFoundError:
         logger.warning("Audio player not found: %s", cmd[0])
@@ -370,6 +372,16 @@ class DaemonContext:
 _CHIME_MAP: dict[str, str] = {
     "done": "chime_done.mp3",
     "prompt": "chime_prompt.mp3",
+    "acknowledge": "chime_done.mp3",
+    "compact": "chime_done.mp3",
+    "subagent": "chime_done.mp3",
+    "farewell": "chime_done.mp3",
+    "tests-pass": "chime_tests_pass.mp3",
+    "tests-fail": "chime_tests_fail.mp3",
+    "lint-pass": "chime_lint_pass.mp3",
+    "lint-fail": "chime_lint_fail.mp3",
+    "git-push-ok": "chime_git_push_ok.mp3",
+    "merge-conflict": "chime_merge_conflict.mp3",
 }
 
 
