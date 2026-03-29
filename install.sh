@@ -113,7 +113,16 @@ fi
 
 ok "$BINARY $(command -v "$BINARY")"
 
-# --- Step 4: Register marketplace ---
+# --- Step 5: Install daemon ---
+
+info "Installing vox daemon..."
+if "$BINARY" daemon install; then
+  ok "vox daemon installed"
+else
+  warn "Could not install vox daemon (run 'vox daemon install' manually)"
+fi
+
+# --- Step 6: Register marketplace ---
 
 info "Registering Punt Labs marketplace..."
 
@@ -125,7 +134,7 @@ else
   ok "marketplace registered"
 fi
 
-# --- Step 5: SSH fallback for plugin install ---
+# --- Step 7: SSH fallback for plugin install ---
 
 # claude plugin install clones via SSH (git@github.com:...).
 # Users without SSH keys need an HTTPS fallback.
@@ -144,7 +153,7 @@ if ! ssh -n -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeo
   NEED_HTTPS_REWRITE=1
 fi
 
-# --- Step 6: Install or upgrade plugin ---
+# --- Step 8: Install or upgrade plugin ---
 
 info "Installing $PLUGIN_NAME plugin..."
 
@@ -161,7 +170,7 @@ ok "$PLUGIN_NAME plugin installed"
 
 cleanup_https_rewrite
 
-# --- Step 7: Verify ---
+# --- Step 9: Verify ---
 
 info "Verifying installation..."
 printf '\n'

@@ -28,6 +28,7 @@ from punt_vox.daemon import (
     _remove_port_file,  # pyright: ignore[reportPrivateUsage]
     read_port_file,
 )
+from punt_vox.keys import write_keys_env
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,9 @@ def install() -> str:
     plat = detect_platform()
     args = _vox_exec_args()
 
+    keys_path = write_keys_env(dict(os.environ))
+    logger.info("Wrote provider keys to %s", keys_path)
+
     if plat == "macos":
         _launchd_install()
         running = _launchd_status()
@@ -381,6 +385,7 @@ def install() -> str:
     lines = [
         f"vox daemon {status} on port {DEFAULT_PORT}.",
         f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
+        f"  Keys:    {keys_path}",
         f"  Command: {exec_display}",
     ]
     if plat == "linux" and not _has_linger():
