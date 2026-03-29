@@ -81,7 +81,7 @@ def _is_vox_daemon_process(pid: int) -> bool:
             timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         )
         cmd_line = result.stdout.strip()
-        if "serve" in cmd_line and (
+        if re.search(r"\bserve\b", cmd_line) and (
             "punt_vox" in cmd_line
             or "punt-vox" in cmd_line
             or re.search(r"\bvox\b.*\bserve\b", cmd_line)
@@ -285,7 +285,8 @@ _SYSTEMD_UNIT = _SYSTEMD_DIR / "vox.service"
 def _systemd_unit_content() -> str:
     args = _vox_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
-    path_value = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    path_value = raw_path.replace("%", "%%")
     return textwrap.dedent(f"""\
         [Unit]
         Description=Vox text-to-speech daemon
