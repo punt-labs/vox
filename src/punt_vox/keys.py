@@ -89,6 +89,9 @@ def write_keys_env(env: Mapping[str, str]) -> Path:
         os.write(fd, format_keys_env(merged).encode())
     finally:
         os.close(fd)
+    # Belt-and-suspenders: enforce 0600 even if file already existed with
+    # different permissions (os.open mode only applies at creation).
+    path.chmod(0o600)
     return path
 
 
@@ -111,7 +114,8 @@ def load_keys_env() -> frozenset[str]:
         return frozenset()
     parsed = parse_keys_env(text)
     loaded: set[str] = set()
-    for k, v in parsed.items():
+    for k in _PROVIDER_KEY_NAMES:
+        v = parsed.get(k)
         if v and k not in os.environ:
             os.environ[k] = v
             loaded.add(k)

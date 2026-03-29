@@ -236,40 +236,55 @@ class TestLoadKeysEnv:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         keys_file = tmp_path / "keys.env"
-        keys_file.write_text("MY_KEY=my_value\n")
+        keys_file.write_text("ELEVENLABS_API_KEY=sk-test\n")
         monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
-        monkeypatch.delenv("MY_KEY", raising=False)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
 
         loaded = load_keys_env()
 
-        assert "MY_KEY" in loaded
-        assert os.environ["MY_KEY"] == "my_value"
+        assert "ELEVENLABS_API_KEY" in loaded
+        assert os.environ["ELEVENLABS_API_KEY"] == "sk-test"
 
     def test_does_not_override_existing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         keys_file = tmp_path / "keys.env"
-        keys_file.write_text("MY_KEY=from_file\n")
+        keys_file.write_text("ELEVENLABS_API_KEY=from_file\n")
         monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
-        monkeypatch.setenv("MY_KEY", "from_env")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "from_env")
 
         loaded = load_keys_env()
 
-        assert "MY_KEY" not in loaded
-        assert os.environ["MY_KEY"] == "from_env"
+        assert "ELEVENLABS_API_KEY" not in loaded
+        assert os.environ["ELEVENLABS_API_KEY"] == "from_env"
 
     def test_returns_loaded_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         keys_file = tmp_path / "keys.env"
-        keys_file.write_text("A=1\nB=2\n")
+        keys_file.write_text("ELEVENLABS_API_KEY=sk-1\nOPENAI_API_KEY=sk-2\n")
         monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
-        monkeypatch.delenv("A", raising=False)
-        monkeypatch.setenv("B", "existing")
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "existing")
 
         loaded = load_keys_env()
 
-        assert loaded == frozenset({"A"})
+        assert loaded == frozenset({"ELEVENLABS_API_KEY"})
+
+    def test_ignores_non_provider_keys(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("PYTHONPATH=/evil\nELEVENLABS_API_KEY=sk-good\n")
+        monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        loaded = load_keys_env()
+
+        assert "ELEVENLABS_API_KEY" in loaded
+        assert "PYTHONPATH" not in loaded
+        assert "PYTHONPATH" not in os.environ
 
     def test_missing_file_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -297,13 +312,13 @@ class TestLoadKeysEnv:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         keys_file = tmp_path / "keys.env"
-        keys_file.write_text("EMPTY=\nFULL=value\n")
+        keys_file.write_text("ELEVENLABS_API_KEY=\nOPENAI_API_KEY=value\n")
         monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
-        monkeypatch.delenv("EMPTY", raising=False)
-        monkeypatch.delenv("FULL", raising=False)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
         loaded = load_keys_env()
 
         # Empty value should not be loaded
-        assert "EMPTY" not in loaded
-        assert "FULL" in loaded
+        assert "ELEVENLABS_API_KEY" not in loaded
+        assert "OPENAI_API_KEY" in loaded

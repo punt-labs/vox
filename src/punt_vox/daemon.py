@@ -565,14 +565,21 @@ def serve(
     host: str = "127.0.0.1",
 ) -> None:
     """Start the daemon HTTP + WebSocket server.  Blocks until shutdown."""
+    keys_path = keys_file_path()
     loaded_keys = load_keys_env()
     configure_logging(stderr_level="INFO")
     if loaded_keys:
-        logger.info("Loaded provider keys from keys.env: %s", sorted(loaded_keys))
+        logger.info("Loaded provider keys from %s: %s", keys_path, sorted(loaded_keys))
+    elif keys_path.exists():
+        logger.info(
+            "No new provider keys loaded from %s"
+            " (keys may already be set in the environment)",
+            keys_path,
+        )
     else:
         logger.info(
-            "No provider keys loaded from %s — run 'vox daemon install' to configure",
-            keys_file_path(),
+            "No provider keys file at %s — run 'vox daemon install' to configure",
+            keys_path,
         )
     logger.info("Starting vox daemon on %s:%d", host, port)
 
