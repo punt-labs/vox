@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-03-29
+
 ### Changed
 
 - **BREAKING:** Data directory migrated from `~/.punt-vox/` to `~/.punt-labs/vox/` per org filesystem standard. Clean break — old directory is not read or migrated. Re-run `vox daemon install` after upgrade.
