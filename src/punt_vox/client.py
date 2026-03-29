@@ -56,7 +56,7 @@ def _data_root() -> Path:
             return Path(prefix)
         except (subprocess.SubprocessError, FileNotFoundError):
             return Path("/usr/local")
-    return Path("/")  # type: ignore[unreachable]  # Linux path
+    return Path("/")
 
 
 def _run_dir() -> Path:
