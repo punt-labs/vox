@@ -13,12 +13,14 @@ _stdin=$(cat)
 
 # Daemon relay (~15ms) — fall back to subprocess (~500ms)
 _state_dir="${HOME}/.punt-labs/vox"
+_err_log="${_state_dir}/logs/hook-errors.log"
+mkdir -p "${_state_dir}/logs" 2>/dev/null
 _token_file="${_state_dir}/serve.token"
 _port_file="${_state_dir}/serve.port"
 if command -v mcp-proxy >/dev/null 2>&1 && [[ -f "$_token_file" ]] && [[ -f "$_port_file" ]]; then
   _token=$(cat "$_token_file")
   _port=$(cat "$_port_file")
   _encoded_dir=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$_repo_root" 2>/dev/null || printf '%s' "$_repo_root")
-  echo "$_stdin" | mcp-proxy "ws://localhost:${_port}/hook?config_dir=${_encoded_dir}&token=${_token}" --hook --async UserPromptSubmit 2>>"${HOME}/.punt-labs/vox/logs/hook-errors.log" && exit 0
+  echo "$_stdin" | mcp-proxy "ws://localhost:${_port}/hook?config_dir=${_encoded_dir}&token=${_token}" --hook --async UserPromptSubmit 2>>"${_err_log}" && exit 0
 fi
-echo "$_stdin" | vox hook user-prompt-submit 2>>"${HOME}/.punt-labs/vox/logs/hook-errors.log" || true
+echo "$_stdin" | vox hook user-prompt-submit 2>>"${_err_log}" || true
