@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** New `voxd` audio server daemon replaces the old `daemon.py`. Pure audio server — synthesizes text and plays through speakers. Knows nothing about MCP, hooks, projects, or Claude Code.
+- **BREAKING:** System-level service install. macOS: `/Library/LaunchDaemons/` (sudo required). Linux: `/etc/systemd/system/` (sudo required). Daemon data in Homebrew prefix (macOS) or FHS paths (Linux), not `~/.punt-labs/vox/`.
+- **BREAKING:** `mcp-proxy` eliminated. MCP server runs as direct stdio process (`vox mcp`). Plugin.json simplified.
+- MCP server is now a thin client of `voxd`. Session state in memory, not `.vox/config.md`. No provider imports — cold start target < 500ms.
+- Hook handlers call `voxd` via WebSocket client for audio instead of in-process synthesis.
+- WebSocket protocol between clients and `voxd` — streaming-capable for future real-time voice.
+
+### Added
+
+- `voxd` binary entry point (`punt_vox.voxd:main`) — audio daemon with playback queue, dedup, caching.
+- `punt_vox.client` — lightweight WebSocket client library (`VoxClient` async, `VoxClientSync` sync wrapper).
+
+### Removed
+
+- `daemon.py` — replaced by `voxd.py`
+- `proxy.py` — mcp-proxy eliminated
+- `ephemeral.py` — no project-directory writes from daemon
+- `_config_path_override` ContextVar — daemon has no session/config concept
+- PID-based CWD resolution via `lsof` / `/proc` — eliminated
+- `playback.py` flock/pending/subprocess queue — daemon owns playback
+
 ## [2.0.0] - 2026-03-29
 
 ### Changed

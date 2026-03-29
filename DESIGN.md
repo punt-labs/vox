@@ -1297,3 +1297,39 @@ Clean break migration: `vox daemon install` creates the new directory. The old `
 ### Why logging_config.py Owns the Constant
 
 The constant must be importable by every module without circular dependencies. `logging_config.py` imports only stdlib (`logging`, `pathlib`) and is imported by every module that calls `configure_logging()`. Adding `VOX_DATA_DIR` here avoids creating a new `paths.py` module for a single constant.
+
+## DES-028: Vox v3 — Audio Server Architecture
+
+**Status:** SETTLED
+
+### Problem
+
+The v2 daemon tried to know which project a client belonged to. It resolved CWDs from PIDs via `lsof`, read/wrote `.vox/config.md` in project directories, and used ContextVars to isolate per-session config. Every piece of this chain broke — 8 rounds of path bugs. The root cause was architecture, not code.
+
+### Decision
+
+One machine, one set of speakers, one audio daemon (`voxd`). Clients send text + parameters. The daemon synthesizes and plays. It knows nothing about projects, sessions, CWDs, or Claude Code.
+
+**Two entry points, one package:**
+- `voxd` — system-level audio daemon. Owns speakers, providers, playback queue, dedup, cache. System paths (Homebrew prefix on macOS, FHS on Linux).
+- `vox` — everything else. CLI, MCP server (`vox mcp`), hook handlers. All are clients of `voxd`.
+
+**Wire protocol:** WebSocket + JSON messages. Streaming-capable for future real-time voice conversation.
+
+**MCP server:** Lightweight stdio process per Claude Code session. Session state in memory. Finds `.vox/config.md` by walking up from CWD (same as biff). Calls `voxd` via WebSocket for synthesis/playback. No provider imports — cold start < 500ms.
+
+**Hooks:** Three-layer dispatch unchanged (hooks.md standard). Python handlers call `voxd` via WebSocket client. No in-process synthesis.
+
+**Service install:** System-level. macOS: `/Library/LaunchDaemons/` with `UserName` = installing user. Linux: `/etc/systemd/system/` with `User` = installing user. Requires sudo.
+
+### Why Not Keep the Proxy Architecture
+
+mcp-proxy existed to avoid spawning a Python process per session. The new MCP server is lightweight (no provider imports) so Python startup cost is acceptable. Eliminating mcp-proxy removes a Go binary dependency, the WebSocket MCP bridge, and the entire class of "MCP session doesn't survive daemon restart" bugs.
+
+### Why WebSocket, Not HTTP
+
+HTTP request/response can't do bidirectional streaming. Real-time voice conversation (vox-7hr) needs streaming audio in both directions. WebSocket handles both fire-and-forget synthesis (today) and streaming conversation (future) without a protocol change.
+
+### Why System Paths, Not Home Directory
+
+The daemon serves the machine, not a user. One set of speakers. Data belongs in system directories (`/Library/LaunchDaemons/`, Homebrew `var/`, FHS `/var/`). Home directory paths caused the v2 path resolution bugs — the daemon's CWD was `/` under launchd but all paths assumed `~`.
