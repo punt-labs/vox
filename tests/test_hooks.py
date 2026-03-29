@@ -515,19 +515,14 @@ class TestHandleUserPromptSubmit:
         handle_user_prompt_submit(config)
         mock_enqueue.assert_called_once()
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_voice_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         """Speaks an acknowledgment phrase when notify=c and speak=y."""
         config = _make_config(notify="c", speak="y", voice="matilda")
         handle_user_prompt_submit(config)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "vox"
-        assert cmd[3] in ACKNOWLEDGE_PHRASES
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text in ACKNOWLEDGE_PHRASES
 
 
 # ---------------------------------------------------------------------------
@@ -562,17 +557,13 @@ class TestHandleSubagentStart:
         handle_subagent_start(config)
         mock_enqueue.assert_called_once()
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_voice_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="c", speak="y")
         handle_subagent_start(config)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[3] in SUBAGENT_START_PHRASES
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text in SUBAGENT_START_PHRASES
 
 
 # ---------------------------------------------------------------------------
@@ -607,17 +598,13 @@ class TestHandleSubagentStop:
         handle_subagent_stop(config)
         mock_enqueue.assert_called_once()
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_voice_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="c", speak="y")
         handle_subagent_stop(config)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[3] in SUBAGENT_STOP_PHRASES
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text in SUBAGENT_STOP_PHRASES
 
 
 # ---------------------------------------------------------------------------
@@ -643,27 +630,19 @@ class TestHandleSessionEnd:
         handle_session_end(config, Path("/fake/.vox/config.md"))
         mock_enqueue.assert_called_once()
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_voice_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="y", speak="y", vibe_signals=None)
         handle_session_end(config, Path("/fake/.vox/config.md"))
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[3] in FAREWELL_PHRASES
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text in FAREWELL_PHRASES
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_continuous_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    def test_continuous_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="c", speak="y", vibe_signals=None)
         handle_session_end(config, Path("/fake/.vox/config.md"))
-        mock_run.assert_called_once()
+        mock_speak.assert_called_once()
 
     @patch("punt_vox.hooks.write_field")
     @patch("punt_vox.hooks._speak_via_voxd")
