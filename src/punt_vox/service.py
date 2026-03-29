@@ -81,7 +81,11 @@ def _is_vox_daemon_process(pid: int) -> bool:
             timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         )
         cmd_line = result.stdout.strip()
-        if "punt_vox" in cmd_line and "serve" in cmd_line:
+        if "serve" in cmd_line and (
+            "punt_vox" in cmd_line
+            or "punt-vox" in cmd_line
+            or re.search(r"\bvox\b.*\bserve\b", cmd_line)
+        ):
             return True
         logger.warning(
             "PID %d is not a vox daemon (command: %s)", pid, cmd_line or "<empty>"
@@ -201,6 +205,7 @@ def _launchd_plist_content() -> str:
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
     log_dir = html.escape(str(Path.home() / ".punt-vox" / "logs"))
+    path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -213,6 +218,11 @@ def _launchd_plist_content() -> str:
             <array>
         {program_args}
             </array>
+            <key>EnvironmentVariables</key>
+            <dict>
+                <key>PATH</key>
+                <string>{path_value}</string>
+            </dict>
             <key>RunAtLoad</key>
             <true/>
             <key>KeepAlive</key>
@@ -275,6 +285,7 @@ _SYSTEMD_UNIT = _SYSTEMD_DIR / "vox.service"
 def _systemd_unit_content() -> str:
     args = _vox_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
+    path_value = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     return textwrap.dedent(f"""\
         [Unit]
         Description=Vox text-to-speech daemon
@@ -282,6 +293,7 @@ def _systemd_unit_content() -> str:
 
         [Service]
         ExecStart={exec_start}
+        Environment="PATH={path_value}"
         Restart=on-failure
         RestartSec=5
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Daemon identity check (`_is_vox_daemon_process`) now matches all invocation patterns: `punt_vox` (underscore), `punt-vox` (hyphen in uv tool path), and bare `vox serve` binary
+- Daemon launchd plist and systemd unit now embed the user's `PATH` at install time so ffmpeg and other tools in `/opt/homebrew/bin` or `/usr/local/bin` are found
+
 ## [1.10.2] - 2026-03-28
 
 ### Fixed
