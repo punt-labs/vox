@@ -243,6 +243,16 @@ def _launchd_install() -> None:
     # Ensure log directory exists — launchd won't create it.
     log_dir = Path.home() / ".punt-vox" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Unload first if already loaded — launchctl load fails with I/O error
+    # if the plist is already loaded (happens on every upgrade).
+    if _LAUNCHD_PLIST.exists():
+        subprocess.run(
+            ["launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+            check=False,  # may not be loaded
+        )
+        logger.info("Unloaded existing %s", _LABEL)
+
     _LAUNCHD_PLIST.write_text(_launchd_plist_content())
     logger.info("Wrote %s", _LAUNCHD_PLIST)
 
@@ -307,6 +317,16 @@ def _systemd_unit_content() -> str:
 def _systemd_install() -> None:
     _ensure_port_free()
     _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Stop if already running — systemd won't pick up new unit config
+    # from enable --now alone.
+    if _SYSTEMD_UNIT.exists():
+        subprocess.run(
+            ["systemctl", "--user", "stop", "vox"],
+            check=False,  # may not be running
+        )
+        logger.info("Stopped existing vox.service")
+
     _SYSTEMD_UNIT.write_text(_systemd_unit_content())
     logger.info("Wrote %s", _SYSTEMD_UNIT)
 
