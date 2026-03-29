@@ -433,6 +433,8 @@ def install() -> str:
             )
             raise SystemExit(msg) from exc
         if existing:
+            # Enforce secure permissions on existing token file.
+            token_path.chmod(0o600)
             logger.info("Reusing existing auth token from %s", token_path)
         else:
             token = secrets.token_urlsafe(32)

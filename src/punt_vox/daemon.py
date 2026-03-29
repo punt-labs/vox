@@ -588,6 +588,8 @@ def serve(
                 "Re-run 'vox daemon install' to generate a new token."
             )
             raise SystemExit(msg)
+        # Enforce secure permissions on token file.
+        _TOKEN_FILE.chmod(0o600)
         logger.info("Loaded auth token from %s", _TOKEN_FILE)
     else:
         auth_token = secrets.token_urlsafe(32)
