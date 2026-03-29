@@ -123,7 +123,7 @@ else
 fi
 
 info "Installing mcp-proxy..."
-if uv tool run --from "$PACKAGE" python3 -c "from punt_vox.proxy import install, installed_path; p = installed_path(); print(p) if p else print(install())" 2>/dev/null; then
+if uv tool run --from "$PACKAGE" python -c "from punt_vox.proxy import install, installed_path; p = installed_path(); print(p) if p else print(install())" 2>/dev/null; then
   ok "mcp-proxy installed"
 else
   warn "mcp-proxy install skipped (hooks will use subprocess fallback)"
