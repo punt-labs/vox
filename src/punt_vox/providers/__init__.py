@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 import platform
@@ -102,9 +101,8 @@ PROVIDER_REGISTRY["espeak"] = _register_espeak
 logger = logging.getLogger(__name__)
 
 
-@functools.lru_cache(maxsize=1)
 def _has_aws_credentials() -> bool:
-    """Check whether AWS credentials are configured (cached)."""
+    """Check whether AWS credentials are configured."""
     if not shutil.which("aws"):
         return False
     try:

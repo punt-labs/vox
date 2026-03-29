@@ -6,7 +6,8 @@ import logging
 import logging.config
 from pathlib import Path
 
-_LOG_DIR = Path.home() / ".punt-vox" / "logs"
+VOX_DATA_DIR = Path.home() / ".punt-labs" / "vox"
+_LOG_DIR = VOX_DATA_DIR / "logs"
 _LOG_FILE = _LOG_DIR / "tts.log"
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -65,6 +66,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
                 "botocore": {"level": "WARNING"},
                 "urllib3": {"level": "WARNING"},
                 "s3transfer": {"level": "WARNING"},
+                "httpx": {"level": "WARNING"},
             },
         }
     )

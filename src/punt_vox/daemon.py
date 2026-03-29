@@ -7,7 +7,7 @@ Exposes three endpoints:
 
 Lifecycle:
     1. ``vox serve`` starts uvicorn with the Starlette app
-    2. Writes port to ``~/.punt-vox/serve.port``
+    2. Writes port to ``~/.punt-labs/vox/serve.port``
     3. Accepts MCP and hook connections on ``localhost:<port>``
     4. Cleans up port file on shutdown
 """
@@ -18,6 +18,7 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 import platform
 import re
 import secrets
@@ -50,7 +51,7 @@ from punt_vox.hooks import (
     handle_user_prompt_submit,
 )
 from punt_vox.keys import keys_file_path, load_keys_env
-from punt_vox.logging_config import configure_logging
+from punt_vox.logging_config import VOX_DATA_DIR, configure_logging
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -511,7 +512,7 @@ def build_app(
 # Port file helpers
 # ---------------------------------------------------------------------------
 
-_STATE_DIR = Path.home() / ".punt-vox"
+_STATE_DIR = VOX_DATA_DIR
 _PORT_FILE = _STATE_DIR / "serve.port"
 _TOKEN_FILE = _STATE_DIR / "serve.token"
 
@@ -522,20 +523,12 @@ def _write_port_file(port: int) -> None:
     logger.info("Wrote port file: %s (port %d)", _PORT_FILE, port)
 
 
-def _write_token_file(token: str) -> None:
-    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_FILE.write_text(token)
-    _TOKEN_FILE.chmod(0o600)
-    logger.info("Wrote token file: %s", _TOKEN_FILE)
-
-
 def _remove_port_file() -> None:
-    for path in (_PORT_FILE, _TOKEN_FILE):
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Could not remove %s", path)
-    logger.info("Removed port/token files")
+    try:
+        _PORT_FILE.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not remove %s", _PORT_FILE)
+    logger.info("Removed port file")
 
 
 def read_port_file() -> int | None:
@@ -583,7 +576,34 @@ def serve(
         )
     logger.info("Starting vox daemon on %s:%d", host, port)
 
-    auth_token = secrets.token_urlsafe(32)
+    if _TOKEN_FILE.exists():
+        try:
+            auth_token = _TOKEN_FILE.read_text().strip()
+        except (PermissionError, OSError) as exc:
+            msg = (
+                f"Cannot read auth token from {_TOKEN_FILE}: {exc}. "
+                "Fix file permissions or remove the file, "
+                "then re-run 'vox daemon install'."
+            )
+            raise SystemExit(msg) from exc
+        if not auth_token:
+            msg = (
+                f"Auth token file {_TOKEN_FILE} is empty. "
+                "Re-run 'vox daemon install' to generate a new token."
+            )
+            raise SystemExit(msg)
+        # Enforce secure permissions on token file.
+        _TOKEN_FILE.chmod(0o600)
+        logger.info("Loaded auth token from %s", _TOKEN_FILE)
+    else:
+        auth_token = secrets.token_urlsafe(32)
+        _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(_TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, auth_token.encode())
+        finally:
+            os.close(fd)
+        logger.info("Generated and wrote auth token to %s", _TOKEN_FILE)
     ctx = DaemonContext(auth_token=auth_token)
 
     @asynccontextmanager
@@ -613,7 +633,6 @@ def serve(
         if server.servers and server.servers[0].sockets:
             actual_port = server.servers[0].sockets[0].getsockname()[1]
             _write_port_file(actual_port)
-            _write_token_file(auth_token)
             logger.info("Vox daemon listening on http://%s:%d", host, actual_port)
         else:
             logger.error("Server started but no bound sockets; shutting down")

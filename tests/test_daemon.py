@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from starlette.testclient import TestClient
 
 from punt_vox.daemon import (
@@ -14,6 +15,7 @@ from punt_vox.daemon import (
     _resolve_config_from_session_key,  # pyright: ignore[reportPrivateUsage]
     build_app,
     resolve_cwd_from_pid,
+    serve,
 )
 
 # ---------------------------------------------------------------------------
@@ -203,3 +205,120 @@ def test_health_endpoint() -> None:
     assert data["status"] == "ok"
     assert "uptime_seconds" in data
     assert data["active_sessions"] == 0
+
+
+# ---------------------------------------------------------------------------
+# serve() — stable token behavior
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.daemon.uvicorn.Server")
+@patch("punt_vox.daemon.uvicorn.Config")
+@patch("punt_vox.daemon.configure_logging")
+@patch("punt_vox.daemon.load_keys_env", return_value={})
+@patch("punt_vox.daemon.keys_file_path")
+def test_serve_reads_token_from_file(
+    mock_keys_path: MagicMock,
+    _mock_load: MagicMock,
+    _mock_logging: MagicMock,
+    mock_config: MagicMock,
+    mock_server_cls: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """serve() reads token from _TOKEN_FILE when it exists and is non-empty."""
+    mock_keys_path.return_value = tmp_path / "keys.env"
+    token_file = tmp_path / "serve.token"
+    token_file.write_text("my-stable-token")
+
+    mock_server = MagicMock()
+    mock_server_cls.return_value = mock_server
+
+    with patch("punt_vox.daemon._TOKEN_FILE", token_file):
+        serve(port=9999)
+
+    # Verify build_app was called via Config with a ctx that has our token
+    config_call = mock_config.call_args
+    app = config_call[0][0]
+    assert app.state.ctx.auth_token == "my-stable-token"
+    mock_server.run.assert_called_once()
+
+
+@patch("punt_vox.daemon.configure_logging")
+@patch("punt_vox.daemon.load_keys_env", return_value={})
+@patch("punt_vox.daemon.keys_file_path")
+def test_serve_generates_token_when_file_missing(
+    mock_keys_path: MagicMock,
+    _mock_load: MagicMock,
+    _mock_logging: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """serve() generates a new token when _TOKEN_FILE does not exist."""
+    mock_keys_path.return_value = tmp_path / "keys.env"
+    token_file = tmp_path / "serve.token"
+    # File does not exist
+
+    mock_server = MagicMock()
+
+    with (
+        patch("punt_vox.daemon._TOKEN_FILE", token_file),
+        patch("punt_vox.daemon.uvicorn.Config") as mock_config,
+        patch("punt_vox.daemon.uvicorn.Server", return_value=mock_server),
+    ):
+        serve(port=9999)
+
+    # Token file should now exist with generated content
+    assert token_file.exists()
+    assert len(token_file.read_text().strip()) > 0
+
+    # Verify the app got the generated token
+    config_call = mock_config.call_args
+    app = config_call[0][0]
+    assert app.state.ctx.auth_token is not None
+    assert len(app.state.ctx.auth_token) > 0
+
+
+@patch("punt_vox.daemon.configure_logging")
+@patch("punt_vox.daemon.load_keys_env", return_value={})
+@patch("punt_vox.daemon.keys_file_path")
+def test_serve_raises_when_token_file_empty(
+    mock_keys_path: MagicMock,
+    _mock_load: MagicMock,
+    _mock_logging: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """serve() raises SystemExit when _TOKEN_FILE is empty."""
+    mock_keys_path.return_value = tmp_path / "keys.env"
+    token_file = tmp_path / "serve.token"
+    token_file.write_text("")
+
+    with (
+        patch("punt_vox.daemon._TOKEN_FILE", token_file),
+        pytest.raises(SystemExit, match="empty"),
+    ):
+        serve(port=9999)
+
+
+@patch("punt_vox.daemon.configure_logging")
+@patch("punt_vox.daemon.load_keys_env", return_value={})
+@patch("punt_vox.daemon.keys_file_path")
+def test_serve_raises_when_token_file_unreadable(
+    mock_keys_path: MagicMock,
+    _mock_load: MagicMock,
+    _mock_logging: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """serve() raises SystemExit when _TOKEN_FILE is not readable."""
+    mock_keys_path.return_value = tmp_path / "keys.env"
+    token_file = tmp_path / "serve.token"
+    token_file.write_text("secret")
+    token_file.chmod(0o000)
+
+    try:
+        with (
+            patch("punt_vox.daemon._TOKEN_FILE", token_file),
+            pytest.raises(SystemExit, match="Cannot read auth token"),
+        ):
+            serve(port=9999)
+    finally:
+        # Restore permissions so tmp_path cleanup works
+        token_file.chmod(0o644)

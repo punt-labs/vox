@@ -1,7 +1,7 @@
 """Provider API key management for the vox daemon.
 
 The daemon runs as a launchd/systemd service with a stripped environment —
-no API keys.  This module manages ``~/.punt-vox/keys.env``, a simple
+no API keys.  This module manages ``~/.punt-labs/vox/keys.env``, a simple
 KEY=VALUE file written at ``vox daemon install`` time from the caller's
 environment and loaded at daemon startup before any provider is instantiated.
 """
@@ -13,9 +13,11 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from punt_vox.logging_config import VOX_DATA_DIR
+
 logger = logging.getLogger(__name__)
 
-_KEYS_FILE = Path.home() / ".punt-vox" / "keys.env"
+_KEYS_FILE = VOX_DATA_DIR / "keys.env"
 
 _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
     {
@@ -27,6 +29,7 @@ _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
         "AWS_SESSION_TOKEN",
         "AWS_DEFAULT_REGION",
         "TTS_PROVIDER",
+        "TTS_MODEL",
     }
 )
 

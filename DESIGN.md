@@ -494,7 +494,7 @@ When multiple paths fire at once, audio overlaps (cacophony). PR #17 attempted P
 
 ### Design
 
-Every playback invocation acquires `LOCK_EX` on `~/.punt-vox/playback.lock`, runs `afplay` synchronously, then releases. Concurrent callers block on the lock and play in turn.
+Every playback invocation acquires `LOCK_EX` on `~/.punt-labs/vox/playback.lock`, runs `afplay` synchronously, then releases. Concurrent callers block on the lock and play in turn.
 
 ```text
 Process A: flock(LOCK_EX) → afplay file1.mp3 → release
@@ -1197,10 +1197,10 @@ A shared `_kill_stale_daemon()` helper used by both install and uninstall:
 
 ```text
 _kill_stale_daemon():
-  1. Read port from ~/.punt-vox/serve.port (fallback: DEFAULT_PORT)
+  1. Read port from ~/.punt-labs/vox/serve.port (fallback: DEFAULT_PORT)
   2. Find PID via lsof -ti :<port> (macOS) or fuser <port>/tcp (Linux)
   3. SIGTERM → wait up to 5s → SIGKILL if still alive
-  4. Remove serve.port and serve.token
+  4. Remove serve.port (serve.token is preserved for session continuity)
 ```
 
 - **Uninstall** calls `_kill_stale_daemon()` after removing the service config
@@ -1236,7 +1236,7 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited th
 
 ### Design
 
-A dedicated config file at `~/.punt-vox/keys.env` — a simple `KEY=VALUE` format, chmod 0600.
+A dedicated config file at `~/.punt-labs/vox/keys.env` — a simple `KEY=VALUE` format, chmod 0600.
 
 **Write path:** `vox daemon install` calls `write_keys_env(dict(os.environ))`. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`) from the caller's shell into the file. Idempotent: re-running merges with existing keys (absent env vars preserve existing file values; empty env vars remove them).
 
@@ -1249,3 +1249,51 @@ A dedicated config file at `~/.punt-vox/keys.env` — a simple `KEY=VALUE` forma
 ### Why a Flat File, Not TOML/YAML
 
 The file is never sourced by a shell. It's parsed by a 15-line Python function. No quoting, no escaping, no schema. One `KEY=VALUE` per line, `#` comments, blank lines ignored. The simplest format that works.
+
+## DES-026: Stable Auth Token Across Daemon Restarts
+
+**Status:** SETTLED
+
+### Problem
+
+The daemon generated a fresh auth token (`secrets.token_urlsafe(32)`) on every startup. mcp-proxy instances already connected to the daemon held the old token baked into their WebSocket URL (read from `serve.token` at session start via `plugin.json`). When the daemon restarted (upgrade, crash recovery, `KeepAlive`), all existing mcp-proxy connections failed authentication and could not reconnect — they retried the same stale URL indefinitely.
+
+The user experience: every `vox daemon install` (upgrade) broke all active Claude Code sessions. Users had to restart Claude Code to pick up the new token.
+
+### Decision
+
+The auth token is generated once and persisted to `~/.punt-labs/vox/serve.token` (chmod 0600). It is stable across daemon restarts.
+
+- `service.install()`: generates a token only if `serve.token` does not exist or is empty. Existing non-empty tokens are preserved.
+- `daemon.serve()`: reads the token from file. If the file is missing (first start without prior install), generates and persists one. If the file is empty or unreadable, raises `SystemExit` with an actionable message.
+- The token file is NOT removed on daemon shutdown (unlike `serve.port`, which is removed to signal the daemon is down).
+
+### Why Not Remove Auth Entirely
+
+The daemon binds to `127.0.0.1`, so only local processes can connect. Removing auth was considered (same trust model as Docker daemon default, Redis default). Rejected because:
+
+1. Multi-user systems: other users on the same machine could connect.
+2. Defense in depth: the token costs nothing and prevents accidental tool invocation by other local MCP clients.
+3. The token mechanism already exists and works — removing it is churn with no upside.
+
+### Rejected: Token Rotation on Every Install
+
+The original design (regenerate on install) was simpler but broke the reconnection invariant. mcp-proxy's reconnect logic (exponential backoff, caps at 5s) works correctly only when the URL is stable. Changing the token on install means the daemon must either: (a) accept both old and new tokens during a grace period, or (b) require all clients to re-read the token file. Both are more complex than simply keeping the token stable.
+
+## DES-027: Data Directory Migration to ~/.punt-labs/vox/
+
+**Status:** SETTLED
+
+### Problem
+
+Vox stored data in `~/.punt-vox/` — a top-level dot directory. The org filesystem standard (`punt-kit/standards/filesystem.md`) requires all tools to use `~/.punt-labs/<tool>/`.
+
+### Decision
+
+Single central constant `VOX_DATA_DIR = Path.home() / ".punt-labs" / "vox"` in `logging_config.py`. All paths derive from it: logs, cache, keys.env, serve.port, serve.token, playback.lock, pending queue.
+
+Clean break migration: `vox daemon install` creates the new directory. The old `~/.punt-vox/` is not read, moved, or deleted. Documented as a breaking change in CHANGELOG.
+
+### Why logging_config.py Owns the Constant
+
+The constant must be importable by every module without circular dependencies. `logging_config.py` imports only stdlib (`logging`, `pathlib`) and is imported by every module that calls `configure_logging()`. Adding `VOX_DATA_DIR` here avoids creating a new `paths.py` module for a single constant.

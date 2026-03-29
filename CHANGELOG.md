@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** Data directory migrated from `~/.punt-vox/` to `~/.punt-labs/vox/` per org filesystem standard. Clean break — old directory is not read or migrated. Re-run `vox daemon install` after upgrade.
+- Auth token is now stable across daemon restarts. Generated once at install time, persisted to `serve.token`, reused on daemon startup. Enables mcp-proxy reconnection without session restart.
+- Daemon service config uses `vox` shim path (via `shutil.which`) instead of `sys.executable`. Survives venv recreation by uv.
+- `TTS_MODEL` now persisted to `keys.env` alongside provider API keys.
+- AWS credential check (`_has_aws_credentials()`) no longer cached with `lru_cache` — expired session tokens are detected correctly in long-running daemon.
+- Hook scripts log errors to `~/.punt-labs/vox/logs/hook-errors.log` instead of `/dev/null`.
+- `install.sh` now installs `mcp-proxy` after daemon setup for fast hook relay.
+- Plugin MCP server command uses `-s` (non-empty) file checks instead of `-f` for token/port files.
+
 ### Fixed
 
 - `vox daemon install` now unloads the existing launchd plist before loading the new one, preventing `launchctl load` I/O errors on upgrades. Same fix for systemd: stops the service before writing the new unit.
+- `vox daemon install` now creates parent directory before writing token file, fixing `FileNotFoundError` on fresh installs.
+- `vox daemon install` reuses existing auth token instead of always generating a new one, preventing session breakage during upgrades.
+- Daemon validates auth token on startup — empty or unreadable token files produce actionable `SystemExit` messages instead of silent auth bypass.
+- Hook logging initialized via `configure_logging()` in CLI hook entry point.
+- `httpx` logger suppressed (noisy at INFO from OpenAI SDK).
 
 ## [1.11.0] - 2026-03-28
 

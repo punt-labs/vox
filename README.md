@@ -172,7 +172,7 @@ vox daemon status                              # Check if daemon is running
 | `TTS_MODEL` | Model override | provider default |
 | `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
-**Daemon API keys:** Run `vox daemon install` from a shell where your API keys are set (e.g., a directory with `.envrc`). The command writes keys to `~/.punt-vox/keys.env` (chmod 0600) so the daemon can use premium providers. Run `vox doctor` to verify which providers are active.
+**Daemon API keys:** Run `vox daemon install` from a shell where your API keys are set (e.g., a directory with `.envrc`). The command writes keys to `~/.punt-labs/vox/keys.env` (chmod 0600) so the daemon can use premium providers. Run `vox doctor` to verify which providers are active.
 
 ## Roadmap
 

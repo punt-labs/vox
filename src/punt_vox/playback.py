@@ -21,9 +21,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from punt_vox.logging_config import VOX_DATA_DIR
+
 logger = logging.getLogger(__name__)
 
-LOCK_FILE = Path.home() / ".punt-vox" / "playback.lock"
+LOCK_FILE = VOX_DATA_DIR / "playback.lock"
 PLAYBACK_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
 _PENDING_DIR = LOCK_FILE.parent / "pending"
 
@@ -72,7 +74,7 @@ def play_audio(path: Path) -> None:
 def enqueue(path: Path) -> None:
     """Spawn detached subprocess that plays audio. Non-blocking.
 
-    Copies the file to ``~/.punt-vox/pending/`` first so the original
+    Copies the file to ``~/.punt-labs/vox/pending/`` first so the original
     can be safely deleted (e.g., by ephemeral cleanup) before the
     subprocess acquires the flock and opens the file.
     """
