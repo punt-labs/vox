@@ -199,6 +199,23 @@ class TestWriteKeysEnv:
         parsed = parse_keys_env(keys_file.read_text())
         assert "ELEVENLABS_API_KEY" not in parsed
 
+    def test_corrupted_existing_file_overwrites(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("OLD=data\n")
+        keys_file.chmod(0o000)
+        monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
+
+        # Should warn and overwrite despite unreadable existing file
+        keys_file.chmod(0o200)  # write-only so read fails but write succeeds
+        path = write_keys_env({"OPENAI_API_KEY": "new-key"})
+
+        # Restore read permission to verify
+        path.chmod(0o600)
+        content = path.read_text()
+        assert "OPENAI_API_KEY=new-key" in content
+
     def test_creates_parent_directories(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -258,6 +275,18 @@ class TestLoadKeysEnv:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         keys_file = tmp_path / "nonexistent" / "keys.env"
+        monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
+
+        loaded = load_keys_env()
+
+        assert loaded == frozenset()
+
+    def test_unreadable_file_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("MY_KEY=my_value\n")
+        keys_file.chmod(0o000)
         monkeypatch.setattr("punt_vox.keys._KEYS_FILE", keys_file)
 
         loaded = load_keys_env()

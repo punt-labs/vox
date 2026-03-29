@@ -49,7 +49,7 @@ from punt_vox.hooks import (
     handle_subagent_stop,
     handle_user_prompt_submit,
 )
-from punt_vox.keys import load_keys_env
+from punt_vox.keys import keys_file_path, load_keys_env
 from punt_vox.logging_config import configure_logging
 
 if TYPE_CHECKING:
@@ -569,6 +569,11 @@ def serve(
     configure_logging(stderr_level="INFO")
     if loaded_keys:
         logger.info("Loaded provider keys from keys.env: %s", sorted(loaded_keys))
+    else:
+        logger.info(
+            "No provider keys loaded from %s — run 'vox daemon install' to configure",
+            keys_file_path(),
+        )
     logger.info("Starting vox daemon on %s:%d", host, port)
 
     auth_token = secrets.token_urlsafe(32)

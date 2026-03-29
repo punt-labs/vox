@@ -24,6 +24,7 @@ _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
         "AWS_PROFILE",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
         "AWS_DEFAULT_REGION",
         "TTS_PROVIDER",
     }
@@ -69,7 +70,10 @@ def write_keys_env(env: Mapping[str, str]) -> Path:
 
     existing: dict[str, str] = {}
     if path.exists():
-        existing = parse_keys_env(path.read_text())
+        try:
+            existing = parse_keys_env(path.read_text())
+        except OSError as exc:
+            logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
 
     merged = dict(existing)
     for k in _PROVIDER_KEY_NAMES:
@@ -80,8 +84,11 @@ def write_keys_env(env: Mapping[str, str]) -> Path:
                 merged.pop(k, None)
         # k not in env: preserve existing value
 
-    path.write_text(format_keys_env(merged))
-    path.chmod(0o600)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, format_keys_env(merged).encode())
+    finally:
+        os.close(fd)
     return path
 
 
@@ -93,7 +100,16 @@ def load_keys_env() -> frozenset[str]:
     path = keys_file_path()
     if not path.exists():
         return frozenset()
-    parsed = parse_keys_env(path.read_text())
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        logger.warning(
+            "Could not read %s: %s — daemon will use system TTS only",
+            path,
+            exc,
+        )
+        return frozenset()
+    parsed = parse_keys_env(text)
     loaded: set[str] = set()
     for k, v in parsed.items():
         if v and k not in os.environ:
