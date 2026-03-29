@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daemon validates auth token on startup — empty or unreadable token files produce actionable `SystemExit` messages instead of silent auth bypass.
 - Hook logging initialized via `configure_logging()` in CLI hook entry point.
 - `httpx` logger suppressed (noisy at INFO from OpenAI SDK).
+- `install.sh` mcp-proxy step uses `python` instead of `python3` for `uv tool run` (python3 not guaranteed by `uv python install`).
 
 ## [1.11.0] - 2026-03-28
 

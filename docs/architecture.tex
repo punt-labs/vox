@@ -135,7 +135,7 @@ Quips      & \modpath{quips.py}      & Immutable phrase pools for hook
 Mood       & \modpath{mood.py}       & Mood family classification
              (bright/dark/neutral) \\
 Logging    & \modpath{logging\_config.py} & Rotating file log to
-             \texttt{\~{}/.punt-vox/logs/tts.log} \\
+             \texttt{\~{}/.punt-labs/vox/logs/tts.log} \\
 Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
              tailing Claude session JSONL files for real-time
              signal classification and autonomous chime/speech
@@ -177,9 +177,9 @@ Three primary data paths define the system's runtime behavior.
     MP3 files with configurable inter-segment silence (default
     500\,ms) plus 150\,ms trailing silence.
   \item \texttt{enqueue(path)} copies the file to
-    \texttt{\~{}/.punt-vox/pending/}, spawns a detached subprocess.
+    \texttt{\~{}/.punt-labs/vox/pending/}, spawns a detached subprocess.
   \item Subprocess acquires \texttt{flock(LOCK\_EX)} on
-    \texttt{\~{}/.punt-vox/playback.lock}, plays via
+    \texttt{\~{}/.punt-labs/vox/playback.lock}, plays via
     \texttt{afplay} (macOS) or \texttt{ffplay} (cross-platform),
     deletes the pending copy on completion.
 \end{enumerate}
@@ -541,12 +541,12 @@ file locking:
 \toprule
 \textbf{Component} & \textbf{Details} \\
 \midrule
-Lock file      & \texttt{\~{}/.punt-vox/playback.lock} \\
+Lock file      & \texttt{\~{}/.punt-labs/vox/playback.lock} \\
 Lock type      & \texttt{fcntl.flock(fd, LOCK\_EX)} (blocking) \\
 Timeout        & 120 seconds \\
 Player (macOS) & \texttt{afplay} \\
 Player (other) & \texttt{ffplay -nodisp -autoexit -loglevel quiet} \\
-Pending dir    & \texttt{\~{}/.punt-vox/pending/} \\
+Pending dir    & \texttt{\~{}/.punt-labs/vox/pending/} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1081,7 +1081,7 @@ playback, not config writes.
 
 The playback serialization relies on \texttt{fcntl.flock()}.  On
 NFS mounts, \texttt{flock} may not provide mutual exclusion.  If
-\texttt{\~{}/.punt-vox/} is on an NFS filesystem, concurrent
+\texttt{\~{}/.punt-labs/vox/} is on an NFS filesystem, concurrent
 playback from multiple machines could overlap.
 
 \subsection{No Headless Audio Detection}
