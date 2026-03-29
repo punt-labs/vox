@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-03-28
+
 ### Fixed
 
 - Daemon identity check (`_is_vox_daemon_process`) now matches all invocation patterns: `punt_vox` (underscore), `punt-vox` (hyphen in uv tool path), and bare `vox serve` binary
