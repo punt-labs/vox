@@ -199,13 +199,42 @@ _LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
 
+def _capture_env() -> dict[str, str]:
+    """Capture environment variables the daemon needs at install time.
+
+    launchd and systemd start services with a minimal environment — no
+    direnv, no shell profile.  We snapshot the caller's env so the daemon
+    inherits API keys, PATH, and AWS config that were active when the user
+    ran ``vox daemon install``.
+    """
+    env: dict[str, str] = {}
+    # PATH — so ffmpeg and other tools are found
+    env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    # TTS provider API keys
+    for key in ("ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    # AWS (Polly) — profile and region
+    for key in ("AWS_PROFILE", "AWS_DEFAULT_REGION", "AWS_REGION"):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    return env
+
+
 def _launchd_plist_content() -> str:
     args = _vox_exec_args()
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
     log_dir = html.escape(str(Path.home() / ".punt-vox" / "logs"))
-    path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
+    env_vars = _capture_env()
+    env_entries = "\n".join(
+        f"            <key>{html.escape(k)}</key>\n"
+        f"            <string>{html.escape(v)}</string>"
+        for k, v in env_vars.items()
+    )
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -220,8 +249,7 @@ def _launchd_plist_content() -> str:
             </array>
             <key>EnvironmentVariables</key>
             <dict>
-                <key>PATH</key>
-                <string>{path_value}</string>
+        {env_entries}
             </dict>
             <key>RunAtLoad</key>
             <true/>
@@ -285,8 +313,11 @@ _SYSTEMD_UNIT = _SYSTEMD_DIR / "vox.service"
 def _systemd_unit_content() -> str:
     args = _vox_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
-    raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-    path_value = raw_path.replace("%", "%%")
+    env_vars = _capture_env()
+    # systemd expands % specifiers — escape them.
+    env_lines = "\n".join(
+        f'Environment="{k}={v.replace("%", "%%")}"' for k, v in env_vars.items()
+    )
     return textwrap.dedent(f"""\
         [Unit]
         Description=Vox text-to-speech daemon
@@ -294,7 +325,7 @@ def _systemd_unit_content() -> str:
 
         [Service]
         ExecStart={exec_start}
-        Environment="PATH={path_value}"
+        {env_lines}
         Restart=on-failure
         RestartSec=5
 

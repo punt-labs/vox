@@ -64,12 +64,18 @@ def test_launchd_plist_keepalive() -> None:
     assert "<true/>" in content
 
 
-@patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
-def test_launchd_plist_contains_path_from_env() -> None:
+@patch.dict(
+    "os.environ",
+    {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "ELEVENLABS_API_KEY": "sk-test-123"},
+    clear=True,
+)
+def test_launchd_plist_contains_env_from_capture() -> None:
     content = _launchd_plist_content()
     assert "<key>EnvironmentVariables</key>" in content
     assert "<key>PATH</key>" in content
     assert "/opt/homebrew/bin:/usr/bin:/bin" in content
+    assert "<key>ELEVENLABS_API_KEY</key>" in content
+    assert "sk-test-123" in content
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +96,15 @@ def test_systemd_unit_restart_policy() -> None:
     assert "RestartSec=5" in content
 
 
-@patch.dict("os.environ", {"PATH": "/usr/local/bin:/usr/bin:/bin"})
-def test_systemd_unit_contains_path_from_env() -> None:
+@patch.dict(
+    "os.environ",
+    {"PATH": "/usr/local/bin:/usr/bin:/bin", "OPENAI_API_KEY": "sk-openai-test"},
+    clear=True,
+)
+def test_systemd_unit_contains_env_from_capture() -> None:
     content = _systemd_unit_content()
     assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
+    assert 'Environment="OPENAI_API_KEY=sk-openai-test"' in content
 
 
 def test_systemd_unit_description() -> None:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Daemon service config now embeds API keys (ELEVENLABS_API_KEY, OPENAI_API_KEY) from the user's environment at install time — without these the daemon fell back to Polly/say instead of ElevenLabs
+
 ## [1.10.3] - 2026-03-28
 
 ### Fixed
