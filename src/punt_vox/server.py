@@ -343,6 +343,9 @@ def record(
     effective_model = _state.model
     effective_vibe_tags = _state.vibe_tags
 
+    if output_path and len(segments) > 1:
+        return _error("output_path only supported for single-segment calls")
+
     # Resolve output directory.
     dir_path = Path(output_dir) if output_dir else _default_output_dir()
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -351,7 +354,7 @@ def record(
     results: list[dict[str, Any]] = []
 
     try:
-        for i, seg in enumerate(segments):
+        for seg in segments:
             seg_text = seg.get("text", "")
             if not seg_text:
                 continue
@@ -391,10 +394,7 @@ def record(
 
                 text_hash = hashlib.md5(seg_text.encode()).hexdigest()[:10]
                 filename = f"{text_hash}.mp3"
-                if output_path and i == 0:
-                    file_path = Path(output_path)
-                else:
-                    file_path = dir_path / filename
+                file_path = dir_path / filename
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(mp3_bytes)

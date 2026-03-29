@@ -30,7 +30,7 @@ from pathlib import Path
 
 import typer
 
-from punt_vox.client import VoxClientSync, VoxdConnectionError
+from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
     DEFAULT_CONFIG_PATH,
     VoxConfig,
@@ -135,20 +135,20 @@ def _speak_via_voxd(
         if config.provider:
             kwargs["provider"] = config.provider
         client.synthesize(text, **kwargs)
-    except VoxdConnectionError:
+    except (VoxdConnectionError, VoxdProtocolError):
         logger.warning("voxd not running, skipping speech")
 
 
 def _chime_via_voxd(signal: str) -> None:
     """Play a chime via voxd.
 
-    Catches ``VoxdConnectionError`` so a missing daemon never crashes
-    a hook.
+    Catches ``VoxdConnectionError`` and ``VoxdProtocolError`` so a
+    missing or misbehaving daemon never crashes a hook.
     """
     try:
         client = _make_client()
         client.chime(signal)
-    except VoxdConnectionError:
+    except (VoxdConnectionError, VoxdProtocolError):
         logger.warning("voxd not running, skipping chime")
 
 

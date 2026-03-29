@@ -52,6 +52,9 @@ DEFAULT_HOST = "127.0.0.1"
 # Audio deduplication window: skip identical audio within this many seconds.
 _DEDUP_WINDOW_SECONDS = 5.0
 
+# Lock to serialize os.environ mutation during synthesis with per-request API keys.
+_env_lock = asyncio.Lock()
+
 
 # ---------------------------------------------------------------------------
 # System paths
@@ -280,9 +283,6 @@ class PlaybackItem:
     notify: asyncio.Event
 
 
-_playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
-
-
 async def _play_audio(path: Path) -> None:
     """Play an audio file using the platform player."""
     if sys.platform == "darwin":
@@ -306,21 +306,21 @@ async def _play_audio(path: Path) -> None:
         return
 
     try:
-        await asyncio.wait_for(proc.wait(), timeout=120)
+        await asyncio.wait_for(proc.wait(), timeout=30)
     except TimeoutError:
-        logger.warning("Playback timed out after 120s for %s", path.name)
+        logger.warning("Playback timed out after 30s for %s", path.name)
         proc.kill()
 
 
-async def _playback_consumer() -> None:
+async def _playback_consumer(ctx: DaemonContext) -> None:
     """Single consumer: plays audio sequentially."""
     while True:
-        item = await _playback_queue.get()
+        item = await ctx.playback_queue.get()
         logger.info("Playback start: %s", item.path.name)
         await _play_audio(item.path)
         logger.info("Playback done: %s", item.path.name)
         item.notify.set()
-        _playback_queue.task_done()
+        ctx.playback_queue.task_done()
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +369,7 @@ class DaemonContext:
         self.port: int = port
         self.dedup = AudioDedup()
         self.client_count: int = 0
+        self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
 
 
 # ---------------------------------------------------------------------------
@@ -505,49 +506,50 @@ async def _synthesize_to_file(
     if cached is not None:
         return cached
 
-    # Temporarily set API key if provided by client
-    old_key: str | None = None
-    env_key_name: str | None = None
-    if api_key:
-        if provider_name == "elevenlabs":
-            env_key_name = "ELEVENLABS_API_KEY"
-        elif provider_name == "openai":
-            env_key_name = "OPENAI_API_KEY"
-        if env_key_name:
-            old_key = os.environ.get(env_key_name)
-            os.environ[env_key_name] = api_key
+    # Serialize env mutation + synthesis to avoid concurrent os.environ races.
+    async with _env_lock:
+        old_key: str | None = None
+        env_key_name: str | None = None
+        if api_key:
+            if provider_name == "elevenlabs":
+                env_key_name = "ELEVENLABS_API_KEY"
+            elif provider_name == "openai":
+                env_key_name = "OPENAI_API_KEY"
+            if env_key_name:
+                old_key = os.environ.get(env_key_name)
+                os.environ[env_key_name] = api_key
 
-    try:
-        provider = get_provider(provider_name, config_path=None, model=model)
-        request = _build_audio_request(
-            normalized,
-            voice,
-            language,
-            rate,
-            stability,
-            similarity,
-            style,
-            speaker_boost,
-            provider_name,
-        )
-        client = TTSClient(provider)
+        try:
+            provider = get_provider(provider_name, config_path=None, model=model)
+            request = _build_audio_request(
+                normalized,
+                voice,
+                language,
+                rate,
+                stability,
+                similarity,
+                style,
+                speaker_boost,
+                provider_name,
+            )
+            client = TTSClient(provider)
 
-        import tempfile
+            import tempfile
 
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            output_path = Path(tmp.name)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                output_path = Path(tmp.name)
 
-        await asyncio.to_thread(client.synthesize, request, output_path)
+            await asyncio.to_thread(client.synthesize, request, output_path)
 
-        # Cache the result
-        cache_put(normalized, resolved_voice, provider_name, output_path)
-        return output_path
-    finally:
-        # Restore API key
-        if env_key_name and old_key is not None:
-            os.environ[env_key_name] = old_key
-        elif env_key_name and api_key:
-            os.environ.pop(env_key_name, None)
+            # Cache the result
+            cache_put(normalized, resolved_voice, provider_name, output_path)
+            return output_path
+        finally:
+            # Restore API key
+            if env_key_name and old_key is not None:
+                os.environ[env_key_name] = old_key
+            elif env_key_name and api_key:
+                os.environ.pop(env_key_name, None)
 
 
 async def _handle_synthesize(
@@ -616,7 +618,7 @@ async def _handle_synthesize(
 
     # Enqueue for playback
     done_event = asyncio.Event()
-    await _playback_queue.put(
+    await ctx.playback_queue.put(
         PlaybackItem(path=output_path, request_id=request_id, notify=done_event)
     )
     await websocket.send_json({"type": "playing", "id": request_id})
@@ -682,6 +684,7 @@ async def _handle_record(
         return
 
     audio_data = output_path.read_bytes()
+    output_path.unlink(missing_ok=True)  # clean up temp file
     encoded = base64.b64encode(audio_data).decode("ascii")
     await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
 
@@ -709,7 +712,7 @@ async def _handle_chime(
 
     logger.info("Chime: %s", signal)
     done_event = asyncio.Event()
-    await _playback_queue.put(
+    await ctx.playback_queue.put(
         PlaybackItem(path=path, request_id=f"chime:{signal}", notify=done_event)
     )
     await websocket.send_json({"type": "playing", "id": f"chime:{signal}"})
@@ -758,7 +761,7 @@ async def _handle_health(
             "type": "health",
             "status": "ok",
             "uptime_seconds": round(uptime, 1),
-            "queued": _playback_queue.qsize(),
+            "queued": ctx.playback_queue.qsize(),
             "port": ctx.port,
             "active_sessions": ctx.client_count,
             "provider": auto_detect_provider(),
@@ -856,7 +859,7 @@ async def _health_route(request: Request) -> JSONResponse:
         {
             "status": "ok",
             "uptime_seconds": round(uptime, 1),
-            "queued": _playback_queue.qsize(),
+            "queued": ctx.playback_queue.qsize(),
             "port": ctx.port,
             "active_sessions": ctx.client_count,
             "provider": auto_detect_provider(),
@@ -928,7 +931,7 @@ def main(
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
         # Start playback consumer
-        consumer_task = asyncio.create_task(_playback_consumer())
+        consumer_task = asyncio.create_task(_playback_consumer(ctx))
         logger.info("Playback consumer started")
         try:
             yield

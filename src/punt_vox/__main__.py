@@ -980,13 +980,9 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @daemon_app.command("status")
 def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check if the vox daemon is reachable."""
-    from punt_vox.logging_config import VOX_DATA_DIR
+    from punt_vox.client import read_port_file
 
-    port_file = VOX_DATA_DIR / "serve.port"
-    try:
-        port = int(port_file.read_text().strip())
-    except (FileNotFoundError, ValueError, OSError):
-        port = None
+    port = read_port_file()
     if port is None:
         typer.echo("Daemon: not running (no port file)")
         raise typer.Exit(code=1)

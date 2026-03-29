@@ -96,6 +96,8 @@ class VoxClient:
         token: str | None = None,
     ) -> None:
         self._host = host
+        self._explicit_port = port
+        self._explicit_token = token
         self._port = port
         self._token = token
         self._ws: websockets.asyncio.client.ClientConnection | None = None
@@ -157,9 +159,9 @@ class VoxClient:
                 # Connection is dead; fall through to reconnect.
                 self._ws = None
 
-        # Clear cached port/token so we re-read from disk.
-        self._port = None
-        self._token = None
+        # Restore explicit values; re-read from disk only if None.
+        self._port = self._explicit_port
+        self._token = self._explicit_token
         await self.connect()
         # connect() sets self._ws or raises VoxdConnectionError.
         ws = self._ws
@@ -204,9 +206,9 @@ class VoxClient:
         ws = await self._ensure_connected()
         await ws.send(json.dumps(msg))
         responses: list[dict[str, Any]] = []
-        deadline = asyncio.get_event_loop().time() + timeout
+        deadline = asyncio.get_running_loop().time() + timeout
         while True:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 msg_type = str(msg.get("type", ""))
                 raise VoxdProtocolError(
