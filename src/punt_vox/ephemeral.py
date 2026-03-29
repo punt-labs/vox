@@ -31,8 +31,8 @@ def project_root() -> Path:
     config = resolve_config_path()
     # config is <root>/.vox/config.md — parent.parent is the project root
     root = config.parent.parent
-    # Sanity check: if root is / or empty, fall back to cwd
-    if root == Path("/") or not root.parts:
+    # Sanity check: if root is /, fall back to cwd
+    if root == Path("/"):
         return Path.cwd()
     return root
 
