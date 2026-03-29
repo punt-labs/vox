@@ -9,11 +9,8 @@
   "mcpServers": {
     "mic": {
       "type": "stdio",
-      "command": "sh",
-      "args": [
-        "-c",
-        "sd=\"$HOME/.punt-labs/vox\"; tf=\"$sd/serve.token\"; pf=\"$sd/serve.port\"; if command -v mcp-proxy >/dev/null 2>&1 && [ -s \"$tf\" ] && [ -s \"$pf\" ]; then exec mcp-proxy \"ws://localhost:$(cat \"$pf\")/mcp?token=$(cat \"$tf\")\"; else exec vox mcp; fi"
-      ]
+      "command": "vox",
+      "args": ["mcp"]
     }
   }
 }

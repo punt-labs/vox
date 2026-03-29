@@ -3,6 +3,9 @@
 Thin shell scripts read stdin and delegate to ``vox hook <event>``.
 All business logic lives here as testable pure functions.
 
+Audio playback goes through voxd via ``VoxClientSync``. Hooks never
+do in-process synthesis, caching, or direct playback.
+
 Events:
 - **stop**: task-completion notification (decision-block pattern)
 - **post-bash**: signal accumulator for auto-vibe
@@ -22,20 +25,20 @@ import logging
 import os
 import random
 import select
-import subprocess
 import sys
 from pathlib import Path
 
 import typer
 
+from punt_vox.client import VoxClientSync, VoxdConnectionError
 from punt_vox.config import (
+    DEFAULT_CONFIG_PATH,
     VoxConfig,
+    find_config,
     read_config,
-    resolve_config_path,
     write_field,
     write_fields,
 )
-from punt_vox.mood import classify_mood
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
     FAREWELL_PHRASES,
@@ -69,21 +72,6 @@ def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedF
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
-
-def _resolve_assets_dir() -> Path:
-    """Resolve the plugin assets directory.
-
-    Uses ``CLAUDE_PLUGIN_ROOT`` (set by Claude Code when running hooks)
-    first.  Falls back to the ``assets/`` subpackage next to this file,
-    which works for both editable and installed packages.
-    """
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin_root:
-        candidate = Path(plugin_root) / "assets"
-        if candidate.is_dir():
-            return candidate
-    return Path(__file__).resolve().parent / "assets"
 
 
 def _read_hook_input() -> dict[str, object]:
@@ -121,56 +109,47 @@ def _emit(output: dict[str, object]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Chime resolution
+# Voxd client helpers
 # ---------------------------------------------------------------------------
 
 
-def resolve_chime(signal: str, vibe: str | None) -> Path:
-    """Resolve mood-aware chime path for a signal.
+def _make_client() -> VoxClientSync:
+    """Create a VoxClientSync for hook use."""
+    return VoxClientSync()
 
-    Fallback chain: mood-specific signal -> neutral signal ->
-    mood-specific done -> done.
+
+def _speak_via_voxd(
+    text: str,
+    config: VoxConfig,
+) -> None:
+    """Synthesize and play a phrase via voxd.
+
+    Catches ``VoxdConnectionError`` so a missing daemon never crashes
+    a hook.
     """
-    assets = _resolve_assets_dir()
-    mood = classify_mood(vibe)
-    # Asset filenames use underscores (chime_tests_pass.mp3) but
-    # signal tokens use hyphens (tests-pass).
-    file_signal = signal.replace("-", "_")
-
-    if mood != "neutral":
-        mood_file = assets / f"chime_{file_signal}_{mood}.mp3"
-        if mood_file.exists():
-            return mood_file
-
-    neutral_file = assets / f"chime_{file_signal}.mp3"
-    if neutral_file.exists():
-        return neutral_file
-
-    if mood != "neutral":
-        mood_done = assets / f"chime_done_{mood}.mp3"
-        if mood_done.exists():
-            return mood_done
-
-    return assets / "chime_done.mp3"
-
-
-# ---------------------------------------------------------------------------
-# Audio helpers
-# ---------------------------------------------------------------------------
-
-
-def _enqueue_audio(path: Path) -> None:
-    """Play audio via flock-serialized queue (non-blocking)."""
-    logger.info("Hook enqueue: %s (pid=%d)", path.name, os.getpid())
     try:
-        subprocess.Popen(
-            ["vox", "play", str(path)],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        logger.warning("vox binary not found, skipping audio")
+        client = _make_client()
+        kwargs: dict[str, str] = {}
+        if config.voice:
+            kwargs["voice"] = config.voice
+        if config.provider:
+            kwargs["provider"] = config.provider
+        client.synthesize(text, **kwargs)
+    except VoxdConnectionError:
+        logger.warning("voxd not running, skipping speech")
+
+
+def _chime_via_voxd(signal: str) -> None:
+    """Play a chime via voxd.
+
+    Catches ``VoxdConnectionError`` so a missing daemon never crashes
+    a hook.
+    """
+    try:
+        client = _make_client()
+        client.chime(signal)
+    except VoxdConnectionError:
+        logger.warning("voxd not running, skipping chime")
 
 
 # ---------------------------------------------------------------------------
@@ -248,14 +227,10 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         logger.info("Stop hook: skip (no vibe_signals)")
         return None
 
-    # Chime mode: play chime, let Claude stop
+    # Chime mode: play chime via voxd, let Claude stop
     if config.speak == "n":
-        chime = resolve_chime("done", config.vibe)
-        if chime.exists():
-            logger.info("Stop hook: chime mode, playing %s", chime.name)
-            _enqueue_audio(chime)
-        else:
-            logger.info("Stop hook: chime mode, missing %s", chime.name)
+        logger.info("Stop hook: chime mode, requesting done chime from voxd")
+        _chime_via_voxd("done")
         return None
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
@@ -272,7 +247,7 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         pass  # Manual mode with existing tags — already set
     else:
         tags = resolve_tags_from_signals(config.vibe_signals)
-        config_path = resolve_config_path()
+        config_path = find_config() or DEFAULT_CONFIG_PATH
         write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_path)
     return {"decision": "block", "reason": phrase}
 
@@ -322,6 +297,10 @@ def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
     """Accumulate vibe signals from Bash tool execution.
 
     Appends a signal token to ``vibe_signals`` in ``.vox/config.md``.
+
+    .. todo:: Signal accumulation should move to the MCP server so hooks
+       don't write to config. Kept here as the one exception to preserve
+       auto-vibe detection until a proper communication channel exists.
     """
     tool_response = data.get("tool_response", {})
     if not isinstance(tool_response, dict):
@@ -375,8 +354,8 @@ def _pick_notification_phrase(notification_type: str, message: str) -> str:
 def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
     """Handle permission/idle prompt notifications.
 
-    In chime mode, plays a chime. In voice mode, synthesizes and plays
-    a short spoken phrase.
+    In chime mode, plays a chime via voxd. In voice mode, synthesizes
+    and plays a short spoken phrase via voxd.
     """
     # Not enabled
     if config.notify == "n":
@@ -395,106 +374,13 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 
     # Chime mode
     if config.speak == "n":
-        chime = resolve_chime("prompt", config.vibe)
-        if chime.exists():
-            logger.info("Notification hook: chime mode, playing %s", chime.name)
-            _enqueue_audio(chime)
-        else:
-            logger.info("Notification hook: chime mode, missing %s", chime.name)
+        logger.info("Notification hook: chime mode, requesting prompt chime from voxd")
+        _chime_via_voxd("prompt")
         return
 
-    # Voice mode: synthesize and play
+    # Voice mode: synthesize via voxd
     text = _pick_notification_phrase(notification_type, message)
-    if notification_type in ("permission_prompt", "idle_prompt"):
-        # Known quip pool — safe to cache
-        _speak_with_cache(text, config)
-    else:
-        # Dynamic text from notification message — bypass cache
-        _speak_uncached(text, config)
-
-
-# ---------------------------------------------------------------------------
-# Cached speech helper
-# ---------------------------------------------------------------------------
-
-
-def _speak_with_cache(text: str, config: VoxConfig) -> None:
-    """Synthesize and play a phrase, using the MP3 cache when possible.
-
-    On cache hit: plays the cached file directly via ``_enqueue_audio`` —
-    no subprocess, no API call.
-
-    On cache miss: runs ``vox --json unmute`` which handles both synthesis
-    and playback internally (its ``enqueue()`` call spawns a detached
-    player).  The result is then copied to cache for future hits.
-    ``_enqueue_audio`` is intentionally NOT called on miss — the subprocess
-    already enqueued playback.
-
-    Cache I/O failures (``OSError``) are caught so a broken cache never
-    prevents speech.
-    """
-    from punt_vox.cache import cache_get, cache_put
-    from punt_vox.providers import auto_detect_provider
-
-    voice = config.voice
-    # Always resolve to an actual provider name so cache keys are
-    # stable regardless of whether config.provider is set or auto-detected.
-    provider = config.provider or auto_detect_provider()
-
-    # Cache hit — play directly, skip subprocess entirely
-    try:
-        cached = cache_get(text, voice, provider)
-        if cached is not None:
-            logger.debug("Cache hit for %r, playing %s", text, cached.name)
-            _enqueue_audio(cached)
-            return
-    except OSError:
-        logger.debug("Cache lookup failed, falling through to synthesis", exc_info=True)
-
-    # Cache miss — synthesize via subprocess (subprocess owns playback).
-    # Pass --provider so the subprocess uses the same provider as the cache key.
-    extra_args: list[str] = ["--provider", provider]
-    if voice:
-        extra_args.extend(["--voice", voice])
-
-    try:
-        result = subprocess.run(
-            ["vox", "--json", "unmute", text, *extra_args],
-            check=False,
-            capture_output=True,
-            timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return
-
-    # Populate cache from subprocess output.
-    try:
-        if result.returncode == 0 and result.stdout:
-            data = json.loads(result.stdout)
-            if isinstance(data, dict) and "path" in data:
-                source = Path(str(data["path"]))  # pyright: ignore[reportUnknownArgumentType]
-                cache_put(text, voice, provider, source)
-    except (OSError, ValueError):
-        logger.debug("Cache put failed", exc_info=True)
-
-
-def _speak_uncached(text: str, config: VoxConfig) -> None:
-    """Synthesize and play a phrase without caching.
-
-    Used for dynamic text (e.g. unknown notification types) that should
-    not pollute the cache.
-    """
-    voice_args: list[str] = []
-    if config.voice:
-        voice_args = ["--voice", config.voice]
-
-    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
-        subprocess.run(
-            ["vox", "--json", "unmute", text, *voice_args],
-            check=False,
-            capture_output=True,
-            timeout=30,
-        )
+    _speak_via_voxd(text, config)
 
 
 # ---------------------------------------------------------------------------
@@ -508,19 +394,17 @@ def _speak_phrase(
     *,
     chime_signal: str = "done",
 ) -> None:
-    """Pick a random phrase and speak or chime it.
+    """Pick a random phrase and speak or chime it via voxd.
 
     Common pattern for async continuous-mode hooks: check speak mode,
-    play a chime or synthesize speech via ``vox unmute``.
+    play a chime or synthesize speech.
     """
     if config.speak == "n":
-        chime = resolve_chime(chime_signal, config.vibe)
-        if chime.exists():
-            _enqueue_audio(chime)
+        _chime_via_voxd(chime_signal)
         return
 
     text = random.choice(phrases)
-    _speak_with_cache(text, config)
+    _speak_via_voxd(text, config)
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +517,7 @@ def handle_session_end(config: VoxConfig, config_path: Path) -> None:
 @hook_app.command("stop")
 def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Stop hook: task-completion notification."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -647,7 +531,7 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("post-bash")
 def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PostToolUse hook: accumulate vibe signals from Bash."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -658,7 +542,7 @@ def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("notification")
 def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Notification hook: permission/idle prompt audio alerts."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -670,7 +554,7 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("pre-compact")
 def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PreCompact hook: playful 'be right back' message."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -681,7 +565,7 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("user-prompt-submit")
 def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """UserPromptSubmit hook: acknowledgment in continuous mode."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -692,7 +576,7 @@ def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("subagent-start")
 def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStart hook: announce subagent spawn."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -703,7 +587,7 @@ def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("subagent-stop")
 def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStop hook: announce subagent completion."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 
@@ -714,7 +598,7 @@ def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("session-end")
 def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SessionEnd hook: farewell speech."""
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     if not config_path.exists():
         return
 

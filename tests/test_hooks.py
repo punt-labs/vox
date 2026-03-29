@@ -11,7 +11,6 @@ from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
-    _speak_with_cache,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
     handle_pre_compact,
@@ -20,7 +19,6 @@ from punt_vox.hooks import (
     handle_subagent_start,
     handle_subagent_stop,
     handle_user_prompt_submit,
-    resolve_chime,
     resolve_tags_from_signals,
 )
 from punt_vox.quips import (
@@ -138,14 +136,14 @@ class TestHandleStop:
         config = _make_config(vibe_signals="")
         assert handle_stop({}, config) is None
 
-    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: object) -> None:
         config = _make_config(speak="n")
         result = handle_stop({}, config)
         assert result is None
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.resolve_config_path")
+    @patch("punt_vox.hooks.find_config")
     def test_voice_mode_blocks_clean_reason(
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
@@ -161,7 +159,7 @@ class TestHandleStop:
         assert "vibe_signals" not in reason
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.resolve_config_path")
+    @patch("punt_vox.hooks.find_config")
     def test_auto_mode_writes_tags_and_clears_signals(
         self, mock_path: MagicMock, mock_write: MagicMock
     ) -> None:
@@ -174,7 +172,7 @@ class TestHandleStop:
         )
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.resolve_config_path")
+    @patch("punt_vox.hooks.find_config")
     def test_continuous_mode_blocks(
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
@@ -260,116 +258,44 @@ class TestResolveTagsFromSignals:
 
 
 # ---------------------------------------------------------------------------
-# resolve_chime tests
-# ---------------------------------------------------------------------------
-
-
-class TestResolveChime:
-    def test_neutral_mood_returns_signal_chime(self) -> None:
-        chime = resolve_chime("done", None)
-        assert chime.name == "chime_done.mp3"
-
-    def test_bright_mood_returns_mood_chime(self) -> None:
-        chime = resolve_chime("done", "happy and excited")
-        assert chime.name == "chime_done_bright.mp3"
-
-    def test_dark_mood_returns_mood_chime(self) -> None:
-        chime = resolve_chime("done", "frustrated")
-        assert chime.name == "chime_done_dark.mp3"
-
-    def test_fallback_to_neutral_signal(self) -> None:
-        # Signal that doesn't have mood variants falls to neutral
-        chime = resolve_chime("done", None)
-        assert "chime_done.mp3" in chime.name
-
-    def test_unknown_signal_falls_to_done(self) -> None:
-        chime = resolve_chime("nonexistent_signal", None)
-        assert chime.name == "chime_done.mp3"
-
-    def test_prompt_chime(self) -> None:
-        chime = resolve_chime("prompt", None)
-        assert chime.name == "chime_prompt.mp3"
-
-    def test_hyphenated_signal_resolves_underscore_file(self) -> None:
-        # Signal "tests-pass" should find "chime_tests_pass.mp3"
-        chime = resolve_chime("tests-pass", None)
-        assert chime.name == "chime_tests_pass.mp3"
-
-
-# ---------------------------------------------------------------------------
 # handle_notification tests
 # ---------------------------------------------------------------------------
 
 
 class TestHandleNotification:
-    @patch("punt_vox.hooks._enqueue_audio")
-    def test_notify_disabled_does_nothing(self, mock_enqueue: object) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_notify_disabled_does_nothing(
+        self, mock_chime: MagicMock, mock_speak: MagicMock
+    ) -> None:
         config = _make_config(notify="n")
         handle_notification({"notification_type": "permission_prompt"}, config)
-        # Should not enqueue anything when notify=n
-        from unittest.mock import MagicMock
+        mock_chime.assert_not_called()
+        mock_speak.assert_not_called()
 
-        assert isinstance(mock_enqueue, MagicMock)
-        mock_enqueue.assert_not_called()
-
-    @patch("punt_vox.hooks._enqueue_audio")
-    def test_chime_mode_plays_chime(self, mock_enqueue: object) -> None:
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_chime_mode_plays_chime(self, mock_chime: MagicMock) -> None:
         config = _make_config(speak="n")
         handle_notification({"notification_type": "permission_prompt"}, config)
-        from unittest.mock import MagicMock
+        mock_chime.assert_called_once_with("prompt")
 
-        assert isinstance(mock_enqueue, MagicMock)
-        mock_enqueue.assert_called_once()
-        chime_path = mock_enqueue.call_args[0][0]
-        assert "chime_prompt" in chime_path.name
-
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_calls_vox_unmute(
-        self, mock_run: object, _mock_detect: object, _mock_cache: object
-    ) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_voice_mode_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y", voice="matilda")
         handle_notification({"notification_type": "permission_prompt"}, config)
-        from unittest.mock import MagicMock
+        mock_speak.assert_called_once()
 
-        assert isinstance(mock_run, MagicMock)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "vox"
-        assert cmd[1] == "--json"
-        assert cmd[2] == "unmute"
-        assert "--provider" in cmd
-        assert "elevenlabs" in cmd
-        assert "--voice" in cmd
-        assert "matilda" in cmd
-
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_idle_prompt_calls_vox(
-        self, mock_run: object, _mock_detect: object, _mock_cache: object
-    ) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_idle_prompt_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y")
         handle_notification({"notification_type": "idle_prompt"}, config)
-        from unittest.mock import MagicMock
+        mock_speak.assert_called_once()
 
-        assert isinstance(mock_run, MagicMock)
-        mock_run.assert_called_once()
-
-    @patch("punt_vox.hooks._speak_with_cache")
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_unknown_type_bypasses_cache(
-        self, mock_run: object, mock_cached: object
-    ) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_unknown_type_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y")
         handle_notification({"notification_type": "unknown"}, config)
-        from unittest.mock import MagicMock
-
-        assert isinstance(mock_cached, MagicMock)
-        assert isinstance(mock_run, MagicMock)
-        mock_cached.assert_not_called()
-        mock_run.assert_called_once()
+        mock_speak.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -476,67 +402,50 @@ class TestHandlePostBash:
 
 
 class TestHandlePreCompact:
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_n(
-        self, mock_run: MagicMock, mock_enqueue: MagicMock
+        self, mock_speak: MagicMock, mock_chime: MagicMock
     ) -> None:
         """PreCompact does nothing when notify=n."""
         config = _make_config(notify="n")
         handle_pre_compact(config)
-        mock_run.assert_not_called()
-        mock_enqueue.assert_not_called()
+        mock_speak.assert_not_called()
+        mock_chime.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_y(
-        self, mock_run: MagicMock, mock_enqueue: MagicMock
+        self, mock_speak: MagicMock, mock_chime: MagicMock
     ) -> None:
         """PreCompact does nothing when notify=y (on-demand only)."""
         config = _make_config(notify="y")
         handle_pre_compact(config)
-        mock_run.assert_not_called()
-        mock_enqueue.assert_not_called()
+        mock_speak.assert_not_called()
+        mock_chime.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
-    def test_chime_mode_plays_chime(self, mock_enqueue: MagicMock) -> None:
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_chime_mode_plays_chime(self, mock_chime: MagicMock) -> None:
         """PreCompact plays chime when notify=c and speak=n."""
         config = _make_config(notify="c", speak="n")
         handle_pre_compact(config)
-        mock_enqueue.assert_called_once()
+        mock_chime.assert_called_once()
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_speaks(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         """PreCompact speaks a phrase when notify=c and speak=y."""
         config = _make_config(notify="c", speak="y", voice="matilda")
         handle_pre_compact(config)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "vox"
-        assert cmd[1] == "--json"
-        assert cmd[2] == "unmute"
-        assert "--voice" in cmd
-        assert "matilda" in cmd
-        # Phrase should be from the pool
-        spoken_text = cmd[3]
-        assert spoken_text in PRE_COMPACT_PHRASES
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text in PRE_COMPACT_PHRASES
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_no_voice_config(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_voice_mode_no_voice_config(self, mock_speak: MagicMock) -> None:
         """PreCompact works without explicit voice config."""
         config = _make_config(notify="c", speak="y")
         handle_pre_compact(config)
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert "--voice" not in cmd
+        mock_speak.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -545,53 +454,30 @@ class TestHandlePreCompact:
 
 
 class TestSpeakPhrase:
-    @patch("punt_vox.hooks._enqueue_audio")
-    def test_chime_mode_enqueues_audio(self, mock_enqueue: MagicMock) -> None:
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_chime_mode_plays_chime(self, mock_chime: MagicMock) -> None:
         """speak=n plays a chime instead of synthesizing speech."""
         config = _make_config(notify="c", speak="n")
         _speak_phrase(("Hello",), config, chime_signal="done")
-        mock_enqueue.assert_called_once()
+        mock_chime.assert_called_once_with("done")
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_calls_vox_unmute(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
-        """speak=y synthesizes speech via vox unmute."""
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_voice_mode_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
+        """speak=y synthesizes speech via voxd."""
         config = _make_config(notify="c", speak="y", voice="matilda")
         _speak_phrase(("Hello there",), config, chime_signal="done")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "vox"
-        assert cmd[1] == "--json"
-        assert cmd[2] == "unmute"
-        assert cmd[3] == "Hello there"
-        assert "--voice" in cmd
-        assert "matilda" in cmd
+        mock_speak.assert_called_once()
+        text = mock_speak.call_args[0][0]
+        assert text == "Hello there"
 
-    @patch("punt_vox.providers._has_aws_credentials", return_value=False)
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_voice_mode_no_voice(
-        self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
-    ) -> None:
-        """speak=y without voice config omits --voice flag."""
-        config = _make_config(notify="c", speak="y")
-        _speak_phrase(("Hey",), config, chime_signal="done")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert "--voice" not in cmd
-
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_picks_from_pool(self, mock_run: MagicMock, _mock_cache: MagicMock) -> None:
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_picks_from_pool(self, mock_speak: MagicMock) -> None:
         """Spoken text is always drawn from the provided phrase pool."""
         phrases = ("Alpha", "Bravo", "Charlie")
         config = _make_config(notify="c", speak="y")
         _speak_phrase(phrases, config, chime_signal="done")
-        cmd = mock_run.call_args[0][0]
-        assert cmd[3] in phrases
+        text = mock_speak.call_args[0][0]
+        assert text in phrases
 
 
 # ---------------------------------------------------------------------------
@@ -600,8 +486,8 @@ class TestSpeakPhrase:
 
 
 class TestHandleUserPromptSubmit:
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_n(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -611,8 +497,8 @@ class TestHandleUserPromptSubmit:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_y(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -622,7 +508,7 @@ class TestHandleUserPromptSubmit:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         """Plays chime when notify=c and speak=n."""
         config = _make_config(notify="c", speak="n")
@@ -631,7 +517,7 @@ class TestHandleUserPromptSubmit:
 
     @patch("punt_vox.providers._has_aws_credentials", return_value=False)
     @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(
         self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
     ) -> None:
@@ -650,8 +536,8 @@ class TestHandleUserPromptSubmit:
 
 
 class TestHandleSubagentStart:
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_n(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -660,8 +546,8 @@ class TestHandleSubagentStart:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_y(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -670,7 +556,7 @@ class TestHandleSubagentStart:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         config = _make_config(notify="c", speak="n")
         handle_subagent_start(config)
@@ -678,7 +564,7 @@ class TestHandleSubagentStart:
 
     @patch("punt_vox.providers._has_aws_credentials", return_value=False)
     @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(
         self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
     ) -> None:
@@ -695,8 +581,8 @@ class TestHandleSubagentStart:
 
 
 class TestHandleSubagentStop:
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_n(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -705,8 +591,8 @@ class TestHandleSubagentStop:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_y(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -715,7 +601,7 @@ class TestHandleSubagentStop:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         config = _make_config(notify="c", speak="n")
         handle_subagent_stop(config)
@@ -723,7 +609,7 @@ class TestHandleSubagentStop:
 
     @patch("punt_vox.providers._has_aws_credentials", return_value=False)
     @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(
         self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
     ) -> None:
@@ -740,8 +626,8 @@ class TestHandleSubagentStop:
 
 
 class TestHandleSessionEnd:
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_skip_when_notify_n(
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
@@ -750,7 +636,7 @@ class TestHandleSessionEnd:
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
-    @patch("punt_vox.hooks._enqueue_audio")
+    @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         """Fires for notify=y (not just continuous)."""
         config = _make_config(notify="y", speak="n", vibe_signals=None)
@@ -759,7 +645,7 @@ class TestHandleSessionEnd:
 
     @patch("punt_vox.providers._has_aws_credentials", return_value=False)
     @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(
         self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
     ) -> None:
@@ -771,7 +657,7 @@ class TestHandleSessionEnd:
 
     @patch("punt_vox.providers._has_aws_credentials", return_value=False)
     @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_continuous_mode_speaks(
         self, mock_run: MagicMock, _mock_cache: MagicMock, _mock_aws: MagicMock
     ) -> None:
@@ -780,7 +666,7 @@ class TestHandleSessionEnd:
         mock_run.assert_called_once()
 
     @patch("punt_vox.hooks.write_field")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_clears_vibe_signals(
         self, _mock_run: MagicMock, mock_write: MagicMock
     ) -> None:
@@ -791,7 +677,7 @@ class TestHandleSessionEnd:
         mock_write.assert_called_once_with("vibe_signals", "", config_path)
 
     @patch("punt_vox.hooks.write_field")
-    @patch("punt_vox.hooks.subprocess.run")
+    @patch("punt_vox.hooks._speak_via_voxd")
     def test_no_write_when_no_signals(
         self, _mock_run: MagicMock, mock_write: MagicMock
     ) -> None:
@@ -902,133 +788,3 @@ class TestReadHookInput:
         finally:
             r.close()
         assert result == {}
-
-
-# ---------------------------------------------------------------------------
-# _speak_with_cache tests
-# ---------------------------------------------------------------------------
-
-
-class TestSpeakWithCache:
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.cache.cache_get")
-    def test_cache_hit_skips_subprocess(
-        self,
-        mock_get: MagicMock,
-        mock_enqueue: MagicMock,
-        _mock_detect: MagicMock,
-    ) -> None:
-        """On cache hit, plays cached file without spawning subprocess."""
-        cached_path = Path("/fake/cache/abc123.mp3")
-        mock_get.return_value = cached_path
-        config = _make_config(speak="y", voice="matilda")
-
-        with patch("punt_vox.hooks.subprocess.run") as mock_run:
-            _speak_with_cache("On it.", config)
-            mock_run.assert_not_called()
-
-        mock_enqueue.assert_called_once_with(cached_path)
-
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.cache.cache_put")
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_cache_miss_runs_subprocess_and_populates(
-        self,
-        mock_run: MagicMock,
-        _mock_get: MagicMock,
-        mock_put: MagicMock,
-        _mock_detect: MagicMock,
-    ) -> None:
-        """On cache miss, runs subprocess and copies result to cache."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=b'{"path": "/tmp/vox/output.mp3", "text": "On it."}',
-        )
-        config = _make_config(speak="y", voice="matilda")
-
-        _speak_with_cache("On it.", config)
-
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "vox"
-        assert cmd[1] == "--json"
-        assert cmd[2] == "unmute"
-        assert cmd[3] == "On it."
-        assert "--provider" in cmd
-        assert "elevenlabs" in cmd
-        assert "--voice" in cmd
-        assert "matilda" in cmd
-
-        mock_put.assert_called_once_with(
-            "On it.", "matilda", "elevenlabs", Path("/tmp/vox/output.mp3")
-        )
-
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.cache.cache_get", side_effect=OSError("disk error"))
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_cache_failure_falls_through(
-        self,
-        mock_run: MagicMock,
-        _mock_get: MagicMock,
-        _mock_enqueue: MagicMock,
-        _mock_detect: MagicMock,
-    ) -> None:
-        """Cache failures are silent — synthesis proceeds normally."""
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")
-        config = _make_config(speak="y")
-
-        _speak_with_cache("On it.", config)
-
-        # Subprocess should still run despite cache error
-        mock_run.assert_called_once()
-
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.hooks._enqueue_audio")
-    @patch("punt_vox.cache.cache_put")
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_cache_miss_does_not_enqueue_directly(
-        self,
-        mock_run: MagicMock,
-        _mock_get: MagicMock,
-        _mock_put: MagicMock,
-        mock_enqueue: MagicMock,
-        _mock_detect: MagicMock,
-    ) -> None:
-        """On miss, subprocess owns playback — _enqueue_audio is not called."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=b'{"path": "/tmp/vox/output.mp3"}',
-        )
-        config = _make_config(speak="y")
-
-        _speak_with_cache("On it.", config)
-
-        mock_run.assert_called_once()
-        mock_enqueue.assert_not_called()
-
-    @patch("punt_vox.providers.auto_detect_provider", return_value="elevenlabs")
-    @patch("punt_vox.cache.cache_put")
-    @patch("punt_vox.cache.cache_get", return_value=None)
-    @patch("punt_vox.hooks.subprocess.run")
-    def test_no_voice_omits_flag(
-        self,
-        mock_run: MagicMock,
-        _mock_get: MagicMock,
-        _mock_put: MagicMock,
-        _mock_detect: MagicMock,
-    ) -> None:
-        """Without voice config, --voice flag is omitted."""
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"{}")
-        config = _make_config(speak="y")
-
-        _speak_with_cache("hello", config)
-
-        cmd = mock_run.call_args[0][0]
-        assert "--voice" not in cmd
-        # --provider is always passed to keep cache key and subprocess in sync
-        assert "--provider" in cmd
-        assert "elevenlabs" in cmd

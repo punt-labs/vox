@@ -1,8 +1,8 @@
 """Shared resolution helpers for CLI and MCP server.
 
-Houses voice/language resolution, output path resolution, and vibe
-application — logic that both surfaces need but that doesn't belong
-in core.py (provider-agnostic orchestration) or config.py (file I/O).
+Houses voice/language resolution and vibe application -- logic that
+both surfaces need but that doesn't belong in core.py (provider-agnostic
+orchestration) or config.py (file I/O).
 """
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ import re
 from pathlib import Path
 
 import punt_vox.config as _config
-from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
-from punt_vox.output import default_output_dir
 from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
 
 logger = logging.getLogger(__name__)
@@ -76,20 +74,6 @@ def resolve_voice_and_language(
             language = provider.infer_language_from_voice(voice)
 
     return voice, language
-
-
-def resolve_output_dir(output_dir: str | None, *, ephemeral: bool = False) -> Path:
-    """Resolve an output directory, using the default if not specified.
-
-    When *ephemeral* is True, returns the ephemeral ``.vox/`` directory
-    in the current working directory and ignores *output_dir*.
-    """
-    if ephemeral:
-        clean_ephemeral()
-        return ephemeral_output_dir()
-    if output_dir:
-        return Path(output_dir)
-    return default_output_dir()
 
 
 def apply_vibe(

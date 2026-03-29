@@ -18,7 +18,13 @@ from typing import Annotated
 import typer
 
 from punt_vox import __version__
-from punt_vox.config import read_config, resolve_config_path, write_field, write_fields
+from punt_vox.config import (
+    DEFAULT_CONFIG_PATH,
+    find_config,
+    read_config,
+    write_field,
+    write_fields,
+)
 from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
@@ -234,7 +240,6 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     speaker_boost: SpeakerBoostFlag = False,
 ) -> None:
     """Synthesize and play audio."""
-    from punt_vox.ephemeral import clean_ephemeral, ephemeral_output_dir
     from punt_vox.playback import enqueue
     from punt_vox.types import generate_filename
 
@@ -255,8 +260,11 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
         boost,
     )
 
-    clean_ephemeral()
-    out_dir = ephemeral_output_dir()
+    out_dir = Path.cwd() / ".vox"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Clean old ephemeral MP3s before synthesizing new ones
+    for _mp3 in out_dir.glob("*.mp3"):
+        _mp3.unlink(missing_ok=True)
     client = TTSClient(prov)
 
     if len(requests) > 1:
@@ -462,7 +470,7 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
 ) -> None:
     """Set session mood for TTS voice."""
-    cp = resolve_config_path()
+    cp = find_config() or DEFAULT_CONFIG_PATH
     if mood == "auto":
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_path=cp)
         _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
@@ -497,7 +505,7 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y, n, or c.", err=True)
         raise typer.Exit(code=1)
 
-    config_path = resolve_config_path()
+    config_path = find_config() or DEFAULT_CONFIG_PATH
     first_init = not config_path.exists()
     updates: dict[str, str] = {"notify": mode}
     if mode == "c" or (first_init and mode == "y"):
@@ -531,7 +539,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    write_field("speak", mode, config_path=resolve_config_path())
+    write_field("speak", mode, config_path=find_config() or DEFAULT_CONFIG_PATH)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _emit({"speak": mode}, label)
 
@@ -546,7 +554,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
 ) -> None:
     """Set the session voice."""
-    write_field("voice", name, config_path=resolve_config_path())
+    write_field("voice", name, config_path=find_config() or DEFAULT_CONFIG_PATH)
     _emit({"voice": name}, f"{name}'s here.")
 
 
@@ -573,7 +581,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (provider, voice, vibe, notify)."""
     prov = get_provider(provider, model=model)
-    cfg = read_config(config_path=resolve_config_path())
+    cfg = read_config(config_path=find_config() or DEFAULT_CONFIG_PATH)
 
     info = {
         "provider": prov.name,
@@ -697,23 +705,15 @@ def doctor(
                 required=False,
             )
 
-    # mcp-proxy (optional)
-    from punt_vox.proxy import installed_path as proxy_path
-
-    proxy = proxy_path()
-    if proxy:
-        _check(_PASS, f"mcp-proxy: {proxy}", required=False)
-    else:
-        _check(
-            _OPTIONAL,
-            "mcp-proxy: not found (run 'vox install')",
-            required=False,
-        )
-
     # Daemon (optional)
-    from punt_vox.daemon import read_port_file
+    from punt_vox.logging_config import VOX_DATA_DIR
 
-    daemon_port = read_port_file()
+    port_file = VOX_DATA_DIR / "serve.port"
+
+    try:
+        daemon_port: int | None = int(port_file.read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        daemon_port = None
     if daemon_port is not None:
         try:
             req = urllib.request.Request(
@@ -820,9 +820,9 @@ _PLUGIN_ID = "vox@punt-labs"
 
 @app.command()
 def install() -> None:
-    """Install the Claude Code plugin, mcp-proxy, and daemon service."""
+    """Install the Claude Code plugin and daemon service."""
     # Step 1: Claude Code plugin
-    typer.echo("[1/3] Installing Claude Code plugin...")
+    typer.echo("[1/2] Installing Claude Code plugin...")
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
@@ -837,25 +837,10 @@ def install() -> None:
         raise typer.Exit(code=1)
     typer.echo("  \u2713 plugin installed")
 
-    # Step 2: mcp-proxy (best-effort — optional, falls back to vox mcp)
-    typer.echo("[2/3] Installing mcp-proxy...")
-    try:
-        from punt_vox.proxy import install as proxy_install, installed_path
-
-        existing = installed_path()
-        if existing:
-            typer.echo(f"  \u2713 mcp-proxy already installed at {existing}")
-        else:
-            msg = proxy_install()
-            typer.echo(f"  \u2713 {msg}")
-    except Exception as exc:
-        typer.echo(f"  \u2022 Skipped: {exc}")
-        typer.echo("    mcp-proxy is optional — vox works without it.")
-
-    # Step 3: daemon service (best-effort — not available in CI/containers)
+    # Step 2: daemon service (best-effort — not available in CI/containers)
     # Catch BaseException because service.detect_platform() raises
     # SystemExit on unsupported platforms (not a subclass of Exception).
-    typer.echo("[3/3] Registering vox daemon...")
+    typer.echo("[2/2] Registering vox daemon...")
     try:
         from punt_vox.service import install as svc_install
 
@@ -1072,28 +1057,6 @@ def mcp() -> None:
 
 
 # ---------------------------------------------------------------------------
-# serve (daemon mode)
-# ---------------------------------------------------------------------------
-
-
-@app.command()
-def serve(
-    port: Annotated[
-        int,
-        typer.Option("--port", help="Port to bind."),
-    ] = 8421,  # daemon.DEFAULT_PORT (can't import at module level)
-    host: Annotated[
-        str,
-        typer.Option("--host", help="Host to bind."),
-    ] = "127.0.0.1",
-) -> None:
-    """Start the vox daemon (HTTP + WebSocket server)."""
-    from punt_vox.daemon import serve as daemon_serve
-
-    daemon_serve(port=port, host=host)
-
-
-# ---------------------------------------------------------------------------
 # daemon subcommand group
 # ---------------------------------------------------------------------------
 
@@ -1125,9 +1088,13 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @daemon_app.command("status")
 def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check if the vox daemon is reachable."""
-    from punt_vox.daemon import read_port_file
+    from punt_vox.logging_config import VOX_DATA_DIR
 
-    port = read_port_file()
+    port_file = VOX_DATA_DIR / "serve.port"
+    try:
+        port = int(port_file.read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        port = None
     if port is None:
         typer.echo("Daemon: not running (no port file)")
         raise typer.Exit(code=1)

@@ -1,15 +1,19 @@
-"""Daemon lifecycle management for ``vox serve``.
+"""Daemon lifecycle management for ``voxd``.
 
-Provides ``install`` and ``uninstall`` commands that register vox as a
+Provides ``install`` and ``uninstall`` commands that register voxd as a
 system service (launchd on macOS, systemd on Linux) so the daemon starts
-at login and restarts on crash.
+at boot and restarts on crash.
 
-The service runs ``vox serve --port 8421`` using the Python interpreter
-that executed the install command, anchoring to the exact venv/installation.
+The service runs ``voxd --port 8421`` as a system-level daemon:
+- macOS: ``/Library/LaunchDaemons/com.punt-labs.voxd.plist``
+- Linux: ``/etc/systemd/system/voxd.service``
+
+Both require ``sudo`` for installation.
 """
 
 from __future__ import annotations
 
+import getpass
 import html
 import logging
 import os
@@ -19,33 +23,166 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import textwrap
 import time
 from pathlib import Path
 
-from punt_vox.daemon import (
-    DEFAULT_PORT,
-    _remove_port_file,  # pyright: ignore[reportPrivateUsage]
-    read_port_file,
-)
-from punt_vox.keys import write_keys_env
-from punt_vox.logging_config import VOX_DATA_DIR
-
 logger = logging.getLogger(__name__)
 
-_LABEL = "com.punt-labs.vox"
+DEFAULT_PORT = 8421
+
+_LABEL = "com.punt-labs.voxd"
 
 _KILL_TIMEOUT_SECONDS = 5
 _SUBPROCESS_TIMEOUT_SECONDS = 5
+
+
+# ---------------------------------------------------------------------------
+# System paths — duplicated from voxd.py to avoid importing heavy providers.
+# TODO: extract into a shared lightweight module.
+# ---------------------------------------------------------------------------
+
+
+def _data_root() -> Path:
+    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
+    if sys.platform == "darwin":
+        try:
+            prefix = subprocess.check_output(
+                ["brew", "--prefix"], text=True, timeout=5
+            ).strip()
+            return Path(prefix)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return Path("/usr/local")  # fallback for non-Homebrew macOS
+    return Path("/")  # type: ignore[unreachable]  # Linux path
+
+
+def _config_dir() -> Path:
+    return _data_root() / "etc" / "vox"
+
+
+def _log_dir() -> Path:
+    return _data_root() / "var" / "log" / "vox"
+
+
+def _run_dir() -> Path:
+    return _data_root() / "var" / "run" / "vox"
+
+
+def _cache_dir() -> Path:
+    return _data_root() / "var" / "cache" / "vox"
+
+
+# ---------------------------------------------------------------------------
+# User detection
+# ---------------------------------------------------------------------------
+
+
+def _installing_user() -> str:
+    """Get the real user, not root, when running under sudo."""
+    return os.environ.get("SUDO_USER") or getpass.getuser()
+
+
+# ---------------------------------------------------------------------------
+# Keys.env writing (inline — system config dir, not ~/.punt-labs/vox/)
+# ---------------------------------------------------------------------------
+
+_PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
+    {
+        "ELEVENLABS_API_KEY",
+        "OPENAI_API_KEY",
+        "AWS_PROFILE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_DEFAULT_REGION",
+        "TTS_PROVIDER",
+        "TTS_MODEL",
+    }
+)
+
+
+def _write_keys_env(env: dict[str, str], config_dir: Path) -> Path:
+    """Write keys.env to the system config dir.  chmod 0600."""
+    path = config_dir / "keys.env"
+
+    existing: dict[str, str] = {}
+    if path.exists():
+        try:
+            text = path.read_text()
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "=" not in stripped:
+                    continue
+                key, _, value = stripped.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if key:
+                    existing[key] = value
+        except OSError as exc:
+            logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
+
+    merged = dict(existing)
+    for k in _PROVIDER_KEY_NAMES:
+        if k in env:
+            if env[k]:
+                merged[k] = env[k]
+            else:
+                merged.pop(k, None)
+
+    header = (
+        "# vox provider keys — loaded by voxd at startup\n"
+        "# Written by: vox daemon install\n\n"
+    )
+    lines = [f"{k}={v}" for k, v in sorted(merged.items()) if v]
+    content = header + "\n".join(lines) + "\n"
+
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
+    path.chmod(0o600)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Port file helpers
+# ---------------------------------------------------------------------------
+
+
+def read_port_file() -> int | None:
+    """Read the daemon port from the port file. Returns None if missing."""
+    port_file = _run_dir() / "serve.port"
+    try:
+        return int(port_file.read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def _remove_port_file() -> None:
+    port_file = _run_dir() / "serve.port"
+    try:
+        port_file.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not remove %s", port_file)
+    logger.info("Removed port file")
+
+
+# ---------------------------------------------------------------------------
+# Process management
+# ---------------------------------------------------------------------------
 
 
 def _find_pid_on_port(port: int) -> list[int]:
     """Return all PIDs with connections to *port*.
 
     On macOS ``lsof -ti :<port>`` returns one PID per line (daemon *and*
-    connected clients like mcp-proxy).  On Linux ``fuser <port>/tcp``
-    returns space-separated PIDs.  We return **all** of them so the caller
-    can check each for vox identity.
+    connected clients).  On Linux ``fuser <port>/tcp`` returns
+    space-separated PIDs.  We return **all** of them so the caller can
+    check each for voxd identity.
     """
     if platform.system() == "Darwin":
         cmd = ["lsof", "-ti", f":{port}"]
@@ -70,10 +207,10 @@ def _find_pid_on_port(port: int) -> list[int]:
 
 
 def _is_vox_daemon_process(pid: int) -> bool:
-    """Check whether *pid* is a vox daemon process.
+    """Check whether *pid* is a voxd daemon process.
 
     Uses ``ps`` to inspect the command line.  Returns False if the
-    process doesn't look like ``punt_vox … serve``.
+    process doesn't look like ``voxd``.
     """
     try:
         result = subprocess.run(
@@ -83,6 +220,9 @@ def _is_vox_daemon_process(pid: int) -> bool:
             timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         )
         cmd_line = result.stdout.strip()
+        if re.search(r"\bvoxd\b", cmd_line):
+            return True
+        # Also match the old "vox serve" pattern for upgrade transitions.
         if re.search(r"\bserve\b", cmd_line) and (
             "punt_vox" in cmd_line
             or "punt-vox" in cmd_line
@@ -90,7 +230,7 @@ def _is_vox_daemon_process(pid: int) -> bool:
         ):
             return True
         logger.warning(
-            "PID %d is not a vox daemon (command: %s)", pid, cmd_line or "<empty>"
+            "PID %d is not a voxd process (command: %s)", pid, cmd_line or "<empty>"
         )
     except (OSError, subprocess.TimeoutExpired):
         logger.warning("Could not verify PID %d identity via ps", pid)
@@ -161,7 +301,7 @@ def _kill_stale_daemon() -> bool:
     for pid in pids:
         if not _is_vox_daemon_process(pid):
             logger.debug(
-                "PID %d on port %d is not a vox daemon — skipping",
+                "PID %d on port %d is not a voxd process — skipping",
                 pid,
                 port,
             )
@@ -172,7 +312,7 @@ def _kill_stale_daemon() -> bool:
             return True
         logger.warning("Failed to kill PID %d — leaving state files intact", pid)
         return False
-    logger.warning("No vox daemon found among PIDs %s on port %d", pids, port)
+    logger.warning("No voxd process found among PIDs %s on port %d", pids, port)
     return False
 
 
@@ -188,34 +328,63 @@ def _ensure_port_free() -> None:
         raise SystemExit(msg)
 
 
-def _vox_exec_args() -> list[str]:
-    """Return the command to invoke ``vox serve`` via the uv tool shim."""
-    vox_path = shutil.which("vox")
-    if vox_path is None:
+def _voxd_exec_args() -> list[str]:
+    """Return the command to invoke ``voxd``."""
+    voxd_path = shutil.which("voxd")
+    if voxd_path is None:
         msg = (
-            "vox binary not found on PATH. "
+            "voxd binary not found on PATH. "
             "Install with 'uv tool install punt-vox' "
             "or ensure ~/.local/bin is on your PATH."
         )
         raise SystemExit(msg)
-    return [vox_path, "serve", "--port", str(DEFAULT_PORT)]
+    return [voxd_path, "--port", str(DEFAULT_PORT)]
 
 
 # ---------------------------------------------------------------------------
-# macOS — launchd
+# Directory creation
 # ---------------------------------------------------------------------------
 
-_LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
+
+def _ensure_system_dirs(user: str) -> None:
+    """Create system data directories with appropriate ownership."""
+    dirs = [_config_dir(), _log_dir(), _run_dir(), _cache_dir()]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+        logger.info("Ensured directory: %s", d)
+
+    # On macOS/Linux, set ownership to the installing user (not root).
+    if os.getuid() == 0:
+        import pwd
+
+        try:
+            pw = pwd.getpwnam(user)
+            uid, gid = pw.pw_uid, pw.pw_gid
+            for d in dirs:
+                os.chown(str(d), uid, gid)
+                logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
+        except KeyError:
+            logger.warning("User %s not found — skipping chown", user)
+
+
+# ---------------------------------------------------------------------------
+# macOS — launchd (system-level)
+# ---------------------------------------------------------------------------
+
+_LAUNCHD_DIR = Path("/Library/LaunchDaemons")
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
 
-def _launchd_plist_content() -> str:
-    args = _vox_exec_args()
+def _launchd_plist_content(user: str) -> str:
+    args = _voxd_exec_args()
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
-    log_dir = html.escape(str(VOX_DATA_DIR / "logs"))
+    log_dir = _log_dir()
+    stdout_log = html.escape(str(log_dir / "voxd-stdout.log"))
+    stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
+    escaped_user = html.escape(user)
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -224,6 +393,8 @@ def _launchd_plist_content() -> str:
         <dict>
             <key>Label</key>
             <string>{_LABEL}</string>
+            <key>UserName</key>
+            <string>{escaped_user}</string>
             <key>ProgramArguments</key>
             <array>
         {program_args}
@@ -238,20 +409,15 @@ def _launchd_plist_content() -> str:
             <key>KeepAlive</key>
             <true/>
             <key>StandardOutPath</key>
-            <string>{log_dir}/daemon-stdout.log</string>
+            <string>{stdout_log}</string>
             <key>StandardErrorPath</key>
-            <string>{log_dir}/daemon-stderr.log</string>
+            <string>{stderr_log}</string>
         </dict>
         </plist>
     """)
 
 
-def _launchd_install() -> None:
-    _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
-    # Ensure log directory exists — launchd won't create it.
-    log_dir = VOX_DATA_DIR / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
+def _launchd_install(user: str) -> None:
     # Unload first if already loaded — launchctl load fails with I/O error
     # if the plist is already loaded (happens on every upgrade).  Must happen
     # BEFORE _ensure_port_free() so launchd doesn't restart the killed process.
@@ -270,7 +436,7 @@ def _launchd_install() -> None:
 
     _ensure_port_free()
 
-    _LAUNCHD_PLIST.write_text(_launchd_plist_content())
+    _LAUNCHD_PLIST.write_text(_launchd_plist_content(user))
     logger.info("Wrote %s", _LAUNCHD_PLIST)
 
     subprocess.run(
@@ -303,47 +469,46 @@ def _launchd_status() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Linux — systemd user unit
+# Linux — systemd (system-level)
 # ---------------------------------------------------------------------------
 
-_SYSTEMD_DIR = Path.home() / ".config" / "systemd" / "user"
-_SYSTEMD_UNIT = _SYSTEMD_DIR / "vox.service"
+_SYSTEMD_DIR = Path("/etc/systemd/system")
+_SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 
 
-def _systemd_unit_content() -> str:
-    args = _vox_exec_args()
+def _systemd_unit_content(user: str) -> str:
+    args = _voxd_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
     raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     path_value = raw_path.replace("%", "%%")
     return textwrap.dedent(f"""\
         [Unit]
-        Description=Vox text-to-speech daemon
+        Description=Voxd text-to-speech daemon
         After=network.target
 
         [Service]
+        User={user}
         ExecStart={exec_start}
         Environment="PATH={path_value}"
         Restart=on-failure
         RestartSec=5
 
         [Install]
-        WantedBy=default.target
+        WantedBy=multi-user.target
     """)
 
 
-def _systemd_install() -> None:
-    _SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
-
+def _systemd_install(user: str) -> None:
     # Stop if already running — systemd won't pick up new unit config
     # from enable --now alone.  Must happen BEFORE _ensure_port_free()
     # so systemd doesn't restart the killed process (Restart=on-failure).
     if _SYSTEMD_UNIT.exists():
         result = subprocess.run(
-            ["systemctl", "--user", "stop", "vox"],
+            ["systemctl", "stop", "voxd"],
             check=False,  # may not be running
         )
         if result.returncode == 0:
-            logger.info("Stopped existing vox.service")
+            logger.info("Stopped existing voxd.service")
         else:
             logger.debug(
                 "systemctl stop exited %d (may not have been running)",
@@ -352,29 +517,29 @@ def _systemd_install() -> None:
 
     _ensure_port_free()
 
-    _SYSTEMD_UNIT.write_text(_systemd_unit_content())
+    _SYSTEMD_UNIT.write_text(_systemd_unit_content(user))
     logger.info("Wrote %s", _SYSTEMD_UNIT)
 
     subprocess.run(
-        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "daemon-reload"],
         check=True,
     )
     subprocess.run(
-        ["systemctl", "--user", "enable", "--now", "vox"],
+        ["systemctl", "enable", "--now", "voxd"],
         check=True,
     )
-    logger.info("Enabled and started vox.service")
+    logger.info("Enabled and started voxd.service")
 
 
 def _systemd_uninstall() -> None:
     if _SYSTEMD_UNIT.exists():
         subprocess.run(
-            ["systemctl", "--user", "disable", "--now", "vox"],
+            ["systemctl", "disable", "--now", "voxd"],
             check=False,  # may already be stopped
         )
         _SYSTEMD_UNIT.unlink()
         subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "daemon-reload"],
             check=False,
         )
         logger.info("Removed %s", _SYSTEMD_UNIT)
@@ -385,7 +550,7 @@ def _systemd_uninstall() -> None:
 
 def _systemd_status() -> bool:
     result = subprocess.run(
-        ["systemctl", "--user", "is-active", "vox"],
+        ["systemctl", "is-active", "voxd"],
         capture_output=True,
         text=True,
     )
@@ -411,74 +576,40 @@ def detect_platform() -> str:
 
 
 def install() -> str:
-    """Install vox as a system service.  Returns a status message."""
+    """Install voxd as a system service.  Returns a status message."""
     plat = detect_platform()
-    args = _vox_exec_args()
+    user = _installing_user()
+    args = _voxd_exec_args()
 
-    keys_path = write_keys_env(dict(os.environ))
+    # Create system directories with correct ownership.
+    config_dir = _config_dir()
+    _ensure_system_dirs(user)
+
+    # Write provider keys to system config dir.
+    keys_path = _write_keys_env(dict(os.environ), config_dir)
     logger.info("Wrote provider keys to %s", keys_path)
 
-    import secrets
-
-    token_path = VOX_DATA_DIR / "serve.token"
-    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if token_path.exists():
-        try:
-            existing = token_path.read_text().strip()
-        except (PermissionError, OSError) as exc:
-            msg = (
-                f"Cannot read existing auth token at {token_path}: {exc}. "
-                "Fix file permissions or remove the file, "
-                "then rerun 'vox daemon install'."
-            )
-            raise SystemExit(msg) from exc
-        if existing:
-            # Enforce secure permissions on existing token file.
-            token_path.chmod(0o600)
-            logger.info("Reusing existing auth token from %s", token_path)
-        else:
-            token = secrets.token_urlsafe(32)
-            fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                os.write(fd, token.encode())
-            finally:
-                os.close(fd)
-            logger.info("Replaced empty auth token at %s", token_path)
-    else:
-        token = secrets.token_urlsafe(32)
-        fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, token.encode())
-        finally:
-            os.close(fd)
-        logger.info("Generated auth token at %s", token_path)
-
     if plat == "macos":
-        _launchd_install()
+        _launchd_install(user)
         running = _launchd_status()
     else:
-        _systemd_install()
+        _systemd_install(user)
         running = _systemd_status()
 
     exec_display = " ".join(args)
     status = "running" if running else "installed (not yet running)"
     lines = [
-        f"vox daemon {status} on port {DEFAULT_PORT}.",
+        f"voxd daemon {status} on port {DEFAULT_PORT}.",
         f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
         f"  Keys:    {keys_path}",
         f"  Command: {exec_display}",
+        f"  User:    {user}",
     ]
-    if plat == "linux" and not _has_linger():
-        lines.append(
-            "  Warning: loginctl linger is not enabled. "
-            "The daemon will stop when you log out. "
-            "Run: loginctl enable-linger"
-        )
     return os.linesep.join(lines)
 
 
 def uninstall() -> str:
-    """Remove vox system service.  Returns a status message."""
+    """Remove voxd system service.  Returns a status message."""
     plat = detect_platform()
     if plat == "macos":
         _launchd_uninstall()
@@ -486,7 +617,7 @@ def uninstall() -> str:
     else:
         _systemd_uninstall()
         path = _SYSTEMD_UNIT
-    return f"vox daemon uninstalled. Removed {path}."
+    return f"voxd daemon uninstalled. Removed {path}."
 
 
 def is_running() -> bool:
@@ -495,20 +626,3 @@ def is_running() -> bool:
     if plat == "macos":
         return _launchd_status()
     return _systemd_status()
-
-
-def _has_linger() -> bool:
-    """Check if loginctl linger is enabled for the current user (Linux only)."""
-    import pwd
-
-    try:
-        username = pwd.getpwuid(os.getuid()).pw_name
-        result = subprocess.run(
-            ["loginctl", "show-user", username, "--property=Linger"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return "Linger=yes" in result.stdout
-    except (OSError, KeyError, subprocess.TimeoutExpired):
-        return False

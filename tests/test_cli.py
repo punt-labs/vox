@@ -286,7 +286,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "y"])
@@ -298,7 +298,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "n"])
@@ -310,7 +310,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
@@ -326,7 +326,7 @@ class TestNotifyCommand:
         config = tmp_path / "config.md"
         config.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
@@ -340,7 +340,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c", "--voice", "matilda"])
@@ -352,7 +352,7 @@ class TestNotifyCommand:
 
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         config = tmp_path / "config.md"
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "x"])
@@ -365,7 +365,7 @@ class TestSpeakCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "y"])
@@ -377,7 +377,7 @@ class TestSpeakCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "n"])
@@ -391,7 +391,7 @@ class TestVoiceCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "matilda"])

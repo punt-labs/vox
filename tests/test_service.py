@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from punt_vox.daemon import DEFAULT_PORT
 from punt_vox.service import (
+    DEFAULT_PORT,
     _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
     _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
     _is_vox_daemon_process,  # pyright: ignore[reportPrivateUsage]
@@ -18,7 +18,7 @@ from punt_vox.service import (
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
-    _vox_exec_args,  # pyright: ignore[reportPrivateUsage]
+    _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     detect_platform,
     install,
 )
@@ -28,10 +28,9 @@ from punt_vox.service import (
 # ---------------------------------------------------------------------------
 
 
-def test_vox_exec_args() -> None:
-    args = _vox_exec_args()
-    assert args[0].endswith("vox")
-    assert "serve" in args
+def test_voxd_exec_args() -> None:
+    args = _voxd_exec_args()
+    assert args[0].endswith("voxd")
     assert "--port" in args
     assert str(DEFAULT_PORT) in args
 
@@ -41,37 +40,37 @@ def test_vox_exec_args() -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_label(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "com.punt-labs.vox" in content
+    content = _launchd_plist_content("testuser")
+    assert "com.punt-labs.voxd" in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_args(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "serve" in content
+    content = _launchd_plist_content("testuser")
+    assert "voxd" in content
     assert str(DEFAULT_PORT) in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_log_paths(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "daemon-stdout.log" in content
-    assert "daemon-stderr.log" in content
+    content = _launchd_plist_content("testuser")
+    assert "voxd-stdout.log" in content
+    assert "voxd-stderr.log" in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_keepalive(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
+    content = _launchd_plist_content("testuser")
     assert "<key>KeepAlive</key>" in content
     assert "<true/>" in content
 
 
 @patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
-@patch("punt_vox.service.shutil.which", return_value="/opt/homebrew/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/opt/homebrew/bin/voxd")
 def test_launchd_plist_contains_path_from_env(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
+    content = _launchd_plist_content("testuser")
     assert "<key>EnvironmentVariables</key>" in content
     assert "<key>PATH</key>" in content
     assert "/opt/homebrew/bin:/usr/bin:/bin" in content
@@ -82,32 +81,32 @@ def test_launchd_plist_contains_path_from_env(_mock_which: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_contains_exec_start(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert "ExecStart=" in content
-    assert "serve" in content
+    assert "voxd" in content
     assert str(DEFAULT_PORT) in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_restart_policy(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert "Restart=on-failure" in content
     assert "RestartSec=5" in content
 
 
 @patch.dict("os.environ", {"PATH": "/usr/local/bin:/usr/bin:/bin"})
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_contains_path_from_env(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_description(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
-    assert "Vox text-to-speech daemon" in content
+    content = _systemd_unit_content("testuser")
+    assert "Voxd text-to-speech daemon" in content
 
 
 # ---------------------------------------------------------------------------
@@ -393,13 +392,9 @@ def test_kill_pid_sigkill_after_timeout(
 @patch("punt_vox.service.subprocess.run")
 @patch("punt_vox.service._ensure_port_free")
 @patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._LAUNCHD_DIR")
-@patch("punt_vox.service.VOX_DATA_DIR")
 @patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
 def test_launchd_install_fresh(
     _mock_content: MagicMock,
-    mock_data_dir: MagicMock,
-    mock_launchd_dir: MagicMock,
     mock_plist: MagicMock,
     mock_ensure: MagicMock,
     mock_run: MagicMock,
@@ -409,12 +404,10 @@ def test_launchd_install_fresh(
 
     mock_plist.exists.return_value = False
     mock_run.return_value = MagicMock(returncode=0)
-    log_dir = MagicMock()
-    mock_data_dir.__truediv__ = MagicMock(return_value=log_dir)
 
-    _launchd_install()
+    _launchd_install("testuser")
 
-    # No unload call — plist didn't exist
+    # No unload call -- plist didn't exist
     mock_ensure.assert_called_once()
     mock_plist.write_text.assert_called_once_with("<plist>test</plist>")
     # Only the load call
@@ -427,13 +420,9 @@ def test_launchd_install_fresh(
 @patch("punt_vox.service.subprocess.run")
 @patch("punt_vox.service._ensure_port_free")
 @patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._LAUNCHD_DIR")
-@patch("punt_vox.service.VOX_DATA_DIR")
 @patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
 def test_launchd_install_upgrade(
     _mock_content: MagicMock,
-    mock_data_dir: MagicMock,
-    mock_launchd_dir: MagicMock,
     mock_plist: MagicMock,
     mock_ensure: MagicMock,
     mock_run: MagicMock,
@@ -443,10 +432,8 @@ def test_launchd_install_upgrade(
 
     mock_plist.exists.return_value = True
     mock_run.return_value = MagicMock(returncode=0)
-    log_dir = MagicMock()
-    mock_data_dir.__truediv__ = MagicMock(return_value=log_dir)
 
-    _launchd_install()
+    _launchd_install("testuser")
 
     # First call is unload, second is load
     assert mock_run.call_count == 2
@@ -484,9 +471,9 @@ def test_systemd_install_fresh(
     mock_unit.exists.return_value = False
     mock_run.return_value = MagicMock(returncode=0)
 
-    _systemd_install()
+    _systemd_install("testuser")
 
-    # No stop call — unit didn't exist
+    # No stop call -- unit didn't exist
     mock_ensure.assert_called_once()
     mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
     # daemon-reload + enable --now
@@ -516,13 +503,13 @@ def test_systemd_install_upgrade(
     mock_unit.exists.return_value = True
     mock_run.return_value = MagicMock(returncode=0)
 
-    _systemd_install()
+    _systemd_install("testuser")
 
     # First call is stop, then daemon-reload, then enable --now
     assert mock_run.call_count == 3
     stop_call = mock_run.call_args_list[0]
     assert "stop" in stop_call[0][0]
-    assert "vox" in stop_call[0][0]
+    assert "voxd" in stop_call[0][0]
 
     mock_ensure.assert_called_once()
     mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
