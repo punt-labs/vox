@@ -1315,6 +1315,20 @@ mcp-proxy existed to avoid spawning a Python process per session. The new MCP se
 
 HTTP request/response can't do bidirectional streaming. Real-time voice conversation (vox-7hr) needs streaming audio in both directions. WebSocket handles both fire-and-forget synthesis (today) and streaming conversation (future) without a protocol change.
 
+### System Paths
+
+| Purpose | macOS (Homebrew) | Linux |
+|---------|-----------------|-------|
+| Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
+| Cache | `$(brew --prefix)/var/lib/vox/cache/` | `/var/lib/vox/cache/` |
+| Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
+| Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
+| Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |
+
 ### Why System Paths, Not Home Directory
 
 The daemon serves the machine, not a user. One set of speakers. Data belongs in system directories (`/Library/LaunchDaemons/`, Homebrew `var/`, FHS `/var/`). Home directory paths caused the v2 path resolution bugs — the daemon's CWD was `/` under launchd but all paths assumed `~`.
+
+### Service Identity
+
+`voxd` runs as the installing user, not root. Audio device access (CoreAudio on macOS, PulseAudio/PipeWire on Linux) is tied to the desktop session user. The LaunchDaemon plist sets `UserName` to `$SUDO_USER`; the systemd unit sets `User=` to `$SUDO_USER`. The service install requires sudo only because the plist/unit file goes in a system directory — the daemon process itself has normal user privileges.

@@ -141,6 +141,56 @@ The full experience --- natural voice with expressive tags that respond to `/vib
 
 Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > say (macOS) / espeak (Linux).
 
+## Architecture
+
+```
+Claude Code ◄── stdio ──► vox mcp ── WebSocket ──► voxd :8421
+                                                      │
+Hook scripts ──► vox hook <event> ── WebSocket ──►    │
+                                                      │
+Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
+                                                      ▼
+                                                   speakers
+```
+
+**`voxd`** is a system-level audio daemon. It synthesizes text via TTS providers and plays audio through the speakers. It owns the playback queue (sequential, no overlap), deduplicates identical requests within 5 seconds, and caches synthesis results. It knows nothing about MCP, hooks, projects, or Claude Code.
+
+**`vox mcp`** is a lightweight stdio MCP server, one per Claude Code session. It holds session state (voice, vibe, notify mode) in memory and delegates synthesis to `voxd` over WebSocket. It inherits its working directory from Claude Code and finds `.vox/config.md` by walking up from there.
+
+**`vox hook <event>`** handlers call `voxd` for chimes and speech. Hook shell scripts are thin gates per the [hooks standard](https://github.com/punt-labs/punt-kit/blob/main/standards/hooks.md).
+
+**`vox unmute`** and other CLI commands are one-shot WebSocket clients of `voxd`.
+
+### System Paths
+
+`voxd` stores all state in system directories, not in any user's home.
+
+| Purpose | macOS (Homebrew) | Linux |
+|---------|-----------------|-------|
+| Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
+| Cache | `$(brew --prefix)/var/lib/vox/cache/` | `/var/lib/vox/cache/` |
+| Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
+| Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
+| Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |
+
+### Service Install
+
+```bash
+sudo vox daemon install    # writes keys.env, registers service, starts voxd
+```
+
+Requires `sudo` because the service plist/unit goes in a system directory. `voxd` runs as the installing user (not root) — it needs audio device access tied to the desktop session. The plist sets `UserName`; the systemd unit sets `User=`.
+
+### Session State
+
+Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory — not on disk, not in the daemon. When the MCP server process exits (session ends), state is gone. The daemon is stateless with respect to sessions.
+
+Per-project enablement (`.vox/config.md`) is a client-side file in the project directory. The daemon never reads it.
+
+### Daemon Restart
+
+The MCP session (Claude Code ↔ `vox mcp`) is stdio — unaffected by daemon restarts. The WebSocket connection (`vox mcp` ↔ `voxd`) reconnects automatically. No session data is lost.
+
 ## CLI
 
 punt-vox is also a standalone TTS tool, independent of Claude Code.
@@ -183,14 +233,12 @@ vox daemon status                              # Check if daemon is running
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
 - CLI: unmute, record, vibe, on/off, mute, version, status, doctor
-- Ephemeral output mode (`.vox/` in cwd)
 - Two-channel display: `♪` panel summaries with voice/provider context
-- Audio playback serialization via `flock` --- concurrent utterances queue instead of overlapping
 - ElevenLabs streaming API for lower time-to-first-audio
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
 - Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
 - Per-signal chime assets and vibe-driven chimes with mood-aware pitch shifting
-- Audio daemon (`voxd`): system-level audio server with playback queue, dedup, synthesis cache, launchd/systemd service management
+- Audio daemon (`voxd`): system-level audio server with in-memory playback queue, dedup, synthesis cache, launchd/systemd service management
 
 ### Coming Soon
 
