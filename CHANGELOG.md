@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-03-29
+
 ### Changed
 
 - **BREAKING:** New `voxd` audio server daemon replaces the old `daemon.py`. Pure audio server — synthesizes text and plays through speakers. Knows nothing about MCP, hooks, projects, or Claude Code.
