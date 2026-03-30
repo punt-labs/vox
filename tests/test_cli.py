@@ -577,6 +577,7 @@ class TestInstallCommand:
         with (
             patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
             patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch("punt_vox.service.install", return_value="voxd running"),
         ):
             mock_run.return_value = MagicMock(returncode=0)
             result = runner.invoke(app, ["install"])
