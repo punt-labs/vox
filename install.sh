@@ -116,10 +116,11 @@ ok "$BINARY $(command -v "$BINARY")"
 # --- Step 5: Install daemon ---
 
 info "Installing vox daemon (requires sudo for system service)..."
-if sudo "$BINARY" daemon install; then
+_vox_path="$(command -v "$BINARY")"
+if sudo PATH="$PATH" "$_vox_path" daemon install; then
   ok "vox daemon installed"
 else
-  warn "Could not install vox daemon (run 'sudo vox daemon install' manually)"
+  warn "Could not install vox daemon (run 'sudo PATH=\$PATH $(command -v vox) daemon install' manually)"
 fi
 
 # --- Step 6: Register marketplace ---

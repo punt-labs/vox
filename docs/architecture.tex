@@ -82,20 +82,22 @@ WebSocket and serializes playback.
     hooks produce sound, no chimes play, and no synthesis calls fire
     until the user explicitly enables notifications via \cmd{unmute}
     or \cmd{vox}.
-  \item \textbf{Session-scoped state.}  All mutable state (voice,
-    provider, mood, signal history) lives in a single config file
-    (\texttt{.vox/config.md}) scoped to the working directory.
-    An optional daemon (\texttt{voxd}) handles synthesis and
-    playback; session config remains file-based.
+  \item \textbf{Session-scoped state.}  Mutable state (voice,
+    provider, mood) lives in the MCP server's memory, one instance
+    per Claude Code session.  Initial state is seeded from
+    \texttt{.vox/config.md} at startup; hook handlers also read and
+    write this file for signal accumulation.  The \texttt{voxd} daemon
+    is stateless with respect to sessions---it synthesizes and plays
+    whatever clients send it.
   \item \textbf{Fail fast.}  Invalid input raises exceptions.
     No defensive fallbacks, no silent degradation.  If a voice
     doesn't exist, the call fails with a
     \texttt{VoiceNotFoundError}---it does not silently substitute
     another voice.
   \item \textbf{Serialized playback.}  Concurrent synthesis calls
-    never overlap audio output.  A file lock
-    (\texttt{\~{}/.punt\discretionary{-}{}{-}vox/playback.lock})
-    serializes all playback across all processes on the machine.
+    never overlap audio output.  The \texttt{voxd} daemon owns an
+    in-memory playback queue with a single consumer---audio items
+    play sequentially across all connected clients.
 \end{enumerate}
 
 \subsection{Component Map}
@@ -163,6 +165,78 @@ CLI        & \modpath{\_\_main\_\_.py} & Typer CLI: unmute, record, vibe,
 % ===================================================================
 \section{System Architecture}
 % ===================================================================
+
+\subsection{Daemon and Connectivity}
+
+The system has two binaries from one package (\texttt{punt-vox}):
+
+\begin{description}
+  \item[\texttt{voxd}] System-level audio daemon.  Listens on port
+    8421 via WebSocket.  Owns synthesis (providers), playback queue,
+    audio deduplication, and synthesis cache.  Knows nothing about
+    MCP, hooks, projects, or Claude Code.
+  \item[\texttt{vox}] Everything else: CLI commands, MCP server
+    (\texttt{vox mcp}), hook handlers (\texttt{vox hook <event>}).
+    All are WebSocket clients of \texttt{voxd}.
+\end{description}
+
+\begin{verbatim}
+Claude Code <-- stdio --> vox mcp -- WebSocket --> voxd :8421
+Hook scripts --> vox hook <event> -- WebSocket -->    |
+Shell        --> vox unmute "hi"  -- WebSocket -->    |
+                                                      v
+                                                   speakers
+\end{verbatim}
+
+The MCP session (Claude~Code~$\leftrightarrow$~\texttt{vox mcp}) is
+stdio---unaffected by daemon restarts.  The WebSocket connection
+(\texttt{vox mcp}~$\leftrightarrow$~\texttt{voxd}) reconnects
+automatically.
+
+\subsection{System Paths}
+
+\texttt{voxd} stores runtime state in system directories.  The
+synthesis cache is in the user's home directory
+(\texttt{\~{}/.punt-labs/vox/cache/}).
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Purpose} & \textbf{macOS (Homebrew)} & \textbf{Linux} \\
+\midrule
+Config   & \texttt{\$(brew --prefix)/etc/vox/keys.env}
+         & \texttt{/etc/vox/keys.env} \\
+Cache    & \multicolumn{2}{l}{\texttt{\~{}/.punt-labs/vox/cache/}} \\
+Logs     & \texttt{\$(brew --prefix)/var/log/vox/voxd.log}
+         & \texttt{/var/log/vox/voxd.log} \\
+Runtime  & \texttt{\$(brew --prefix)/var/run/vox/serve.\{port,token\}}
+         & \texttt{/var/run/vox/serve.\{port,token\}} \\
+Service  & \texttt{/Library/LaunchDaemons/com.punt-labs.voxd.plist}
+         & \texttt{/etc/systemd/system/voxd.service} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Per-project enablement (\texttt{.vox/config.md}) is a client-side
+file in the project directory.  The daemon never reads it.
+
+\subsection{Service Install and Identity}
+
+\begin{verbatim}
+sudo vox daemon install
+\end{verbatim}
+
+Requires \texttt{sudo} because the service plist (macOS) or unit
+(Linux) is written to a system directory.  \texttt{voxd} runs as the
+\emph{installing user}, not root---it needs audio device access tied
+to the desktop session.  The LaunchDaemon plist sets
+\texttt{UserName}; the systemd unit sets \texttt{User=}.
+
+On macOS, \texttt{voxd} detects the Homebrew prefix at startup via
+\texttt{brew --prefix} (default \texttt{/opt/homebrew} on Apple
+Silicon, \texttt{/usr/local} on Intel).
+
+\subsection{Data Paths}
 
 Three primary data paths define the system's runtime behavior.
 
