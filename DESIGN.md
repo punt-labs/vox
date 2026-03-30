@@ -1320,7 +1320,7 @@ HTTP request/response can't do bidirectional streaming. Real-time voice conversa
 | Purpose | macOS (Homebrew) | Linux |
 |---------|-----------------|-------|
 | Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
-| Cache | `$(brew --prefix)/var/lib/vox/cache/` | `/var/lib/vox/cache/` |
+| Cache | `~/.punt-labs/vox/cache/` | `~/.punt-labs/vox/cache/` |
 | Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
 | Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
 | Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |

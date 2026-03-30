@@ -163,15 +163,15 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 
 ### System Paths
 
-`voxd` stores all state in system directories, not in any user's home.
+`voxd` stores runtime state in system directories.
 
 | Purpose | macOS (Homebrew) | Linux |
 |---------|-----------------|-------|
 | Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
-| Cache | `$(brew --prefix)/var/lib/vox/cache/` | `/var/lib/vox/cache/` |
 | Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
 | Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
 | Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |
+| Cache | `~/.punt-labs/vox/cache/` | `~/.punt-labs/vox/cache/` |
 
 ### Service Install
 
@@ -183,9 +183,7 @@ Requires `sudo` because the service plist/unit goes in a system directory. `voxd
 
 ### Session State
 
-Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory — not on disk, not in the daemon. When the MCP server process exits (session ends), state is gone. The daemon is stateless with respect to sessions.
-
-Per-project enablement (`.vox/config.md`) is a client-side file in the project directory. The daemon never reads it.
+Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory. The daemon is stateless with respect to sessions. Per-project enablement and initial state are read from `.vox/config.md` in the project directory at MCP server startup. Hook handlers also read and write `.vox/config.md` for signal accumulation (`vibe_signals`). The daemon never reads this file.
 
 ### Daemon Restart
 

@@ -82,9 +82,11 @@ WebSocket and serializes playback.
     hooks produce sound, no chimes play, and no synthesis calls fire
     until the user explicitly enables notifications via \cmd{unmute}
     or \cmd{vox}.
-  \item \textbf{Session-scoped state.}  All mutable state (voice,
-    provider, mood, signal history) lives in the MCP server's memory,
-    one instance per Claude Code session.  The \texttt{voxd} daemon
+  \item \textbf{Session-scoped state.}  Mutable state (voice,
+    provider, mood) lives in the MCP server's memory, one instance
+    per Claude Code session.  Initial state is seeded from
+    \texttt{.vox/config.md} at startup; hook handlers also read and
+    write this file for signal accumulation.  The \texttt{voxd} daemon
     is stateless with respect to sessions---it synthesizes and plays
     whatever clients send it.
   \item \textbf{Fail fast.}  Invalid input raises exceptions.
@@ -193,8 +195,9 @@ automatically.
 
 \subsection{System Paths}
 
-\texttt{voxd} stores all state in system directories, not in any
-user's home directory.
+\texttt{voxd} stores runtime state in system directories.  The
+synthesis cache is in the user's home directory
+(\texttt{\~{}/.punt-labs/vox/cache/}).
 
 \begin{center}
 \begin{tabular}{lll}
@@ -203,8 +206,7 @@ user's home directory.
 \midrule
 Config   & \texttt{\$(brew --prefix)/etc/vox/keys.env}
          & \texttt{/etc/vox/keys.env} \\
-Cache    & \texttt{\$(brew --prefix)/var/lib/vox/cache/}
-         & \texttt{/var/lib/vox/cache/} \\
+Cache    & \multicolumn{2}{l}{\texttt{\~{}/.punt-labs/vox/cache/}} \\
 Logs     & \texttt{\$(brew --prefix)/var/log/vox/voxd.log}
          & \texttt{/var/log/vox/voxd.log} \\
 Runtime  & \texttt{\$(brew --prefix)/var/run/vox/serve.\{port,token\}}
