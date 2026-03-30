@@ -162,8 +162,8 @@ def get_provider(
     Args:
         name: Provider name (e.g. 'polly', 'openai'). If None, checks
             session config then auto-detects.
-        config_path: Path to session config file. Pass
-            ``resolve_config_path()`` for worktree-safe behavior.
+        config_path: Path to session config file. Use
+            ``find_config()`` to locate the nearest config.
             Defaults to ``.vox/config.md`` in the current directory.
         **kwargs: Provider-specific options (e.g. model='tts-1-hd').
 

@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from punt_vox.daemon import DEFAULT_PORT
 from punt_vox.service import (
+    DEFAULT_PORT,
     _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
     _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
     _is_vox_daemon_process,  # pyright: ignore[reportPrivateUsage]
@@ -18,7 +18,7 @@ from punt_vox.service import (
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
-    _vox_exec_args,  # pyright: ignore[reportPrivateUsage]
+    _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     detect_platform,
     install,
 )
@@ -28,10 +28,9 @@ from punt_vox.service import (
 # ---------------------------------------------------------------------------
 
 
-def test_vox_exec_args() -> None:
-    args = _vox_exec_args()
-    assert args[0].endswith("vox")
-    assert "serve" in args
+def test_voxd_exec_args() -> None:
+    args = _voxd_exec_args()
+    assert args[0].endswith("voxd")
     assert "--port" in args
     assert str(DEFAULT_PORT) in args
 
@@ -41,37 +40,37 @@ def test_vox_exec_args() -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_label(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "com.punt-labs.vox" in content
+    content = _launchd_plist_content("testuser")
+    assert "com.punt-labs.voxd" in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_args(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "serve" in content
+    content = _launchd_plist_content("testuser")
+    assert "voxd" in content
     assert str(DEFAULT_PORT) in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_contains_log_paths(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
-    assert "daemon-stdout.log" in content
-    assert "daemon-stderr.log" in content
+    content = _launchd_plist_content("testuser")
+    assert "voxd-stdout.log" in content
+    assert "voxd-stderr.log" in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_launchd_plist_keepalive(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
+    content = _launchd_plist_content("testuser")
     assert "<key>KeepAlive</key>" in content
     assert "<true/>" in content
 
 
 @patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
-@patch("punt_vox.service.shutil.which", return_value="/opt/homebrew/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/opt/homebrew/bin/voxd")
 def test_launchd_plist_contains_path_from_env(_mock_which: MagicMock) -> None:
-    content = _launchd_plist_content()
+    content = _launchd_plist_content("testuser")
     assert "<key>EnvironmentVariables</key>" in content
     assert "<key>PATH</key>" in content
     assert "/opt/homebrew/bin:/usr/bin:/bin" in content
@@ -82,32 +81,32 @@ def test_launchd_plist_contains_path_from_env(_mock_which: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_contains_exec_start(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert "ExecStart=" in content
-    assert "serve" in content
+    assert "voxd" in content
     assert str(DEFAULT_PORT) in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_restart_policy(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert "Restart=on-failure" in content
     assert "RestartSec=5" in content
 
 
 @patch.dict("os.environ", {"PATH": "/usr/local/bin:/usr/bin:/bin"})
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_contains_path_from_env(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
+    content = _systemd_unit_content("testuser")
     assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
 
 
-@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/vox")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
 def test_systemd_unit_description(_mock_which: MagicMock) -> None:
-    content = _systemd_unit_content()
-    assert "Vox text-to-speech daemon" in content
+    content = _systemd_unit_content("testuser")
+    assert "Voxd text-to-speech daemon" in content
 
 
 # ---------------------------------------------------------------------------
@@ -393,13 +392,9 @@ def test_kill_pid_sigkill_after_timeout(
 @patch("punt_vox.service.subprocess.run")
 @patch("punt_vox.service._ensure_port_free")
 @patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._LAUNCHD_DIR")
-@patch("punt_vox.service.VOX_DATA_DIR")
 @patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
 def test_launchd_install_fresh(
     _mock_content: MagicMock,
-    mock_data_dir: MagicMock,
-    mock_launchd_dir: MagicMock,
     mock_plist: MagicMock,
     mock_ensure: MagicMock,
     mock_run: MagicMock,
@@ -409,12 +404,10 @@ def test_launchd_install_fresh(
 
     mock_plist.exists.return_value = False
     mock_run.return_value = MagicMock(returncode=0)
-    log_dir = MagicMock()
-    mock_data_dir.__truediv__ = MagicMock(return_value=log_dir)
 
-    _launchd_install()
+    _launchd_install("testuser")
 
-    # No unload call — plist didn't exist
+    # No unload call -- plist didn't exist
     mock_ensure.assert_called_once()
     mock_plist.write_text.assert_called_once_with("<plist>test</plist>")
     # Only the load call
@@ -427,13 +420,9 @@ def test_launchd_install_fresh(
 @patch("punt_vox.service.subprocess.run")
 @patch("punt_vox.service._ensure_port_free")
 @patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._LAUNCHD_DIR")
-@patch("punt_vox.service.VOX_DATA_DIR")
 @patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
 def test_launchd_install_upgrade(
     _mock_content: MagicMock,
-    mock_data_dir: MagicMock,
-    mock_launchd_dir: MagicMock,
     mock_plist: MagicMock,
     mock_ensure: MagicMock,
     mock_run: MagicMock,
@@ -443,10 +432,8 @@ def test_launchd_install_upgrade(
 
     mock_plist.exists.return_value = True
     mock_run.return_value = MagicMock(returncode=0)
-    log_dir = MagicMock()
-    mock_data_dir.__truediv__ = MagicMock(return_value=log_dir)
 
-    _launchd_install()
+    _launchd_install("testuser")
 
     # First call is unload, second is load
     assert mock_run.call_count == 2
@@ -484,9 +471,9 @@ def test_systemd_install_fresh(
     mock_unit.exists.return_value = False
     mock_run.return_value = MagicMock(returncode=0)
 
-    _systemd_install()
+    _systemd_install("testuser")
 
-    # No stop call — unit didn't exist
+    # No stop call -- unit didn't exist
     mock_ensure.assert_called_once()
     mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
     # daemon-reload + enable --now
@@ -516,13 +503,13 @@ def test_systemd_install_upgrade(
     mock_unit.exists.return_value = True
     mock_run.return_value = MagicMock(returncode=0)
 
-    _systemd_install()
+    _systemd_install("testuser")
 
     # First call is stop, then daemon-reload, then enable --now
     assert mock_run.call_count == 3
     stop_call = mock_run.call_args_list[0]
     assert "stop" in stop_call[0][0]
-    assert "vox" in stop_call[0][0]
+    assert "voxd" in stop_call[0][0]
 
     mock_ensure.assert_called_once()
     mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
@@ -540,146 +527,127 @@ def test_systemd_install_upgrade(
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch("punt_vox.service._ensure_system_dirs")
 @patch(
-    "punt_vox.service._vox_exec_args",
-    return_value=["/usr/bin/vox", "serve", "--port", "8421"],
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
+@patch("punt_vox.service._installing_user", return_value="testuser")
 @patch("punt_vox.service.detect_platform", return_value="macos")
-@patch("punt_vox.service.write_keys_env", return_value=Path("/fake/keys.env"))
-def test_install_reuses_existing_token(
-    mock_keys: MagicMock,
+def test_install_returns_running_status(
     _mock_platform: MagicMock,
+    _mock_user: MagicMock,
     _mock_args: MagicMock,
+    _mock_dirs: MagicMock,
+    _mock_keys: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
-    tmp_path: Path,
 ) -> None:
-    """install() reuses existing token when serve.token exists and is non-empty."""
-    data_dir = tmp_path / "vox-data"
-    data_dir.mkdir(parents=True)
-    token_path = data_dir / "serve.token"
-    token_path.write_text("existing-secret-token")
-
-    with patch("punt_vox.service.VOX_DATA_DIR", data_dir):
-        result = install()
-
-    mock_keys.assert_called_once()
-    # Token file should still contain original value — not overwritten
-    assert token_path.read_text() == "existing-secret-token"
+    """install() reports running status when launchd confirms the service."""
+    result = install()
     assert "running" in result
+    assert "voxd" in result
 
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch("punt_vox.service._ensure_system_dirs")
 @patch(
-    "punt_vox.service._vox_exec_args",
-    return_value=["/usr/bin/vox", "serve", "--port", "8421"],
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
+@patch("punt_vox.service._installing_user", return_value="testuser")
 @patch("punt_vox.service.detect_platform", return_value="macos")
-@patch("punt_vox.service.write_keys_env", return_value=Path("/fake/keys.env"))
-def test_install_generates_token_when_missing(
-    mock_keys: MagicMock,
+def test_install_calls_ensure_system_dirs(
     _mock_platform: MagicMock,
+    _mock_user: MagicMock,
     _mock_args: MagicMock,
+    mock_dirs: MagicMock,
+    _mock_keys: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
-    tmp_path: Path,
 ) -> None:
-    """install() generates new token when serve.token does not exist."""
-    data_dir = tmp_path / "vox-data"
-    data_dir.mkdir(parents=True)
-    token_path = data_dir / "serve.token"
-
-    with patch("punt_vox.service.VOX_DATA_DIR", data_dir):
-        install()
-
-    assert token_path.exists()
-    assert len(token_path.read_text().strip()) > 0
+    """install() creates system directories with the installing user."""
+    install()
+    mock_dirs.assert_called_once_with("testuser")
 
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch("punt_vox.service._ensure_system_dirs")
 @patch(
-    "punt_vox.service._vox_exec_args",
-    return_value=["/usr/bin/vox", "serve", "--port", "8421"],
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
+@patch("punt_vox.service._installing_user", return_value="testuser")
 @patch("punt_vox.service.detect_platform", return_value="macos")
-@patch("punt_vox.service.write_keys_env", return_value=Path("/fake/keys.env"))
-def test_install_generates_token_when_empty(
-    mock_keys: MagicMock,
-    _mock_platform: MagicMock,
-    _mock_args: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-    tmp_path: Path,
-) -> None:
-    """install() generates new token when serve.token exists but is empty."""
-    data_dir = tmp_path / "vox-data"
-    data_dir.mkdir(parents=True)
-    token_path = data_dir / "serve.token"
-    token_path.write_text("")
-
-    with patch("punt_vox.service.VOX_DATA_DIR", data_dir):
-        install()
-
-    assert len(token_path.read_text().strip()) > 0
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch(
-    "punt_vox.service._vox_exec_args",
-    return_value=["/usr/bin/vox", "serve", "--port", "8421"],
-)
-@patch("punt_vox.service.detect_platform", return_value="macos")
-@patch("punt_vox.service.write_keys_env", return_value=Path("/fake/keys.env"))
-def test_install_creates_parent_dir(
-    mock_keys: MagicMock,
-    _mock_platform: MagicMock,
-    _mock_args: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-    tmp_path: Path,
-) -> None:
-    """install() creates VOX_DATA_DIR before writing token."""
-    data_dir = tmp_path / "nonexistent" / "vox-data"
-    # Parent does not exist yet
-
-    with patch("punt_vox.service.VOX_DATA_DIR", data_dir):
-        install()
-
-    assert data_dir.exists()
-    token_path = data_dir / "serve.token"
-    assert token_path.exists()
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch(
-    "punt_vox.service._vox_exec_args",
-    return_value=["/usr/bin/vox", "serve", "--port", "8421"],
-)
-@patch("punt_vox.service.detect_platform", return_value="macos")
-@patch("punt_vox.service.write_keys_env", return_value=Path("/fake/keys.env"))
 def test_install_calls_write_keys_env(
-    mock_keys: MagicMock,
     _mock_platform: MagicMock,
+    _mock_user: MagicMock,
     _mock_args: MagicMock,
+    _mock_dirs: MagicMock,
+    mock_keys: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
-    tmp_path: Path,
 ) -> None:
-    """install() calls write_keys_env with the environment."""
-    data_dir = tmp_path / "vox-data"
-    data_dir.mkdir(parents=True)
-
-    with patch("punt_vox.service.VOX_DATA_DIR", data_dir):
-        install()
-
+    """install() writes provider keys to the system config dir."""
+    install()
     mock_keys.assert_called_once()
-    # Argument should be a dict (os.environ)
+    # First arg is a dict (os.environ), second is config_dir (Path)
     args = mock_keys.call_args[0]
     assert isinstance(args[0], dict)
+    assert isinstance(args[1], Path)
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch("punt_vox.service._ensure_system_dirs")
+@patch(
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
+)
+@patch("punt_vox.service._installing_user", return_value="testuser")
+@patch("punt_vox.service.detect_platform", return_value="macos")
+def test_install_passes_user_to_launchd(
+    _mock_platform: MagicMock,
+    _mock_user: MagicMock,
+    _mock_args: MagicMock,
+    _mock_dirs: MagicMock,
+    _mock_keys: MagicMock,
+    mock_launchd: MagicMock,
+    _mock_status: MagicMock,
+) -> None:
+    """install() passes the installing user to _launchd_install."""
+    install()
+    mock_launchd.assert_called_once_with("testuser")
+
+
+@patch("punt_vox.service._launchd_status", return_value=False)
+@patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch("punt_vox.service._ensure_system_dirs")
+@patch(
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
+)
+@patch("punt_vox.service._installing_user", return_value="testuser")
+@patch("punt_vox.service.detect_platform", return_value="macos")
+def test_install_reports_not_running(
+    _mock_platform: MagicMock,
+    _mock_user: MagicMock,
+    _mock_args: MagicMock,
+    _mock_dirs: MagicMock,
+    _mock_keys: MagicMock,
+    _mock_launchd: MagicMock,
+    _mock_status: MagicMock,
+) -> None:
+    """install() reports 'not yet running' when launchd says service is down."""
+    result = install()
+    assert "not yet running" in result
 
 
 # ---------------------------------------------------------------------------

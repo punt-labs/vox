@@ -279,8 +279,9 @@ Restart Claude Code and type \texttt{/vox y}. From that moment, every
 task completion and permission prompt produces a chime notification.
 Type \texttt{/vox c} for continuous spoken summaries.
 
-There is no voice selection wizard, no audio device configuration, and no
-daemon to manage. If \texttt{vox doctor} passes, everything works. If punt-vox
+There is no voice selection wizard and no audio device configuration. One
+optional daemon (\texttt{voxd}) handles
+synthesis and playback. If \texttt{vox doctor} passes, everything works. If punt-vox
 is not installed, Claude Code behaves exactly as before --- no error, no
 degradation.
 
@@ -652,7 +653,7 @@ Restart Claude Code and type \texttt{/vox y}.
 
   The only local scaling concern is audio file accumulation in the output
   directory. punt-vox includes an ephemeral mode (\texttt{.vox/} in cwd)
-  that auto-cleans on session end.
+  that cleans previous MP3 files before each new synthesis call.
 \end{faqpair}
 
 \subsubsection*{Business}

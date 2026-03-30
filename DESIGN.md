@@ -48,14 +48,11 @@ This file is the authoritative record of design decisions, prior approaches, and
 ┌─────────▼────────────────────────────────────▼───────────────┐
 │                    punt-vox Engine                            │
 │                                                              │
-│  With daemon (DES-021):                                      │
-│    mcp-proxy (stdio↔WS) → vox serve :8421/mcp              │
-│    mcp-proxy (--hook)   → vox serve :8421/hook              │
+│  vox mcp (stdio, thin client) ──► voxd :8421/ws (WebSocket) │
+│  vox hook <event> (Python)   ──► voxd :8421/ws (WebSocket) │
+│  vox unmute (CLI)            ──► voxd :8421/ws (WebSocket) │
 │                                                              │
-│  Without daemon (fallback):                                  │
-│    vox mcp (stdio, per-session)                              │
-│    vox hook <event> (subprocess, per-hook)                   │
-│                                                              │
+│  voxd: synthesis, playback queue, dedup, cache (DES-028)    │
 │  Providers: ElevenLabs > OpenAI > Polly > say > espeak      │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -1060,7 +1057,10 @@ The Lux window provides the visual interface for recording:
 ## DES-021: Daemon Mode — Single Process with mcp-proxy
 
 **Date:** 2026-03-14
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-028
+
+> **Note:** This ADR describes the v2 mcp-proxy daemon design. The production implementation now uses `voxd` (DES-028) — a simpler audio server without mcp-proxy, ContextVar, or PID-based CWD resolution.
+
 **Topic:** Convert vox from per-session MCP processes to a single daemon
 
 ### Problem
@@ -1236,13 +1236,13 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited th
 
 ### Design
 
-A dedicated config file at `~/.punt-labs/vox/keys.env` — a simple `KEY=VALUE` format, chmod 0600.
+A dedicated config file at the system config directory — `$(brew --prefix)/etc/vox/keys.env` on macOS, `/etc/vox/keys.env` on Linux. Simple `KEY=VALUE` format, chmod 0600.
 
-**Write path:** `vox daemon install` calls `write_keys_env(dict(os.environ))`. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`) from the caller's shell into the file. Idempotent: re-running merges with existing keys (absent env vars preserve existing file values; empty env vars remove them).
+**Write path:** `sudo vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the system config file.
 
-**Read path:** `vox serve` calls `load_keys_env()` as its very first statement, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
+**Read path:** `voxd` calls `_load_keys()` at startup, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
 - launchd/systemd daemon: loads all keys from file (nothing in env)
-- Manual `vox serve` from shell with direnv: env vars already set, file keys ignored
+- Manual `voxd` from shell with direnv: env vars already set, file keys ignored
 
 **Resolution order:** shell env var > keys.env value > provider unavailable.
 
@@ -1256,16 +1256,13 @@ The file is never sourced by a shell. It's parsed by a 15-line Python function. 
 
 ### Problem
 
-The daemon generated a fresh auth token (`secrets.token_urlsafe(32)`) on every startup. mcp-proxy instances already connected to the daemon held the old token baked into their WebSocket URL (read from `serve.token` at session start via `plugin.json`). When the daemon restarted (upgrade, crash recovery, `KeepAlive`), all existing mcp-proxy connections failed authentication and could not reconnect — they retried the same stale URL indefinitely.
-
-The user experience: every `vox daemon install` (upgrade) broke all active Claude Code sessions. Users had to restart Claude Code to pick up the new token.
+The daemon generated a fresh auth token (`secrets.token_urlsafe(32)`) on every startup. Clients already connected held the old token. When the daemon restarted, all existing client connections failed authentication.
 
 ### Decision
 
-The auth token is generated once and persisted to `~/.punt-labs/vox/serve.token` (chmod 0600). It is stable across daemon restarts.
+The auth token is generated once and persisted to `<run_dir>/serve.token` (chmod 0600). It is stable across daemon restarts. In v3, the run dir is a system path: `$(brew --prefix)/var/run/vox/` on macOS, `/var/run/vox/` on Linux.
 
-- `service.install()`: generates a token only if `serve.token` does not exist or is empty. Existing non-empty tokens are preserved.
-- `daemon.serve()`: reads the token from file. If the file is missing (first start without prior install), generates and persists one. If the file is empty or unreadable, raises `SystemExit` with an actionable message.
+- `voxd` startup (`_read_or_create_token()`): reads the token from file. If the file is missing, generates and persists one.
 - The token file is NOT removed on daemon shutdown (unlike `serve.port`, which is removed to signal the daemon is down).
 
 ### Why Not Remove Auth Entirely
@@ -1282,18 +1279,42 @@ The original design (regenerate on install) was simpler but broke the reconnecti
 
 ## DES-027: Data Directory Migration to ~/.punt-labs/vox/
 
+**Status:** SUPERSEDED by DES-028
+
+> **Note:** DES-027 migrated daemon data from `~/.punt-vox/` to `~/.punt-labs/vox/`. DES-028 (v3) subsequently moved all daemon data to system paths: `$(brew --prefix)/etc/vox/`, `$(brew --prefix)/var/run/vox/`, etc. on macOS; FHS paths on Linux. Home directory paths are now client-side only (`.vox/config.md` in project dirs).
+
+## DES-028: Vox v3 — Audio Server Architecture
+
 **Status:** SETTLED
 
 ### Problem
 
-Vox stored data in `~/.punt-vox/` — a top-level dot directory. The org filesystem standard (`punt-kit/standards/filesystem.md`) requires all tools to use `~/.punt-labs/<tool>/`.
+The v2 daemon tried to know which project a client belonged to. It resolved CWDs from PIDs via `lsof`, read/wrote `.vox/config.md` in project directories, and used ContextVars to isolate per-session config. Every piece of this chain broke — 8 rounds of path bugs. The root cause was architecture, not code.
 
 ### Decision
 
-Single central constant `VOX_DATA_DIR = Path.home() / ".punt-labs" / "vox"` in `logging_config.py`. All paths derive from it: logs, cache, keys.env, serve.port, serve.token, playback.lock, pending queue.
+One machine, one set of speakers, one audio daemon (`voxd`). Clients send text + parameters. The daemon synthesizes and plays. It knows nothing about projects, sessions, CWDs, or Claude Code.
 
-Clean break migration: `vox daemon install` creates the new directory. The old `~/.punt-vox/` is not read, moved, or deleted. Documented as a breaking change in CHANGELOG.
+**Two entry points, one package:**
+- `voxd` — system-level audio daemon. Owns speakers, providers, playback queue, dedup, cache. System paths (Homebrew prefix on macOS, FHS on Linux).
+- `vox` — everything else. CLI, MCP server (`vox mcp`), hook handlers. All are clients of `voxd`.
 
-### Why logging_config.py Owns the Constant
+**Wire protocol:** WebSocket + JSON messages. Streaming-capable for future real-time voice conversation.
 
-The constant must be importable by every module without circular dependencies. `logging_config.py` imports only stdlib (`logging`, `pathlib`) and is imported by every module that calls `configure_logging()`. Adding `VOX_DATA_DIR` here avoids creating a new `paths.py` module for a single constant.
+**MCP server:** Lightweight stdio process per Claude Code session. Session state in memory. Finds `.vox/config.md` by walking up from CWD (same as biff). Calls `voxd` via WebSocket for synthesis/playback. No provider imports — cold start < 500ms.
+
+**Hooks:** Three-layer dispatch unchanged (hooks.md standard). Python handlers call `voxd` via WebSocket client. No in-process synthesis.
+
+**Service install:** System-level. macOS: `/Library/LaunchDaemons/` with `UserName` = installing user. Linux: `/etc/systemd/system/` with `User` = installing user. Requires sudo.
+
+### Why Not Keep the Proxy Architecture
+
+mcp-proxy existed to avoid spawning a Python process per session. The new MCP server is lightweight (no provider imports) so Python startup cost is acceptable. Eliminating mcp-proxy removes a Go binary dependency, the WebSocket MCP bridge, and the entire class of "MCP session doesn't survive daemon restart" bugs.
+
+### Why WebSocket, Not HTTP
+
+HTTP request/response can't do bidirectional streaming. Real-time voice conversation (vox-7hr) needs streaming audio in both directions. WebSocket handles both fire-and-forget synthesis (today) and streaming conversation (future) without a protocol change.
+
+### Why System Paths, Not Home Directory
+
+The daemon serves the machine, not a user. One set of speakers. Data belongs in system directories (`/Library/LaunchDaemons/`, Homebrew `var/`, FHS `/var/`). Home directory paths caused the v2 path resolution bugs — the daemon's CWD was `/` under launchd but all paths assumed `~`.

@@ -1,48 +1,25 @@
-"""FastMCP server for punt-vox — mic API."""
+"""FastMCP server for punt-vox -- mic API.
+
+Thin client of the voxd audio daemon. Session state lives in an
+in-memory dataclass; audio requests go to voxd over WebSocket
+via VoxClient.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import random
-import tempfile
-import threading
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-if TYPE_CHECKING:
-    from anyio.streams.memory import (
-        MemoryObjectReceiveStream,
-        MemoryObjectSendStream,
-    )
-    from mcp.shared.message import SessionMessage
-
 from punt_vox import __version__
-from punt_vox.config import read_config, read_field, write_fields
-from punt_vox.core import TTSClient, stitch_audio
+from punt_vox.client import VoxClientSync, VoxdConnectionError
 from punt_vox.logging_config import configure_logging
-from punt_vox.normalize import normalize_for_speech
-from punt_vox.playback import enqueue as _enqueue_audio
-from punt_vox.providers import get_provider
-from punt_vox.resolve import (
-    apply_vibe,
-    resolve_output_dir,
-    resolve_voice_and_language,
-)
-from punt_vox.types import (
-    AudioProviderId,
-    MergeStrategy,
-    SynthesisRequest,
-    SynthesisResult,
-    TTSProvider,
-    VoiceNotFoundError,
-    generate_filename,
-    result_to_dict,
-    validate_language,
-)
-from punt_vox.voices import VOICE_BLURBS, voice_not_found_message
+from punt_vox.voices import VOICE_BLURBS
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +30,75 @@ mcp = FastMCP(
         "and generate audio files.\n\n"
         "When a stop hook blocks with a \u266a phrase, write 1-2 sentences "
         "summarizing what you completed and call the unmute tool with "
-        "ephemeral=true. Mood tags are pre-resolved in config — do not "
+        "ephemeral=true. Mood tags are pre-resolved in config \u2014 do not "
         "pass vibe_tags. No other output.\n\n"
         "Do NOT use Read, Write, or Bash tools to access .vox/config.md. "
         "All config state is available through MCP tools or hook context."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
+
+
+# ---------------------------------------------------------------------------
+# Session state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SessionState:
+    """In-memory session state. Seeded from .vox/config.md on startup."""
+
+    notify: str = "n"
+    speak: str = "n"
+    voice: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    vibe_mode: str = "off"
+    vibe: str | None = None
+    vibe_tags: str | None = None
+    vibe_signals: str = ""
+
+
+# Module-level singleton; initialized in run_server().
+_state: SessionState = SessionState()
+
+
+# ---------------------------------------------------------------------------
+# Config discovery and seeding
+# ---------------------------------------------------------------------------
+
+
+def _find_config() -> Path | None:
+    """Walk up from cwd to find .vox/config.md."""
+    from punt_vox.config import find_config
+
+    return find_config()
+
+
+def _seed_state_from_config(config_path: Path | None) -> SessionState:
+    """Read .vox/config.md once and return a SessionState."""
+    if config_path is None or not config_path.exists():
+        return SessionState()
+
+    from punt_vox.config import read_config
+
+    cfg = read_config(config_path=config_path)
+    return SessionState(
+        notify=cfg.notify,
+        speak=cfg.speak,
+        voice=cfg.voice,
+        provider=cfg.provider,
+        model=cfg.model,
+        vibe_mode=cfg.vibe_mode,
+        vibe=cfg.vibe,
+        vibe_tags=cfg.vibe_tags,
+        vibe_signals=cfg.vibe_signals or "",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _validate_voice_settings(
@@ -78,189 +117,24 @@ def _validate_voice_settings(
             raise ValueError(msg)
 
 
-def _config_path() -> Path:
-    """Worktree-safe config path (cached after first call)."""
-    from punt_vox.config import resolve_config_path
+def _default_output_dir() -> Path:
+    """Resolve the default output directory for record tool."""
+    import os
 
-    return resolve_config_path()
-
-
-# ---------------------------------------------------------------------------
-# Segment processing — shared by unmute and record
-# ---------------------------------------------------------------------------
+    env_dir = os.environ.get("VOX_OUTPUT_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / "vox-output"
 
 
-def _build_requests(
-    segments: list[dict[str, str]],
-    default_voice: str | None,
-    default_language: str | None,
-    provider: TTSProvider,
-    *,
-    rate: int,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
-) -> list[SynthesisRequest]:
-    """Convert segment dicts to SynthesisRequest objects.
-
-    Each segment has ``text`` (required) and optional ``voice`` and
-    ``language``.  The *default_voice* and *default_language* are used
-    when a segment omits those fields.
-
-    Raises:
-        VoiceNotFoundError: If a voice cannot be resolved.
-        ValueError: If a language code is invalid or voice/language
-            are incompatible.
-    """
-    requests: list[SynthesisRequest] = []
-    for seg in segments:
-        seg_voice = seg.get("voice") or default_voice
-        seg_language = seg.get("language") or default_language
-        seg_text = seg.get("text", "")
-        if not seg_text:
-            continue
-
-        resolved_voice, language = resolve_voice_and_language(
-            provider, seg_voice, seg_language
-        )
-
-        seg_text = normalize_for_speech(seg_text)
-        seg_text = apply_vibe(
-            seg_text,
-            expressive_tags=provider.supports_expressive_tags,
-            override_tags=seg.get("vibe_tags"),
-        )
-
-        requests.append(
-            SynthesisRequest(
-                text=seg_text,
-                voice=resolved_voice,
-                language=language,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-            )
-        )
-    return requests
+def _voxd_client() -> VoxClientSync:
+    """Create a VoxClientSync instance."""
+    return VoxClientSync()
 
 
-def _predict_results(
-    requests: list[SynthesisRequest],
-    provider: TTSProvider,
-    output_dir: Path,
-) -> list[SynthesisResult]:
-    """Compute the expected result metadata without synthesizing.
-
-    Returns ``SynthesisResult`` objects with the paths that
-    ``_synthesize_segments`` will write to.  Used by non-blocking
-    tools to return immediately.
-    """
-    if len(requests) == 1:
-        req = requests[0]
-        out_path = output_dir / generate_filename(req.text)
-        return [
-            SynthesisResult(
-                path=out_path,
-                text=req.text,
-                provider=AudioProviderId(provider.name),
-                voice=req.voice,
-                language=req.language,
-                metadata=req.metadata,
-            )
-        ]
-
-    combined_text = " | ".join(r.text for r in requests)
-    out_path = output_dir / generate_filename(combined_text, prefix="batch_")
-    voices = {r.voice for r in requests}
-    languages = {r.language for r in requests}
-    voice = next(iter(voices)) if len(voices) == 1 else "mixed"
-    language = next(iter(languages)) if len(languages) == 1 else "mixed"
-    return [
-        SynthesisResult(
-            path=out_path,
-            text=combined_text,
-            provider=AudioProviderId(provider.name),
-            voice=voice,
-            language=language,
-        )
-    ]
-
-
-def _synthesize_segments(
-    requests: list[SynthesisRequest],
-    provider: TTSProvider,
-    output_dir: Path,
-    pause_ms: int,
-) -> list[SynthesisResult]:
-    """Synthesize a list of requests, stitching into one file if multiple."""
-    client = TTSClient(provider)
-
-    if len(requests) == 1:
-        req = requests[0]
-        out_path = output_dir / generate_filename(req.text)
-        if out_path.exists():
-            return _predict_results(requests, provider, output_dir)
-        return [client.synthesize(req, out_path)]
-
-    combined_text = " | ".join(r.text for r in requests)
-    out_path = output_dir / generate_filename(combined_text, prefix="batch_")
-    if out_path.exists():
-        return _predict_results(requests, provider, output_dir)
-    return client.synthesize_batch(
-        requests, output_dir, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms
-    )
-
-
-def _synthesize_and_enqueue(
-    requests: list[SynthesisRequest],
-    provider: TTSProvider,
-    output_dir: Path,
-    pause_ms: int,
-) -> None:
-    """Background worker: synthesize segments and enqueue for playback."""
-    try:
-        logger.info(
-            "Synthesis started: %d segment(s), dir=%s",
-            len(requests),
-            output_dir,
-        )
-        results = _synthesize_segments(requests, provider, output_dir, pause_ms)
-        for r in results:
-            logger.info("Synthesis done, enqueuing: %s", r.path.name)
-            _enqueue_audio(r.path)
-    except Exception:
-        logger.exception("Background synthesis failed")
-
-
-def _synthesize_to_disk(
-    requests: list[SynthesisRequest],
-    provider: TTSProvider,
-    output_dir: Path,
-    pause_ms: int,
-    output_path: str | None,
-) -> None:
-    """Background worker: synthesize segments to disk (no playback)."""
-    try:
-        if output_path:
-            client = TTSClient(provider)
-            if len(requests) == 1:
-                client.synthesize(requests[0], Path(output_path))
-            else:
-                with tempfile.TemporaryDirectory() as tmp:
-                    tmp_dir = Path(tmp)
-                    tmp_paths: list[Path] = []
-                    for i, req in enumerate(requests):
-                        seg_path = tmp_dir / f"seg_{i:04d}.mp3"
-                        client.synthesize(req, seg_path)
-                        tmp_paths.append(seg_path)
-                    stitch_audio(tmp_paths, Path(output_path), pause_ms)
-        else:
-            _synthesize_segments(requests, provider, output_dir, pause_ms)
-    except Exception:
-        logger.exception("Background synthesis failed")
+def _error(message: str) -> str:
+    """Return a JSON error string."""
+    return json.dumps({"error": message})
 
 
 # ---------------------------------------------------------------------------
@@ -325,58 +199,90 @@ def unmute(
     """
     _validate_voice_settings(stability, similarity, style)
 
-    # Persist provider/model to session config when explicitly set.
-    config_updates: dict[str, str] = {}
+    # Update in-memory state for persistent fields.
     if provider is not None:
-        config_updates["provider"] = provider
+        _state.provider = provider
     if model is not None:
-        config_updates["model"] = model
+        _state.model = model
     if vibe_tags is not None:
-        config_updates["vibe_tags"] = vibe_tags
-        config_updates["vibe_signals"] = ""
-    if config_updates:
-        write_fields(config_updates, _config_path())
+        _state.vibe_tags = vibe_tags
+        _state.vibe_signals = ""
 
-    # Normalize input: text → single segment
+    # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
-            if config_updates:
-                # Config-only call (no text to speak).
-                return json.dumps({"status": "config updated", **config_updates})
-            return json.dumps({"error": "Provide text or segments."})
+            if provider is not None or model is not None or vibe_tags is not None:
+                updates: dict[str, str] = {}
+                if provider is not None:
+                    updates["provider"] = provider
+                if model is not None:
+                    updates["model"] = model
+                if vibe_tags is not None:
+                    updates["vibe_tags"] = vibe_tags
+                return json.dumps({"status": "config updated", **updates})
+            return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    tts_provider = get_provider(provider, config_path=_config_path(), model=model)
+    # Resolve effective voice: explicit param > session state.
+    effective_voice = voice or _state.voice
+    effective_provider = provider or _state.provider
+    effective_model = model or _state.model
+
+    # Resolve vibe_tags: explicit param > session state.
+    effective_vibe_tags = vibe_tags or _state.vibe_tags
+
+    client = _voxd_client()
+    results: list[dict[str, Any]] = []
+
     try:
-        requests = _build_requests(
-            segments,
-            voice,
-            language,
-            tts_provider,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
-        )
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)})
-    if not requests:
+        for seg in segments:
+            seg_text = seg.get("text", "")
+            if not seg_text:
+                continue
+            seg_voice = seg.get("voice") or effective_voice
+            seg_language = seg.get("language") or language
+            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
+
+            kwargs: dict[str, Any] = {
+                "rate": rate,
+            }
+            if seg_voice is not None:
+                kwargs["voice"] = seg_voice
+            if effective_provider is not None:
+                kwargs["provider"] = effective_provider
+            if effective_model is not None:
+                kwargs["model"] = effective_model
+            if seg_language is not None:
+                kwargs["language"] = seg_language
+            if seg_vibe_tags is not None:
+                kwargs["vibe_tags"] = str(seg_vibe_tags)
+            if stability is not None:
+                kwargs["stability"] = stability
+            if similarity is not None:
+                kwargs["similarity"] = similarity
+            if style is not None:
+                kwargs["style"] = style
+            if speaker_boost is not None:
+                kwargs["speaker_boost"] = speaker_boost
+
+            request_id = client.synthesize(seg_text, **kwargs)
+            results.append(
+                {
+                    "id": request_id,
+                    "text": seg_text,
+                    "voice": seg_voice,
+                    "provider": effective_provider,
+                }
+            )
+    except VoxdConnectionError as exc:
+        return _error(str(exc))
+    except Exception as exc:
+        logger.exception("Synthesis failed")
+        return _error(str(exc))
+
+    if not results:
         return json.dumps([])
-
-    dir_path = resolve_output_dir(None, ephemeral=ephemeral)
-    predicted = _predict_results(requests, tts_provider, dir_path)
-
-    # Synthesize and play in background — return immediately
-    threading.Thread(
-        target=_synthesize_and_enqueue,
-        args=(requests, tts_provider, dir_path, pause_ms),
-        daemon=True,
-    ).start()
-
-    return json.dumps([result_to_dict(r) for r in predicted])
+    return json.dumps(results)
 
 
 @mcp.tool()
@@ -423,62 +329,91 @@ def record(
     """
     _validate_voice_settings(stability, similarity, style)
 
-    # Normalize input: text → single segment
+    # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
-            return json.dumps({"error": "Provide text or segments."})
+            return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    provider = get_provider(config_path=_config_path())
+    effective_voice = voice or _state.voice
+    effective_provider = _state.provider
+    effective_model = _state.model
+    effective_vibe_tags = _state.vibe_tags
+
+    if output_path and len(segments) > 1:
+        return _error("output_path only supported for single-segment calls")
+
+    # Resolve output directory.
+    dir_path = Path(output_dir) if output_dir else _default_output_dir()
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    client = _voxd_client()
+    results: list[dict[str, Any]] = []
+
     try:
-        requests = _build_requests(
-            segments,
-            voice,
-            language,
-            provider,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
-        )
-    except VoiceNotFoundError as exc:
-        return json.dumps({"error": voice_not_found_message(exc)})
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)})
-    if not requests:
-        return json.dumps([])
+        for seg in segments:
+            seg_text = seg.get("text", "")
+            if not seg_text:
+                continue
+            seg_voice = seg.get("voice") or effective_voice
+            seg_language = seg.get("language") or language
+            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
 
-    dir_path = resolve_output_dir(output_dir)
+            kwargs: dict[str, Any] = {
+                "rate": rate,
+            }
+            if seg_voice is not None:
+                kwargs["voice"] = seg_voice
+            if effective_provider is not None:
+                kwargs["provider"] = effective_provider
+            if effective_model is not None:
+                kwargs["model"] = effective_model
+            if seg_language is not None:
+                kwargs["language"] = seg_language
+            if seg_vibe_tags is not None:
+                kwargs["vibe_tags"] = str(seg_vibe_tags)
+            if stability is not None:
+                kwargs["stability"] = stability
+            if similarity is not None:
+                kwargs["similarity"] = similarity
+            if style is not None:
+                kwargs["style"] = style
+            if speaker_boost is not None:
+                kwargs["speaker_boost"] = speaker_boost
 
-    # Compute expected results before synthesis
-    if output_path:
-        path_obj = Path(output_path)
-        combined_text = " | ".join(r.text for r in requests)
-        voices = {r.voice for r in requests}
-        languages = {r.language for r in requests}
-        result_voice = next(iter(voices)) if len(voices) == 1 else "mixed"
-        result_lang = next(iter(languages)) if len(languages) == 1 else "mixed"
-        predicted = [
-            SynthesisResult(
-                path=path_obj,
-                text=requests[0].text if len(requests) == 1 else combined_text,
-                provider=AudioProviderId(provider.name),
-                voice=result_voice,
-                language=result_lang,
+            mp3_bytes = client.record(seg_text, **kwargs)
+
+            # Determine output file path.
+            if output_path and len(segments) == 1:
+                file_path = Path(output_path)
+            else:
+                import hashlib
+
+                text_hash = hashlib.md5(seg_text.encode()).hexdigest()[:10]
+                filename = f"{text_hash}.mp3"
+                file_path = dir_path / filename
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_bytes(mp3_bytes)
+
+            results.append(
+                {
+                    "path": str(file_path),
+                    "text": seg_text,
+                    "voice": seg_voice,
+                    "provider": effective_provider,
+                    "bytes": len(mp3_bytes),
+                }
             )
-        ]
-    else:
-        predicted = _predict_results(requests, provider, dir_path)
+    except VoxdConnectionError as exc:
+        return _error(str(exc))
+    except Exception as exc:
+        logger.exception("Record failed")
+        return _error(str(exc))
 
-    # Synthesize in background — return the predicted paths immediately
-    threading.Thread(
-        target=_synthesize_to_disk,
-        args=(requests, provider, dir_path, pause_ms, output_path),
-        daemon=True,
-    ).start()
-
-    return json.dumps([result_to_dict(r) for r in predicted])
+    if not results:
+        return json.dumps([])
+    return json.dumps(results)
 
 
 @mcp.tool()
@@ -507,18 +442,21 @@ def vibe(
     updates: dict[str, str] = {}
     if mood is not None:
         updates["vibe"] = mood
+        _state.vibe = mood
     if tags is not None:
         updates["vibe_tags"] = tags
         updates["vibe_signals"] = ""
+        _state.vibe_tags = tags
+        _state.vibe_signals = ""
     if mode is not None:
         if mode not in ("auto", "manual", "off"):
-            return json.dumps({"error": f"Invalid mode '{mode}'. Use auto/manual/off."})
+            return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
         updates["vibe_mode"] = mode
+        _state.vibe_mode = mode
 
     if not updates:
-        return json.dumps({"error": "Provide at least one of: mood, tags, mode."})
+        return _error("Provide at least one of: mood, tags, mode.")
 
-    write_fields(updates, _config_path())
     return json.dumps({"vibe": updates})
 
 
@@ -536,24 +474,31 @@ def who(language: str | None = None) -> str:
         JSON string with provider, current voice, featured voices,
         and full voice list.
     """
-    if language is not None:
-        language = validate_language(language)
-    provider = get_provider(config_path=_config_path())
-    all_voices = provider.list_voices(language)
-    current = read_field("voice", _config_path())
+    client = _voxd_client()
+
+    try:
+        all_voices = client.voices(provider=_state.provider)
+    except VoxdConnectionError as exc:
+        return _error(str(exc))
+    except Exception as exc:
+        logger.exception("Voice listing failed")
+        return _error(str(exc))
+
+    # Determine effective provider name for blurb lookup.
+    provider_name = _state.provider or "elevenlabs"
 
     featured = [
         {"name": name, "blurb": blurb}
         for (prov, name), blurb in VOICE_BLURBS.items()
-        if prov == provider.name and name in all_voices
+        if prov == provider_name and name in all_voices
     ]
     random.shuffle(featured)
     featured = featured[:6]
 
     return json.dumps(
         {
-            "provider": provider.name,
-            "current": current,
+            "provider": provider_name,
+            "current": _state.voice,
             "featured": featured,
             "all": all_voices,
         }
@@ -577,7 +522,7 @@ def notify(
     notifications preserves that choice.
 
     Args:
-        mode: Notification mode — "y" (notifications on), "n" (off),
+        mode: Notification mode -- "y" (notifications on), "n" (off),
             or "c" (continuous with real-time signal announcements).
         voice: Optional session voice to set (e.g. "matilda", "roger").
 
@@ -585,16 +530,32 @@ def notify(
         JSON string with the updated config fields.
     """
     if mode not in ("y", "n", "c"):
-        return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n/c."})
+        return _error(f"Invalid mode '{mode}'. Use y/n/c.")
 
-    config_path = _config_path()
     updates: dict[str, str] = {"notify": mode}
-    if mode in ("y", "c") and read_field("speak", config_path) is None:
+    _state.notify = mode
+
+    # Initialize speak to "y" if not explicitly set yet.
+    # "n" is the default sentinel; if it's still at default and we're
+    # enabling notifications, default to voice mode.
+    if mode in ("y", "c") and _state.speak == "n" and not _speak_was_explicitly_set():
         updates["speak"] = "y"
+        _state.speak = "y"
+
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_path=config_path)
+        _state.voice = voice
+
     return json.dumps({"notify": updates})
+
+
+# Track whether speak was explicitly set by the user.
+_speak_explicit: bool = False
+
+
+def _speak_was_explicitly_set() -> bool:
+    """Check if speak was explicitly set (via config file or tool call)."""
+    return _speak_explicit
 
 
 @mcp.tool()
@@ -611,13 +572,19 @@ def speak(
     Returns:
         JSON string with the updated fields.
     """
+    global _speak_explicit
+
     if mode not in ("y", "n"):
-        return json.dumps({"error": f"Invalid mode '{mode}'. Use y/n."})
+        return _error(f"Invalid mode '{mode}'. Use y/n.")
 
     updates: dict[str, str] = {"speak": mode}
+    _state.speak = mode
+    _speak_explicit = True
+
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_path=_config_path())
+        _state.voice = voice
+
     return json.dumps(updates)
 
 
@@ -629,19 +596,16 @@ def status() -> str:
         JSON string with provider, voice, notify mode, speak mode,
         vibe mode, and current vibe.
     """
-    provider = get_provider(config_path=_config_path())
-    cfg = read_config(config_path=_config_path())
-
     return json.dumps(
         {
-            "provider": provider.name,
-            "voice": cfg.voice or provider.default_voice,
-            "notify": cfg.notify,
-            "speak": cfg.speak,
-            "vibe_mode": cfg.vibe_mode,
-            "vibe": cfg.vibe,
-            "vibe_tags": cfg.vibe_tags,
-            "vibe_signals": cfg.vibe_signals,
+            "provider": _state.provider,
+            "voice": _state.voice,
+            "notify": _state.notify,
+            "speak": _state.speak,
+            "vibe_mode": _state.vibe_mode,
+            "vibe": _state.vibe,
+            "vibe_tags": _state.vibe_tags,
+            "vibe_signals": _state.vibe_signals,
         }
     )
 
@@ -658,12 +622,29 @@ def show_vox() -> str:
         JSON string with status ("ok" or "error" with message).
     """
     from punt_vox.applet import show_applet
+    from punt_vox.config import VoxConfig
 
-    config_path = _config_path()
-    cfg = read_config(config_path=config_path)
-    provider = get_provider(config_path=config_path)
-    voice_roster = provider.list_voices()
-    return json.dumps(show_applet(cfg, provider.name, voice_roster))
+    cfg = VoxConfig(
+        notify=_state.notify,
+        speak=_state.speak,
+        vibe_mode=_state.vibe_mode,
+        voice=_state.voice,
+        provider=_state.provider,
+        model=_state.model,
+        vibe=_state.vibe,
+        vibe_tags=_state.vibe_tags,
+        vibe_signals=_state.vibe_signals,
+    )
+
+    # Get voice roster from voxd.
+    try:
+        client = _voxd_client()
+        voice_roster = client.voices(provider=_state.provider)
+    except Exception:
+        voice_roster = []
+
+    provider_name = _state.provider or "elevenlabs"
+    return json.dumps(show_applet(cfg, provider_name, voice_roster))
 
 
 # ---------------------------------------------------------------------------
@@ -671,46 +652,33 @@ def show_vox() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _start_watcher() -> None:
-    """Start the session event watcher if a session directory exists."""
-    from punt_vox.watcher import (
-        SessionWatcher,
-        derive_session_dir,
-        make_notification_consumer,
-    )
-
-    session_dir = derive_session_dir()
-    if not session_dir.is_dir():
-        logger.info("Session dir %s not found, watcher not started", session_dir)
-        return
-
-    consumer = make_notification_consumer()
-    watcher = SessionWatcher(session_dir=session_dir, consumers=[consumer])
-    watcher.start()
-
-
-async def run_mcp_session(
-    read_stream: MemoryObjectReceiveStream[SessionMessage | Exception],
-    write_stream: MemoryObjectSendStream[SessionMessage],
-) -> None:
-    """Run an MCP session on the given streams (WebSocket, stdio, etc.).
-
-    Public entry point for non-stdio transports (daemon WebSocket).
-    Each call gets its own ``ServerSession`` with isolated ContextVar state.
-    """
-    server = mcp._mcp_server  # pyright: ignore[reportPrivateUsage]
-    await server.run(
-        read_stream,
-        write_stream,
-        server.create_initialization_options(),
-    )
-
-
 def run_server() -> None:
     """Run the MCP server with stdio transport."""
+    global _state, _speak_explicit
+
     configure_logging(stderr_level="INFO")
     logger.info("Starting vox MCP server (mic)")
-    _start_watcher()
+
+    # Seed session state from .vox/config.md if it exists.
+    config_path = _find_config()
+    _state = _seed_state_from_config(config_path)
+
+    # Mark speak as explicitly set if the config file had it.
+    if config_path is not None and config_path.exists():
+        from punt_vox.config import read_field
+
+        if read_field("speak", config_path) is not None:
+            _speak_explicit = True
+
+    logger.info(
+        "Session state: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",
+        _state.notify,
+        _state.speak,
+        _state.voice,
+        _state.provider,
+        _state.vibe_mode,
+    )
+
     mcp.run(transport="stdio")
 
 

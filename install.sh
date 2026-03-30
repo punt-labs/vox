@@ -115,18 +115,11 @@ ok "$BINARY $(command -v "$BINARY")"
 
 # --- Step 5: Install daemon ---
 
-info "Installing vox daemon..."
-if "$BINARY" daemon install; then
+info "Installing vox daemon (requires sudo for system service)..."
+if sudo "$BINARY" daemon install; then
   ok "vox daemon installed"
 else
-  warn "Could not install vox daemon (run 'vox daemon install' manually)"
-fi
-
-info "Installing mcp-proxy..."
-if uv tool run --from "$PACKAGE" python -c "from punt_vox.proxy import install, installed_path; p = installed_path(); print(p) if p else print(install())" 2>/dev/null; then
-  ok "mcp-proxy installed"
-else
-  warn "mcp-proxy install skipped (hooks will use subprocess fallback)"
+  warn "Could not install vox daemon (run 'sudo vox daemon install' manually)"
 fi
 
 # --- Step 6: Register marketplace ---

@@ -184,6 +184,8 @@ class SayProvider:
                 ],
                 check=True,
                 timeout=60,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
             )
             logger.info(
                 "say: voice=%s, wpm=%d, chars=%d",
@@ -207,6 +209,7 @@ class SayProvider:
                 check=True,
                 capture_output=True,
                 timeout=60,
+                start_new_session=True,
             )
         finally:
             aiff_path.unlink(missing_ok=True)

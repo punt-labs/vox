@@ -14,35 +14,6 @@ from punt_vox.__main__ import app
 
 if TYPE_CHECKING:
     from click.testing import Result
-from punt_vox.types import (
-    AudioProviderId,
-    HealthCheck,
-    SynthesisResult,
-)
-
-
-def _mock_synthesize_result(path: Path, text: str = "hello") -> SynthesisResult:
-    return SynthesisResult(
-        path=path,
-        text=text,
-        provider=AudioProviderId.polly,
-        voice="Joanna",
-    )
-
-
-def _make_mock_provider() -> MagicMock:
-    """Create a mock TTSProvider."""
-    provider = MagicMock()
-    provider.name = "polly"
-    provider.default_voice = "joanna"
-    provider.resolve_voice.side_effect = lambda name, language=None: name.capitalize()  # pyright: ignore[reportUnknownLambdaType,reportUnknownMemberType]
-    provider.infer_language_from_voice.return_value = "en"
-    provider.get_default_voice.side_effect = lambda lang: "joanna"  # pyright: ignore[reportUnknownLambdaType,reportUnknownMemberType]
-    provider.check_health.return_value = [
-        HealthCheck(passed=True, message="AWS credentials (account: 123456789012)"),
-        HealthCheck(passed=True, message="AWS Polly access"),
-    ]
-    return provider
 
 
 _CLI = "punt_vox.__main__"
@@ -54,56 +25,63 @@ _CLI = "punt_vox.__main__"
 
 
 class TestUnmuteCommand:
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
+    @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_basic(
         self,
-        mock_get_provider: MagicMock,
         mock_client_cls: MagicMock,
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.synthesize.return_value = "abc123"
 
         runner = CliRunner()
-        with patch("punt_vox.playback.enqueue"):
-            result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0
         mock_instance.synthesize.assert_called_once()
+        call_kwargs = mock_instance.synthesize.call_args
+        assert call_kwargs[0][0] == "hello"
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
+    @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_custom_voice(
         self,
-        mock_get_provider: MagicMock,
         mock_client_cls: MagicMock,
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.synthesize.return_value = "abc123"
 
         runner = CliRunner()
-        with patch("punt_vox.playback.enqueue"):
-            result = runner.invoke(app, ["unmute", "Hallo", "--voice", "hans"])
+        result = runner.invoke(app, ["unmute", "Hallo", "--voice", "hans"])
 
         assert result.exit_code == 0
-        request = mock_instance.synthesize.call_args[0][0]
-        assert request.voice == "hans"
+        call_kwargs = mock_instance.synthesize.call_args
+        assert call_kwargs[1]["voice"] == "hans"
 
     def test_unmute_no_text_fails(self) -> None:
         runner = CliRunner()
-        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
-            result = runner.invoke(app, ["unmute"])
+        result = runner.invoke(app, ["unmute"])
         assert result.exit_code != 0
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_connection_error(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -112,31 +90,26 @@ class TestUnmuteCommand:
 
 
 class TestRecordCommand:
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_record_basic(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_basic(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10  # fake MP3
 
         runner = CliRunner()
         result = runner.invoke(app, ["record", "hello", "-o", str(out)])
 
         assert result.exit_code == 0
-        mock_instance.synthesize.assert_called_once()
+        mock_instance.record.assert_called_once()
+        assert out.exists()
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_custom_voice(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+        self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
 
         runner = CliRunner()
         result = runner.invoke(
@@ -144,25 +117,18 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        request = mock_instance.synthesize.call_args[0][0]
-        assert request.voice == "hans"
+        call_kwargs = mock_instance.record.call_args
+        assert call_kwargs[1]["voice"] == "hans"
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_record_from_file(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_from_file(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(["hello", "world"]))
         out_dir = tmp_path / "out"
         out_dir.mkdir()
 
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.side_effect = [
-            _mock_synthesize_result(out_dir / "a.mp3", "hello"),
-            _mock_synthesize_result(out_dir / "b.mp3", "world"),
-        ]
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
 
         runner = CliRunner()
         result = runner.invoke(
@@ -170,17 +136,15 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        assert mock_instance.synthesize.call_count == 2
+        assert mock_instance.record.call_count == 2
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_voice_settings(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+        self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
         out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
 
         runner = CliRunner()
         result = runner.invoke(
@@ -201,28 +165,23 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        request = mock_instance.synthesize.call_args[0][0]
-        assert request.stability == 0.5
-        assert request.similarity == 0.7
-        assert request.style == 0.3
-        assert request.speaker_boost is True
+        call_kwargs = mock_instance.record.call_args[1]
+        assert call_kwargs["stability"] == 0.5
+        assert call_kwargs["similarity"] == 0.7
+        assert call_kwargs["style"] == 0.3
+        assert call_kwargs["speaker_boost"] is True
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_with_language(
         self,
-        mock_get_provider: MagicMock,
         mock_client_cls: MagicMock,
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
         monkeypatch.chdir(tmp_path)
         out = tmp_path / "test.mp3"
-        provider = _make_mock_provider()
-        provider.get_default_voice.side_effect = lambda lang: "vicki"  # pyright: ignore[reportUnknownLambdaType,reportUnknownMemberType]
-        mock_get_provider.return_value = provider
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = _mock_synthesize_result(out)
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
 
         runner = CliRunner()
         result = runner.invoke(
@@ -230,9 +189,26 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        request = mock_instance.synthesize.call_args[0][0]
-        assert request.voice == "vicki"
-        assert request.language == "de"
+        call_kwargs = mock_instance.record.call_args[1]
+        assert call_kwargs["language"] == "de"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_connection_error(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        out = tmp_path / "test.mp3"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +262,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "y"])
@@ -298,7 +274,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "n"])
@@ -310,7 +286,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
@@ -326,7 +302,7 @@ class TestNotifyCommand:
         config = tmp_path / "config.md"
         config.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
@@ -340,7 +316,7 @@ class TestNotifyCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c", "--voice", "matilda"])
@@ -352,7 +328,7 @@ class TestNotifyCommand:
 
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         config = tmp_path / "config.md"
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "x"])
@@ -365,7 +341,7 @@ class TestSpeakCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "y"])
@@ -377,7 +353,7 @@ class TestSpeakCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "n"])
@@ -391,7 +367,7 @@ class TestVoiceCommand:
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.resolve_config_path", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "matilda"])
@@ -418,19 +394,43 @@ class TestVersionCommand:
 
 
 class TestStatusCommand:
-    def test_status(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_daemon_running(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
         import punt_vox.config as cfg
 
         config = tmp_path / "config.md"
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
 
+        mock_instance = mock_client_cls.return_value
+        mock_instance.health.return_value = {"provider": "elevenlabs"}
+
         runner = CliRunner()
-        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
-            result = runner.invoke(app, ["status"])
+        result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        assert "Provider" in result.output
-        assert "Voice" in result.output
+        assert "Daemon" in result.output
+        assert "running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_daemon_not_running(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        import punt_vox.config as cfg
+        from punt_vox.client import VoxdConnectionError
+
+        config = tmp_path / "config.md"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.health.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0
+        assert "not running" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -456,16 +456,11 @@ class TestMainGroup:
         result = runner.invoke(app, ["-v", "--help"])
         assert result.exit_code == 0
 
-    @patch(f"{_CLI}.TTSClient")
-    @patch(f"{_CLI}.get_provider")
-    def test_provider_flag(
-        self, mock_get_provider: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_provider_flag(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         out = tmp_path / "test.mp3"
-        mock_get_provider.return_value = _make_mock_provider()
-        mock_client_cls.return_value.synthesize.return_value = _mock_synthesize_result(
-            out
-        )
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
 
         runner = CliRunner()
         result = runner.invoke(
@@ -473,7 +468,8 @@ class TestMainGroup:
             ["record", "hello", "--provider", "polly", "-o", str(out)],
         )
         assert result.exit_code == 0
-        mock_get_provider.assert_called_once_with("polly", model=None)
+        call_kwargs = mock_instance.record.call_args[1]
+        assert call_kwargs["provider"] == "polly"
 
 
 # ---------------------------------------------------------------------------
@@ -486,18 +482,15 @@ class TestDoctorCommand:
         self,
         tmp_path: Path,
         *,
-        health_checks: list[HealthCheck] | None = None,
         ffmpeg_found: bool = True,
         uvx_found: bool = True,
         config_exists: bool = False,
         config_data: dict[str, object] | None = None,
         system_platform: str = "Darwin",
         espeak_found: str | None = None,
+        daemon_healthy: bool = True,
     ) -> Result:
         """Invoke doctor with controlled mocks."""
-        provider = _make_mock_provider()
-        if health_checks is not None:
-            provider.check_health.return_value = health_checks
 
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg" and ffmpeg_found:
@@ -513,10 +506,22 @@ class TestDoctorCommand:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config_data or {}))
 
+        mock_client = MagicMock()
+        if daemon_healthy:
+            mock_client.health.return_value = {
+                "provider": "elevenlabs",
+                "active_sessions": 2,
+                "port": 8421,
+            }
+        else:
+            from punt_vox.client import VoxdConnectionError
+
+            mock_client.health.side_effect = VoxdConnectionError("not running")
+
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
-            patch(f"{_CLI}.get_provider", return_value=provider),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
             patch(
                 f"{_CLI}.default_output_dir",
@@ -531,19 +536,24 @@ class TestDoctorCommand:
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)
         assert result.exit_code == 0
-        assert "✓ Python" in result.output
-        assert "✓ Provider: polly" in result.output
-        assert "✓ ffmpeg" in result.output
+        assert "\u2713 Python" in result.output
+        assert "\u2713 ffmpeg" in result.output
+        assert "Daemon: running" in result.output
 
     def test_ffmpeg_missing_fails(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
-        assert "✗ ffmpeg" in result.output
+        assert "\u2717 ffmpeg" in result.output
 
     def test_uvx_missing_is_optional(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, uvx_found=False)
         assert result.exit_code == 0
-        assert "○ uvx" in result.output
+        assert "\u25cb uvx" in result.output
+
+    def test_daemon_not_running_fails(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, daemon_healthy=False)
+        assert result.exit_code == 1
+        assert "Daemon: not running" in result.output
 
     def test_linux_no_keys_no_espeak_warns(self, tmp_path: Path) -> None:
         with patch.dict(os.environ, {}, clear=False):
@@ -684,17 +694,25 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    def test_quiet_suppresses_status(self) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_quiet_suppresses_status(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.health.side_effect = VoxdConnectionError("not running")
+
         runner = CliRunner()
-        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
-            result = runner.invoke(app, ["-q", "status"])
+        result = runner.invoke(app, ["-q", "status"])
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    def test_json_still_emits_with_quiet(self) -> None:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_json_still_emits_with_quiet(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.health.return_value = {"provider": "polly"}
+
         runner = CliRunner()
-        with patch(f"{_CLI}.get_provider", return_value=_make_mock_provider()):
-            result = runner.invoke(app, ["--json", "-q", "status"])
+        result = runner.invoke(app, ["--json", "-q", "status"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data

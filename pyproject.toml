@@ -32,6 +32,7 @@ dependencies = [
     "pydub>=0.25.0",
     "audioop-lts>=0.2.1",
     "typer>=0.24.1",
+    "websockets>=14.0",
 ]
 
 [project.urls]
@@ -41,6 +42,7 @@ Repository = "https://github.com/punt-labs/vox"
 
 [project.scripts]
 vox = "punt_vox.__main__:app"
+voxd = "punt_vox.voxd:entrypoint"
 
 [project.optional-dependencies]
 dev = [
@@ -48,6 +50,7 @@ dev = [
     "pyright>=1.1.390",
     "ruff>=0.9.0",
     "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
 ]
 lux = ["punt-lux>=0.9.0"]
@@ -133,6 +136,7 @@ reportMissingTypeStubs = "warning"
 minversion = "8.0"
 addopts = "-ra -q"
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (requires provider API credentials)",
 ]

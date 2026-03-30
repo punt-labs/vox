@@ -1,18 +1,29 @@
 """Tests for server-level helpers and mic API tools."""
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from punt_vox.config import write_field, write_fields
 from punt_vox.resolve import apply_vibe
-from punt_vox.server import notify, record, speak, status, unmute, vibe, who
-from punt_vox.types import AudioProviderId, VoiceNotFoundError
+from punt_vox.server import (
+    SessionState,
+    notify,
+    record,
+    speak,
+    status,
+    unmute,
+    vibe,
+    who,
+)
+from punt_vox.types import VoiceNotFoundError
 from punt_vox.voices import voice_not_found_message
 
 
@@ -20,14 +31,21 @@ from punt_vox.voices import voice_not_found_message
 def _patch_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Return a writable config path and patch the module."""
+    """Return a writable config path and patch config module default."""
     import punt_vox.config as cfg
-    import punt_vox.server as srv
 
     config = tmp_path / "config.md"
-    monkeypatch.setattr(srv, "_config_path", lambda: config)
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
     return config
+
+
+@pytest.fixture(autouse=True)
+def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Reset server session state before every test."""
+    import punt_vox.server as srv
+
+    monkeypatch.setattr(srv, "_state", SessionState())
+    monkeypatch.setattr(srv, "_speak_explicit", False)
 
 
 # ---------------------------------------------------------------------------
@@ -295,34 +313,6 @@ class TestVoiceNotFoundMessage:
 
 
 # ---------------------------------------------------------------------------
-# Shared mock helpers
-# ---------------------------------------------------------------------------
-
-
-def _mock_provider_ok() -> MagicMock:
-    """Create a mock provider that succeeds."""
-    provider = MagicMock()
-    provider.name = "elevenlabs"
-    provider.default_voice = "matilda"
-    provider.supports_expressive_tags = True
-    provider.resolve_voice.return_value = "matilda"
-    provider.infer_language_from_voice.return_value = None
-    return provider
-
-
-def _mock_result(tmp_path: Path) -> MagicMock:
-    """Create a mock SynthesisResult."""
-    result = MagicMock()
-    result.path = tmp_path / "out.mp3"
-    result.text = "Done."
-    result.provider = AudioProviderId("elevenlabs")
-    result.voice = "matilda"
-    result.language = None
-    result.metadata = {}
-    return result
-
-
-# ---------------------------------------------------------------------------
 # unmute tool tests
 # ---------------------------------------------------------------------------
 
@@ -330,135 +320,131 @@ def _mock_result(tmp_path: Path) -> MagicMock:
 class TestUnmute:
     """Tests for the unmute MCP tool."""
 
-    def test_simple_text(self, _patch_config: Path, tmp_path: Path) -> None:
-        provider = _mock_provider_ok()
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
+    def test_simple_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req123"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            result = json.loads(unmute(text="Hello world"))
+        result = json.loads(unmute(text="Hello world"))
 
         assert isinstance(result, list)
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert result[0]["text"] == "Hello world"
+        mock_client.synthesize.assert_called_once()
 
-    def test_segments(self, _patch_config: Path, tmp_path: Path) -> None:
-        provider = _mock_provider_ok()
-        mock_r = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_r
+    def test_segments(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req456"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.server.TTSClient") as mock_client_cls,
-        ):
-            mock_client = mock_client_cls.return_value
-            mock_client.synthesize_batch.return_value = [mock_r]
-            result = json.loads(
-                unmute(
-                    segments=[
-                        {"voice": "roger", "text": "Part one."},
-                        {"text": "Part two."},
-                    ]
-                )
+        result = json.loads(
+            unmute(
+                segments=[
+                    {"voice": "roger", "text": "Part one."},
+                    {"text": "Part two."},
+                ]
             )
+        )
 
         assert isinstance(result, list)
-        assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert len(result) == 2  # pyright: ignore[reportUnknownArgumentType]
+        assert mock_client.synthesize.call_count == 2
 
-    def test_no_input_returns_error(self, _patch_config: Path) -> None:
+    def test_no_input_returns_error(self) -> None:
         result = json.loads(unmute())
         assert "error" in result
 
-    def test_vibe_tags_writes_config(self, _patch_config: Path, tmp_path: Path) -> None:
-        _patch_config.write_text('---\nvibe_signals: "tests-pass@14:00"\n---\n')
-        provider = _mock_provider_ok()
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
-
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            unmute(text="Done.", vibe_tags="[warm] [satisfied]")
-
-        text = _patch_config.read_text()
-        assert 'vibe_tags: "[warm] [satisfied]"' in text
-        assert 'vibe_signals: ""' in text
-
-    def test_voice_not_found_returns_error(
-        self, _patch_config: Path, tmp_path: Path
+    def test_vibe_tags_updates_session_state(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When a segment voice is not found, returns a friendly error."""
-        provider = _mock_provider_ok()
-        provider.resolve_voice.side_effect = VoiceNotFoundError(
-            "bob", ["matilda", "aria"]
-        )
+        import punt_vox.server as srv
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-        ):
-            result = json.loads(unmute(segments=[{"voice": "bob", "text": "Hello"}]))
+        srv._state.vibe_signals = "tests-pass@14:00"
 
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req789"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        unmute(text="Done.", vibe_tags="[warm] [satisfied]")
+
+        assert srv._state.vibe_tags == "[warm] [satisfied]"
+        assert srv._state.vibe_signals == ""
+
+    def test_voxd_connection_error_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.synthesize.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(unmute(text="Hello"))
         assert "error" in result
-        assert "bob" in result["error"]
+        assert "not running" in result["error"]
 
-    def test_language_passed_to_provider(
-        self, _patch_config: Path, tmp_path: Path
+    def test_provider_persists_to_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req_prov"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        unmute(text="Hello", provider="openai")
+        assert srv._state.provider == "openai"
+
+    def test_model_persists_to_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req_mod"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        unmute(text="Hello", model="eleven_v3")
+        assert srv._state.model == "eleven_v3"
+
+    def test_config_only_update_no_text(self) -> None:
+        """Provider/model/vibe_tags update without text returns config update."""
+        import punt_vox.server as srv
+
+        result = json.loads(unmute(provider="polly"))
+        assert result["status"] == "config updated"
+        assert result["provider"] == "polly"
+        assert srv._state.provider == "polly"
+
+    def test_voice_settings_validation(self) -> None:
+        """Invalid voice settings raise ValueError."""
+        with pytest.raises(ValueError, match="stability"):
+            unmute(text="Hello", stability=1.5)
+
+    def test_language_passed_to_synthesize(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Top-level language param is passed through to voice resolution."""
-        provider = _mock_provider_ok()
-        provider.get_default_voice.return_value = "vicki"
-        mock_r = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_r
+        """Top-level language param is forwarded to voxd synthesize."""
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req_lang"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            unmute(text="Guten Tag", language="de")
+        unmute(text="Guten Tag", language="de")
 
-        # get_default_voice called with language, resolve_voice with result
-        provider.get_default_voice.assert_called_once_with("de")
-        provider.resolve_voice.assert_called_once_with("vicki", "de")
+        call_kwargs = mock_client.synthesize.call_args
+        assert call_kwargs[1]["language"] == "de"
 
     def test_per_segment_language_overrides_default(
-        self, _patch_config: Path, tmp_path: Path
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Per-segment language overrides the top-level default."""
-        provider = _mock_provider_ok()
-        provider.get_default_voice.return_value = "amelie"
-        mock_r = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_r
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = "req_lang2"
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.server._enqueue_audio"),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            unmute(
-                language="en",
-                segments=[{"text": "Bonjour", "language": "fr"}],
-            )
+        unmute(
+            language="en",
+            segments=[{"text": "Bonjour", "language": "fr"}],
+        )
 
-        # Per-segment "fr" should override top-level "en"
-        provider.get_default_voice.assert_called_once_with("fr")
-        provider.resolve_voice.assert_called_once_with("amelie", "fr")
-
-    def test_invalid_language_returns_error(self, _patch_config: Path) -> None:
-        """Invalid language code returns a structured error."""
-        provider = _mock_provider_ok()
-
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(unmute(text="Hello", language="xxx"))
-
-        assert "error" in result
+        call_kwargs = mock_client.synthesize.call_args
+        assert call_kwargs[1]["language"] == "fr"
 
 
 # ---------------------------------------------------------------------------
@@ -469,37 +455,49 @@ class TestUnmute:
 class TestRecord:
     """Tests for the record MCP tool."""
 
-    def test_simple_text(self, _patch_config: Path, tmp_path: Path) -> None:
-        provider = _mock_provider_ok()
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
+    def test_simple_text(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        mock_client = MagicMock()
+        mock_client.record.return_value = b"\xff\xfb\x90\x00" * 10
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            result = json.loads(record(text="Hello world"))
+        result = json.loads(record(text="Hello world"))
 
         assert isinstance(result, list)
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert result[0]["text"] == "Hello world"
+        assert "path" in result[0]
+        mock_client.record.assert_called_once()
 
-    def test_no_input_returns_error(self, _patch_config: Path) -> None:
+    def test_no_input_returns_error(self) -> None:
         result = json.loads(record())
         assert "error" in result
 
-    def test_custom_output_path(self, _patch_config: Path, tmp_path: Path) -> None:
-        provider = _mock_provider_ok()
-        mock_result = _mock_result(tmp_path)
-        provider.synthesize.return_value = mock_result
+    def test_custom_output_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client.record.return_value = b"\xff\xfb\x90\x00" * 10
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         out_path = str(tmp_path / "custom.mp3")
-        with (
-            patch("punt_vox.server.get_provider", return_value=provider),
-            patch("punt_vox.core._pad_audio_file"),
-        ):
-            result = json.loads(record(text="Hello", output_path=out_path))
+        result = json.loads(record(text="Hello", output_path=out_path))
 
         assert isinstance(result, list)
+        assert result[0]["path"] == out_path
+
+    def test_voxd_connection_error_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.record.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
+
+        result = json.loads(record(text="Hello"))
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -510,37 +508,37 @@ class TestRecord:
 class TestVibeTool:
     """Tests for the vibe MCP tool."""
 
-    def test_set_mood(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_mood(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(vibe(mood="excited"))
         assert result["vibe"]["vibe"] == "excited"
-        assert 'vibe: "excited"' in _patch_config.read_text()
+        assert srv._state.vibe == "excited"
 
-    def test_set_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_tags(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(vibe(tags="[warm] [calm]"))
         assert result["vibe"]["vibe_tags"] == "[warm] [calm]"
-        text = _patch_config.read_text()
-        assert 'vibe_tags: "[warm] [calm]"' in text
-        assert 'vibe_signals: ""' in text
+        assert srv._state.vibe_tags == "[warm] [calm]"
+        assert srv._state.vibe_signals == ""
 
-    def test_set_mode(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_mode(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(vibe(mode="manual"))
         assert result["vibe"]["vibe_mode"] == "manual"
+        assert srv._state.vibe_mode == "manual"
 
-    def test_invalid_mode(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_invalid_mode(self) -> None:
         result = json.loads(vibe(mode="invalid"))
         assert "error" in result
 
-    def test_no_args_returns_error(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_no_args_returns_error(self) -> None:
         result = json.loads(vibe())
         assert "error" in result
 
-    def test_combined_mood_and_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_combined_mood_and_tags(self) -> None:
         result = json.loads(vibe(mood="happy", tags="[cheerful]", mode="manual"))
         updates = result["vibe"]
         assert updates["vibe"] == "happy"
@@ -556,79 +554,119 @@ class TestVibeTool:
 class TestWho:
     """Tests for the who MCP tool."""
 
-    def _mock_provider(
-        self, name: str = "elevenlabs", voices: list[str] | None = None
-    ) -> MagicMock:
-        provider = MagicMock()
-        provider.name = name
-        provider.list_voices.return_value = voices or [
-            "aria",
-            "callum",
-            "charlie",
-            "drew",
-            "george",
-            "jessica",
-            "laura",
-            "lily",
-            "matilda",
-            "river",
-            "roger",
-            "sarah",
-        ]
-        return provider
+    _VOICE_LIST: typing.ClassVar[list[str]] = [
+        "aria",
+        "callum",
+        "charlie",
+        "drew",
+        "george",
+        "jessica",
+        "laura",
+        "lily",
+        "matilda",
+        "river",
+        "roger",
+        "sarah",
+    ]
 
-    def test_returns_provider_and_voices(self, _patch_config: Path) -> None:
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+    def test_returns_provider_and_voices(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.provider = "elevenlabs"
+
+        mock_client = MagicMock()
+        mock_client.voices.return_value = self._VOICE_LIST
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         assert result["provider"] == "elevenlabs"
         assert isinstance(result["all"], list)
         assert len(result["all"]) == 12
         assert isinstance(result["featured"], list)
 
-    def test_featured_includes_blurbs(self, _patch_config: Path) -> None:
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+    def test_featured_includes_blurbs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.provider = "elevenlabs"
+
+        mock_client = MagicMock()
+        mock_client.voices.return_value = self._VOICE_LIST
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         for entry in result["featured"]:
             assert "name" in entry
             assert "blurb" in entry
             assert len(entry["blurb"]) > 0
 
-    def test_featured_capped_at_six(self, _patch_config: Path) -> None:
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+    def test_featured_capped_at_six(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.provider = "elevenlabs"
+
+        mock_client = MagicMock()
+        mock_client.voices.return_value = self._VOICE_LIST
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         assert len(result["featured"]) <= 6
 
-    def test_current_voice_included(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvoice: "aria"\n---\n')
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+    def test_current_voice_included(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.voice = "aria"
+        srv._state.provider = "elevenlabs"
+
+        mock_client = MagicMock()
+        mock_client.voices.return_value = self._VOICE_LIST
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         assert result["current"] == "aria"
 
-    def test_no_current_voice(self, _patch_config: Path) -> None:
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+    def test_no_current_voice(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.voices.return_value = self._VOICE_LIST
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         assert result["current"] is None
 
-    def test_language_filter_passed_through(self, _patch_config: Path) -> None:
-        provider = self._mock_provider()
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            who(language="de")
-        provider.list_voices.assert_called_once_with("de")
+    def test_language_filter_passed_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client.voices.return_value = []
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        who(language="de")
+        mock_client.voices.assert_called_once_with(provider=None)
 
     def test_provider_without_blurbs_returns_empty_featured(
-        self, _patch_config: Path
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        provider = self._mock_provider(name="say", voices=["samantha", "alex"])
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(who())
+        import punt_vox.server as srv
+
+        srv._state.provider = "say"
+
+        mock_client = MagicMock()
+        mock_client.voices.return_value = ["samantha", "alex"]
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
         assert result["provider"] == "say"
         assert result["featured"] == []
         assert result["all"] == ["samantha", "alex"]
+
+    def test_voxd_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.voices.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(who())
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -639,58 +677,71 @@ class TestWho:
 class TestNotifyTool:
     """Tests for the notify MCP tool."""
 
-    def test_set_mode_y(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_mode_y(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(notify(mode="y"))
         assert result["notify"]["notify"] == "y"
-        assert 'notify: "y"' in _patch_config.read_text()
+        assert srv._state.notify == "y"
 
-    def test_set_mode_n(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_mode_n(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(notify(mode="n"))
         assert result["notify"]["notify"] == "n"
+        assert srv._state.notify == "n"
 
-    def test_speak_unset_c_inits_voice(self, _patch_config: Path) -> None:
-        # speak not yet in config — mode=c should initialize it
-        _patch_config.write_text("---\n---\n")
+    def test_speak_unset_c_inits_voice(self) -> None:
+        """speak not yet set — mode=c should initialize it to y."""
+        import punt_vox.server as srv
+
         result = json.loads(notify(mode="c"))
         assert result["notify"]["notify"] == "c"
         assert result["notify"]["speak"] == "y"
+        assert srv._state.speak == "y"
 
-    def test_speak_unset_y_inits_voice(self, _patch_config: Path) -> None:
-        # speak not yet in config — mode=y should also initialize it
-        _patch_config.write_text("---\n---\n")
+    def test_speak_unset_y_inits_voice(self) -> None:
+        """speak not yet set — mode=y should also initialize it."""
         result = json.loads(notify(mode="y"))
         assert result["notify"]["speak"] == "y"
 
-    def test_speak_unset_first_init_inits_voice(self, _patch_config: Path) -> None:
-        # Config file does not exist — first init
+    def test_speak_unset_first_init_inits_voice(self) -> None:
+        """Fresh session — first init."""
         result = json.loads(notify(mode="y"))
         assert result["notify"]["speak"] == "y"
 
-    def test_speak_set_preserved_by_c(self, _patch_config: Path) -> None:
-        # User explicitly muted — mode=c should not re-enable voice
-        _patch_config.write_text('---\nspeak: "n"\n---\n')
+    def test_speak_set_preserved_by_c(self) -> None:
+        """User explicitly muted — mode=c should not re-enable voice."""
+        import punt_vox.server as srv
+
+        # Simulate explicit mute.
+        srv._state.speak = "n"
+        srv._speak_explicit = True
+
         result = json.loads(notify(mode="c"))
         assert result["notify"]["notify"] == "c"
         assert "speak" not in result["notify"]
-        assert 'speak: "n"' in _patch_config.read_text()
+        assert srv._state.speak == "n"
 
-    def test_speak_set_preserved_by_y(self, _patch_config: Path) -> None:
-        # User explicitly muted — mode=y should not re-enable voice
-        _patch_config.write_text('---\nspeak: "n"\n---\n')
+    def test_speak_set_preserved_by_y(self) -> None:
+        """User explicitly muted — mode=y should not re-enable voice."""
+        import punt_vox.server as srv
+
+        srv._state.speak = "n"
+        srv._speak_explicit = True
+
         result = json.loads(notify(mode="y"))
         assert "speak" not in result["notify"]
-        assert 'speak: "n"' in _patch_config.read_text()
+        assert srv._state.speak == "n"
 
-    def test_set_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_voice(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(notify(mode="c", voice="matilda"))
         assert result["notify"]["voice"] == "matilda"
-        assert 'voice: "matilda"' in _patch_config.read_text()
+        assert srv._state.voice == "matilda"
 
-    def test_invalid_mode(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_invalid_mode(self) -> None:
         result = json.loads(notify(mode="x"))
         assert "error" in result
 
@@ -703,28 +754,38 @@ class TestNotifyTool:
 class TestSpeakTool:
     """Tests for the speak MCP tool."""
 
-    def test_set_speak_y(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_speak_y(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(speak(mode="y"))
         assert result["speak"] == "y"
+        assert srv._state.speak == "y"
 
-    def test_set_speak_n(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_speak_n(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(speak(mode="n"))
         assert result["speak"] == "n"
-        assert 'speak: "n"' in _patch_config.read_text()
+        assert srv._state.speak == "n"
 
-    def test_set_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_set_voice(self) -> None:
+        import punt_vox.server as srv
+
         result = json.loads(speak(mode="y", voice="matilda"))
         assert result["speak"] == "y"
         assert result["voice"] == "matilda"
-        assert 'voice: "matilda"' in _patch_config.read_text()
+        assert srv._state.voice == "matilda"
 
-    def test_invalid_mode(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+    def test_invalid_mode(self) -> None:
         result = json.loads(speak(mode="x"))
         assert "error" in result
+
+    def test_marks_speak_explicit(self) -> None:
+        import punt_vox.server as srv
+
+        assert not srv._speak_explicit
+        speak(mode="n")
+        assert srv._speak_explicit
 
 
 # ---------------------------------------------------------------------------
@@ -735,22 +796,18 @@ class TestSpeakTool:
 class TestStatusTool:
     """Tests for the status MCP tool."""
 
-    def test_returns_config_fields(self, _patch_config: Path) -> None:
-        _patch_config.write_text(
-            "---\n"
-            'notify: "c"\n'
-            'speak: "y"\n'
-            'voice: "sarah"\n'
-            'vibe_mode: "auto"\n'
-            'vibe_tags: "[excited]"\n'
-            'vibe_signals: "tests-pass@12:00"\n'
-            "---\n"
-        )
-        provider = MagicMock()
-        provider.name = "elevenlabs"
-        provider.default_voice = "sarah"
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(status())
+    def test_returns_state_fields(self) -> None:
+        import punt_vox.server as srv
+
+        srv._state.notify = "c"
+        srv._state.speak = "y"
+        srv._state.voice = "sarah"
+        srv._state.provider = "elevenlabs"
+        srv._state.vibe_mode = "auto"
+        srv._state.vibe_tags = "[excited]"
+        srv._state.vibe_signals = "tests-pass@12:00"
+
+        result = json.loads(status())
         assert result["provider"] == "elevenlabs"
         assert result["voice"] == "sarah"
         assert result["notify"] == "c"
@@ -759,11 +816,9 @@ class TestStatusTool:
         assert result["vibe_tags"] == "[excited]"
         assert result["vibe_signals"] == "tests-pass@12:00"
 
-    def test_falls_back_to_provider_default_voice(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
-        provider = MagicMock()
-        provider.name = "polly"
-        provider.default_voice = "Joanna"
-        with patch("punt_vox.server.get_provider", return_value=provider):
-            result = json.loads(status())
-        assert result["voice"] == "Joanna"
+    def test_defaults_when_no_state_set(self) -> None:
+        result = json.loads(status())
+        assert result["voice"] is None
+        assert result["provider"] is None
+        assert result["notify"] == "n"
+        assert result["speak"] == "n"
