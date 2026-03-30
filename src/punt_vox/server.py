@@ -70,12 +70,9 @@ _state: SessionState = SessionState()
 
 def _find_config() -> Path | None:
     """Walk up from cwd to find .vox/config.md."""
-    path = Path.cwd().resolve()
-    for parent in (path, *path.parents):
-        config = parent / ".vox" / "config.md"
-        if config.exists():
-            return config
-    return None
+    from punt_vox.config import find_config
+
+    return find_config()
 
 
 def _seed_state_from_config(config_path: Path | None) -> SessionState:

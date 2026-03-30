@@ -329,7 +329,8 @@ def _resolve_text_segments(
     """Resolve text input into a list of segments.
 
     Accepts either a direct text argument or a JSON file with an array of
-    strings or {voice, text} objects.
+    strings or {text} objects. Per-segment voice override is available
+    via the MCP ``unmute`` tool, not the CLI.
     """
     if from_file is not None:
         return _segments_from_file(from_file)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 import subprocess
@@ -56,7 +57,7 @@ def _data_root() -> Path:
             return Path(prefix)
         except (subprocess.SubprocessError, FileNotFoundError):
             return Path("/usr/local")
-    return Path("/")
+    return Path("/")  # type: ignore[unreachable,unused-ignore]
 
 
 def _run_dir() -> Path:
@@ -336,7 +337,10 @@ class VoxClient:
                 f"Expected 'audio' response, got '{resp.get('type')}'"
             )
         data = resp.get("data", "")
-        return base64.b64decode(str(data))
+        try:
+            return base64.b64decode(str(data))
+        except (binascii.Error, ValueError) as exc:
+            raise VoxdProtocolError(f"Invalid audio data from voxd: {exc}") from exc
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices."""
