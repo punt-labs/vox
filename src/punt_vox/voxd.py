@@ -499,7 +499,7 @@ async def _synthesize_to_file(
 
     normalized = normalize_for_speech(text)
     if vibe_tags:
-        normalized = f"[{vibe_tags}] {normalized}"
+        normalized = f"{vibe_tags} {normalized}"
 
     # Check cache first
     cached = cache_get(normalized, resolved_voice, provider_name)

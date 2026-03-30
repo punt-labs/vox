@@ -115,11 +115,11 @@ ok "$BINARY $(command -v "$BINARY")"
 
 # --- Step 5: Install daemon ---
 
-info "Installing vox daemon..."
-if "$BINARY" daemon install; then
+info "Installing vox daemon (requires sudo for system service)..."
+if sudo "$BINARY" daemon install; then
   ok "vox daemon installed"
 else
-  warn "Could not install vox daemon (run 'vox daemon install' manually)"
+  warn "Could not install vox daemon (run 'sudo vox daemon install' manually)"
 fi
 
 # --- Step 6: Register marketplace ---
