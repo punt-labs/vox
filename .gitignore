@@ -19,7 +19,6 @@ htmlcov/
 *.ogg
 .venv/
 .env
-.envrc
 lancedb/
 .mcp.json
 .claude/
