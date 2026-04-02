@@ -153,12 +153,15 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
         # immediately.  Per hooks.md §4: side-effect hooks must not block.
         import subprocess as _sp
 
-        _sp.Popen(
-            [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
-            start_new_session=True,
-        )
+        try:
+            _sp.Popen(
+                [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            logger.warning("Could not spawn chime subprocess")
         return
     try:
         client = _make_client()
