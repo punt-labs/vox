@@ -102,8 +102,8 @@ info "Installing $PACKAGE..."
 
 # Clean up root-owned __pycache__ left by previous 'sudo vox daemon install'.
 # Without this, uv tool install fails with Permission denied on Linux.
-_uv_tools="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/punt-vox"
-if [ -d "$_uv_tools" ]; then
+_uv_tools="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/$PACKAGE"
+if [ -d "$_uv_tools" ] && [ -n "$(find "$_uv_tools" -name __pycache__ -user root -print -quit 2>/dev/null)" ]; then
   sudo find "$_uv_tools" -name __pycache__ -user root -exec rm -rf {} + 2>/dev/null || true
 fi
 
@@ -127,7 +127,7 @@ _vox_path="$(command -v "$BINARY")"
 if sudo PYTHONDONTWRITEBYTECODE=1 PATH="$PATH" "$_vox_path" daemon install; then
   ok "vox daemon installed"
 else
-  warn "Could not install vox daemon (run 'sudo PATH=\$PATH $(command -v vox) daemon install' manually)"
+  warn "Could not install vox daemon (run 'sudo PYTHONDONTWRITEBYTECODE=1 PATH=\$PATH $(command -v vox) daemon install' manually)"
 fi
 
 # --- Step 6: Register marketplace ---
