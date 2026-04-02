@@ -139,12 +139,30 @@ def _speak_via_voxd(
         logger.warning("voxd not running, skipping speech")
 
 
-def _chime_via_voxd(signal: str) -> None:
+def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
     """Play a chime via voxd.
+
+    When *wait* is False, spawns a detached subprocess to avoid blocking
+    the hook.  Used by sync hooks (Stop) that must return quickly.
 
     Catches ``VoxdConnectionError`` and ``VoxdProtocolError`` so a
     missing or misbehaving daemon never crashes a hook.
     """
+    if not wait:
+        # Fire-and-forget: spawn a detached process so the hook returns
+        # immediately.  Per hooks.md §4: side-effect hooks must not block.
+        import subprocess as _sp
+
+        try:
+            _sp.Popen(
+                [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            logger.warning("Could not spawn chime subprocess")
+        return
     try:
         client = _make_client()
         client.chime(signal)
@@ -227,10 +245,11 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         logger.info("Stop hook: skip (no vibe_signals)")
         return None
 
-    # Chime mode: play chime via voxd, let Claude stop
+    # Chime mode: fire-and-forget chime, let Claude stop immediately.
+    # Must not block — the Stop hook is sync and Claude waits.
     if config.speak == "n":
         logger.info("Stop hook: chime mode, requesting done chime from voxd")
-        _chime_via_voxd("done")
+        _chime_via_voxd("done", wait=False)
         return None
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
@@ -604,3 +623,9 @@ def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
     config = read_config(config_path)
     handle_session_end(config, config_path)
+
+
+@hook_app.command("_chime", hidden=True)
+def chime_cmd(signal: str) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Internal: play a chime (used by fire-and-forget detached process)."""
+    _chime_via_voxd(signal)
