@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-04-01
+
 ### Fixed
 
 - **Stop hook hang**: fire-and-forget chime in Stop hook prevents 5s+ hang when voxd is slow or unreachable (#143)
