@@ -16,7 +16,7 @@ class TestSnakeCase:
         assert normalize_for_speech("hello_world") == "hello world"
 
     def test_eof_received(self) -> None:
-        assert normalize_for_speech("eof_received") == "EOF received"
+        assert normalize_for_speech("eof_received") == "E O F received"
 
     def test_multiple_underscores(self) -> None:
         assert normalize_for_speech("on_data_received") == "on data received"
@@ -54,11 +54,11 @@ class TestCamelCase:
         assert normalize_for_speech("onDataReceived") == "on data received"
 
     def test_acronym_prefix(self) -> None:
-        # HTMLParser → HTML Parser → HTML parser
-        assert normalize_for_speech("HTMLParser") == "HTML parser"
+        # HTMLParser → HTML Parser → H T M L parser
+        assert normalize_for_speech("HTMLParser") == "H T M L parser"
 
     def test_acronym_suffix(self) -> None:
-        assert normalize_for_speech("parseHTML") == "parse HTML"
+        assert normalize_for_speech("parseHTML") == "parse H T M L"
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ class TestAbbreviations:
         assert normalize_for_speech("stdin") == "standard input"
 
     def test_eof_standalone(self) -> None:
-        assert normalize_for_speech("eof") == "EOF"
+        assert normalize_for_speech("eof") == "E O F"
 
     def test_case_insensitive(self) -> None:
         assert normalize_for_speech("STDERR") == "standard error"
@@ -145,7 +145,7 @@ class TestMixedText:
 
     def test_mixed_programmer_and_english(self) -> None:
         result = normalize_for_speech("The eof_received handler uses stderr")
-        assert result == "The EOF received handler uses standard error"
+        assert result == "The E O F received handler uses standard error"
 
     def test_empty_string(self) -> None:
         assert normalize_for_speech("") == ""
@@ -193,8 +193,8 @@ class TestEdgeCases:
         assert normalize_for_speech("x") == "x"
 
     def test_all_caps_short(self) -> None:
-        # Two-letter caps — treated as abbreviation if known, else kept
-        assert normalize_for_speech("IO") == "IO"
+        # Two-letter ALL_CAPS: spaced unless in pronounceable allowlist
+        assert normalize_for_speech("IO") == "I O"
 
     def test_number_in_identifier(self) -> None:
         assert normalize_for_speech("value2key") == "value 2 key"
@@ -209,3 +209,77 @@ class TestEdgeCases:
         # Vibe tags like [warm] should pass through — apply_vibe handles them
         result = normalize_for_speech("[warm] Hello world")
         assert "[warm]" in result
+
+
+# ---------------------------------------------------------------------------
+# Acronym spacing
+# ---------------------------------------------------------------------------
+
+
+class TestAcronymSpacing:
+    def test_ocr_spaced(self) -> None:
+        assert normalize_for_speech("OCR") == "O C R"
+
+    def test_mcp_spaced(self) -> None:
+        assert normalize_for_speech("MCP") == "M C P"
+
+    def test_tts_spaced(self) -> None:
+        assert normalize_for_speech("TTS") == "T T S"
+
+    def test_cli_spaced(self) -> None:
+        assert normalize_for_speech("CLI") == "C L I"
+
+    def test_html_spaced(self) -> None:
+        assert normalize_for_speech("HTML") == "H T M L"
+
+    def test_api_spaced(self) -> None:
+        assert normalize_for_speech("API") == "A P I"
+
+    def test_json_pronounceable(self) -> None:
+        assert normalize_for_speech("JSON") == "JSON"
+
+    def test_nats_pronounceable(self) -> None:
+        assert normalize_for_speech("NATS") == "NATS"
+
+    def test_sql_pronounceable(self) -> None:
+        assert normalize_for_speech("SQL") == "SQL"
+
+    def test_aws_pronounceable(self) -> None:
+        assert normalize_for_speech("AWS") == "AWS"
+
+    def test_io_spaced(self) -> None:
+        assert normalize_for_speech("IO") == "I O"
+
+    def test_ok_pronounceable(self) -> None:
+        assert normalize_for_speech("OK") == "OK"
+
+    def test_long_caps_unchanged(self) -> None:
+        assert normalize_for_speech("SIGNAL") == "SIGNAL"
+
+    def test_mp3_spaced(self) -> None:
+        # camelCase split "MP" + "3", then MP gets spaced → "M P 3"
+        assert normalize_for_speech("MP3") == "M P 3"
+
+    def test_acronym_in_camel(self) -> None:
+        assert normalize_for_speech("HTMLParser") == "H T M L parser"
+
+    def test_acronym_with_punctuation(self) -> None:
+        assert normalize_for_speech("(CLI)") == "(C L I)"
+
+    def test_max_pronounceable(self) -> None:
+        assert normalize_for_speech("MAX") == "MAX"
+
+    def test_idempotent_spaced(self) -> None:
+        once = normalize_for_speech("OCR")
+        twice = normalize_for_speech(once)
+        assert once == twice == "O C R"
+
+    def test_idempotent_eof(self) -> None:
+        once = normalize_for_speech("eof")
+        twice = normalize_for_speech(once)
+        assert once == twice == "E O F"
+
+    def test_vibe_tag_with_acronym(self) -> None:
+        result = normalize_for_speech("[warm] The OCR failed")
+        assert "[warm]" in result
+        assert "O C R" in result
