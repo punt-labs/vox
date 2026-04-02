@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Symbol mispronunciation**: parentheses, brackets, and other non-speech symbols are now stripped before TTS synthesis — only prosody punctuation (`.` `,` `?` `!` `:` `;`) is preserved (#150)
+- **Linux install failure**: `sudo vox daemon install` wrote root-owned `__pycache__` into user's uv tools directory, causing subsequent `uv tool install` to fail with Permission denied. Fixed with `PYTHONDONTWRITEBYTECODE=1` and cleanup step (#149)
+
+### Changed
+
+- Add `punt-labs/team` git submodule at `.punt-labs/ethos/` for agent definitions and identity data (#149)
+
 ## [4.0.1] - 2026-04-01
 
 ### Fixed
