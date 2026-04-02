@@ -550,8 +550,8 @@ def normalize_for_speech(text: str) -> str:
 
 def _normalize_token(token: str) -> str:
     """Normalize a single whitespace-delimited token."""
-    # Preserve punctuation wrapping the token (e.g. "(stderr)" → "(standard error)")
-    prefix, core, suffix = _strip_punctuation(token)
+    # Strip non-speech symbols; only prosody punctuation survives in suffix
+    _prefix, core, suffix = _strip_punctuation(token)
 
     if not core:
         # Token was only non-speech symbols — drop it
@@ -565,28 +565,28 @@ def _normalize_token(token: str) -> str:
     if _HAS_UNDERSCORE.search(core):
         parts = core.split("_")
         expanded = " ".join(_expand_part(p) for p in parts if p)
-        return prefix + expanded + suffix
+        return expanded + suffix
 
     # camelCase / PascalCase: split on case boundaries
     if _HAS_CAMEL.search(core):
         split = _CAMEL_BOUNDARY.sub(" ", core)
         parts = split.split()
         expanded = " ".join(_expand_part(p) for p in parts)
-        return prefix + expanded + suffix
+        return expanded + suffix
 
     # Standalone abbreviation
     expanded = _expand_abbreviation(core)
     if expanded != core:
-        return prefix + expanded + suffix
+        return expanded + suffix
 
     # ALL_CAPS standalone: space out acronyms for TTS spelling
     if core.isupper() and len(core) > 1:
         spaced = _space_acronym(core)
         if spaced != core:
-            return prefix + spaced + suffix
+            return spaced + suffix
 
     # Return reconstructed token (punctuation may have been stripped)
-    return prefix + core + suffix
+    return core + suffix
 
 
 def _expand_part(part: str) -> str:
