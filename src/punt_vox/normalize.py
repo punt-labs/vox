@@ -632,7 +632,10 @@ def _strip_punctuation(token: str) -> tuple[str, str, str]:
     """Strip leading/trailing punctuation, returning (prefix, core, suffix).
 
     Leading ``~/._`` are kept in core (file path / identifier prefixes).
-    Trailing punctuation (commas, parens, etc.) is preserved in *suffix*.
+    Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
+    ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
+    symbols (parentheses, brackets, slashes, etc.) are discarded since
+    TTS engines either mispronounce them or produce artifacts.
     Trailing underscores are discarded — they're separators, not speech.
     """
     start = 0
@@ -650,4 +653,13 @@ def _strip_punctuation(token: str) -> tuple[str, str, str]:
     core_end = suffix_start
     while core_end > start and token[core_end - 1] == "_":
         core_end -= 1
-    return token[:start], token[start:core_end], token[suffix_start:]
+    # Only keep prosody-affecting suffix characters; drop the rest
+    raw_suffix = token[suffix_start:]
+    suffix = "".join(ch for ch in raw_suffix if ch in _PROSODY_PUNCTUATION)
+    # Leading punctuation is never speech — always discard
+    return "", token[start:core_end], suffix
+
+
+# Punctuation that affects TTS prosody (pauses, intonation) — keep these.
+# Everything else (parens, brackets, slashes, etc.) is dropped.
+_PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
