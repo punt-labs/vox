@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stop hook hang**: fire-and-forget chime in Stop hook prevents 5s+ hang when voxd is slow or unreachable (#143)
+- **Acronym mispronunciation**: TTS engines no longer pronounce OCR as "ocker" or MCP as "mick-pee" — ALL_CAPS acronyms (2-5 chars) are letter-spaced unless in a ~280-entry pronounceable-words allowlist (#144)
+- **State persistence**: notify/speak/vibe session state now persists to disk, surviving MCP server restart (#142)
+
+### Security
+
+- Bump Pygments to 2.20.0 in lockfile — ReDoS CVE (#141)
+- Bump punt-lux to 0.15.1, fastmcp to 3.2.0+ in lockfile — CVE-2026-32871, CVE-2026-27124 (#139)
+- Bump PyJWT in lockfile — security fix (#138)
+
+### Changed
+
+- Track `.envrc` in version control; user overrides go in `.envrc.local` (gitignored) (#140)
+- Add Skill() allow entries via punt auto settings (#137)
+
 ## [4.0.0] - 2026-03-29
 
 ## [3.0.0] - 2026-03-29
