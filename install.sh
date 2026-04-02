@@ -100,6 +100,13 @@ fi
 
 info "Installing $PACKAGE..."
 
+# Clean up root-owned __pycache__ left by previous 'sudo vox daemon install'.
+# Without this, uv tool install fails with Permission denied on Linux.
+_uv_tools="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/punt-vox"
+if [ -d "$_uv_tools" ]; then
+  sudo find "$_uv_tools" -name __pycache__ -user root -exec rm -rf {} + 2>/dev/null || true
+fi
+
 # shellcheck disable=SC2086
 uv tool install --force $PYTHON_FLAG "$PACKAGE==$VERSION" || fail "Failed to install $PACKAGE==$VERSION"
 ok "$PACKAGE installed"
@@ -117,7 +124,7 @@ ok "$BINARY $(command -v "$BINARY")"
 
 info "Installing vox daemon (requires sudo for system service)..."
 _vox_path="$(command -v "$BINARY")"
-if sudo PATH="$PATH" "$_vox_path" daemon install; then
+if sudo PYTHONDONTWRITEBYTECODE=1 PATH="$PATH" "$_vox_path" daemon install; then
   ok "vox daemon installed"
 else
   warn "Could not install vox daemon (run 'sudo PATH=\$PATH $(command -v vox) daemon install' manually)"
