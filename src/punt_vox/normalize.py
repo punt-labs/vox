@@ -542,7 +542,9 @@ def normalize_for_speech(text: str) -> str:
     words = text.split()
     result: list[str] = []
     for word in words:
-        result.append(_normalize_token(word))
+        normalized = _normalize_token(word)
+        if normalized:
+            result.append(normalized)
     return " ".join(result)
 
 
@@ -552,11 +554,12 @@ def _normalize_token(token: str) -> str:
     prefix, core, suffix = _strip_punctuation(token)
 
     if not core:
-        return token
+        # Token was only non-speech symbols — drop it
+        return suffix if suffix else ""
 
-    # Skip file paths
+    # File paths: keep core as-is but still strip non-speech wrapping
     if _FILE_PATH_RE.match(core):
-        return token
+        return core + suffix
 
     # snake_case: split on underscores, process each part
     if _HAS_UNDERSCORE.search(core):
@@ -631,12 +634,13 @@ def _expand_abbreviation(word: str) -> str:
 def _strip_punctuation(token: str) -> tuple[str, str, str]:
     """Strip leading/trailing punctuation, returning (prefix, core, suffix).
 
+    Leading punctuation is always discarded (prefix is always empty).
     Leading ``~/._`` are kept in core (file path / identifier prefixes).
     Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
     ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
     symbols (parentheses, brackets, slashes, etc.) are discarded since
     TTS engines either mispronounce them or produce artifacts.
-    Trailing underscores are discarded — they're separators, not speech.
+    Trailing underscores are discarded -- they are separators, not speech.
     """
     start = 0
     end = len(token)

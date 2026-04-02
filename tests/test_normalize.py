@@ -207,8 +207,8 @@ class TestEdgeCases:
         assert normalize_for_speech("(fileName),") == "file name,"
 
     def test_expression_tags_stripped(self) -> None:
-        # Brackets are non-speech symbols — stripped by normalize.
-        # Vibe tags are handled by apply_vibe before normalize runs.
+        # Brackets are non-speech symbols — normalize drops them,
+        # keeping the inner word.
         result = normalize_for_speech("[warm] Hello world")
         assert result == "warm Hello world"
 
@@ -324,3 +324,13 @@ class TestSymbolStripping:
     def test_slash_command_preserved(self) -> None:
         # Leading / is a file path prefix — token skipped entirely
         assert normalize_for_speech("/wall") == "/wall"
+
+    def test_wrapped_file_path(self) -> None:
+        # Parens stripped, file path core preserved
+        assert normalize_for_speech("(/usr/local/bin)") == "/usr/local/bin"
+
+    def test_wrapped_file_path_with_prosody(self) -> None:
+        assert normalize_for_speech("(/usr/local/bin),") == "/usr/local/bin,"
+
+    def test_punctuation_only_token_dropped(self) -> None:
+        assert normalize_for_speech("hello () world") == "hello world"
