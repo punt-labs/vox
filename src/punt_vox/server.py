@@ -458,11 +458,9 @@ def vibe(
         return _error("Provide at least one of: mood, tags, mode.")
 
     # Persist to disk so hooks (which read config independently) see the change
-    config_path = _find_config()
-    if config_path:
-        from punt_vox.config import write_fields
+    from punt_vox.config import write_fields
 
-        write_fields(updates, config_path)
+    write_fields(updates, _find_config())
 
     return json.dumps({"vibe": updates})
 
@@ -554,11 +552,9 @@ def notify(
         _state.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    config_path = _find_config()
-    if config_path:
-        from punt_vox.config import write_fields
+    from punt_vox.config import write_fields
 
-        write_fields(updates, config_path)
+    write_fields(updates, _find_config())
 
     return json.dumps({"notify": updates})
 
@@ -600,11 +596,9 @@ def speak(
         _state.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    config_path = _find_config()
-    if config_path:
-        from punt_vox.config import write_fields
+    from punt_vox.config import write_fields
 
-        write_fields(updates, config_path)
+    write_fields(updates, _find_config())
 
     return json.dumps(updates)
 
