@@ -457,6 +457,11 @@ def vibe(
     if not updates:
         return _error("Provide at least one of: mood, tags, mode.")
 
+    # Persist to disk so hooks (which read config independently) see the change
+    from punt_vox.config import write_fields
+
+    write_fields(updates, _find_config())
+
     return json.dumps({"vibe": updates})
 
 
@@ -546,6 +551,11 @@ def notify(
         updates["voice"] = voice
         _state.voice = voice
 
+    # Persist to disk so hooks (which read config independently) see the change
+    from punt_vox.config import write_fields
+
+    write_fields(updates, _find_config())
+
     return json.dumps({"notify": updates})
 
 
@@ -584,6 +594,11 @@ def speak(
     if voice is not None:
         updates["voice"] = voice
         _state.voice = voice
+
+    # Persist to disk so hooks (which read config independently) see the change
+    from punt_vox.config import write_fields
+
+    write_fields(updates, _find_config())
 
     return json.dumps(updates)
 
