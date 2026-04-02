@@ -15,9 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Upgrade Pygments to 2.20.0 — ReDoS CVE (#141)
-- Upgrade punt-lux to 0.15.1, fastmcp to 3.2.0+ — CVE-2026-32871, CVE-2026-27124 (#139)
-- Upgrade PyJWT — security fix (#138)
+- Bump Pygments to 2.20.0 in lockfile — ReDoS CVE (#141)
+- Bump punt-lux to 0.15.1, fastmcp to 3.2.0+ in lockfile — CVE-2026-32871, CVE-2026-27124 (#139)
+- Bump PyJWT in lockfile — security fix (#138)
 
 ### Changed
 
