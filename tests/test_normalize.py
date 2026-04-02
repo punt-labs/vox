@@ -89,7 +89,7 @@ class TestAbbreviations:
         )
 
     def test_abbreviation_with_punctuation(self) -> None:
-        assert normalize_for_speech("(stderr)") == "(standard error)"
+        assert normalize_for_speech("(stderr)") == "standard error"
 
     def test_repo(self) -> None:
         assert normalize_for_speech("repo") == "repository"
@@ -203,12 +203,14 @@ class TestEdgeCases:
         assert normalize_for_speech("stdin_reader") == "standard input reader"
 
     def test_punctuation_preserved(self) -> None:
-        assert normalize_for_speech("(fileName),") == "(file name),"
+        # Non-speech symbols (parens) stripped; prosody punctuation (comma) kept
+        assert normalize_for_speech("(fileName),") == "file name,"
 
-    def test_expression_tags_untouched(self) -> None:
-        # Vibe tags like [warm] should pass through — apply_vibe handles them
+    def test_expression_tags_stripped(self) -> None:
+        # Brackets are non-speech symbols — normalize drops them,
+        # keeping the inner word.
         result = normalize_for_speech("[warm] Hello world")
-        assert "[warm]" in result
+        assert result == "warm Hello world"
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +266,7 @@ class TestAcronymSpacing:
         assert normalize_for_speech("HTMLParser") == "H T M L parser"
 
     def test_acronym_with_punctuation(self) -> None:
-        assert normalize_for_speech("(CLI)") == "(C L I)"
+        assert normalize_for_speech("(CLI)") == "C L I"
 
     def test_max_pronounceable(self) -> None:
         assert normalize_for_speech("MAX") == "MAX"
@@ -281,5 +283,54 @@ class TestAcronymSpacing:
 
     def test_vibe_tag_with_acronym(self) -> None:
         result = normalize_for_speech("[warm] The OCR failed")
-        assert "[warm]" in result
+        assert "warm" in result
         assert "O C R" in result
+
+
+# ---------------------------------------------------------------------------
+# Non-speech symbol stripping
+# ---------------------------------------------------------------------------
+
+
+class TestSymbolStripping:
+    def test_parentheses_stripped(self) -> None:
+        assert normalize_for_speech("only (10m TTL)") == "only 10 m T T L"
+
+    def test_brackets_stripped(self) -> None:
+        assert normalize_for_speech("[calm] hello") == "calm hello"
+
+    def test_curly_braces_stripped(self) -> None:
+        assert normalize_for_speech("{key: value}") == "key: value"
+
+    def test_prosody_comma_kept(self) -> None:
+        assert normalize_for_speech("hello, world") == "hello, world"
+
+    def test_prosody_question_mark_kept(self) -> None:
+        assert normalize_for_speech("really?") == "really?"
+
+    def test_prosody_exclamation_kept(self) -> None:
+        assert normalize_for_speech("done!") == "done!"
+
+    def test_prosody_colon_kept(self) -> None:
+        assert normalize_for_speech("value:") == "value:"
+
+    def test_prosody_period_kept(self) -> None:
+        assert normalize_for_speech("end.") == "end."
+
+    def test_mixed_symbols_and_prosody(self) -> None:
+        # Parens stripped, comma kept
+        assert normalize_for_speech("(fileName),") == "file name,"
+
+    def test_slash_command_preserved(self) -> None:
+        # Leading / is a file path prefix — token skipped entirely
+        assert normalize_for_speech("/wall") == "/wall"
+
+    def test_wrapped_file_path(self) -> None:
+        # Parens stripped, file path core preserved
+        assert normalize_for_speech("(/usr/local/bin)") == "/usr/local/bin"
+
+    def test_wrapped_file_path_with_prosody(self) -> None:
+        assert normalize_for_speech("(/usr/local/bin),") == "/usr/local/bin,"
+
+    def test_punctuation_only_token_dropped(self) -> None:
+        assert normalize_for_speech("hello () world") == "hello world"
