@@ -110,6 +110,10 @@ class OpenAIProvider:
         """
         return self._resolve_voice_name(name)
 
+    def play_directly(self, request: SynthesisRequest) -> int | None:
+        """OpenAI returns MP3 bytes; use the synthesize-and-cache path."""
+        return None
+
     def check_health(self) -> list[HealthCheck]:
         """Check OpenAI API key and model access."""
         checks: list[HealthCheck] = []

@@ -276,6 +276,10 @@ class PollyProvider:
             raise ValueError(msg)
         return cfg.voice_id
 
+    def play_directly(self, request: SynthesisRequest) -> int | None:
+        """Polly returns MP3 bytes; use the synthesize-and-cache path."""
+        return None
+
     def check_health(self) -> list[HealthCheck]:
         """Check AWS credentials and Polly API access."""
         from botocore.exceptions import (

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Direct-play path for local TTS providers**: `TTSProvider` now has an optional `play_directly()` method. `espeak-ng` and macOS `say` implement it by spawning their binary without the `-w`/`-o` flag, playing straight to the default audio device -- the same syscall and audio session a user's shell would use. Cloud providers (ElevenLabs, OpenAI, Polly) return `None` and continue using the existing synthesize-cache-enqueue pipeline, so MP3 caching and dedup replay still work. This eliminates the WAV -> ffmpeg -> MP3 -> ffplay round-trip for local synthesis and removes an entire class of audio-session negotiation bugs on Linux.
+
 ### Fixed
 
 - **voxd playback observability**: playback was fire-and-forget with player stderr piped to `DEVNULL`, making silent failures impossible to diagnose remotely. `_play_audio` now captures the spawn command, audio env vars at call time (`XDG_RUNTIME_DIR`, `PULSE_SERVER`, `DBUS_SESSION_BUS_ADDRESS`, etc.), exit code, elapsed wall time, file size, and full stderr. Logs `ERROR` on non-zero exit or spawn failure, `WARNING` on suspicious sub-50ms "success", `INFO` with stderr summary on normal success. Voxd startup logs its full process environment (pid, uid, gid, cwd, binary, audio env) so operators can verify systemd env injection without poking at `/proc`. Synthesis logs output file size so 0-byte synthesis bugs stop masquerading as playback bugs. The `/health` endpoint and `health` WebSocket message now expose `audio_env`, `player_binary`, and `last_playback` so `vox doctor` surfaces playback state automatically.

@@ -16,6 +16,7 @@ from punt_vox.voxd import (
     DaemonContext,
     _health_payload,
     _play_audio,
+    _try_direct_play,
 )
 
 
@@ -170,3 +171,91 @@ class TestHealthPayload:
         }
         payload = _health_payload(ctx)
         assert payload["last_playback"] == ctx.last_playback
+
+
+class TestTryDirectPlay:
+    """Voxd dispatches to provider.play_directly for local providers."""
+
+    def _run(self, provider: MagicMock, ctx: DaemonContext) -> int | None:
+        with patch("punt_vox.voxd.get_provider", return_value=provider):
+            return asyncio.run(
+                _try_direct_play(
+                    text="hello",
+                    voice=None,
+                    provider_name="espeak",
+                    model=None,
+                    language=None,
+                    rate=None,
+                    vibe_tags=None,
+                    stability=None,
+                    similarity=None,
+                    style=None,
+                    speaker_boost=None,
+                    api_key=None,
+                    ctx=ctx,
+                )
+            )
+
+    def test_returns_provider_rc_on_success(self) -> None:
+        ctx = _make_ctx()
+        provider = MagicMock()
+        provider.play_directly = MagicMock(return_value=0)
+
+        rc = self._run(provider, ctx)
+
+        assert rc == 0
+        assert ctx.last_playback is not None
+        assert ctx.last_playback["rc"] == 0
+        provider.play_directly.assert_called_once()
+
+    def test_returns_none_for_cloud_provider(self) -> None:
+        ctx = _make_ctx()
+        provider = MagicMock()
+        provider.play_directly = MagicMock(return_value=None)
+
+        rc = self._run(provider, ctx)
+
+        assert rc is None
+        # No playback attempted -- last_playback stays None.
+        assert ctx.last_playback is None
+
+    def test_nonzero_rc_logs_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        ctx = _make_ctx()
+        provider = MagicMock()
+        provider.play_directly = MagicMock(return_value=2)
+
+        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd"):
+            rc = self._run(provider, ctx)
+
+        assert rc == 2
+        assert "Direct-play FAILED" in caplog.text
+        assert ctx.last_playback is not None
+        assert ctx.last_playback["rc"] == 2
+
+
+class TestCloudProvidersPlayDirectlyReturnsNone:
+    """Cloud providers must opt out of direct play so MP3 caching still works."""
+
+    def test_polly(self) -> None:
+        from punt_vox.providers.polly import PollyProvider
+        from punt_vox.types import AudioRequest
+
+        with patch("punt_vox.providers.polly.boto3.client"):
+            provider = PollyProvider()
+        assert provider.play_directly(AudioRequest(text="hi")) is None
+
+    def test_openai(self) -> None:
+        from punt_vox.providers.openai import OpenAIProvider
+        from punt_vox.types import AudioRequest
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}):
+            provider = OpenAIProvider()
+        assert provider.play_directly(AudioRequest(text="hi")) is None
+
+    def test_elevenlabs(self) -> None:
+        from punt_vox.providers.elevenlabs import ElevenLabsProvider
+        from punt_vox.types import AudioRequest
+
+        with patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test"}):
+            provider = ElevenLabsProvider()
+        assert provider.play_directly(AudioRequest(text="hi")) is None

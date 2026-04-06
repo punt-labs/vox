@@ -13,6 +13,7 @@ from pathlib import Path
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
+    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
@@ -210,6 +211,57 @@ class EspeakProvider:
     ) -> list[SynthesisResult]:
         return [self.generate_audio(request) for request in requests]
 
+    def _resolve_voice_and_rate(
+        self, request: AudioRequest
+    ) -> tuple[EspeakVoiceConfig, int]:
+        """Return the espeak voice config and resolved WPM for a request."""
+        resolved_voice = request.voice or self.default_voice
+        voice_cfg = self._resolve_voice_config(resolved_voice)
+        rate = request.rate if request.rate is not None else 100
+        return voice_cfg, _rate_to_wpm(rate)
+
+    def play_directly(self, request: AudioRequest) -> int | None:
+        """Play directly via espeak-ng's built-in audio output.
+
+        Spawns ``espeak-ng -v <voice> -s <wpm> <text>`` without ``-w``,
+        so espeak-ng writes to the default audio device instead of a
+        WAV file. Bypasses the WAV -> ffmpeg -> MP3 -> ffplay pipeline
+        entirely: same syscall and same audio session as a user shell.
+        """
+        voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        cmd = [
+            self._binary,
+            "-v",
+            voice_cfg.name,
+            "-s",
+            str(wpm),
+            request.text,
+        ]
+        logger.info(
+            "espeak direct-play: voice=%s wpm=%d chars=%d",
+            voice_cfg.name,
+            wpm,
+            len(request.text),
+        )
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.error("espeak direct-play failed: %s", exc)
+            return 1
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            logger.error(
+                "espeak direct-play rc=%d stderr=%r",
+                result.returncode,
+                stderr,
+            )
+        return result.returncode
+
     def synthesize(
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
@@ -217,10 +269,7 @@ class EspeakProvider:
 
         Produces WAV via espeak-ng, then converts to MP3 via ffmpeg.
         """
-        resolved_voice = request.voice or self.default_voice
-        voice_cfg = self._resolve_voice_config(resolved_voice)
-        rate = request.rate if request.rate is not None else 100
-        wpm = _rate_to_wpm(rate)
+        voice_cfg, wpm = self._resolve_voice_and_rate(request)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

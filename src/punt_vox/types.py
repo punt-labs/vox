@@ -279,6 +279,20 @@ class TTSProvider(AudioProvider, Protocol):
         """
         ...
 
+    def play_directly(self, request: AudioRequest) -> int | None:
+        """Synthesize and play audio in one step, bypassing the file pipeline.
+
+        Local providers (espeak-ng, macOS say) play directly to the
+        default audio device. Cloud providers return ``None`` because
+        their MP3 output benefits from caching for dedup replay.
+
+        Returns:
+            The subprocess exit code (0 on success), or ``None`` if direct
+            play is not supported -- caller falls back to ``synthesize``
+            + playback queue.
+        """
+        ...
+
 
 def generate_filename(text: str, prefix: str = "") -> str:
     """Generate a deterministic MP3 filename from text content.

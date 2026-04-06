@@ -179,6 +179,10 @@ class ElevenLabsProvider:
             return name
         return name.lower()
 
+    def play_directly(self, request: SynthesisRequest) -> int | None:
+        """ElevenLabs returns MP3 bytes; use the synthesize-and-cache path."""
+        return None
+
     def check_health(self) -> list[HealthCheck]:
         """Check ElevenLabs API key and subscription status."""
         checks: list[HealthCheck] = []

@@ -802,6 +802,99 @@ async def _synthesize_to_file(
                 os.environ.pop(env_key_name, None)
 
 
+async def _try_direct_play(
+    *,
+    text: str,
+    voice: str | None,
+    provider_name: str,
+    model: str | None,
+    language: str | None,
+    rate: int | None,
+    vibe_tags: str | None,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+    api_key: str | None,
+    ctx: DaemonContext,
+) -> int | None:
+    """Attempt direct-to-device playback via the provider.
+
+    Returns the subprocess exit code on success, or ``None`` if the
+    provider doesn't implement direct play (cloud providers) -- the
+    caller then falls back to synthesize-and-queue.
+
+    This matches the shell-level playback path exactly: same binary,
+    same env, same audio session as a user running ``espeak-ng`` or
+    ``say`` directly. No WAV, no ffmpeg, no ffplay.
+    """
+    normalized = normalize_for_speech(text)
+    if vibe_tags:
+        normalized = f"{vibe_tags} {normalized}"
+
+    async with _env_lock:
+        old_key: str | None = None
+        env_key_name: str | None = None
+        if api_key:
+            if provider_name == "elevenlabs":
+                env_key_name = "ELEVENLABS_API_KEY"
+            elif provider_name == "openai":
+                env_key_name = "OPENAI_API_KEY"
+            if env_key_name:
+                old_key = os.environ.get(env_key_name)
+                os.environ[env_key_name] = api_key
+
+        try:
+            provider = get_provider(provider_name, config_path=None, model=model)
+            request = _build_audio_request(
+                normalized,
+                voice,
+                language,
+                rate,
+                stability,
+                similarity,
+                style,
+                speaker_boost,
+                provider_name,
+            )
+            start = _monotonic()
+            rc = await asyncio.to_thread(provider.play_directly, request)
+        finally:
+            if env_key_name and old_key is not None:
+                os.environ[env_key_name] = old_key
+            elif env_key_name and api_key:
+                os.environ.pop(env_key_name, None)
+
+    if rc is None:
+        return None
+
+    elapsed = _monotonic() - start
+    _record_playback_result(
+        ctx,
+        path=Path(f"<direct:{provider_name}>"),
+        rc=rc,
+        elapsed=elapsed,
+        stderr="" if rc == 0 else f"play_directly rc={rc}",
+    )
+    if rc == 0:
+        logger.info(
+            "Direct-play ok: provider=%s voice=%s elapsed=%.3fs chars=%d",
+            provider_name,
+            voice or "",
+            elapsed,
+            len(text),
+        )
+    else:
+        logger.error(
+            "Direct-play FAILED: provider=%s voice=%s elapsed=%.3fs rc=%d",
+            provider_name,
+            voice or "",
+            elapsed,
+            rc,
+        )
+    return rc
+
+
 async def _handle_synthesize(
     msg: dict[str, object],
     websocket: WebSocket,
@@ -843,6 +936,37 @@ async def _handle_synthesize(
         resolved_voice,
         len(text),
     )
+
+    # Try direct-play path for local providers (espeak, say) before
+    # falling through to the synthesize-cache-enqueue pipeline. Cloud
+    # providers' play_directly() returns None and we skip this block.
+    direct_rc = await _try_direct_play(
+        text=text,
+        voice=voice,
+        provider_name=provider_name,
+        model=model,
+        language=language,
+        rate=rate,
+        vibe_tags=vibe_tags,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        api_key=api_key,
+        ctx=ctx,
+    )
+    if direct_rc is not None:
+        if direct_rc == 0:
+            await websocket.send_json({"type": "done", "id": request_id})
+        else:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "id": request_id,
+                    "message": f"play_directly failed with rc={direct_rc}",
+                }
+            )
+        return
 
     try:
         output_path = await _synthesize_to_file(
