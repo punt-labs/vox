@@ -18,6 +18,7 @@ import logging
 import logging.config
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -94,6 +95,39 @@ _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _LOG_MAX_BYTES = 5_242_880  # 5 MB
 _LOG_BACKUP_COUNT = 5
+
+
+_STARTUP_ENV_KEYS: tuple[str, ...] = (
+    "PATH",
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "HOME",
+    "USER",
+    "LANG",
+)
+
+
+def _log_voxd_environment() -> None:
+    """Log voxd's process identity and audio env vars at startup.
+
+    Single greppable INFO line so operators can verify systemd env
+    injection without poking at ``/proc``.
+    """
+    env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
+    logger.info(
+        "voxd environment: pid=%d uid=%d gid=%d cwd=%s "
+        "voxd_binary=%s voxd_module=%s env=%s",
+        os.getpid(),
+        os.getuid(),
+        os.getgid(),
+        os.getcwd(),
+        sys.executable,
+        __file__,
+        env,
+    )
 
 
 def _configure_logging(log_dir: Path) -> None:
@@ -283,33 +317,224 @@ class PlaybackItem:
     notify: asyncio.Event
 
 
-async def _play_audio(path: Path) -> None:
-    """Play an audio file using the platform player."""
-    if sys.platform == "darwin":
-        cmd = ["afplay", str(path)]
-    else:
-        cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
+# Audio environment variables we capture for every playback. These determine
+# whether ffplay can reach PulseAudio/PipeWire and dbus at the moment of the
+# call, which is exactly the failure mode we saw on Linux in v4.0.3.
+_AUDIO_ENV_KEYS: tuple[str, ...] = (
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "HOME",
+    "USER",
+)
 
+# Playback under 50ms is a "success" that almost certainly played nothing.
+_SUSPICIOUS_ELAPSED_S = 0.05
+
+_PLAYBACK_TIMEOUT_S = 30.0
+
+
+def _monotonic() -> float:
+    """Indirection for ``time.monotonic`` so tests can stub playback timing.
+
+    Patching ``time.monotonic`` directly would also affect asyncio internals.
+    """
+    return time.monotonic()
+
+
+def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str]:
+    """Return a dict of env var values, using <unset> for missing keys."""
+    return {k: os.environ.get(k, "<unset>") for k in keys}
+
+
+def _player_binary_name() -> str:
+    """Return the platform player binary name."""
+    return "afplay" if sys.platform == "darwin" else "ffplay"
+
+
+def _player_binary_path() -> str | None:
+    """Return the resolved path to the platform player binary, or None."""
+    return shutil.which(_player_binary_name())
+
+
+def _player_command(path: Path) -> list[str]:
+    """Return the argv for playing ``path`` on this platform.
+
+    No ``-loglevel quiet`` on ffplay -- we want its stream summary and errors.
+    """
+    if sys.platform == "darwin":
+        return ["afplay", str(path)]
+    return ["ffplay", "-nodisp", "-autoexit", str(path)]  # type: ignore[unreachable,unused-ignore]
+
+
+def _record_playback_result(
+    ctx: DaemonContext,
+    *,
+    path: Path,
+    rc: int,
+    elapsed: float,
+    stderr: str,
+) -> None:
+    """Update ctx.last_playback with a freshly-observed playback result."""
+    ctx.last_playback = {
+        "file": str(path),
+        "rc": rc,
+        "elapsed_s": round(elapsed, 4),
+        "stderr": stderr,
+        "ts": time.time(),
+    }
+
+
+async def _play_audio(path: Path, ctx: DaemonContext) -> None:
+    """Play an audio file and record a rich result in ``ctx.last_playback``.
+
+    Captures spawn command, audio env vars at call time, exit code, elapsed
+    wall time, file size, and full stderr. Logs ERROR on non-zero exit,
+    WARNING on suspiciously fast "success", INFO with stderr summary on
+    normal success. Stderr is never silently discarded.
+    """
+    cmd = _player_command(path)
+    env_snapshot = _snapshot_env(_AUDIO_ENV_KEYS)
+
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        logger.error("Playback aborted: cannot stat %s: %s", path, exc)
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
+        )
+        return
+
+    if size == 0:
+        logger.error(
+            "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
+            path,
+        )
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=0.0, stderr="0-byte file"
+        )
+        return
+
+    logger.info(
+        "Playback spawn: cmd=%s size=%d audio_env=%s",
+        cmd,
+        size,
+        env_snapshot,
+    )
+
+    start = _monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-    except FileNotFoundError:
-        logger.warning("Audio player not found: %s", cmd[0])
+    except FileNotFoundError as exc:
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: binary not found: %s (%s) cmd=%s audio_env=%s",
+            cmd[0],
+            exc,
+            cmd,
+            env_snapshot,
+        )
+        _record_playback_result(
+            ctx,
+            path=path,
+            rc=-1,
+            elapsed=elapsed,
+            stderr=f"FileNotFoundError: {exc}",
+        )
         return
     except OSError as exc:
-        logger.warning("Playback failed for %s: %s", path.name, exc)
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: OSError spawning %s: %s audio_env=%s",
+            cmd[0],
+            exc,
+            env_snapshot,
+        )
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
+        )
         return
 
     try:
-        await asyncio.wait_for(proc.wait(), timeout=30)
+        _, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=_PLAYBACK_TIMEOUT_S
+        )
     except TimeoutError:
-        logger.warning("Playback timed out after 30s for %s", path.name)
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: timed out after %.1fs for %s audio_env=%s",
+            _PLAYBACK_TIMEOUT_S,
+            path.name,
+            env_snapshot,
+        )
         proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        _record_playback_result(
+            ctx,
+            path=path,
+            rc=-1,
+            elapsed=elapsed,
+            stderr=f"timeout after {_PLAYBACK_TIMEOUT_S}s",
+        )
+        return
+
+    elapsed = _monotonic() - start
+    rc = proc.returncode if proc.returncode is not None else -1
+    stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+
+    _record_playback_result(ctx, path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
+
+    if rc != 0:
+        logger.error(
+            "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
+            "cmd=%s audio_env=%s stderr=%r",
+            rc,
+            elapsed,
+            path.name,
+            size,
+            cmd,
+            env_snapshot,
+            stderr_text,
+        )
+        return
+
+    if elapsed < _SUSPICIOUS_ELAPSED_S:
+        logger.warning(
+            "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
+            "size=%d audio_env=%s stderr=%r -- probably played nothing",
+            elapsed,
+            _SUSPICIOUS_ELAPSED_S,
+            path.name,
+            size,
+            env_snapshot,
+            stderr_text,
+        )
+        return
+
+    if stderr_text:
+        logger.info(
+            "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
+            elapsed,
+            path.name,
+            size,
+            stderr_text,
+        )
+    else:
+        logger.info(
+            "Playback ok: elapsed=%.3fs file=%s size=%d",
+            elapsed,
+            path.name,
+            size,
+        )
 
 
 async def _playback_consumer(ctx: DaemonContext) -> None:
@@ -317,7 +542,7 @@ async def _playback_consumer(ctx: DaemonContext) -> None:
     while True:
         item = await ctx.playback_queue.get()
         logger.info("Playback start: %s", item.path.name)
-        await _play_audio(item.path)
+        await _play_audio(item.path, ctx)
         logger.info("Playback done: %s", item.path.name)
         item.notify.set()
         ctx.playback_queue.task_done()
@@ -370,6 +595,7 @@ class DaemonContext:
         self.dedup = AudioDedup()
         self.client_count: int = 0
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
+        self.last_playback: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +766,30 @@ async def _synthesize_to_file(
                 output_path = Path(tmp.name)
 
             await asyncio.to_thread(client.synthesize, request, output_path)
+
+            try:
+                synth_size = output_path.stat().st_size
+            except OSError:
+                synth_size = -1
+            if synth_size <= 0:
+                logger.error(
+                    "synthesize FAILED: provider=%s voice=%s file=%s "
+                    "size=%d chars_in=%d -- zero-byte or missing output",
+                    provider_name,
+                    resolved_voice,
+                    output_path,
+                    synth_size,
+                    len(text),
+                )
+            else:
+                logger.info(
+                    "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
+                    provider_name,
+                    resolved_voice,
+                    output_path,
+                    synth_size,
+                    len(text),
+                )
 
             # Cache the result
             cache_put(normalized, resolved_voice, provider_name, output_path)
@@ -747,26 +997,34 @@ async def _handle_voices(
     )
 
 
+def _health_payload(ctx: DaemonContext) -> dict[str, object]:
+    """Build the shared health payload for both WS and HTTP handlers."""
+    from punt_vox.providers import auto_detect_provider
+
+    uptime = time.monotonic() - ctx.start_time
+    audio_env = {k: os.environ.get(k, "") for k in _AUDIO_ENV_KEYS}
+    return {
+        "status": "ok",
+        "uptime_seconds": round(uptime, 1),
+        "queued": ctx.playback_queue.qsize(),
+        "port": ctx.port,
+        "active_sessions": ctx.client_count,
+        "provider": auto_detect_provider(),
+        "audio_env": audio_env,
+        "player_binary": _player_binary_path(),
+        "last_playback": ctx.last_playback,
+    }
+
+
 async def _handle_health(
     msg: dict[str, object],
     websocket: WebSocket,
     ctx: DaemonContext,
 ) -> None:
     """Handle a 'health' message over WebSocket."""
-    from punt_vox.providers import auto_detect_provider
-
-    uptime = time.monotonic() - ctx.start_time
-    await websocket.send_json(
-        {
-            "type": "health",
-            "status": "ok",
-            "uptime_seconds": round(uptime, 1),
-            "queued": ctx.playback_queue.qsize(),
-            "port": ctx.port,
-            "active_sessions": ctx.client_count,
-            "provider": auto_detect_provider(),
-        }
-    )
+    payload = _health_payload(ctx)
+    payload["type"] = "health"
+    await websocket.send_json(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -851,20 +1109,8 @@ async def _ws_route(websocket: WebSocket) -> None:
 
 async def _health_route(request: Request) -> JSONResponse:
     """Health check endpoint."""
-    from punt_vox.providers import auto_detect_provider
-
     ctx: DaemonContext = request.app.state.ctx
-    uptime = time.monotonic() - ctx.start_time
-    return JSONResponse(
-        {
-            "status": "ok",
-            "uptime_seconds": round(uptime, 1),
-            "queued": ctx.playback_queue.qsize(),
-            "port": ctx.port,
-            "active_sessions": ctx.client_count,
-            "provider": auto_detect_provider(),
-        }
-    )
+    return JSONResponse(_health_payload(ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +1160,7 @@ def main(
 
     # Configure logging
     _configure_logging(log_dir)
+    _log_voxd_environment()
 
     # Load provider keys
     loaded_keys = _load_keys(config_dir)
