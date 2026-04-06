@@ -12,6 +12,7 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 from punt_vox.providers.espeak import (
     EspeakProvider,
     EspeakVoiceConfig,
+    _load_voices_from_system,  # pyright: ignore[reportPrivateUsage]
     _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
@@ -62,7 +63,119 @@ class TestEspeakProviderName:
     def test_name(self, espeak_provider: EspeakProvider) -> None:
         assert espeak_provider.name == "espeak"
 
-    def test_default_voice(self, espeak_provider: EspeakProvider) -> None:
+
+class TestEspeakBareIsoFallback:
+    """Verify that _load_voices_from_system registers bare ISO 639-1 keys."""
+
+    def test_bare_en_registered_from_qualified_variants(self) -> None:
+        """When espeak-ng only has en-us and en-gb, bare 'en' is still registered."""
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
+
+        fake_output = (
+            "Pty  Language  Age/Gender  VoiceName   File   Other Languages\n"
+            " 5     en-us          M  english-us   other/en-us\n"
+            " 5     en-gb          M  english-gb   other/en-gb\n"
+            " 5     de             M  german       other/de\n"
+        )
+        with (
+            patch(
+                "punt_vox.providers.espeak._find_espeak_binary",
+                return_value="/usr/bin/espeak-ng",
+            ),
+            patch(
+                "punt_vox.providers.espeak.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["espeak-ng", "--voices"], 0, stdout=fake_output, stderr=""
+                ),
+            ),
+        ):
+            _load_voices_from_system()
+
+        assert "en" in espeak_mod.VOICES
+        assert espeak_mod.VOICES["en"].language == "en"
+        # de should also get a bare entry
+        assert "de" in espeak_mod.VOICES
+
+    def test_bare_iso_not_overwritten_if_exists(self) -> None:
+        """If a bare 'en' voice exists in the output, it takes precedence."""
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
+
+        fake_output = (
+            "Pty  Language  Age/Gender  VoiceName   File   Other Languages\n"
+            " 5     en             M  english      default\n"
+            " 5     en-us          M  english-us   other/en-us\n"
+        )
+        with (
+            patch(
+                "punt_vox.providers.espeak._find_espeak_binary",
+                return_value="/usr/bin/espeak-ng",
+            ),
+            patch(
+                "punt_vox.providers.espeak.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["espeak-ng", "--voices"], 0, stdout=fake_output, stderr=""
+                ),
+            ),
+        ):
+            _load_voices_from_system()
+
+        # The bare "en" key should come from the first "en" line, not en-us
+        assert espeak_mod.VOICES["en"].name == "en"
+
+
+class TestEspeakDefaultVoiceDynamic:
+    """Verify default_voice discovers what's actually installed."""
+
+    def test_prefers_bare_en(self, espeak_provider: EspeakProvider) -> None:
+        """With 'en' in VOICES, default_voice returns 'en'."""
+        assert espeak_provider.default_voice == "en"
+
+    def test_falls_back_to_en_us(self, espeak_provider: EspeakProvider) -> None:
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod.VOICES["en-us"] = EspeakVoiceConfig(name="en-us", language="en")
+        espeak_mod.VOICES["de"] = EspeakVoiceConfig(name="de", language="de")
+
+        assert espeak_provider.default_voice == "en-us"
+
+    def test_falls_back_to_en_gb(self, espeak_provider: EspeakProvider) -> None:
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod.VOICES["en-gb"] = EspeakVoiceConfig(name="en-gb", language="en")
+
+        assert espeak_provider.default_voice == "en-gb"
+
+    def test_falls_back_to_first_en_variant(
+        self, espeak_provider: EspeakProvider
+    ) -> None:
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod.VOICES["en-au"] = EspeakVoiceConfig(name="en-au", language="en")
+
+        assert espeak_provider.default_voice == "en-au"
+
+    def test_falls_back_to_first_voice(self, espeak_provider: EspeakProvider) -> None:
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+        espeak_mod.VOICES["de"] = EspeakVoiceConfig(name="de", language="de")
+
+        assert espeak_provider.default_voice == "de"
+
+    def test_empty_voices_returns_en(self, espeak_provider: EspeakProvider) -> None:
+        import punt_vox.providers.espeak as espeak_mod
+
+        espeak_mod.VOICES.clear()
+
         assert espeak_provider.default_voice == "en"
 
 
@@ -228,9 +341,11 @@ class TestEspeakProviderCheckHealth:
             provider = EspeakProvider()
             checks = provider.check_health()
 
-        assert len(checks) == 1
+        assert len(checks) == 2
         assert checks[0].passed
         assert "espeak-ng" in checks[0].message
+        assert checks[1].passed
+        assert "default voice" in checks[1].message
 
     def test_binary_not_found(self) -> None:
         with patch(

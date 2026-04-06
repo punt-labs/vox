@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **espeak-ng VoiceNotFoundError on Linux**: espeak provider crashed with `VoiceNotFoundError: en` on systems where espeak-ng only has qualified voice variants (`en-us`, `en-gb`) but no bare `en`. Voice resolution now registers bare ISO 639-1 fallback keys and `default_voice` discovers what's actually installed instead of assuming a hardcoded voice exists. Same fix applied to the macOS `say` provider for `samantha`.
+
 ## [4.0.2] - 2026-04-02
 
 ### Fixed

@@ -138,6 +138,10 @@ def _load_voices_from_system() -> None:
         if lang_key not in VOICES:
             VOICES[lang_key] = EspeakVoiceConfig(name=lang, language=iso)
 
+        # Register bare ISO 639-1 prefix for fallback (e.g. "en" from "en-us")
+        if len(iso) == 2 and iso not in VOICES:
+            VOICES[iso] = EspeakVoiceConfig(name=lang, language=iso)
+
     _voices_loaded = True
     logger.debug("Loaded %d voices from espeak-ng", len(VOICES))
 
@@ -177,6 +181,18 @@ class EspeakProvider:
 
     @property
     def default_voice(self) -> str:
+        """Discover the best available English voice from the system."""
+        _load_voices_from_system()
+        for candidate in ("en", "en-us", "en-gb"):
+            if candidate in VOICES:
+                return candidate
+        # First en-* variant found
+        for key in VOICES:
+            if key.startswith("en-"):
+                return key
+        # Absolute fallback: first voice, or "en" if nothing is installed
+        if VOICES:
+            return next(iter(VOICES))
         return "en"
 
     @property
@@ -281,6 +297,8 @@ class EspeakProvider:
         if binary:
             binary_name = Path(binary).name
             checks.append(HealthCheck(passed=True, message=f"{binary_name}: {binary}"))
+            voice = self.default_voice
+            checks.append(HealthCheck(passed=True, message=f"default voice: {voice}"))
         else:
             checks.append(
                 HealthCheck(
