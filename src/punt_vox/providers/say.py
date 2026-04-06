@@ -138,6 +138,19 @@ class SayProvider:
 
     @property
     def default_voice(self) -> str:
+        """Discover the best available voice, preferring Samantha."""
+        _load_voices_from_system()
+        if "samantha" in VOICES:
+            return "samantha"
+        if "alex" in VOICES:
+            return "alex"
+        # First English voice found
+        for key, cfg in VOICES.items():
+            if _locale_to_iso(cfg.locale) == "en":
+                return key
+        # Absolute fallback: first voice, or "samantha" if nothing loaded
+        if VOICES:
+            return next(iter(VOICES))
         return "samantha"
 
     @property
@@ -255,6 +268,22 @@ class SayProvider:
         say_path = shutil.which("say")
         if say_path:
             checks.append(HealthCheck(passed=True, message=f"macOS say: {say_path}"))
+            voice = self.default_voice
+            try:
+                resolved = self.resolve_voice(voice)
+                checks.append(
+                    HealthCheck(
+                        passed=True,
+                        message=f"default voice: {resolved}",
+                    )
+                )
+            except (ValueError, VoiceNotFoundError):
+                checks.append(
+                    HealthCheck(
+                        passed=False,
+                        message=f"default voice unavailable: {voice}",
+                    )
+                )
         else:
             checks.append(
                 HealthCheck(

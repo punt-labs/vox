@@ -88,7 +88,45 @@ class TestSayProviderName:
     def test_name(self, say_provider: SayProvider) -> None:
         assert say_provider.name == "say"
 
-    def test_default_voice(self, say_provider: SayProvider) -> None:
+
+class TestSayDefaultVoiceDynamic:
+    """Verify default_voice discovers what's actually installed."""
+
+    def test_prefers_samantha(self, say_provider: SayProvider) -> None:
+        """With 'samantha' in VOICES, default_voice returns 'samantha'."""
+        assert say_provider.default_voice == "samantha"
+
+    def test_falls_back_to_alex(self, say_provider: SayProvider) -> None:
+        import punt_vox.providers.say as say_mod
+
+        say_mod.VOICES.clear()
+        say_mod.VOICES["alex"] = SayVoiceConfig(name="Alex", locale="en_US")
+        say_mod.VOICES["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+
+        assert say_provider.default_voice == "alex"
+
+    def test_falls_back_to_first_english(self, say_provider: SayProvider) -> None:
+        import punt_vox.providers.say as say_mod
+
+        say_mod.VOICES.clear()
+        say_mod.VOICES["karen"] = SayVoiceConfig(name="Karen", locale="en_AU")
+        say_mod.VOICES["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+
+        assert say_provider.default_voice == "karen"
+
+    def test_falls_back_to_first_voice(self, say_provider: SayProvider) -> None:
+        import punt_vox.providers.say as say_mod
+
+        say_mod.VOICES.clear()
+        say_mod.VOICES["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+
+        assert say_provider.default_voice == "anna"
+
+    def test_empty_voices_returns_samantha(self, say_provider: SayProvider) -> None:
+        import punt_vox.providers.say as say_mod
+
+        say_mod.VOICES.clear()
+
         assert say_provider.default_voice == "samantha"
 
 
@@ -288,9 +326,40 @@ class TestSayProviderCheckHealth:
             provider = SayProvider()
             checks = provider.check_health()
 
-            assert len(checks) == 1
+            assert len(checks) == 2
             assert checks[0].passed
             assert "/usr/bin/say" in checks[0].message
+            assert checks[1].passed
+            assert "default voice: Samantha" in checks[1].message
+
+    def test_default_voice_unavailable(self) -> None:
+        """Health check reports failure when default voice can't be resolved."""
+        import punt_vox.providers.say as say_mod
+
+        with (
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
+        ):
+            mock_platform.system.return_value = "Darwin"
+            mock_shutil.which.return_value = "/usr/bin/say"
+            provider = SayProvider()
+
+        # Empty VOICES so the fallback "samantha" from default_voice can't resolve
+        say_mod.VOICES.clear()
+        say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+
+        with (
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
+        ):
+            mock_platform.system.return_value = "Darwin"
+            mock_shutil.which.return_value = "/usr/bin/say"
+            checks = provider.check_health()
+
+        assert len(checks) == 2
+        assert checks[0].passed
+        assert not checks[1].passed
+        assert "default voice unavailable" in checks[1].message
 
     def test_non_darwin(self) -> None:
         with (
