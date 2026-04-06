@@ -17,6 +17,8 @@ from punt_vox.service import (
     _kill_pid,  # pyright: ignore[reportPrivateUsage]
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
+    _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
+    _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
     _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     detect_platform,
@@ -107,6 +109,155 @@ def test_systemd_unit_contains_path_from_env(_mock_which: MagicMock) -> None:
 def test_systemd_unit_description(_mock_which: MagicMock) -> None:
     content = _systemd_unit_content("testuser")
     assert "Voxd text-to-speech daemon" in content
+
+
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_runtime_directory(_mock_which: MagicMock) -> None:
+    content = _systemd_unit_content("testuser")
+    assert "RuntimeDirectory=vox" in content
+    assert "RuntimeDirectoryMode=0700" in content
+
+
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_no_leading_whitespace(_mock_which: MagicMock) -> None:
+    """Section headers must start at column 0 — no leading spaces."""
+    content = _systemd_unit_content("testuser")
+    for line in content.splitlines():
+        if line.startswith("["):
+            assert line == line.lstrip(), (
+                f"section header has leading whitespace: {line!r}"
+            )
+
+
+@patch.dict(
+    "os.environ",
+    {
+        "PATH": "/usr/bin:/bin",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "PULSE_SERVER": "unix:/run/user/1000/pulse/native",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    },
+)
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_includes_audio_env_vars(
+    _mock_which: MagicMock,
+) -> None:
+    """Audio env vars present in the environment appear in the unit file."""
+    content = _systemd_unit_content("testuser")
+    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in content
+    expected_pulse = 'Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"'
+    assert expected_pulse in content
+    expected_dbus = (
+        'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"'
+    )
+    assert expected_dbus in content
+
+
+@patch.dict(
+    "os.environ",
+    {
+        "PATH": "/usr/bin:/bin",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "PULSE_SERVER": "unix:/run/user/1000/pulse/native",
+    },
+)
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_multiline_env_indented(
+    _mock_which: MagicMock,
+) -> None:
+    """Multiple Environment= lines each start at column 0 (after dedent)."""
+    content = _systemd_unit_content("testuser")
+    env_lines = [ln for ln in content.splitlines() if ln.startswith("Environment=")]
+    assert len(env_lines) >= 2
+    for line in env_lines:
+        assert line == line.lstrip(), (
+            f"Environment line has leading whitespace: {line!r}"
+        )
+
+
+@patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True)
+@patch("punt_vox.service.pwd.getpwnam")
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_xdg_fallback_under_sudo(
+    _mock_which: MagicMock,
+    mock_getpwnam: MagicMock,
+) -> None:
+    """When XDG_RUNTIME_DIR is absent, compute from target user UID."""
+    mock_getpwnam.return_value = MagicMock(pw_uid=1000)
+    content = _systemd_unit_content("deploy")
+    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in content
+    assert "PULSE_SERVER" not in content
+    assert "DBUS_SESSION_BUS_ADDRESS" not in content
+
+
+@patch.dict(
+    "os.environ",
+    {"XDG_RUNTIME_DIR": "/run/user/1000"},
+    clear=True,
+)
+def test_systemd_audio_env_lines_xdg_from_env() -> None:
+    """XDG_RUNTIME_DIR from env is used directly — no pwd fallback."""
+    lines = _systemd_audio_env_lines("testuser")
+    assert len(lines) == 1
+    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in lines[0]
+
+
+@patch.dict("os.environ", {}, clear=True)
+@patch("punt_vox.service.pwd.getpwnam")
+def test_systemd_audio_env_lines_xdg_fallback(
+    mock_getpwnam: MagicMock,
+) -> None:
+    """No XDG_RUNTIME_DIR in env triggers pwd-based fallback."""
+    mock_getpwnam.return_value = MagicMock(pw_uid=1000)
+    lines = _systemd_audio_env_lines("deploy")
+    assert len(lines) == 1
+    assert lines[0] == 'Environment="XDG_RUNTIME_DIR=/run/user/1000"'
+    mock_getpwnam.assert_called_once_with("deploy")
+
+
+@patch.dict("os.environ", {}, clear=True)
+@patch(
+    "punt_vox.service.pwd.getpwnam",
+    side_effect=KeyError("no such user"),
+)
+def test_systemd_audio_env_lines_fallback_unknown_user(
+    _mock_getpwnam: MagicMock,
+) -> None:
+    """Unknown user produces empty list — no crash."""
+    assert _systemd_audio_env_lines("ghost") == []
+
+
+@patch.dict(
+    "os.environ",
+    {"XDG_RUNTIME_DIR": '/run/user/1000\nExecStartPre=/bin/evil"'},
+    clear=True,
+)
+def test_systemd_audio_env_lines_rejects_unsafe_value() -> None:
+    """Values with newlines or quotes are rejected."""
+    lines = _systemd_audio_env_lines("testuser")
+    # The unsafe XDG value is rejected; fallback fires from pwd.
+    assert not any("evil" in line for line in lines)
+
+
+def test_safe_systemd_value_accepts_normal() -> None:
+    assert _safe_systemd_value("/run/user/1000") is True
+    assert _safe_systemd_value("unix:path=/run/user/1000/bus") is True
+
+
+def test_safe_systemd_value_rejects_newline() -> None:
+    assert _safe_systemd_value("foo\nbar") is False
+
+
+def test_safe_systemd_value_rejects_quote() -> None:
+    assert _safe_systemd_value('foo"bar') is False
+
+
+def test_safe_systemd_value_rejects_carriage_return() -> None:
+    assert _safe_systemd_value("foo\rbar") is False
+
+
+def test_safe_systemd_value_rejects_backslash() -> None:
+    assert _safe_systemd_value("foo\\bar") is False
 
 
 # ---------------------------------------------------------------------------

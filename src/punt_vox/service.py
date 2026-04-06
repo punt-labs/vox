@@ -18,6 +18,7 @@ import html
 import logging
 import os
 import platform
+import pwd
 import re
 import shlex
 import shutil
@@ -355,8 +356,6 @@ def _ensure_system_dirs(user: str) -> None:
 
     # On macOS/Linux, set ownership to the installing user (not root).
     if os.getuid() == 0:
-        import pwd
-
         try:
             pw = pwd.getpwnam(user)
             uid, gid = pw.pw_uid, pw.pw_gid
@@ -476,11 +475,60 @@ _SYSTEMD_DIR = Path("/etc/systemd/system")
 _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 
 
+def _safe_systemd_value(value: str) -> bool:
+    """Return True if *value* is safe to embed in a systemd Environment= line.
+
+    Rejects newlines, double quotes, and backslashes. Systemd interprets
+    C-style escapes in double-quoted strings, so a backslash could escape
+    the closing quote or inject control characters.
+    """
+    return not any(c in value for c in '\n\r"\\')
+
+
+def _systemd_audio_env_lines(user: str) -> list[str]:
+    """Build Environment= lines for audio-related env vars.
+
+    PulseAudio/PipeWire need XDG_RUNTIME_DIR to find the user socket.
+    Some setups also require PULSE_SERVER or DBUS_SESSION_BUS_ADDRESS.
+    Only includes variables that are actually set at install time.
+
+    When XDG_RUNTIME_DIR is absent (common under ``sudo``, which strips
+    session env vars), compute the standard path from the target user's
+    UID: ``/run/user/<uid>``.
+    """
+    audio_vars = ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS")
+    lines: list[str] = []
+    for name in audio_vars:
+        value = os.environ.get(name)
+        if value:
+            if not _safe_systemd_value(value):
+                logger.warning("Skipping %s: value contains unsafe characters", name)
+                continue
+            # Percent signs are special in systemd unit files.
+            lines.append(f'Environment="{name}={value.replace("%", "%%")}"')
+    # Deterministic fallback: sudo strips XDG_RUNTIME_DIR, but the
+    # standard path is always /run/user/<uid> on systemd machines.
+    if not any(line.startswith('Environment="XDG_RUNTIME_DIR=') for line in lines):
+        try:
+            uid = pwd.getpwnam(user).pw_uid
+            lines.insert(0, f'Environment="XDG_RUNTIME_DIR=/run/user/{uid}"')
+        except KeyError:
+            logger.warning(
+                "User %s not found — cannot compute XDG_RUNTIME_DIR fallback",
+                user,
+            )
+    return lines
+
+
 def _systemd_unit_content(user: str) -> str:
     args = _voxd_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
     raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     path_value = raw_path.replace("%", "%%")
+    audio_lines = _systemd_audio_env_lines(user)
+    env_block = ("\n" + " " * 8).join(
+        [f'Environment="PATH={path_value}"', *audio_lines]
+    )
     return textwrap.dedent(f"""\
         [Unit]
         Description=Voxd text-to-speech daemon
@@ -489,7 +537,9 @@ def _systemd_unit_content(user: str) -> str:
         [Service]
         User={user}
         ExecStart={exec_start}
-        Environment="PATH={path_value}"
+        {env_block}
+        RuntimeDirectory=vox
+        RuntimeDirectoryMode=0700
         Restart=on-failure
         RestartSec=5
 
