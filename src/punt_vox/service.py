@@ -476,11 +476,30 @@ _SYSTEMD_DIR = Path("/etc/systemd/system")
 _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 
 
+def _systemd_audio_env_lines() -> list[str]:
+    """Build Environment= lines for audio-related env vars.
+
+    PulseAudio/PipeWire need XDG_RUNTIME_DIR to find the user socket.
+    Some setups also require PULSE_SERVER or DBUS_SESSION_BUS_ADDRESS.
+    Only includes variables that are actually set at install time.
+    """
+    audio_vars = ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS")
+    lines: list[str] = []
+    for name in audio_vars:
+        value = os.environ.get(name)
+        if value:
+            # Percent signs are special in systemd unit files.
+            lines.append(f'Environment="{name}={value.replace("%", "%%")}"')
+    return lines
+
+
 def _systemd_unit_content(user: str) -> str:
     args = _voxd_exec_args()
     exec_start = " ".join(shlex.quote(a) for a in args)
     raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     path_value = raw_path.replace("%", "%%")
+    audio_lines = _systemd_audio_env_lines()
+    env_block = "\n".join([f'Environment="PATH={path_value}"', *audio_lines])
     return textwrap.dedent(f"""\
         [Unit]
         Description=Voxd text-to-speech daemon
@@ -489,7 +508,9 @@ def _systemd_unit_content(user: str) -> str:
         [Service]
         User={user}
         ExecStart={exec_start}
-        Environment="PATH={path_value}"
+        {env_block}
+        RuntimeDirectory=vox
+        RuntimeDirectoryMode=0700
         Restart=on-failure
         RestartSec=5
 

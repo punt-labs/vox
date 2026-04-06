@@ -17,6 +17,7 @@ from punt_vox.service import (
     _kill_pid,  # pyright: ignore[reportPrivateUsage]
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
+    _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
     _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     detect_platform,
@@ -107,6 +108,60 @@ def test_systemd_unit_contains_path_from_env(_mock_which: MagicMock) -> None:
 def test_systemd_unit_description(_mock_which: MagicMock) -> None:
     content = _systemd_unit_content("testuser")
     assert "Voxd text-to-speech daemon" in content
+
+
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_runtime_directory(_mock_which: MagicMock) -> None:
+    content = _systemd_unit_content("testuser")
+    assert "RuntimeDirectory=vox" in content
+    assert "RuntimeDirectoryMode=0700" in content
+
+
+@patch.dict(
+    "os.environ",
+    {
+        "PATH": "/usr/bin:/bin",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "PULSE_SERVER": "unix:/run/user/1000/pulse/native",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    },
+)
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_includes_audio_env_vars(_mock_which: MagicMock) -> None:
+    """Audio env vars present in the environment appear in the unit file."""
+    content = _systemd_unit_content("testuser")
+    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in content
+    assert 'Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"' in content
+    expected = 'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"'
+    assert expected in content
+
+
+@patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True)
+@patch("punt_vox.service.shutil.which", return_value="/usr/local/bin/voxd")
+def test_systemd_unit_omits_unset_audio_env_vars(_mock_which: MagicMock) -> None:
+    """Audio env vars absent from the environment do not appear in the unit."""
+    content = _systemd_unit_content("testuser")
+    assert "XDG_RUNTIME_DIR" not in content
+    assert "PULSE_SERVER" not in content
+    assert "DBUS_SESSION_BUS_ADDRESS" not in content
+
+
+@patch.dict(
+    "os.environ",
+    {"XDG_RUNTIME_DIR": "/run/user/1000"},
+    clear=True,
+)
+def test_systemd_audio_env_lines_xdg_only() -> None:
+    """Only XDG_RUNTIME_DIR set produces a single Environment line."""
+    lines = _systemd_audio_env_lines()
+    assert len(lines) == 1
+    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in lines[0]
+
+
+@patch.dict("os.environ", {}, clear=True)
+def test_systemd_audio_env_lines_empty_when_unset() -> None:
+    """No audio vars set produces an empty list."""
+    assert _systemd_audio_env_lines() == []
 
 
 # ---------------------------------------------------------------------------
