@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Silent playback on Linux**: voxd systemd unit lacked `XDG_RUNTIME_DIR`, so ffplay couldn't reach PulseAudio/PipeWire for audio output. Now captures audio session env vars at install time. Also adds `RuntimeDirectory=vox` so `/var/run/vox` survives reboots.
+- **Silent playback on Linux**: voxd systemd unit lacked `XDG_RUNTIME_DIR`, so ffplay couldn't reach PulseAudio/PipeWire for audio output. Now captures audio session env vars at install time. Also adds `RuntimeDirectory=vox` so `/var/run/vox` is created automatically at service start.
 
 ## [4.0.3] - 2026-04-06
 
