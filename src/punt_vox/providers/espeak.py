@@ -138,8 +138,10 @@ def _load_voices_from_system() -> None:
         if lang_key not in VOICES:
             VOICES[lang_key] = EspeakVoiceConfig(name=lang, language=iso)
 
-        # Register bare ISO 639-1 prefix for fallback (e.g. "en" from "en-us")
-        if len(iso) == 2 and iso not in VOICES:
+        # Register bare ISO 639-1 prefix for fallback (e.g. "en" from "en-us").
+        # A truly bare entry (lang == iso, e.g. "en") always wins over a
+        # qualified variant that was parsed first (e.g. "en-us").
+        if len(iso) == 2 and (lang == iso or iso not in VOICES):
             VOICES[iso] = EspeakVoiceConfig(name=lang, language=iso)
 
     _voices_loaded = True
@@ -298,7 +300,21 @@ class EspeakProvider:
             binary_name = Path(binary).name
             checks.append(HealthCheck(passed=True, message=f"{binary_name}: {binary}"))
             voice = self.default_voice
-            checks.append(HealthCheck(passed=True, message=f"default voice: {voice}"))
+            try:
+                cfg = self._resolve_voice_config(voice)
+                checks.append(
+                    HealthCheck(
+                        passed=True,
+                        message=f"default voice: {cfg.name} ({cfg.language})",
+                    )
+                )
+            except VoiceNotFoundError:
+                checks.append(
+                    HealthCheck(
+                        passed=False,
+                        message=f"default voice not available: {voice}",
+                    )
+                )
         else:
             checks.append(
                 HealthCheck(

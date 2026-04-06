@@ -330,7 +330,36 @@ class TestSayProviderCheckHealth:
             assert checks[0].passed
             assert "/usr/bin/say" in checks[0].message
             assert checks[1].passed
-            assert "default voice" in checks[1].message
+            assert "default voice: Samantha" in checks[1].message
+
+    def test_default_voice_unavailable(self) -> None:
+        """Health check reports failure when default voice can't be resolved."""
+        import punt_vox.providers.say as say_mod
+
+        with (
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
+        ):
+            mock_platform.system.return_value = "Darwin"
+            mock_shutil.which.return_value = "/usr/bin/say"
+            provider = SayProvider()
+
+        # Empty VOICES so the fallback "samantha" from default_voice can't resolve
+        say_mod.VOICES.clear()
+        say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+
+        with (
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
+        ):
+            mock_platform.system.return_value = "Darwin"
+            mock_shutil.which.return_value = "/usr/bin/say"
+            checks = provider.check_health()
+
+        assert len(checks) == 2
+        assert checks[0].passed
+        assert not checks[1].passed
+        assert "default voice unavailable" in checks[1].message
 
     def test_non_darwin(self) -> None:
         with (

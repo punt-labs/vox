@@ -269,7 +269,21 @@ class SayProvider:
         if say_path:
             checks.append(HealthCheck(passed=True, message=f"macOS say: {say_path}"))
             voice = self.default_voice
-            checks.append(HealthCheck(passed=True, message=f"default voice: {voice}"))
+            try:
+                resolved = self.resolve_voice(voice)
+                checks.append(
+                    HealthCheck(
+                        passed=True,
+                        message=f"default voice: {resolved}",
+                    )
+                )
+            except (ValueError, VoiceNotFoundError):
+                checks.append(
+                    HealthCheck(
+                        passed=False,
+                        message=f"default voice unavailable: {voice}",
+                    )
+                )
         else:
             checks.append(
                 HealthCheck(
