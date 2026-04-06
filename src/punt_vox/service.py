@@ -478,10 +478,11 @@ _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 def _safe_systemd_value(value: str) -> bool:
     """Return True if *value* is safe to embed in a systemd Environment= line.
 
-    Rejects newlines and double quotes, which could inject directives
-    or break the quoting.
+    Rejects newlines, double quotes, and backslashes. Systemd interprets
+    C-style escapes in double-quoted strings, so a backslash could escape
+    the closing quote or inject control characters.
     """
-    return not any(c in value for c in '\n\r"')
+    return not any(c in value for c in '\n\r"\\')
 
 
 def _systemd_audio_env_lines(user: str) -> list[str]:

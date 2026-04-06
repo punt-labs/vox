@@ -256,6 +256,10 @@ def test_safe_systemd_value_rejects_carriage_return() -> None:
     assert _safe_systemd_value("foo\rbar") is False
 
 
+def test_safe_systemd_value_rejects_backslash() -> None:
+    assert _safe_systemd_value("foo\\bar") is False
+
+
 # ---------------------------------------------------------------------------
 # Platform detection
 # ---------------------------------------------------------------------------
