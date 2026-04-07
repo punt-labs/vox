@@ -39,6 +39,7 @@ from pathlib import Path
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
+    log_dir as _paths_log_dir,
     run_dir as _user_run_dir,
     user_state_dir as _paths_user_state_dir,
 )
@@ -417,7 +418,11 @@ def _launchd_plist_content(user: str) -> str:
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
-    log_dir = _paths_user_state_dir() / "logs"
+    # Route the log dir through the centralized helper in
+    # ``punt_vox.paths`` so this generator stays in sync if the
+    # subdirectory layout ever changes there. Cursor Bugbot 3048378758
+    # on PR #162.
+    log_dir = _paths_log_dir()
     stdout_log = html.escape(str(log_dir / "voxd-stdout.log"))
     stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
