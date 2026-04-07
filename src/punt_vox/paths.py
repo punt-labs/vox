@@ -89,21 +89,25 @@ def installing_user() -> str:
     return os.environ.get("SUDO_USER") or getpass.getuser()
 
 
-def ensure_user_dirs(state_root: Path) -> None:
-    """Create ``state_root`` and its required subdirectories.
+def ensure_user_dirs(state_root: Path | None = None) -> None:
+    """Create the per-user state dir and its required subdirectories.
 
     Creates ``<state_root>``, ``<state_root>/logs``, ``<state_root>/run``,
-    and ``<state_root>/cache``. All four dirs are chmod 0700 because
-    every one of them holds private per-user state: provider API keys,
-    spoken-text logs, auth token, cached synthesis output.
+    and ``<state_root>/cache``. When *state_root* is ``None``, resolves
+    to the current user's state dir via ``user_state_dir()``.
 
-    Idempotent: safe to call repeatedly. Does not chown. Under ``sudo``,
-    callers can either invoke this as the target user (for example
-    after ``seteuid`` or in a child process running as that user) or
-    call it as root and chown the created paths afterward — the service
-    module's ``_ensure_user_dirs`` wrapper does the latter after a
-    symlink-safety check on every path component.
+    All four dirs are chmod 0700 because every one of them holds
+    private per-user state: provider API keys, spoken-text logs, auth
+    token, cached synthesis output. The chmod is applied on every call,
+    not just at creation time, so pre-existing directories with looser
+    permissions (for example 0755 from an older version that respected
+    process umask) are tightened on the next startup.
+
+    Idempotent: safe to call repeatedly. Does not chown — callers are
+    expected to invoke this as the target user.
     """
+    if state_root is None:
+        state_root = user_state_dir()
     state_root.mkdir(parents=True, exist_ok=True)
     state_root.chmod(0o700)
     for subdir in ("logs", "run", "cache"):

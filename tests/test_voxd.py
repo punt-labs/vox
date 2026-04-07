@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
     DaemonContext,
     _config_dir,
@@ -721,3 +722,146 @@ class TestLoadKeys:
         import os as _os
 
         assert "HACKER_BACKDOOR" not in _os.environ
+
+
+class TestVoxdStartupEnforces0700:
+    """voxd.main() must tighten existing state dirs to mode 0700.
+
+    Copilot finding 3048101870 on PR #162: the existing helpers used
+    ``Path.mkdir(..., exist_ok=True)`` which respects the process
+    umask (``0022`` on most shells → directories created as ``0755``).
+    ``paths.ensure_user_dirs()`` creates-or-chmods each subdir with an
+    explicit ``0o700`` so pre-existing directories with looser
+    permissions are tightened on the next startup.
+    """
+
+    def test_ensure_user_dirs_tightens_preexisting_logs_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A pre-existing 0755 logs dir is chmod'd to 0700."""
+        import os as _os
+        import stat as _stat
+
+        fake_home = tmp_path / "home" / "user"
+        state_root = fake_home / ".punt-labs" / "vox"
+        logs = state_root / "logs"
+        logs.mkdir(parents=True)
+        # Pre-create with loose umask-style permissions. This is what
+        # an older voxd left behind before the 0700 contract.
+        logs.chmod(0o755)
+        state_root.chmod(0o755)
+        assert _stat.S_IMODE(_os.stat(logs).st_mode) == 0o755
+
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        # The no-arg form resolves the current user's state dir.
+        ensure_user_dirs()
+
+        # Every subdir and the root are now 0700.
+        for target in (state_root, logs, state_root / "run", state_root / "cache"):
+            mode = _stat.S_IMODE(_os.stat(target).st_mode)
+            assert mode == 0o700, (
+                f"{target} mode is {oct(mode)} after ensure_user_dirs(); expected 0o700"
+            )
+
+    def test_ensure_user_dirs_creates_all_subdirs_when_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fresh ``$HOME`` with no state dir: ensure_user_dirs creates it."""
+        import os as _os
+        import stat as _stat
+
+        fake_home = tmp_path / "home" / "fresh"
+        fake_home.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        ensure_user_dirs()
+
+        state_root = fake_home / ".punt-labs" / "vox"
+        assert state_root.is_dir()
+        for name in ("logs", "run", "cache"):
+            d = state_root / name
+            assert d.is_dir()
+            mode = _stat.S_IMODE(_os.stat(d).st_mode)
+            assert mode == 0o700
+
+
+class TestVoxdPathHelpersArePure:
+    """``_log_dir``, ``_run_dir``, ``_config_dir`` must be side-effect free.
+
+    Closes Copilot 3047999704 (mode 0755 leak from `_log_dir`) and
+    Cursor Bugbot 3048161272 (helper is side-effectful, inconsistent
+    with sibling pure-path helpers). Once ``voxd.main()`` calls
+    ``paths.ensure_user_dirs()`` at startup, the helpers no longer
+    need to create or chmod anything — they are pure path views.
+    """
+
+    def test_log_dir_is_pure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``_log_dir()`` must not create or modify the directory.
+
+        Calling it twice on a tmp HOME with no pre-existing state dir
+        must return the correct path on both calls and leave the
+        filesystem untouched.
+        """
+        fake_home = tmp_path / "home" / "user"
+        fake_home.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        expected = fake_home / ".punt-labs" / "vox" / "logs"
+        assert not expected.exists()
+
+        result_1 = _log_dir()
+        result_2 = _log_dir()
+
+        assert result_1 == expected
+        assert result_2 == expected
+        # The helper must not have created the directory.
+        assert not expected.exists(), (
+            f"_log_dir() created {expected} as a side effect — "
+            "helper should be pure path resolution"
+        )
+
+    def test_run_dir_is_pure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``_run_dir()`` must not create or modify the directory."""
+        fake_home = tmp_path / "home" / "user"
+        fake_home.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        expected = fake_home / ".punt-labs" / "vox" / "run"
+        assert not expected.exists()
+
+        result = _run_dir()
+
+        assert result == expected
+        assert not expected.exists()
+
+    def test_config_dir_is_pure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``_config_dir()`` must not create or modify the directory."""
+        fake_home = tmp_path / "home" / "user"
+        fake_home.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        expected = fake_home / ".punt-labs" / "vox"
+        # The state root parent does not exist yet.
+        assert not expected.exists()
+
+        result = _config_dir()
+
+        assert result == expected
+        assert not expected.exists()

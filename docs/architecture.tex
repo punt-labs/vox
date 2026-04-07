@@ -223,14 +223,19 @@ file in the project directory.  The daemon never reads it.
 \subsection{Service Install and Identity}
 
 \begin{verbatim}
-sudo vox daemon install
+vox daemon install
 \end{verbatim}
 
-Requires \texttt{sudo} because the service plist (macOS) or unit
-(Linux) is written to a system directory.  \texttt{voxd} runs as the
-\emph{installing user}, not root---it needs audio device access tied
-to the desktop session.  The LaunchDaemon plist sets
-\texttt{UserName}; the systemd unit sets \texttt{User=}.
+Runs as the invoking user.  Per-user state under
+\texttt{\textasciitilde/.punt-labs/vox/} (keys, logs, runtime state,
+cache) is created with normal user permissions---no chown, no symlink
+defenses.  Sudo escalation is scoped to exactly three
+\texttt{subprocess.run(["sudo", \ldots])} calls per platform: writing
+the service file into its system directory via \texttt{install(1)},
+reloading the daemon manager, and enabling the service.
+\texttt{voxd} runs as the \emph{installing user}, not root---it needs
+audio device access tied to the desktop session.  The LaunchDaemon
+plist sets \texttt{UserName}; the systemd unit sets \texttt{User=}.
 
 On macOS, \texttt{voxd} detects the Homebrew prefix at startup via
 \texttt{brew --prefix} (default \texttt{/opt/homebrew} on Apple

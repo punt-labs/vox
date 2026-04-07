@@ -1238,7 +1238,7 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited th
 
 A dedicated config file at the system config directory — `$(brew --prefix)/etc/vox/keys.env` on macOS, `/etc/vox/keys.env` on Linux. Simple `KEY=VALUE` format, chmod 0600.
 
-**Write path:** `sudo vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the system config file.
+**Write path:** `vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the per-user config file at `~/.punt-labs/vox/keys.env`. Runs as the installing user — no sudo for the file write.
 
 **Read path:** `voxd` calls `_load_keys()` at startup, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
 - launchd/systemd daemon: loads all keys from file (nothing in env)

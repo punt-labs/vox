@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import stat as stat_mod
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
@@ -18,11 +19,12 @@ from punt_vox.service import (
     _is_vox_daemon_process,  # pyright: ignore[reportPrivateUsage]
     _kill_pid,  # pyright: ignore[reportPrivateUsage]
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
+    _launchd_install,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
     _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
+    _systemd_install,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
-    _user_keys_env_file_for,  # pyright: ignore[reportPrivateUsage]
     _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     _write_keys_env,  # pyright: ignore[reportPrivateUsage]
     detect_platform,
@@ -46,7 +48,6 @@ def test_voxd_exec_args_resolves_relative_to_sys_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """_voxd_exec_args must use sys.executable/../voxd, not $PATH."""
-    # Create a fake distribution layout with our voxd.
     bin_dir = tmp_path / "fake-dist" / "bin"
     bin_dir.mkdir(parents=True)
     fake_voxd = bin_dir / "voxd"
@@ -73,7 +74,6 @@ def test_voxd_exec_args_ignores_stale_voxd_on_path(
     earlier ``uv tool install`` that no longer matches the currently
     installed ``vox``.
     """
-    # Fake "current" distribution
     current = tmp_path / "current" / "bin"
     current.mkdir(parents=True)
     (current / "voxd").write_text("current")
@@ -81,7 +81,6 @@ def test_voxd_exec_args_ignores_stale_voxd_on_path(
     (current / "python").write_text("#!/bin/sh\n")
     (current / "python").chmod(0o755)
 
-    # Stale uv-tool binary — this is what shutil.which would have returned.
     stale_dir = tmp_path / "stale" / "bin"
     stale_dir.mkdir(parents=True)
     (stale_dir / "voxd").write_text("stale")
@@ -152,32 +151,27 @@ def test_launchd_plist_contains_log_paths(_mock_exec: MagicMock) -> None:
     "punt_vox.service._voxd_exec_args",
     return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
-def test_launchd_plist_log_paths_use_target_user_home(
+def test_launchd_plist_log_paths_use_current_user_home(
     _mock_exec: MagicMock,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Log paths in the plist must be resolved from the target user's home.
+    """Log paths in the plist come from the invoking user's ``$HOME``.
 
-    Regression test for Cursor Bugbot medium-severity finding on PR #162:
-    under ``sudo`` the process's ``HOME`` points at ``/var/root``, so
-    ``_log_dir()`` via ``Path.home()`` would bake the wrong path into
-    the plist. Fixed by routing through ``_user_state_dir_for(user)``.
+    Install runs as the user now — no sudo escalation — so
+    ``Path.home()`` is always the installing user's home. Previously
+    service.py had to route through ``_user_state_dir_for(user)`` to
+    work around sudo's ``$HOME=/var/root``; that workaround is gone.
     """
-    # Simulate sudo: process HOME is /var/root, target user's home is elsewhere.
-    monkeypatch.setenv("HOME", "/var/root")
-
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir="/Users/deploy")
-
-    def _fake_getpwnam(_user: str) -> MagicMock:
-        return fake_pw
-
-    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
+    fake_home = tmp_path / "Users" / "deploy"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
 
     content = _launchd_plist_content("deploy")
-    # Target user's home path should appear in the plist, not /var/root.
-    assert "/Users/deploy/.punt-labs/vox/logs/voxd-stdout.log" in content
-    assert "/Users/deploy/.punt-labs/vox/logs/voxd-stderr.log" in content
-    assert "/var/root" not in content
+    expected_stdout = str(fake_home / ".punt-labs" / "vox" / "logs" / "voxd-stdout.log")
+    expected_stderr = str(fake_home / ".punt-labs" / "vox" / "logs" / "voxd-stderr.log")
+    assert expected_stdout in content
+    assert expected_stderr in content
 
 
 @patch(
@@ -330,7 +324,7 @@ def test_systemd_unit_multiline_env_indented(
     "punt_vox.service._voxd_exec_args",
     return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
-def test_systemd_unit_xdg_fallback_under_sudo(
+def test_systemd_unit_xdg_fallback_without_env(
     _mock_exec: MagicMock,
     mock_getpwnam: MagicMock,
 ) -> None:
@@ -387,7 +381,6 @@ def test_systemd_audio_env_lines_fallback_unknown_user(
 def test_systemd_audio_env_lines_rejects_unsafe_value() -> None:
     """Values with newlines or quotes are rejected."""
     lines = _systemd_audio_env_lines("testuser")
-    # The unsafe XDG value is rejected; fallback fires from pwd.
     assert not any("evil" in line for line in lines)
 
 
@@ -453,7 +446,6 @@ def test_find_pid_on_port_macos(mock_run: MagicMock, _mock_sys: MagicMock) -> No
 def test_find_pid_on_port_macos_multiple(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    # lsof returns one PID per line — daemon + mcp-proxy client.
     mock_run.return_value = MagicMock(returncode=0, stdout="12345\n67890\n")
     assert _find_pid_on_port(8421) == [12345, 67890]
 
@@ -461,7 +453,6 @@ def test_find_pid_on_port_macos_multiple(
 @patch("punt_vox.service.platform.system", return_value="Linux")
 @patch("punt_vox.service.subprocess.run")
 def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
-    # fuser returns "8421/tcp:  6789" — not a bare PID.
     mock_run.return_value = MagicMock(returncode=0, stdout="8421/tcp:  6789\n")
     assert _find_pid_on_port(8421) == [6789]
     mock_run.assert_called_once_with(
@@ -494,7 +485,6 @@ def test_find_pid_on_port_timeout(_mock_run: MagicMock, _mock_sys: MagicMock) ->
 
 @patch("punt_vox.service.os.kill")
 def test_kill_pid_exits_after_sigterm(mock_kill: MagicMock) -> None:
-    # First call: SIGTERM succeeds. Second call (probe): process gone.
     mock_kill.side_effect = [None, ProcessLookupError]
     assert _kill_pid(100) is True
     assert mock_kill.call_args_list[0] == call(100, signal.SIGTERM)
@@ -506,6 +496,29 @@ def test_kill_pid_already_gone(mock_kill: MagicMock) -> None:
     mock_kill.side_effect = ProcessLookupError
     assert _kill_pid(100) is True
     mock_kill.assert_called_once_with(100, signal.SIGTERM)
+
+
+@patch("punt_vox.service.os.kill", side_effect=PermissionError)
+def test_kill_pid_permission_error(mock_kill: MagicMock) -> None:
+    assert _kill_pid(100) is False
+    mock_kill.assert_called_once_with(100, signal.SIGTERM)
+
+
+@patch("punt_vox.service.time.sleep")
+@patch("punt_vox.service.time.monotonic")
+@patch("punt_vox.service.os.kill")
+def test_kill_pid_sigkill_after_timeout(
+    mock_kill: MagicMock, mock_monotonic: MagicMock, _mock_sleep: MagicMock
+) -> None:
+    mock_kill.side_effect = [None, None, None, ProcessLookupError]
+    mock_monotonic.side_effect = [0.0, 0.0, 6.0, 6.0, 6.0]
+    assert _kill_pid(100) is True
+    assert mock_kill.call_args_list == [
+        call(100, signal.SIGTERM),
+        call(100, 0),
+        call(100, signal.SIGKILL),
+        call(100, 0),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -651,449 +664,7 @@ def test_is_vox_daemon_process_timeout(_mock_run: MagicMock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _kill_pid — PermissionError
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.os.kill", side_effect=PermissionError)
-def test_kill_pid_permission_error(mock_kill: MagicMock) -> None:
-    assert _kill_pid(100) is False
-    mock_kill.assert_called_once_with(100, signal.SIGTERM)
-
-
-# ---------------------------------------------------------------------------
-# _kill_pid — SIGKILL fallback
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.time.sleep")
-@patch("punt_vox.service.time.monotonic")
-@patch("punt_vox.service.os.kill")
-def test_kill_pid_sigkill_after_timeout(
-    mock_kill: MagicMock, mock_monotonic: MagicMock, _mock_sleep: MagicMock
-) -> None:
-    # SIGTERM succeeds, probes never raise (process alive), then SIGKILL,
-    # then post-SIGKILL probe raises ProcessLookupError (confirmed dead).
-    mock_kill.side_effect = [None, None, None, ProcessLookupError]
-    # monotonic: SIGTERM deadline (0.0), probe before deadline (0.0),
-    # past deadline (6.0), post-SIGKILL deadline (6.0), probe check (6.0).
-    mock_monotonic.side_effect = [0.0, 0.0, 6.0, 6.0, 6.0]
-    assert _kill_pid(100) is True
-    assert mock_kill.call_args_list == [
-        call(100, signal.SIGTERM),
-        call(100, 0),
-        call(100, signal.SIGKILL),
-        call(100, 0),
-    ]
-
-
-# ---------------------------------------------------------------------------
-# _launchd_install — subprocess sequence
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.subprocess.run")
-@patch("punt_vox.service._ensure_port_free")
-@patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
-def test_launchd_install_fresh(
-    _mock_content: MagicMock,
-    mock_plist: MagicMock,
-    mock_ensure: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Fresh install: no unload, ensure_port_free, write plist, load."""
-    from punt_vox.service import _launchd_install  # pyright: ignore[reportPrivateUsage]
-
-    mock_plist.exists.return_value = False
-    mock_run.return_value = MagicMock(returncode=0)
-
-    _launchd_install("testuser")
-
-    # No unload call -- plist didn't exist
-    mock_ensure.assert_called_once()
-    mock_plist.write_text.assert_called_once_with("<plist>test</plist>")
-    # Only the load call
-    assert mock_run.call_count == 1
-    load_call = mock_run.call_args_list[0]
-    assert "load" in load_call[0][0]
-    assert "-w" in load_call[0][0]
-
-
-@patch("punt_vox.service.subprocess.run")
-@patch("punt_vox.service._ensure_port_free")
-@patch("punt_vox.service._LAUNCHD_PLIST")
-@patch("punt_vox.service._launchd_plist_content", return_value="<plist>test</plist>")
-def test_launchd_install_upgrade(
-    _mock_content: MagicMock,
-    mock_plist: MagicMock,
-    mock_ensure: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Upgrade: unload existing, ensure_port_free, write plist, load."""
-    from punt_vox.service import _launchd_install  # pyright: ignore[reportPrivateUsage]
-
-    mock_plist.exists.return_value = True
-    mock_run.return_value = MagicMock(returncode=0)
-
-    _launchd_install("testuser")
-
-    # First call is unload, second is load
-    assert mock_run.call_count == 2
-    unload_call = mock_run.call_args_list[0]
-    assert "unload" in unload_call[0][0]
-    assert "-w" in unload_call[0][0]
-
-    mock_ensure.assert_called_once()
-    mock_plist.write_text.assert_called_once_with("<plist>test</plist>")
-
-    load_call = mock_run.call_args_list[1]
-    assert "load" in load_call[0][0]
-
-
-# ---------------------------------------------------------------------------
-# _systemd_install — subprocess sequence
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.subprocess.run")
-@patch("punt_vox.service._ensure_port_free")
-@patch("punt_vox.service._SYSTEMD_UNIT")
-@patch("punt_vox.service._SYSTEMD_DIR")
-@patch("punt_vox.service._systemd_unit_content", return_value="[Unit]\ntest")
-def test_systemd_install_fresh(
-    _mock_content: MagicMock,
-    mock_systemd_dir: MagicMock,
-    mock_unit: MagicMock,
-    mock_ensure: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Fresh install: no stop, ensure_port_free, write unit, reload, enable."""
-    from punt_vox.service import _systemd_install  # pyright: ignore[reportPrivateUsage]
-
-    mock_unit.exists.return_value = False
-    mock_run.return_value = MagicMock(returncode=0)
-
-    _systemd_install("testuser")
-
-    # No stop call -- unit didn't exist
-    mock_ensure.assert_called_once()
-    mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
-    # daemon-reload + enable --now
-    assert mock_run.call_count == 2
-    reload_call = mock_run.call_args_list[0]
-    assert "daemon-reload" in reload_call[0][0]
-    enable_call = mock_run.call_args_list[1]
-    assert "enable" in enable_call[0][0]
-    assert "--now" in enable_call[0][0]
-
-
-@patch("punt_vox.service.subprocess.run")
-@patch("punt_vox.service._ensure_port_free")
-@patch("punt_vox.service._SYSTEMD_UNIT")
-@patch("punt_vox.service._SYSTEMD_DIR")
-@patch("punt_vox.service._systemd_unit_content", return_value="[Unit]\ntest")
-def test_systemd_install_upgrade(
-    _mock_content: MagicMock,
-    mock_systemd_dir: MagicMock,
-    mock_unit: MagicMock,
-    mock_ensure: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Upgrade: stop existing, ensure_port_free, write unit, reload, enable."""
-    from punt_vox.service import _systemd_install  # pyright: ignore[reportPrivateUsage]
-
-    mock_unit.exists.return_value = True
-    mock_run.return_value = MagicMock(returncode=0)
-
-    _systemd_install("testuser")
-
-    # First call is stop, then daemon-reload, then enable --now
-    assert mock_run.call_count == 3
-    stop_call = mock_run.call_args_list[0]
-    assert "stop" in stop_call[0][0]
-    assert "voxd" in stop_call[0][0]
-
-    mock_ensure.assert_called_once()
-    mock_unit.write_text.assert_called_once_with("[Unit]\ntest")
-
-    reload_call = mock_run.call_args_list[1]
-    assert "daemon-reload" in reload_call[0][0]
-    enable_call = mock_run.call_args_list[2]
-    assert "enable" in enable_call[0][0]
-
-
-# ---------------------------------------------------------------------------
-# install() — public API
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_returns_running_status(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    _mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-) -> None:
-    """install() reports running status when launchd confirms the service."""
-    result = install()
-    assert "running" in result
-    assert "voxd" in result
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_calls_ensure_user_dirs(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    mock_dirs: MagicMock,
-    _mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-) -> None:
-    """install() creates per-user state directories via _ensure_user_dirs."""
-    install()
-    mock_dirs.assert_called_once_with("testuser")
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_calls_write_keys_env(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-) -> None:
-    """install() writes provider keys to the user's keys.env path."""
-    install()
-    mock_keys.assert_called_once()
-    # First positional arg is a dict (os.environ), second is keys_path (Path)
-    args = mock_keys.call_args[0]
-    assert isinstance(args[0], dict)
-    assert isinstance(args[1], Path)
-    # The second arg is the keys.env file itself, not a config dir.
-    assert args[1].name == "keys.env"
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_passes_target_uid_to_write_keys_env_under_sudo(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Under sudo, install() passes target uid/gid to _write_keys_env.
-
-    The keys file is then handed back to the installing user via
-    ``fchown`` on the open descriptor inside ``_write_keys_env`` —
-    symlink-safe. This replaces the legacy ``_chown_to_user`` path-based
-    chown that ran after the write.
-    """
-
-    def _fake_root() -> int:
-        return 0
-
-    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_root)
-
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000)
-
-    def _fake_getpwnam(_user: str) -> MagicMock:
-        return fake_pw
-
-    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
-
-    install()
-    mock_keys.assert_called_once()
-    kwargs = mock_keys.call_args.kwargs
-    assert kwargs["target_uid"] == 1000
-    assert kwargs["target_gid"] == 1000
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_passes_no_target_uid_when_not_root(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When the installer runs as the user, no target_uid is needed."""
-
-    def _fake_user() -> int:
-        return 1000
-
-    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_user)
-
-    install()
-    mock_keys.assert_called_once()
-    kwargs = mock_keys.call_args.kwargs
-    assert kwargs["target_uid"] is None
-    assert kwargs["target_gid"] is None
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_passes_user_to_launchd(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    _mock_keys: MagicMock,
-    mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-) -> None:
-    """install() passes the installing user to _launchd_install."""
-    install()
-    mock_launchd.assert_called_once_with("testuser")
-
-
-@patch("punt_vox.service._launchd_status", return_value=False)
-@patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
-@patch(
-    "punt_vox.service._ensure_user_dirs",
-    return_value=Path("/fake/home/.punt-labs/vox"),
-)
-@patch(
-    "punt_vox.service._user_keys_env_file_for",
-    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
-)
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service._installing_user", return_value="testuser")
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_reports_not_running(
-    _mock_platform: MagicMock,
-    _mock_user: MagicMock,
-    _mock_args: MagicMock,
-    _mock_keys_path: MagicMock,
-    _mock_dirs: MagicMock,
-    _mock_keys: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-) -> None:
-    """install() reports 'not yet running' when launchd says service is down."""
-    result = install()
-    assert "not yet running" in result
-
-
-# ---------------------------------------------------------------------------
-# _ensure_port_free — SystemExit when port occupied
+# _ensure_port_free
 # ---------------------------------------------------------------------------
 
 
@@ -1140,12 +711,9 @@ def test_write_keys_env_creates_file_at_target_path(tmp_path: Path) -> None:
 
 def test_write_keys_env_mode_0600(tmp_path: Path) -> None:
     """keys.env must always be chmod 0600 — it holds provider secrets."""
-    import os as _os
-    import stat as _stat
-
     keys_path = tmp_path / "keys.env"
     _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
-    mode = _stat.S_IMODE(_os.stat(keys_path).st_mode)
+    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
     assert mode == 0o600, f"keys.env mode is {oct(mode)}, expected 0o600"
 
 
@@ -1155,7 +723,6 @@ def test_write_keys_env_preserves_existing_keys(tmp_path: Path) -> None:
     keys_path.write_text(
         "# header\nELEVENLABS_API_KEY=original-eleven\nOPENAI_API_KEY=original-openai\n"
     )
-    # Only pass one key; the other must remain.
     _write_keys_env({"OPENAI_API_KEY": "new-openai"}, keys_path)
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY=original-eleven" in content
@@ -1179,317 +746,13 @@ def test_write_keys_env_no_sudo_required_note(tmp_path: Path) -> None:
     assert "no sudo" in content.lower()
 
 
-# ---------------------------------------------------------------------------
-# _user_keys_env_file_for — routes to per-user state dir
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.paths.pwd.getpwnam")
-def test_user_keys_env_file_for_routes_to_home(mock_getpwnam: MagicMock) -> None:
-    """The keys.env path is computed from pwd.getpwnam(user).pw_dir."""
-    mock_pw = MagicMock()
-    mock_pw.pw_dir = "/home/jfreeman"
-    mock_getpwnam.return_value = mock_pw
-    assert _user_keys_env_file_for("jfreeman") == Path(
-        "/home/jfreeman/.punt-labs/vox/keys.env"
-    )
-
-
-# ---------------------------------------------------------------------------
-# install() under sudo: keys.env must end up owned by the installing user
-# ---------------------------------------------------------------------------
-
-# NOTE: ``_chown_to_user`` was removed by the PR #162 review cycle —
-# ``_write_keys_env`` now performs the ownership change via ``fchown``
-# on an already-opened file descriptor, which is fundamentally
-# symlink-safe (the fd points at a verified inode, not a path).
-# Tests for the old path-based helper were deleted with the helper.
-
-
-@patch("punt_vox.service._launchd_status", return_value=True)
-@patch("punt_vox.service._launchd_install")
-@patch(
-    "punt_vox.service._voxd_exec_args",
-    return_value=["/usr/local/bin/voxd", "--port", "8421"],
-)
-@patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_under_sudo_chowns_keys_env_to_sudo_user(
-    _mock_platform: MagicMock,
-    _mock_args: MagicMock,
-    _mock_launchd: MagicMock,
-    _mock_status: MagicMock,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """sudo vox daemon install: resulting keys.env belongs to SUDO_USER.
-
-    Regression test for the v3 install bug where _write_keys_env ran as
-    root, left the file root-owned, and the daemon (running as the
-    target user) could not read its own keys. Also verifies the
-    symlink-safe ownership path introduced in the PR #162 review cycle:
-    ``_ensure_user_dirs`` uses ``os.lchown`` on the directories and
-    ``_write_keys_env`` uses ``os.fchown`` on the open keys.env fd.
-    """
-    # Simulate sudo: SUDO_USER is set, and os.getuid() returns 0.
-    monkeypatch.setenv("SUDO_USER", "jfreeman")
-
-    def _fake_geteuid_zero() -> int:
-        return 0
-
-    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_geteuid_zero)
-
-    # Route home dir resolution to a fake home under tmp_path.
-    # The ~/.punt-labs parent must already exist — the install command
-    # refuses to create it under sudo (would leave it root-owned).
-    fake_home = tmp_path / "home" / "jfreeman"
-    (fake_home / ".punt-labs").mkdir(parents=True)
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-
-    def _fake_getpwnam(_user: str) -> MagicMock:
-        return fake_pw
-
-    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
-    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
-
-    # Track directory ownership calls. os.chown and os.lchown are used
-    # by _ensure_user_dirs on the created directories; os.fchown is
-    # used by _write_keys_env on the open keys.env descriptor.
-    dir_chown_calls: list[tuple[str, int, int]] = []
-    fchown_calls: list[tuple[int, int, int]] = []
-
-    def _fake_chown(path: str, uid: int, gid: int) -> None:
-        dir_chown_calls.append((str(path), uid, gid))
-
-    def _fake_fchown(fd: int, uid: int, gid: int) -> None:
-        fchown_calls.append((fd, uid, gid))
-
-    monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
-    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_chown)
-    monkeypatch.setattr("punt_vox.service.os.fchown", _fake_fchown)
-
-    install()
-
-    expected_keys = fake_home / ".punt-labs" / "vox" / "keys.env"
-    # _ensure_user_dirs should have chowned each created directory to
-    # jfreeman. keys.env itself is handed back via fchown (fd-based,
-    # symlink-safe), so we check fchown was called with the target uid.
-    assert any(call_[1] == 1000 and call_[2] == 1000 for call_ in fchown_calls), (
-        f"os.fchown was not called with target uid/gid for {expected_keys}; "
-        f"fchown calls: {fchown_calls}"
-    )
-    # The parent vox directory must also be chowned to the user (so the
-    # daemon can actually write inside it).
-    vox_dir = str(fake_home / ".punt-labs" / "vox")
-    assert any(call_[0] == vox_dir for call_ in dir_chown_calls), (
-        f"vox state dir at {vox_dir} was not handed back to jfreeman; "
-        f"dir chown calls: {dir_chown_calls}"
-    )
-    # The ~/.punt-labs parent must NEVER appear in the chown targets —
-    # it could be a symlink to /etc and hand root-owned system paths
-    # to the user.
-    dot_punt = str(fake_home / ".punt-labs")
-    assert not any(call_[0] == dot_punt for call_ in dir_chown_calls), (
-        f"{dot_punt} was chowned — symlink escalation risk"
-    )
-    # keys.env must exist on disk after install.
-    assert expected_keys.exists(), f"install() failed to create {expected_keys}"
-
-
-# ---------------------------------------------------------------------------
-# _ensure_user_dirs — end-to-end with tmp_path
-# ---------------------------------------------------------------------------
-
-
-def test_ensure_user_dirs_creates_all_subdirs_under_target_user_home(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """End-to-end: calling _ensure_user_dirs creates the tree and returns root."""
-    fake_home = tmp_path / "home" / "testuser"
-    (fake_home / ".punt-labs").mkdir(parents=True)
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-
-    def _fake_getpwnam(_user: str) -> MagicMock:
-        return fake_pw
-
-    def _fake_geteuid_nonroot() -> int:
-        return 1000
-
-    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
-    # Not root — no chown path.
-    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_geteuid_nonroot)
-
-    result = _ensure_user_dirs("testuser")
-    expected = fake_home / ".punt-labs" / "vox"
-    assert result == expected
-    assert expected.is_dir()
-    assert (expected / "logs").is_dir()
-    assert (expected / "run").is_dir()
-    assert (expected / "cache").is_dir()
-
-
-# ---------------------------------------------------------------------------
-# Symlink-safety regression tests (Cursor Bugbot findings on PR #162)
-# ---------------------------------------------------------------------------
-
-
-def _install_typed_getpwnam_stub(
-    monkeypatch: pytest.MonkeyPatch, pw: MagicMock
-) -> None:
-    """Install a typed, non-lambda stub for ``pwd.getpwnam`` in both modules."""
-
-    def _fake(_user: str) -> MagicMock:
-        return pw
-
-    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake)
-    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake)
-
-
-def _install_typed_getuid_stub(monkeypatch: pytest.MonkeyPatch, value: int) -> None:
-    def _fake() -> int:
-        return value
-
-    monkeypatch.setattr("punt_vox.service.os.getuid", _fake)
-
-
-def test_ensure_user_dirs_refuses_symlink_punt_labs_parent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """~/.punt-labs must not be a symlink — would let root chown arbitrary dirs.
-
-    Cursor Bugbot critical finding on PR #162.
-    """
-    fake_home = tmp_path / "home" / "attacker"
-    fake_home.mkdir(parents=True)
-    # Attacker pre-places ~/.punt-labs as a symlink to somewhere sensitive.
-    evil_target = tmp_path / "evil_etc"
-    evil_target.mkdir()
-    os.symlink(str(evil_target), str(fake_home / ".punt-labs"))
-
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
-
-    with pytest.raises(OSError, match="symlink"):
-        _ensure_user_dirs("attacker")
-
-
-def test_ensure_user_dirs_refuses_symlink_state_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """~/.punt-labs/vox must not be a symlink either."""
-    fake_home = tmp_path / "home" / "attacker"
-    (fake_home / ".punt-labs").mkdir(parents=True)
-    # Attacker pre-places ~/.punt-labs/vox as a symlink.
-    evil_target = tmp_path / "evil"
-    evil_target.mkdir()
-    os.symlink(str(evil_target), str(fake_home / ".punt-labs" / "vox"))
-
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
-
-    with pytest.raises(OSError, match="symlink"):
-        _ensure_user_dirs("attacker")
-
-
-def test_ensure_user_dirs_fails_when_dot_punt_labs_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Missing ~/.punt-labs is a pre-install error — don't create it as root.
-
-    Creating the parent under sudo would leave it root-owned and the
-    daemon could never write into it. Fail fast with a clear message
-    telling the user to create the dir themselves first.
-    """
-    fake_home = tmp_path / "home" / "nouser"
-    fake_home.mkdir(parents=True)
-    # Note: ~/.punt-labs is NOT created
-
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
-
-    with pytest.raises(SystemExit, match="does not exist"):
-        _ensure_user_dirs("nouser")
-
-
-def test_ensure_user_dirs_never_chowns_parent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """~/.punt-labs must never appear in the chown target list.
-
-    Cursor Bugbot's original critical finding: chowning
-    ``state_root.parent`` would escalate if the parent was a symlink.
-    Even in the happy path, we never touch the parent.
-    """
-    fake_home = tmp_path / "home" / "jfreeman"
-    (fake_home / ".punt-labs").mkdir(parents=True)
-    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
-    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
-    _install_typed_getuid_stub(monkeypatch, 0)
-
-    chowned: list[str] = []
-
-    def _fake_ownership_change(path: str, _uid: int, _gid: int) -> None:
-        chowned.append(str(path))
-
-    # Mock BOTH os.chown and os.lchown — _ensure_user_dirs uses lchown
-    # (symlink-safe) but we still want to catch any future caller that
-    # switches back to os.chown and accidentally widens the attack
-    # surface. Also: non-root pytest users can't actually run lchown on
-    # directories they don't own, so mocking is required in CI.
-    monkeypatch.setattr("punt_vox.service.os.chown", _fake_ownership_change)
-    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_ownership_change)
-
-    _ensure_user_dirs("jfreeman")
-
-    dot_punt = str(fake_home / ".punt-labs")
-    assert dot_punt not in chowned, (
-        "_ensure_user_dirs must never chown the ~/.punt-labs parent "
-        "(symlink escalation risk)"
-    )
-
-
-def test_write_keys_env_refuses_symlink_target(tmp_path: Path) -> None:
-    """Attacker pre-places keys.env as symlink to /etc/shadow — must refuse.
-
-    Cursor Bugbot high-severity finding on PR #162.
-    """
-    state_root = tmp_path / "vox"
-    state_root.mkdir()
-    keys_path = state_root / "keys.env"
-    sensitive = tmp_path / "fake_shadow"
-    sensitive.write_text("root:!::")
-    os.symlink(str(sensitive), str(keys_path))
-
-    with pytest.raises(OSError, match="symlink"):
-        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
-
-    # The sensitive file must NOT have been truncated.
-    assert sensitive.read_text() == "root:!::"
-
-
-def test_write_keys_env_refuses_symlink_in_parent_chain(tmp_path: Path) -> None:
-    """A symlink anywhere in ~/.punt-labs/vox chain aborts the write."""
-    fake_home = tmp_path / "home" / "user"
-    (fake_home / ".punt-labs").mkdir(parents=True)
-    real_vox = tmp_path / "real_vox"
-    real_vox.mkdir()
-    # ~/.punt-labs/vox → /elsewhere
-    os.symlink(str(real_vox), str(fake_home / ".punt-labs" / "vox"))
-    keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
-
-    with pytest.raises(OSError, match="symlink"):
-        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
-
-
 def test_write_keys_env_rejects_control_chars_in_value(tmp_path: Path) -> None:
     """Values containing newlines or NUL bytes are dropped, not written.
 
     Prevents an attacker-controlled env var from smuggling extra
-    key=value lines into keys.env.
+    key=value lines into keys.env. This is input sanitization, not a
+    privilege defense — it applies equally when install runs as the
+    user.
     """
     keys_path = tmp_path / "keys.env"
     _write_keys_env(
@@ -1505,10 +768,331 @@ def test_write_keys_env_rejects_control_chars_in_value(tmp_path: Path) -> None:
     assert "ELEVENLABS_API_KEY" not in content
 
 
-# NOTE: test_chown_to_user_refuses_symlink removed — the helper it
-# tested (``_chown_to_user``) was replaced by fd-based ``fchown`` inside
-# ``_write_keys_env`` during the PR #162 review cycle. The equivalent
-# symlink-safety guarantee is now tested by
-# ``test_write_keys_env_refuses_symlink_target`` — if an attacker
-# pre-places ``keys.env`` as a symlink, the ``O_NOFOLLOW`` open fails
-# and the privileged fchown never runs at all.
+# ---------------------------------------------------------------------------
+# _ensure_user_dirs — end-to-end with tmp HOME
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_user_dirs_creates_tree_under_current_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_ensure_user_dirs creates the tree and returns the state root."""
+    fake_home = tmp_path / "home" / "testuser"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = _ensure_user_dirs()
+    expected = fake_home / ".punt-labs" / "vox"
+    assert result == expected
+    assert expected.is_dir()
+    assert (expected / "logs").is_dir()
+    assert (expected / "run").is_dir()
+    assert (expected / "cache").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# install() — end-to-end under a tmp HOME
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service._systemd_status", return_value=True)
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service._systemd_install")
+@patch("punt_vox.service._launchd_install")
+def test_install_runs_as_user_creates_keys_env(
+    _mock_launchd: MagicMock,
+    _mock_systemd: MagicMock,
+    _mock_launchd_status: MagicMock,
+    _mock_systemd_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install() writes keys.env under the current user's home, mode 0600.
+
+    Runs with the real ``getpass.getuser`` and ``Path.home`` against a
+    tmp HOME — no sudo, no SUDO_USER, no cross-user resolution. The
+    resulting keys.env must exist at ``~/.punt-labs/vox/keys.env`` and
+    be chmod 0600.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    # Force the voxd exec resolution to a fake binary so install()
+    # doesn't depend on where the test runs.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    # Give install() provider keys to snapshot.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    monkeypatch.setenv("TTS_PROVIDER", "openai")
+    # Stub the port pre-flight so the test does not poke the host's
+    # real port 8421.
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    install()
+
+    keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
+    assert keys_path.exists(), f"install() failed to create {keys_path}"
+    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+    assert mode == 0o600, f"keys.env mode is {oct(mode)}, expected 0o600"
+    content = keys_path.read_text()
+    assert "OPENAI_API_KEY=sk-test-openai" in content
+    assert "TTS_PROVIDER=openai" in content
+
+
+@patch("punt_vox.service._systemd_status", return_value=True)
+@patch("punt_vox.service.subprocess.run")
+def test_systemd_install_invokes_three_sudo_commands(
+    mock_run: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_systemd_install issues exactly three sudo subprocess calls.
+
+    Order must be: ``sudo install``, ``sudo systemctl daemon-reload``,
+    ``sudo systemctl enable --now voxd``. Everything else (tmp file
+    write, state dir creation) happens as the user.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    # Pre-create state dir so tmp unit write succeeds without needing
+    # install()'s _ensure_user_dirs step.
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+
+    mock_run.return_value = MagicMock(returncode=0)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    _systemd_install("jfreeman")
+
+    sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
+    assert len(sudo_calls) == 3, (
+        f"Expected 3 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
+    )
+    # Call 1: install the unit file
+    assert sudo_calls[0][0][0][:2] == ["sudo", "install"]
+    assert "/etc/systemd/system/voxd.service" in sudo_calls[0][0][0]
+    # Call 2: daemon-reload
+    assert sudo_calls[1][0][0] == ["sudo", "systemctl", "daemon-reload"]
+    # Call 3: enable --now voxd
+    assert sudo_calls[2][0][0] == [
+        "sudo",
+        "systemctl",
+        "enable",
+        "--now",
+        "voxd",
+    ]
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service.subprocess.run")
+def test_launchd_install_invokes_three_sudo_commands(
+    mock_run: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_launchd_install issues three sudo subprocess calls in order.
+
+    Order: ``sudo install`` (places plist), ``sudo launchctl unload``
+    (idempotent; may exit non-zero), ``sudo launchctl load``.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+
+    mock_run.return_value = MagicMock(returncode=0)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    _launchd_install("jfreeman")
+
+    sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
+    assert len(sudo_calls) == 3, (
+        f"Expected 3 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
+    )
+    # Call 1: install plist into /Library/LaunchDaemons
+    assert sudo_calls[0][0][0][:2] == ["sudo", "install"]
+    assert "/Library/LaunchDaemons/com.punt-labs.voxd.plist" in sudo_calls[0][0][0]
+    # Call 2: unload (idempotent)
+    assert sudo_calls[1][0][0][:3] == ["sudo", "launchctl", "unload"]
+    # Call 3: load
+    assert sudo_calls[2][0][0][:3] == ["sudo", "launchctl", "load"]
+
+
+@patch("punt_vox.service._systemd_status", return_value=True)
+@patch("punt_vox.service.subprocess.run")
+def test_systemd_install_writes_unit_to_user_tmp_first(
+    mock_run: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The systemd unit is materialized as a user-owned tmp file first.
+
+    The tmp file must exist at ``~/.punt-labs/vox/voxd.service.tmp``
+    when the first ``sudo install`` fires so ``install(1)`` has
+    something to copy. After all three sudo calls complete, the tmp
+    file is removed.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    tmp_unit_path = fake_home / ".punt-labs" / "vox" / "voxd.service.tmp"
+    observed_during_sudo: list[bool] = []
+
+    def _capture_install(*args: object, **kwargs: object) -> MagicMock:
+        del args, kwargs
+        observed_during_sudo.append(tmp_unit_path.exists())
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = _capture_install
+
+    _systemd_install("jfreeman")
+
+    # The first sudo call saw the tmp file on disk.
+    assert observed_during_sudo, "no subprocess.run calls were observed"
+    assert observed_during_sudo[0] is True, (
+        f"tmp unit file {tmp_unit_path} did not exist when first sudo ran"
+    )
+    # After the install completes, the tmp file is cleaned up.
+    assert not tmp_unit_path.exists(), (
+        f"tmp unit file {tmp_unit_path} was not removed after install"
+    )
+
+
+def test_install_does_not_chown_anything(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install() must never invoke os.chown / os.lchown / os.fchown.
+
+    Regression guard: the old sudo-based install ran as root inside a
+    user-controlled directory and had to chown every created path
+    back to the installing user. That pattern is gone — install now
+    runs as the user from start to finish — so any chown call is a
+    bug indicating a regression back to root-execution.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    chown_calls: list[tuple[str, object, int, int]] = []
+
+    def _record_chown(path: object, uid: int, gid: int) -> None:
+        chown_calls.append(("chown", path, uid, gid))
+
+    def _record_lchown(path: object, uid: int, gid: int) -> None:
+        chown_calls.append(("lchown", path, uid, gid))
+
+    def _record_fchown(fd: int, uid: int, gid: int) -> None:
+        chown_calls.append(("fchown", fd, uid, gid))
+
+    monkeypatch.setattr("punt_vox.service.os.chown", _record_chown, raising=False)
+    # os.lchown / os.fchown may not be imported into the service module
+    # (they were deleted). Patch them on the real os module instead so
+    # any stray call from any code path still gets recorded.
+    monkeypatch.setattr("os.chown", _record_chown)
+    monkeypatch.setattr("os.lchown", _record_lchown)
+    monkeypatch.setattr("os.fchown", _record_fchown)
+
+    # Stub out the platform-specific install path so we exercise the
+    # user-owned code in install() without touching real system dirs.
+    def _noop_install(_user: str) -> None:
+        return None
+
+    def _always_running() -> bool:
+        return True
+
+    monkeypatch.setattr("punt_vox.service._launchd_install", _noop_install)
+    monkeypatch.setattr("punt_vox.service._systemd_install", _noop_install)
+    monkeypatch.setattr("punt_vox.service._launchd_status", _always_running)
+    monkeypatch.setattr("punt_vox.service._systemd_status", _always_running)
+    # Stub the port pre-flight so the test does not poke at the host's
+    # real port 8421 (which might be holding a developer's running
+    # daemon — this test must be hermetic).
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    install()
+
+    assert chown_calls == [], (
+        "install() must not call os.chown/os.lchown/os.fchown — "
+        f"observed: {chown_calls}"
+    )
+
+
+@patch("punt_vox.service._systemd_status", return_value=False)
+@patch("punt_vox.service._systemd_install")
+@patch("punt_vox.service._launchd_status", return_value=False)
+@patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service.detect_platform", return_value="macos")
+def test_install_reports_not_running(
+    _mock_platform: MagicMock,
+    _mock_launchd: MagicMock,
+    _mock_launchd_status: MagicMock,
+    _mock_systemd: MagicMock,
+    _mock_systemd_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install() reports 'not yet running' when the service is down."""
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    result = install()
+    assert "not yet running" in result
