@@ -315,6 +315,30 @@ class TestSayProviderSynthesize:
         assert result.language == "en"
 
 
+class TestSayProviderPlayDirectly:
+    def test_spawns_without_o_flag(self, say_provider: SayProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+        with patch("punt_vox.providers.say.subprocess.run", mock):
+            rc = say_provider.play_directly(
+                SynthesisRequest(text="hello", voice="fred")
+            )
+
+        assert rc == 0
+        args = mock.call_args[0][0]
+        assert args[0] == "say"
+        assert "-o" not in args
+        assert "-v" in args
+        assert "hello" in args
+
+    def test_nonzero_rc_returned(self, say_provider: SayProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 5, b"", b"oops"))
+        with patch("punt_vox.providers.say.subprocess.run", mock):
+            rc = say_provider.play_directly(
+                SynthesisRequest(text="hello", voice="fred")
+            )
+        assert rc == 5
+
+
 class TestSayProviderCheckHealth:
     def test_darwin_with_say(self) -> None:
         with (

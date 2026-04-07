@@ -17,7 +17,9 @@ import json
 import logging
 import logging.config
 import os
+import platform
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -26,7 +28,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from socket import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 import uvicorn
@@ -39,7 +41,12 @@ from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.types import AudioProviderId, AudioRequest
+from punt_vox.types import (
+    AudioProviderId,
+    AudioRequest,
+    DirectPlayProvider,
+    TTSProvider,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -54,6 +61,11 @@ _DEDUP_WINDOW_SECONDS = 5.0
 
 # Lock to serialize os.environ mutation during synthesis with per-request API keys.
 _env_lock = asyncio.Lock()
+
+# Mutex held by anything that produces audible sound. The playback queue
+# consumer and the direct-play path both acquire it so that two clients
+# (e.g. simultaneous hooks from two Claude sessions) can never overlap.
+_playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +106,44 @@ _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _LOG_MAX_BYTES = 5_242_880  # 5 MB
 _LOG_BACKUP_COUNT = 5
+
+
+_STARTUP_ENV_KEYS: tuple[str, ...] = (
+    "PATH",
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "HOME",
+    "USER",
+    "LANG",
+)
+
+
+def _log_voxd_environment() -> None:
+    """Log voxd's process identity and audio env vars at startup.
+
+    Single greppable INFO line so operators can verify systemd env
+    injection without poking at ``/proc``.
+    """
+    env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
+    # os.getuid/getgid are POSIX-only; fall back gracefully on Windows.
+    getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
+    getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
+    uid: int | str = getuid() if getuid is not None else "<n/a>"
+    gid: int | str = getgid() if getgid is not None else "<n/a>"
+    logger.info(
+        "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
+        "voxd_binary=%s voxd_module=%s env=%s",
+        os.getpid(),
+        uid,
+        gid,
+        os.getcwd(),
+        sys.executable,
+        __file__,
+        env,
+    )
 
 
 def _configure_logging(log_dir: Path) -> None:
@@ -283,41 +333,263 @@ class PlaybackItem:
     notify: asyncio.Event
 
 
-async def _play_audio(path: Path) -> None:
-    """Play an audio file using the platform player."""
-    if sys.platform == "darwin":
-        cmd = ["afplay", str(path)]
-    else:
-        cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
+# Audio environment variables we capture for every playback. These determine
+# whether ffplay can reach PulseAudio/PipeWire and dbus at the moment of the
+# call, which is exactly the failure mode we saw on Linux in v4.0.3.
+_AUDIO_ENV_KEYS: tuple[str, ...] = (
+    "XDG_RUNTIME_DIR",
+    "PULSE_SERVER",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "HOME",
+    "USER",
+)
 
+# Playback under 50ms is a "success" that almost certainly played nothing.
+_SUSPICIOUS_ELAPSED_S = 0.05
+
+_PLAYBACK_TIMEOUT_S = 30.0
+
+# Cap on the stderr blob we keep per playback. ffplay without -loglevel
+# quiet can emit kilobytes of progress lines; we want enough for triage
+# without unbounded growth in memory or log files.
+_MAX_STDERR_LEN = 2000
+
+
+def _truncate_stderr(text: str) -> str:
+    """Return ``text`` clipped to ``_MAX_STDERR_LEN`` with head + tail kept."""
+    if len(text) <= _MAX_STDERR_LEN:
+        return text
+    half = _MAX_STDERR_LEN // 2
+    dropped = len(text) - _MAX_STDERR_LEN
+    return f"{text[:half]}\n... [truncated {dropped} bytes] ...\n{text[-half:]}"
+
+
+def _monotonic() -> float:
+    """Indirection for ``time.monotonic`` so tests can stub playback timing.
+
+    Patching ``time.monotonic`` directly would also affect asyncio internals.
+    """
+    return time.monotonic()
+
+
+def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str]:
+    """Return a dict of env var values, using <unset> for missing keys."""
+    return {k: os.environ.get(k, "<unset>") for k in keys}
+
+
+def _is_darwin() -> bool:
+    """Return True on macOS.
+
+    Wrapped in a function so mypy doesn't narrow ``sys.platform`` to a
+    single value at the call site, which would mark the non-matching
+    branch as unreachable for cross-platform development.
+    """
+    return platform.system() == "Darwin"
+
+
+def _player_binary_name() -> str:
+    """Return the platform player binary name."""
+    return "afplay" if _is_darwin() else "ffplay"
+
+
+def _player_binary_path() -> str | None:
+    """Return the resolved path to the platform player binary, or None."""
+    return shutil.which(_player_binary_name())
+
+
+def _player_command(path: Path) -> list[str]:
+    """Return the argv for playing ``path`` on this platform.
+
+    No ``-loglevel quiet`` on ffplay -- we want its stream summary and errors.
+    """
+    if _is_darwin():
+        return ["afplay", str(path)]
+    return ["ffplay", "-nodisp", "-autoexit", str(path)]
+
+
+def _record_playback_result(
+    ctx: DaemonContext,
+    *,
+    path: Path,
+    rc: int,
+    elapsed: float,
+    stderr: str,
+) -> None:
+    """Update ctx.last_playback with a freshly-observed playback result."""
+    ctx.last_playback = {
+        "file": str(path),
+        "rc": rc,
+        "elapsed_s": round(elapsed, 4),
+        "stderr": stderr,
+        "ts": time.time(),
+    }
+
+
+async def _play_audio(path: Path, ctx: DaemonContext) -> None:
+    """Play an audio file and record a rich result in ``ctx.last_playback``.
+
+    Captures spawn command, audio env vars at call time, exit code, elapsed
+    wall time, file size, and full stderr. Logs ERROR on non-zero exit,
+    WARNING on suspiciously fast "success", INFO with stderr summary on
+    normal success. Stderr is never silently discarded.
+    """
+    cmd = _player_command(path)
+    env_snapshot = _snapshot_env(_AUDIO_ENV_KEYS)
+
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        logger.error("Playback aborted: cannot stat %s: %s", path, exc)
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
+        )
+        return
+
+    if size == 0:
+        logger.error(
+            "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
+            path,
+        )
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=0.0, stderr="0-byte file"
+        )
+        return
+
+    logger.info(
+        "Playback spawn: cmd=%s size=%d audio_env=%s",
+        cmd,
+        size,
+        env_snapshot,
+    )
+
+    start = _monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-    except FileNotFoundError:
-        logger.warning("Audio player not found: %s", cmd[0])
+    except FileNotFoundError as exc:
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: binary not found: %s (%s) cmd=%s audio_env=%s",
+            cmd[0],
+            exc,
+            cmd,
+            env_snapshot,
+        )
+        _record_playback_result(
+            ctx,
+            path=path,
+            rc=-1,
+            elapsed=elapsed,
+            stderr=f"FileNotFoundError: {exc}",
+        )
         return
     except OSError as exc:
-        logger.warning("Playback failed for %s: %s", path.name, exc)
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: OSError spawning %s: %s audio_env=%s",
+            cmd[0],
+            exc,
+            env_snapshot,
+        )
+        _record_playback_result(
+            ctx, path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
+        )
         return
 
     try:
-        await asyncio.wait_for(proc.wait(), timeout=30)
+        _, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=_PLAYBACK_TIMEOUT_S
+        )
     except TimeoutError:
-        logger.warning("Playback timed out after 30s for %s", path.name)
+        elapsed = _monotonic() - start
+        logger.error(
+            "Playback FAILED: timed out after %.1fs for %s audio_env=%s",
+            _PLAYBACK_TIMEOUT_S,
+            path.name,
+            env_snapshot,
+        )
         proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        _record_playback_result(
+            ctx,
+            path=path,
+            rc=-1,
+            elapsed=elapsed,
+            stderr=f"timeout after {_PLAYBACK_TIMEOUT_S}s",
+        )
+        return
+
+    elapsed = _monotonic() - start
+    rc = proc.returncode if proc.returncode is not None else -1
+    raw_stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+    stderr_text = _truncate_stderr(raw_stderr)
+
+    _record_playback_result(ctx, path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
+
+    if rc != 0:
+        logger.error(
+            "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
+            "cmd=%s audio_env=%s stderr=%r",
+            rc,
+            elapsed,
+            path.name,
+            size,
+            cmd,
+            env_snapshot,
+            stderr_text,
+        )
+        return
+
+    if elapsed < _SUSPICIOUS_ELAPSED_S:
+        logger.warning(
+            "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
+            "size=%d audio_env=%s stderr=%r -- probably played nothing",
+            elapsed,
+            _SUSPICIOUS_ELAPSED_S,
+            path.name,
+            size,
+            env_snapshot,
+            stderr_text,
+        )
+        return
+
+    if stderr_text:
+        logger.info(
+            "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
+            elapsed,
+            path.name,
+            size,
+            stderr_text,
+        )
+    else:
+        logger.info(
+            "Playback ok: elapsed=%.3fs file=%s size=%d",
+            elapsed,
+            path.name,
+            size,
+        )
 
 
 async def _playback_consumer(ctx: DaemonContext) -> None:
-    """Single consumer: plays audio sequentially."""
+    """Single consumer: plays audio sequentially.
+
+    Holds ``_playback_mutex`` for the duration of each item so the
+    direct-play path can't produce overlapping audio from another
+    coroutine.
+    """
     while True:
         item = await ctx.playback_queue.get()
         logger.info("Playback start: %s", item.path.name)
-        await _play_audio(item.path)
+        async with _playback_mutex:
+            await _play_audio(item.path, ctx)
         logger.info("Playback done: %s", item.path.name)
         item.notify.set()
         ctx.playback_queue.task_done()
@@ -370,6 +642,7 @@ class DaemonContext:
         self.dedup = AudioDedup()
         self.client_count: int = 0
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
+        self.last_playback: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +814,40 @@ async def _synthesize_to_file(
 
             await asyncio.to_thread(client.synthesize, request, output_path)
 
-            # Cache the result
+            try:
+                synth_size = output_path.stat().st_size
+            except OSError:
+                synth_size = -1
+            if synth_size <= 0:
+                logger.error(
+                    "synthesize FAILED: provider=%s voice=%s file=%s "
+                    "size=%d chars_in=%d -- zero-byte or missing output",
+                    provider_name,
+                    resolved_voice,
+                    output_path,
+                    synth_size,
+                    len(text),
+                )
+                # Delete the broken temp file and fail fast. Caching it
+                # would poison every subsequent identical request.
+                output_path.unlink(missing_ok=True)
+                msg = (
+                    f"synthesis produced missing or empty output file: "
+                    f"{output_path} (provider={provider_name}, "
+                    f"voice={resolved_voice}, chars_in={len(text)})"
+                )
+                raise RuntimeError(msg)
+
+            logger.info(
+                "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
+                provider_name,
+                resolved_voice,
+                output_path,
+                synth_size,
+                len(text),
+            )
+
+            # Only cache verified-good output.
             cache_put(normalized, resolved_voice, provider_name, output_path)
             return output_path
         finally:
@@ -550,6 +856,156 @@ async def _synthesize_to_file(
                 os.environ[env_key_name] = old_key
             elif env_key_name and api_key:
                 os.environ.pop(env_key_name, None)
+
+
+# Providers that synthesize audio directly to the default device. Cloud
+# providers are skipped entirely so we don't pay for provider construction
+# only to discover they don't implement play_directly.
+_LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
+
+# Map of provider name to its expected API key env var. Used by the
+# direct-play env-injection helper.
+_PROVIDER_API_KEY_VAR: dict[str, str] = {
+    "elevenlabs": "ELEVENLABS_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def _run_play_directly_sync(
+    provider_name: str,
+    api_key: str | None,
+    provider_factory: Callable[[], TTSProvider],
+    request: AudioRequest,
+) -> int | None:
+    """Construct provider and call ``play_directly`` on a worker thread.
+
+    Returns ``None`` if the provider does not implement the
+    ``DirectPlayProvider`` protocol -- the caller will fall back to the
+    synthesize-and-queue path. Mutates ``os.environ`` only if an API key
+    is supplied; restoration happens on the same thread so the env-lock
+    contract is preserved without holding the lock during audio playback.
+    """
+    env_var = _PROVIDER_API_KEY_VAR.get(provider_name) if api_key else None
+    old_value: str | None = None
+    if env_var and api_key:
+        old_value = os.environ.get(env_var)
+        os.environ[env_var] = api_key
+    try:
+        provider = provider_factory()
+        if not isinstance(provider, DirectPlayProvider):
+            return None
+        return provider.play_directly(request)
+    finally:
+        if env_var:
+            if old_value is not None:
+                os.environ[env_var] = old_value
+            else:
+                os.environ.pop(env_var, None)
+
+
+async def _try_direct_play(
+    *,
+    text: str,
+    voice: str | None,
+    provider_name: str,
+    model: str | None,
+    language: str | None,
+    rate: int | None,
+    vibe_tags: str | None,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+    api_key: str | None,
+    ctx: DaemonContext,
+) -> int | None | Exception:
+    """Attempt direct-to-device playback via the provider.
+
+    Returns one of:
+      * an ``int`` exit code (0 on success) when ``play_directly`` ran,
+      * ``None`` when the provider opts out of direct play, or
+      * an ``Exception`` instance when provider construction or playback
+        raised. The caller is responsible for translating the exception
+        into a websocket error response.
+
+    The ``_env_lock`` is only acquired when an API key needs to be
+    injected. Local providers (espeak, say) take a fast path with no
+    cross-request blocking. Audio playback never holds the lock.
+    """
+    normalized = normalize_for_speech(text)
+    if vibe_tags:
+        normalized = f"{vibe_tags} {normalized}"
+
+    request = _build_audio_request(
+        normalized,
+        voice,
+        language,
+        rate,
+        stability,
+        similarity,
+        style,
+        speaker_boost,
+        provider_name,
+    )
+
+    def _factory() -> TTSProvider:
+        return get_provider(provider_name, config_path=None, model=model)
+
+    start = _monotonic()
+    try:
+        # _playback_mutex serializes audible output across all paths --
+        # the queue consumer holds it too. Without this, two hooks firing
+        # at once would overlap because direct-play bypasses the queue.
+        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
+            async with _env_lock, _playback_mutex:
+                rc = await asyncio.to_thread(
+                    _run_play_directly_sync,
+                    provider_name,
+                    api_key,
+                    _factory,
+                    request,
+                )
+        else:
+            async with _playback_mutex:
+                rc = await asyncio.to_thread(
+                    _run_play_directly_sync,
+                    provider_name,
+                    None,
+                    _factory,
+                    request,
+                )
+    except Exception as exc:
+        logger.exception("Direct-play raised for provider=%s", provider_name)
+        return exc
+
+    if rc is None:
+        return None
+
+    elapsed = _monotonic() - start
+    _record_playback_result(
+        ctx,
+        path=Path(f"<direct:{provider_name}>"),
+        rc=rc,
+        elapsed=elapsed,
+        stderr="" if rc == 0 else f"play_directly rc={rc}",
+    )
+    if rc == 0:
+        logger.info(
+            "Direct-play ok: provider=%s voice=%s elapsed=%.3fs chars=%d",
+            provider_name,
+            voice or "",
+            elapsed,
+            len(text),
+        )
+    else:
+        logger.error(
+            "Direct-play FAILED: provider=%s voice=%s elapsed=%.3fs rc=%d",
+            provider_name,
+            voice or "",
+            elapsed,
+            rc,
+        )
+    return rc
 
 
 async def _handle_synthesize(
@@ -593,6 +1049,47 @@ async def _handle_synthesize(
         resolved_voice,
         len(text),
     )
+
+    # Local providers (espeak, say) play directly to the audio device,
+    # bypassing the synthesize-cache-enqueue pipeline. Cloud providers
+    # are skipped entirely so we don't pay for provider construction.
+    if provider_name in _LOCAL_PROVIDERS:
+        direct_result = await _try_direct_play(
+            text=text,
+            voice=voice,
+            provider_name=provider_name,
+            model=model,
+            language=language,
+            rate=rate,
+            vibe_tags=vibe_tags,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
+            ctx=ctx,
+        )
+        if isinstance(direct_result, Exception):
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "id": request_id,
+                    "message": str(direct_result),
+                }
+            )
+            return
+        if direct_result is not None:
+            if direct_result == 0:
+                await websocket.send_json({"type": "done", "id": request_id})
+            else:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "id": request_id,
+                        "message": f"play_directly failed with rc={direct_result}",
+                    }
+                )
+            return
 
     try:
         output_path = await _synthesize_to_file(
@@ -747,26 +1244,49 @@ async def _handle_voices(
     )
 
 
+def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:
+    """Return the public health payload safe for unauthenticated callers.
+
+    Excludes ``audio_env``, ``player_binary``, and ``last_playback`` so the
+    HTTP ``/health`` route can never leak environment variables or stderr
+    contents to non-localhost listeners.
+    """
+    from punt_vox.providers import auto_detect_provider
+
+    uptime = time.monotonic() - ctx.start_time
+    return {
+        "status": "ok",
+        "uptime_seconds": round(uptime, 1),
+        "queued": ctx.playback_queue.qsize(),
+        "port": ctx.port,
+        "active_sessions": ctx.client_count,
+        "provider": auto_detect_provider(),
+    }
+
+
+def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
+    """Return the full diagnostic health payload for authenticated callers.
+
+    Adds the audio environment snapshot, the resolved player binary, and
+    the last playback result. Used only by the WebSocket health handler,
+    which is gated by the auth token.
+    """
+    payload = _health_payload_minimal(ctx)
+    payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
+    payload["player_binary"] = _player_binary_path()
+    payload["last_playback"] = ctx.last_playback
+    return payload
+
+
 async def _handle_health(
     msg: dict[str, object],
     websocket: WebSocket,
     ctx: DaemonContext,
 ) -> None:
-    """Handle a 'health' message over WebSocket."""
-    from punt_vox.providers import auto_detect_provider
-
-    uptime = time.monotonic() - ctx.start_time
-    await websocket.send_json(
-        {
-            "type": "health",
-            "status": "ok",
-            "uptime_seconds": round(uptime, 1),
-            "queued": ctx.playback_queue.qsize(),
-            "port": ctx.port,
-            "active_sessions": ctx.client_count,
-            "provider": auto_detect_provider(),
-        }
-    )
+    """Handle a 'health' message over the authenticated WebSocket."""
+    payload = _health_payload_full(ctx)
+    payload["type"] = "health"
+    await websocket.send_json(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -850,21 +1370,9 @@ async def _ws_route(websocket: WebSocket) -> None:
 
 
 async def _health_route(request: Request) -> JSONResponse:
-    """Health check endpoint."""
-    from punt_vox.providers import auto_detect_provider
-
+    """Unauthenticated HTTP health endpoint -- minimal payload only."""
     ctx: DaemonContext = request.app.state.ctx
-    uptime = time.monotonic() - ctx.start_time
-    return JSONResponse(
-        {
-            "status": "ok",
-            "uptime_seconds": round(uptime, 1),
-            "queued": ctx.playback_queue.qsize(),
-            "port": ctx.port,
-            "active_sessions": ctx.client_count,
-            "provider": auto_detect_provider(),
-        }
-    )
+    return JSONResponse(_health_payload_minimal(ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +1422,7 @@ def main(
 
     # Configure logging
     _configure_logging(log_dir)
+    _log_voxd_environment()
 
     # Load provider keys
     loaded_keys = _load_keys(config_dir)

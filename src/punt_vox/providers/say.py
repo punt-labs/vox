@@ -15,6 +15,7 @@ from pathlib import Path
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
+    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
@@ -166,6 +167,58 @@ class SayProvider:
     ) -> list[SynthesisResult]:
         return [self.generate_audio(request) for request in requests]
 
+    def _resolve_voice_and_rate(
+        self, request: AudioRequest
+    ) -> tuple[SayVoiceConfig, int]:
+        """Return the say voice config and resolved WPM for a request."""
+        resolved_voice = request.voice or self.default_voice
+        voice_cfg = self._resolve_voice_config(resolved_voice)
+        rate = request.rate if request.rate is not None else 100
+        return voice_cfg, _rate_to_wpm(rate)
+
+    def play_directly(self, request: AudioRequest) -> int:
+        """Play directly via the macOS ``say`` command.
+
+        Spawns ``say -v <voice> -r <wpm> <text>`` without ``-o``, so
+        say writes to the default audio device instead of an AIFF file.
+        Bypasses the AIFF -> ffmpeg -> MP3 -> ffplay pipeline.
+        """
+        voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        cmd = [
+            "say",
+            "-v",
+            voice_cfg.name,
+            "-r",
+            str(wpm),
+            request.text,
+        ]
+        logger.info(
+            "say direct-play: voice=%s wpm=%d chars=%d",
+            voice_cfg.name,
+            wpm,
+            len(request.text),
+        )
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                timeout=60,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.error("say direct-play failed: %s", exc)
+            return 1
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            logger.error(
+                "say direct-play rc=%d stderr=%r",
+                result.returncode,
+                stderr,
+            )
+        return result.returncode
+
     def synthesize(
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
@@ -173,10 +226,7 @@ class SayProvider:
 
         Produces AIFF via say, then converts to MP3 via ffmpeg.
         """
-        resolved_voice = request.voice or self.default_voice
-        voice_cfg = self._resolve_voice_config(resolved_voice)
-        rate = request.rate if request.rate is not None else 100
-        wpm = _rate_to_wpm(rate)
+        voice_cfg, wpm = self._resolve_voice_and_rate(request)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

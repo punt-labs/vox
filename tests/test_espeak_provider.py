@@ -360,6 +360,43 @@ class TestEspeakProviderSynthesize:
         assert result.language == "de"
 
 
+class TestEspeakProviderPlayDirectly:
+    def test_spawns_without_w_flag(self, espeak_provider: EspeakProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
+            rc = espeak_provider.play_directly(
+                SynthesisRequest(text="hello", voice="en")
+            )
+
+        assert rc == 0
+        mock.assert_called_once()
+        args = mock.call_args[0][0]
+        assert "espeak" in args[0]
+        assert "-w" not in args
+        assert "-v" in args
+        assert "hello" in args
+
+    def test_nonzero_rc_returned(self, espeak_provider: EspeakProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 3, b"", b"boom"))
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
+            rc = espeak_provider.play_directly(
+                SynthesisRequest(text="hello", voice="en")
+            )
+        assert rc == 3
+
+    def test_binary_missing_returns_error(
+        self, espeak_provider: EspeakProvider
+    ) -> None:
+        with patch(
+            "punt_vox.providers.espeak.subprocess.run",
+            side_effect=FileNotFoundError("no espeak"),
+        ):
+            rc = espeak_provider.play_directly(
+                SynthesisRequest(text="hello", voice="en")
+            )
+        assert rc == 1
+
+
 class TestEspeakProviderCheckHealth:
     def test_binary_found(self) -> None:
         with patch(

@@ -18,6 +18,7 @@ __all__ = [
     "AudioProviderId",
     "AudioRequest",
     "AudioResult",
+    "DirectPlayProvider",
     "HealthCheck",
     "MergeStrategy",
     "SynthesisRequest",
@@ -277,6 +278,24 @@ class TTSProvider(AudioProvider, Protocol):
         Returns:
             List of HealthCheck results.
         """
+        ...
+
+
+@runtime_checkable
+class DirectPlayProvider(Protocol):
+    """Optional capability: synthesize and play in one step.
+
+    Providers that can play to the default audio device without producing
+    an intermediate file (espeak-ng, macOS say) implement this protocol.
+    Cloud providers (ElevenLabs, OpenAI, Polly) deliberately do not, so
+    their MP3 output keeps flowing through the cache and dedup pipeline.
+
+    Callers use ``isinstance(provider, DirectPlayProvider)`` to test the
+    capability at runtime; the protocol is ``@runtime_checkable``.
+    """
+
+    def play_directly(self, request: AudioRequest) -> int:
+        """Synthesize and play, returning the subprocess exit code."""
         ...
 
 
