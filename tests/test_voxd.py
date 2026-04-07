@@ -163,6 +163,20 @@ class TestHealthPayloadFull:
         assert "PULSE_SERVER" in audio_env
         assert "DBUS_SESSION_BUS_ADDRESS" in audio_env
 
+    def test_unset_audio_env_uses_sentinel(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Distinguish "unset" from "set to empty string" — diagnosing
+        # PulseAudio failures requires knowing which one we have.
+        for key in ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS"):
+            monkeypatch.delenv(key, raising=False)
+        ctx = _make_ctx()
+        payload = _health_payload_full(ctx)
+        audio_env = cast("dict[str, str]", payload["audio_env"])
+        assert audio_env["XDG_RUNTIME_DIR"] == "<unset>"
+        assert audio_env["PULSE_SERVER"] == "<unset>"
+        assert audio_env["DBUS_SESSION_BUS_ADDRESS"] == "<unset>"
+
     def test_last_playback_reflects_context(self, tmp_path: Path) -> None:
         ctx = _make_ctx()
         ctx.last_playback = {

@@ -1224,7 +1224,7 @@ def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
     which is gated by the auth token.
     """
     payload = _health_payload_minimal(ctx)
-    payload["audio_env"] = {k: os.environ.get(k, "") for k in _AUDIO_ENV_KEYS}
+    payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
     payload["player_binary"] = _player_binary_path()
     payload["last_playback"] = ctx.last_playback
     return payload
