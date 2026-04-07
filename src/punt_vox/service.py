@@ -33,7 +33,6 @@ from pathlib import Path
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     installing_user as _paths_installing_user,
-    log_dir as _user_log_dir,
     run_dir as _user_run_dir,
     user_state_dir_for as _user_state_dir_for,
 )
@@ -51,12 +50,12 @@ _SUBPROCESS_TIMEOUT_SECONDS = 5
 # ---------------------------------------------------------------------------
 # Path helpers — thin wrappers over punt_vox.paths so tests can patch them
 # inside this module. Only the helpers used by service.py itself live here;
-# the full set is in ``punt_vox.paths``.
+# the full set is in ``punt_vox.paths``. Note that per-user paths dependent
+# on the target user (log dir, state root, keys file) are resolved via
+# ``_user_state_dir_for(user)`` rather than ``Path.home()``, because the
+# install command runs under sudo where ``Path.home()`` points at
+# ``/var/root`` or ``/root`` instead of the installing user's home.
 # ---------------------------------------------------------------------------
-
-
-def _log_dir() -> Path:
-    return _user_log_dir()
 
 
 def _run_dir() -> Path:
@@ -485,12 +484,12 @@ def _ensure_user_dirs(user: str) -> Path:
             return state_root
         for d in dirs:
             if d.exists() and not d.is_symlink():
-                # Use os.chown on the pre-validated, non-symlink path.
-                # The _reject_symlinks check above + is_symlink here is
-                # belt and suspenders: between the two we've verified
-                # that nothing in the chain is a link at the moment we
-                # chown.
-                os.chown(str(d), uid, gid)
+                # ``os.lchown`` operates on the link itself rather than
+                # its target, so a TOCTOU symlink-swap between the
+                # ``is_symlink()`` check and the chown cannot escalate.
+                # Combined with the ``_reject_symlinks`` walk above this
+                # gives us two independent layers of symlink protection.
+                os.lchown(str(d), uid, gid)
                 logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
     return state_root
 
@@ -508,7 +507,12 @@ def _launchd_plist_content(user: str) -> str:
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
-    log_dir = _log_dir()
+    # Resolve the log dir from the *target* user's home, not the current
+    # process's. ``_log_dir()`` goes through ``Path.home()`` which under
+    # sudo (or ``sudo -H``/``always_set_home``) can point at ``/var/root``
+    # instead of the installing user's home. Use ``_user_state_dir_for``
+    # so the plist always bakes in the correct path.
+    log_dir = _user_state_dir_for(user) / "logs"
     stdout_log = html.escape(str(log_dir / "voxd-stdout.log"))
     stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))

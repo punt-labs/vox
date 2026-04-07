@@ -153,6 +153,38 @@ def test_launchd_plist_contains_log_paths(_mock_exec: MagicMock) -> None:
     "punt_vox.service._voxd_exec_args",
     return_value=["/usr/local/bin/voxd", "--port", "8421"],
 )
+def test_launchd_plist_log_paths_use_target_user_home(
+    _mock_exec: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Log paths in the plist must be resolved from the target user's home.
+
+    Regression test for Cursor Bugbot medium-severity finding on PR #162:
+    under ``sudo`` the process's ``HOME`` points at ``/var/root``, so
+    ``_log_dir()`` via ``Path.home()`` would bake the wrong path into
+    the plist. Fixed by routing through ``_user_state_dir_for(user)``.
+    """
+    # Simulate sudo: process HOME is /var/root, target user's home is elsewhere.
+    monkeypatch.setenv("HOME", "/var/root")
+
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir="/Users/deploy")
+
+    def _fake_getpwnam(_user: str) -> MagicMock:
+        return fake_pw
+
+    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
+
+    content = _launchd_plist_content("deploy")
+    # Target user's home path should appear in the plist, not /var/root.
+    assert "/Users/deploy/.punt-labs/vox/logs/voxd-stdout.log" in content
+    assert "/Users/deploy/.punt-labs/vox/logs/voxd-stderr.log" in content
+    assert "/var/root" not in content
+
+
+@patch(
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
+)
 def test_launchd_plist_keepalive(_mock_exec: MagicMock) -> None:
     content = _launchd_plist_content("testuser")
     assert "<key>KeepAlive</key>" in content
