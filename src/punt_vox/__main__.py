@@ -962,7 +962,14 @@ app.add_typer(daemon_app, name="daemon")
 
 @daemon_app.command("install")
 def daemon_install_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Register vox as a system service (launchd/systemd)."""
+    """Register vox as a system service (launchd/systemd).
+
+    Run as your normal user, NOT under ``sudo``. vox will prompt once
+    for your sudo password when it needs to place the system service
+    unit into its system directory. Running under sudo yourself would
+    cause per-user state to land under ``/root/.punt-labs/vox/`` and
+    the generated unit to run as ``User=root`` — both wrong.
+    """
     from punt_vox.service import install as svc_install
 
     result = svc_install()

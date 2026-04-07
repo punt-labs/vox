@@ -768,6 +768,65 @@ def test_write_keys_env_rejects_control_chars_in_value(tmp_path: Path) -> None:
     assert "ELEVENLABS_API_KEY" not in content
 
 
+def test_write_keys_env_handles_unreadable_existing_file(tmp_path: Path) -> None:
+    """Non-UTF-8 bytes in an existing keys.env do not crash the install.
+
+    Previously ``keys_path.read_text()`` would raise ``UnicodeDecodeError``
+    on corrupted bytes and abort the whole install with a stack trace.
+    ``_write_keys_env`` now catches the error, logs a warning, and
+    overwrites with the clean env. Copilot 3048295101 on PR #162.
+    """
+    keys_path = tmp_path / "keys.env"
+    # Pre-populate with non-UTF-8 bytes — e.g. corrupted file, or a
+    # binary blob that an attacker dropped there.
+    keys_path.write_bytes(b"\xff\xfe garbage \x00\x01\x02")
+
+    _write_keys_env(
+        {"OPENAI_API_KEY": "sk-clean", "TTS_PROVIDER": "openai"},
+        keys_path,
+    )
+
+    # The call must succeed and produce a clean file containing only
+    # the env values passed in.
+    content = keys_path.read_text()
+    assert "OPENAI_API_KEY=sk-clean" in content
+    assert "TTS_PROVIDER=openai" in content
+    # The garbage must be gone.
+    assert "garbage" not in content
+    # Mode is still 0600.
+    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+    assert mode == 0o600
+
+
+def test_write_keys_env_handles_unreadable_existing_file_oserror(
+    tmp_path: Path,
+) -> None:
+    """OSError (e.g. permission denied) during read_text is non-fatal.
+
+    Same policy as the non-UTF-8 case: log a warning and overwrite.
+    Exercises the ``OSError`` arm of the ``except (OSError,
+    UnicodeDecodeError)`` clause by making the file itself unreadable
+    via chmod 000 (which causes ``read_text`` to raise
+    ``PermissionError``, a subclass of ``OSError``).
+    """
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("OPENAI_API_KEY=stale\n")
+    # Make unreadable even to the owner. 000 on a regular file means
+    # ``open()`` fails with PermissionError, which is exactly the
+    # OSError arm we want to exercise.
+    keys_path.chmod(0o000)
+    try:
+        _write_keys_env({"OPENAI_API_KEY": "sk-new"}, keys_path)
+    finally:
+        # Ensure the file is readable again before pytest's tmp_path
+        # cleanup runs.
+        keys_path.chmod(0o600)
+
+    content = keys_path.read_text()
+    assert "OPENAI_API_KEY=sk-new" in content
+    assert "stale" not in content
+
+
 # ---------------------------------------------------------------------------
 # _ensure_user_dirs — end-to-end with tmp HOME
 # ---------------------------------------------------------------------------
@@ -836,6 +895,13 @@ def test_install_runs_as_user_creates_keys_env(
     # real port 8421.
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
 
+    # Stub geteuid so the install() root-refusal check passes on CI
+    # images that run pytest as uid 0 (e.g. Docker).
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
     install()
 
     keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
@@ -849,17 +915,20 @@ def test_install_runs_as_user_creates_keys_env(
 
 @patch("punt_vox.service._systemd_status", return_value=True)
 @patch("punt_vox.service.subprocess.run")
-def test_systemd_install_invokes_three_sudo_commands(
+def test_systemd_install_invokes_expected_sudo_commands(
     mock_run: MagicMock,
     _mock_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_systemd_install issues exactly three sudo subprocess calls.
+    """_systemd_install issues four sudo subprocess calls in order.
 
-    Order must be: ``sudo install``, ``sudo systemctl daemon-reload``,
-    ``sudo systemctl enable --now voxd``. Everything else (tmp file
-    write, state dir creation) happens as the user.
+    Order: ``sudo install`` (places unit), ``sudo systemctl
+    daemon-reload``, ``sudo systemctl enable voxd`` (boot
+    persistence), ``sudo systemctl restart voxd`` (unconditional
+    cycle so upgrades pick up new ExecStart). The ``restart`` step is
+    the regression guard for Cursor Bugbot 3048294138 / Copilot
+    3048295072.
     """
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
@@ -883,36 +952,84 @@ def test_systemd_install_invokes_three_sudo_commands(
     _systemd_install("jfreeman")
 
     sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
-    assert len(sudo_calls) == 3, (
-        f"Expected 3 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
+    assert len(sudo_calls) == 4, (
+        f"Expected 4 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
     )
     # Call 1: install the unit file
     assert sudo_calls[0][0][0][:2] == ["sudo", "install"]
     assert "/etc/systemd/system/voxd.service" in sudo_calls[0][0][0]
     # Call 2: daemon-reload
     assert sudo_calls[1][0][0] == ["sudo", "systemctl", "daemon-reload"]
-    # Call 3: enable --now voxd
-    assert sudo_calls[2][0][0] == [
-        "sudo",
-        "systemctl",
-        "enable",
-        "--now",
-        "voxd",
-    ]
+    # Call 3: enable voxd (no --now — boot persistence only)
+    assert sudo_calls[2][0][0] == ["sudo", "systemctl", "enable", "voxd"]
+    # Call 4: restart voxd (unconditional cycle to pick up new unit)
+    assert sudo_calls[3][0][0] == ["sudo", "systemctl", "restart", "voxd"]
 
 
-@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service._systemd_status", return_value=True)
 @patch("punt_vox.service.subprocess.run")
-def test_launchd_install_invokes_three_sudo_commands(
+def test_systemd_install_restarts_already_running_voxd(
     mock_run: MagicMock,
     _mock_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_launchd_install issues three sudo subprocess calls in order.
+    """Regression guard: ``restart`` is called unconditionally.
+
+    ``systemctl enable --now`` only starts stopped services; on
+    upgrade from an older install it would leave the previous voxd
+    running with the stale ``ExecStart``. The install path must
+    always call ``systemctl restart`` so the running process picks
+    up the new unit file. Cursor Bugbot 3048294138 / Copilot
+    3048295072 on PR #162.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+
+    mock_run.return_value = MagicMock(returncode=0)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    _systemd_install("jfreeman")
+
+    restart_calls = [
+        c
+        for c in mock_run.call_args_list
+        if c[0][0][:4] == ["sudo", "systemctl", "restart", "voxd"]
+    ]
+    assert len(restart_calls) == 1, (
+        "Expected exactly one `sudo systemctl restart voxd` call; the "
+        "install path must cycle the running daemon unconditionally so "
+        "upgrades pick up the new ExecStart. "
+        f"Actual sudo calls: {[c[0][0] for c in mock_run.call_args_list if c[0][0][0] == 'sudo']}"  # noqa: E501
+    )
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service.subprocess.run")
+def test_launchd_install_invokes_expected_sudo_commands(
+    mock_run: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_launchd_install issues four sudo subprocess calls in order.
 
     Order: ``sudo install`` (places plist), ``sudo launchctl unload``
-    (idempotent; may exit non-zero), ``sudo launchctl load``.
+    (idempotent, ``check=False``), ``sudo launchctl load``, ``sudo
+    launchctl kickstart -k system/<label>`` (force restart so the
+    running daemon picks up the new ``ExecStart``). The ``kickstart
+    -k`` step is the regression guard for Cursor Bugbot 3048294138 /
+    Copilot 3048295072.
     """
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
@@ -934,8 +1051,8 @@ def test_launchd_install_invokes_three_sudo_commands(
     _launchd_install("jfreeman")
 
     sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
-    assert len(sudo_calls) == 3, (
-        f"Expected 3 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
+    assert len(sudo_calls) == 4, (
+        f"Expected 4 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
     )
     # Call 1: install plist into /Library/LaunchDaemons
     assert sudo_calls[0][0][0][:2] == ["sudo", "install"]
@@ -944,6 +1061,61 @@ def test_launchd_install_invokes_three_sudo_commands(
     assert sudo_calls[1][0][0][:3] == ["sudo", "launchctl", "unload"]
     # Call 3: load
     assert sudo_calls[2][0][0][:3] == ["sudo", "launchctl", "load"]
+    # Call 4: kickstart -k to force restart
+    assert sudo_calls[3][0][0] == [
+        "sudo",
+        "launchctl",
+        "kickstart",
+        "-k",
+        "system/com.punt-labs.voxd",
+    ]
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service.subprocess.run")
+def test_launchd_install_restarts_already_running_voxd(
+    mock_run: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: ``kickstart -k`` is called unconditionally.
+
+    ``launchctl load`` on an already-loaded plist is a no-op and does
+    not restart the daemon; the running voxd would keep its stale
+    ``ExecStart``. The install path must always call ``launchctl
+    kickstart -k`` so the running process is forcibly cycled. Cursor
+    Bugbot 3048294138 / Copilot 3048295072 on PR #162.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+
+    mock_run.return_value = MagicMock(returncode=0)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+
+    _launchd_install("jfreeman")
+
+    kickstart_calls = [
+        c
+        for c in mock_run.call_args_list
+        if c[0][0][:4] == ["sudo", "launchctl", "kickstart", "-k"]
+    ]
+    assert len(kickstart_calls) == 1, (
+        "Expected exactly one `sudo launchctl kickstart -k` call; the "
+        "install path must force-restart the running daemon so upgrades "
+        "pick up the new ExecStart. "
+        f"Actual sudo calls: {[c[0][0] for c in mock_run.call_args_list if c[0][0][0] == 'sudo']}"  # noqa: E501
+    )
 
 
 @patch("punt_vox.service._systemd_status", return_value=True)
@@ -958,7 +1130,7 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
 
     The tmp file must exist at ``~/.punt-labs/vox/voxd.service.tmp``
     when the first ``sudo install`` fires so ``install(1)`` has
-    something to copy. After all three sudo calls complete, the tmp
+    something to copy. After all four sudo calls complete, the tmp
     file is removed.
     """
     fake_home = tmp_path / "home" / "jfreeman"
@@ -1058,6 +1230,13 @@ def test_install_does_not_chown_anything(
     # daemon — this test must be hermetic).
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
 
+    # Force non-root uid so the install root-refusal check passes on
+    # CI images that run pytest as uid 0.
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
     install()
 
     assert chown_calls == [], (
@@ -1094,5 +1273,55 @@ def test_install_reports_not_running(
     monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
 
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
     result = install()
     assert "not yet running" in result
+
+
+# ---------------------------------------------------------------------------
+# install() — refuses to run as root (Copilot 3048295090 regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_install_refuses_to_run_as_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """install() raises SystemExit when ``os.geteuid() == 0``.
+
+    Running ``sudo vox daemon install`` would cause ``getpass.getuser``
+    to return ``root``, ``Path.home()`` to resolve to ``/root``, and
+    all per-user state to land under ``/root/.punt-labs/vox/`` with
+    ``User=root`` baked into the generated systemd unit. The install
+    command is supposed to run as the normal user and prompt for sudo
+    only when it places the unit file. Copilot 3048295090 on PR #162.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    def _euid_root() -> int:
+        return 0
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_root)
+
+    with pytest.raises(SystemExit, match="without sudo"):
+        install()
+
+    # The refusal must fire before any filesystem work: no state dir,
+    # no tmp files, no keys.env.
+    assert not (fake_home / ".punt-labs").exists(), (
+        "install() created filesystem state before the root-refusal check"
+    )

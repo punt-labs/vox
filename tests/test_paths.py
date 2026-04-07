@@ -11,22 +11,15 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
-
-if TYPE_CHECKING:
-    import pytest
 
 from punt_vox.paths import (
     cache_dir,
     config_dir,
     ensure_user_dirs,
-    installing_user,
     keys_env_file,
     log_dir,
     run_dir,
     user_state_dir,
-    user_state_dir_for,
 )
 
 # ---------------------------------------------------------------------------
@@ -69,51 +62,6 @@ def test_no_fhs_paths_leak_into_helpers() -> None:
             assert not resolved.startswith(prefix), (
                 f"{helper.__name__} returned forbidden path {resolved}"
             )
-
-
-# ---------------------------------------------------------------------------
-# user_state_dir_for(user) -- cross-user resolution for sudo installs
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.paths.pwd.getpwnam")
-def test_user_state_dir_for_reads_home_from_pwd(mock_getpwnam: MagicMock) -> None:
-    """The target user's home dir drives state_dir, not the current user."""
-    mock_pw = MagicMock()
-    mock_pw.pw_dir = "/home/jfreeman"
-    mock_getpwnam.return_value = mock_pw
-    assert user_state_dir_for("jfreeman") == Path("/home/jfreeman/.punt-labs/vox")
-    mock_getpwnam.assert_called_once_with("jfreeman")
-
-
-@patch("punt_vox.paths.pwd.getpwnam", side_effect=KeyError("no such user"))
-def test_user_state_dir_for_unknown_user_falls_back_to_home(
-    _mock_getpwnam: MagicMock,
-) -> None:
-    """Unknown users fall back to current Path.home() -- don't crash."""
-    result = user_state_dir_for("ghost")
-    assert result == Path.home() / ".punt-labs" / "vox"
-
-
-# ---------------------------------------------------------------------------
-# installing_user
-# ---------------------------------------------------------------------------
-
-
-def test_installing_user_uses_sudo_user_when_set(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SUDO_USER takes precedence over the current process user."""
-    monkeypatch.setenv("SUDO_USER", "jfreeman")
-    assert installing_user() == "jfreeman"
-
-
-def test_installing_user_falls_back_to_current_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Without SUDO_USER, returns the process user."""
-    monkeypatch.delenv("SUDO_USER", raising=False)
-    assert installing_user()  # non-empty string
 
 
 # ---------------------------------------------------------------------------

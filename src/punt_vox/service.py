@@ -11,11 +11,12 @@ The service runs ``voxd --port 8421`` as the installing user:
 Privilege scope: ``vox daemon install`` runs as the installing user.
 Per-user state under ``~/.punt-labs/vox/`` — keys, logs, runtime state,
 cache — is created with normal user permissions. The only privileged
-operations are the three ``sudo`` subprocess calls that place the
-system service file and reload/enable the daemon manager. This keeps
-every file write to a user-controlled directory unprivileged and
-eliminates the class of attacks that arose when the entire install
-ran as root inside ``$HOME``.
+operations are four ``sudo`` subprocess calls per platform that place
+the system service file and reload/enable/restart the daemon manager.
+This keeps every file write to a user-controlled directory
+unprivileged and eliminates the class of attacks that arose when the
+entire install ran as root inside ``$HOME``. See DES-029 in
+``DESIGN.md`` for the full rationale.
 """
 
 from __future__ import annotations
@@ -102,13 +103,35 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     a privilege defense, just input sanitization — without this an
     attacker-controlled env var could smuggle extra key=value lines
     into the file).
+
+    If an existing ``keys.env`` is unreadable (permission error,
+    corruption, not-a-regular-file, non-UTF-8 bytes), the merge is
+    skipped, the broken file is unlinked, and a fresh file is written
+    from *env* alone. Unlinking the broken file is necessary because
+    a chmod 000 or otherwise permission-locked inode blocks a naive
+    truncating write too — the only reliable recovery is to remove it
+    and create a new inode. Overwrite is the right policy: the old
+    file was unreadable, the new file will have correct ownership and
+    permissions, and the current shell's env vars are the source of
+    truth at install time. Copilot 3048295101 on PR #162.
     """
     existing: dict[str, str] = {}
+    force_fresh = False
 
     keys_path.parent.mkdir(parents=True, exist_ok=True)
 
     if keys_path.exists():
-        for line in keys_path.read_text().splitlines():
+        try:
+            existing_text = keys_path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Could not read existing %s: %s — will overwrite with env values",
+                keys_path,
+                exc,
+            )
+            existing_text = ""
+            force_fresh = True
+        for line in existing_text.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
@@ -142,6 +165,20 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     )
     lines = [f"{k}={v}" for k, v in sorted(merged.items()) if v]
     content = header + "\n".join(lines) + "\n"
+
+    if force_fresh:
+        # The existing inode was unreadable — chmod 000 or similar
+        # blocks a truncating write too. Unlink so we can create a
+        # fresh inode with the correct mode. ``missing_ok=True``
+        # because a concurrent unlink would be fine too.
+        try:
+            keys_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "Could not unlink unreadable %s: %s — write may fail",
+                keys_path,
+                exc,
+            )
 
     keys_path.write_text(content)
     keys_path.chmod(0o600)
@@ -418,16 +455,27 @@ def _launchd_plist_content(user: str) -> str:
 
 
 def _launchd_install(user: str) -> None:
-    """Install the launchd plist. Sudo is invoked three times.
+    """Install the launchd plist. Sudo is invoked four times.
 
     1. ``sudo install`` the plist into ``/Library/LaunchDaemons``.
     2. ``sudo launchctl unload -w`` any previously-loaded version
        (``check=False`` — idempotent, no-op on fresh install).
     3. ``sudo launchctl load -w`` the freshly installed plist.
+    4. ``sudo launchctl kickstart -k system/<label>`` to force a
+       restart even if launchd considers the service already running
+       with the old ExecStart baked in.
 
     The plist content is written to a user-owned tmp file first and
     then placed into the system directory via ``install(1)``, so the
     only privileged file write is the single ``install`` invocation.
+
+    Why kickstart? ``launchctl load`` on an already-loaded plist is a
+    no-op — it does not restart the daemon to pick up the new
+    ``ExecStart``. On upgrade from an older install, the running voxd
+    would keep its stale binary/args until the user rebooted. The
+    ``kickstart -k`` primitive (``-k`` means "kill and restart if
+    running; start if not") is the only supported way to force that
+    reload. Cursor Bugbot 3048294138 / Copilot 3048295072 on PR #162.
     """
     state_root = _paths_user_state_dir()
     tmp_plist = state_root / "com.punt-labs.voxd.plist.tmp"
@@ -466,6 +514,16 @@ def _launchd_install(user: str) -> None:
             check=True,
         )
         logger.info("Loaded %s into launchd", _LABEL)
+
+        # Force a restart so the running voxd picks up the new
+        # ExecStart from the freshly installed plist, rather than
+        # continuing to run with the stale args baked in at the
+        # previous launchctl load.
+        subprocess.run(
+            ["sudo", "launchctl", "kickstart", "-k", f"system/{_LABEL}"],
+            check=True,
+        )
+        logger.info("Kickstarted %s", _LABEL)
     finally:
         try:
             tmp_plist.unlink(missing_ok=True)
@@ -581,19 +639,27 @@ def _systemd_unit_content(user: str) -> str:
 
 
 def _systemd_install(user: str) -> None:
-    """Install the systemd unit. Sudo is invoked three times.
+    """Install the systemd unit. Sudo is invoked four times.
 
     1. ``sudo install`` the unit into ``/etc/systemd/system``.
-    2. ``sudo systemctl daemon-reload`` so systemd picks up the new unit.
-    3. ``sudo systemctl enable --now voxd`` to start and persist.
+    2. ``sudo systemctl daemon-reload`` so systemd picks up the new
+       unit file.
+    3. ``sudo systemctl enable voxd`` to persist the unit across
+       reboots (idempotent — safe to run on every install).
+    4. ``sudo systemctl restart voxd`` to unconditionally (re)start
+       the service with the current unit content.
 
     The unit content is written to a user-owned tmp file first and
     then placed into the system directory via ``install(1)``, so the
     only privileged file write is the single ``install`` invocation.
-    ``systemctl enable --now`` both enables the unit at boot and
-    starts it immediately — on upgrade it handles the restart of any
-    previously-running instance by virtue of ``daemon-reload`` having
-    picked up the new unit file.
+
+    Why restart, not ``enable --now``? ``enable --now`` only starts
+    the service if it is not already running — on upgrade from an
+    older install, it would leave the previous voxd process alive
+    with the stale ``ExecStart``. ``systemctl restart`` is the only
+    primitive that unconditionally cycles the process through the
+    freshly-loaded unit file. Cursor Bugbot 3048294138 / Copilot
+    3048295072 on PR #162.
     """
     state_root = _paths_user_state_dir()
     tmp_unit = state_root / "voxd.service.tmp"
@@ -625,10 +691,19 @@ def _systemd_install(user: str) -> None:
         )
 
         subprocess.run(
-            ["sudo", "systemctl", "enable", "--now", "voxd"],
+            ["sudo", "systemctl", "enable", "voxd"],
             check=True,
         )
-        logger.info("Enabled and started voxd.service")
+
+        # Unconditional restart. ``enable`` alone will not restart a
+        # running service, so on upgrade we would leak the old binary
+        # until reboot. ``restart`` starts it if stopped and cycles it
+        # if running — exactly the semantics we want here.
+        subprocess.run(
+            ["sudo", "systemctl", "restart", "voxd"],
+            check=True,
+        )
+        logger.info("Enabled and restarted voxd.service")
     finally:
         try:
             tmp_unit.unlink(missing_ok=True)
@@ -687,6 +762,13 @@ def detect_platform() -> str:
 def install() -> str:
     """Install voxd as a system service. Returns a status message.
 
+    Must be run as a normal user, not as root or under ``sudo``. The
+    command prompts for your sudo password itself when it needs to
+    install the system service unit; running it under ``sudo``
+    instead would cause all per-user state to be created under
+    ``/root/.punt-labs/vox/`` and the generated systemd unit to
+    specify ``User=root`` — both wrong. Copilot 3048295090 on PR #162.
+
     Runs as the invoking user. Per-user state under
     ``~/.punt-labs/vox/`` — keys, logs, runtime state, cache — is
     created with normal user permissions. The system service file
@@ -695,6 +777,17 @@ def install() -> str:
     a small set of ``sudo`` subprocess calls; that is the only
     privileged work.
     """
+    # Refuse to run as root. ``os.geteuid`` is POSIX-only but so is
+    # every platform we install on.
+    if os.geteuid() == 0:
+        msg = (
+            "vox daemon install must be run as your normal user, not root "
+            "or sudo. vox will prompt for your sudo password when it needs "
+            "to install the system service unit. Re-run without sudo:\n\n"
+            "    vox daemon install\n"
+        )
+        raise SystemExit(msg)
+
     plat = detect_platform()
     user = getpass.getuser()
     args = _voxd_exec_args()
@@ -710,11 +803,11 @@ def install() -> str:
 
     # Pre-flight: kill any stale voxd holding the port. This runs
     # before the platform-specific install path so that ``launchctl
-    # load`` (or ``systemctl enable --now``) does not race against a
-    # leftover process bound to ``DEFAULT_PORT``. The platform-
-    # specific install paths themselves are kept narrow — exactly
-    # three ``sudo`` subprocess calls each — so this cleanup happens
-    # here as the user, not inside the privileged section.
+    # load`` / ``systemctl restart`` does not race against a leftover
+    # process bound to ``DEFAULT_PORT``. The platform-specific install
+    # paths themselves are kept narrow — exactly four ``sudo``
+    # subprocess calls each — so this cleanup happens here as the
+    # user, not inside the privileged section.
     _ensure_port_free()
 
     if plat == "macos":

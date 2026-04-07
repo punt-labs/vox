@@ -18,9 +18,6 @@ minimal client can depend on it without pulling providers.
 
 from __future__ import annotations
 
-import getpass
-import os
-import pwd
 from pathlib import Path
 
 _STATE_DIR_NAME = ".punt-labs"
@@ -33,22 +30,6 @@ def user_state_dir() -> Path:
     Same path on macOS and Linux. No FHS split, no Homebrew prefix.
     """
     return Path.home() / _STATE_DIR_NAME / _SUBDIR_NAME
-
-
-def user_state_dir_for(user: str) -> Path:
-    """Return ``~<user>/.punt-labs/vox`` for an arbitrary user.
-
-    Used by ``vox daemon install`` when running under ``sudo``: the
-    process's home dir is root's, but the target state dir must be the
-    installing user's. Looks up the target user's home via ``pwd``.
-    Falls back to ``Path.home() / .punt-labs / vox`` if the user is not
-    in the password database, so callers never crash on a typo.
-    """
-    try:
-        home = Path(pwd.getpwnam(user).pw_dir)
-    except KeyError:
-        return user_state_dir()
-    return home / _STATE_DIR_NAME / _SUBDIR_NAME
 
 
 def config_dir() -> Path:
@@ -78,15 +59,6 @@ def cache_dir() -> Path:
 def keys_env_file() -> Path:
     """Full path to ``keys.env`` inside the config dir."""
     return config_dir() / "keys.env"
-
-
-def installing_user() -> str:
-    """Get the real user, not root, when running under ``sudo``.
-
-    ``SUDO_USER`` is the canonical source when sudo preserves it.
-    Falls back to the current process's login name.
-    """
-    return os.environ.get("SUDO_USER") or getpass.getuser()
 
 
 def ensure_user_dirs(state_root: Path | None = None) -> None:
