@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-04-06
+
 ### Added
 
 - **Direct-play path for local TTS providers**: `espeak-ng` and macOS `say` now implement an optional `DirectPlayProvider` protocol, spawning their binary without the `-w`/`-o` flag and playing straight to the default audio device -- the same syscall and audio session a user's shell would use. Cloud providers (ElevenLabs, OpenAI, Polly) keep using the existing synthesize-cache-enqueue pipeline, so MP3 caching and dedup replay still work. This eliminates the WAV -> ffmpeg -> MP3 -> ffplay round-trip for local synthesis and removes an entire class of audio-session negotiation bugs on Linux. Direct-play and queued playback share a single `_playback_mutex`, so two concurrent clients can never produce overlapping audio.
