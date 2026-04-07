@@ -223,14 +223,18 @@ vox daemon status                              # Check if daemon is running
 | `TTS_MODEL` | Model override | provider default |
 | `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
-**Daemon API keys:** API keys live in `~/.punt-labs/vox/keys.env`, mode 0600. Edit it with your normal editor — no sudo. After changing keys, restart the daemon to pick them up:
+**Daemon API keys:** API keys live in `~/.punt-labs/vox/keys.env`, mode 0600. You can edit it with your normal editor — no sudo required for the edit itself.
+
+**To apply key changes, restart the daemon (requires sudo for systemctl/launchctl):**
 
 ```bash
 sudo systemctl restart voxd                           # Linux
 sudo launchctl kickstart -k system/com.punt-labs.voxd # macOS
 ```
 
-`vox daemon install` seeds this file with any provider keys set in your current shell. It runs as your normal user and only prompts for sudo once — to place the system service unit into its system directory. After the initial install, you never need sudo again to manage your keys. Run `vox doctor` to verify which providers are active.
+The restart step prompts for sudo because `systemctl` and `launchctl` are system-level daemon managers. Editing `keys.env` and restarting the daemon are two separate operations: the edit is sudo-free, the restart is not.
+
+`vox daemon install` seeds `keys.env` with any provider keys set in your current shell. It runs as your normal user and only prompts for sudo once — to place the system service unit into its system directory and start the service. Run `vox doctor` to verify which providers are active.
 
 ## Roadmap
 

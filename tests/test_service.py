@@ -113,6 +113,57 @@ def test_voxd_exec_args_missing_binary_raises(
         _voxd_exec_args()
 
 
+def test_voxd_exec_args_rejects_non_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A voxd file without the executable bit must raise SystemExit.
+
+    ``Path.exists()`` returns True for non-executable files, so the
+    earlier implementation would happily bake a bad ``ExecStart=`` into
+    the systemd unit and fail at runtime with an opaque error. The
+    install now probes ``os.access(X_OK)`` and fails fast with a clear
+    message. Copilot 3048402463 on PR #162.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_python = bin_dir / "python"
+    fake_python.write_text("#!/bin/sh\n")
+    fake_python.chmod(0o755)
+    # voxd exists but is NOT executable.
+    voxd = bin_dir / "voxd"
+    voxd.write_text("#!/bin/sh\n")
+    voxd.chmod(0o644)
+
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(fake_python))
+    with pytest.raises(SystemExit, match="not executable"):
+        _voxd_exec_args()
+
+
+def test_voxd_exec_args_rejects_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory at the voxd path must raise SystemExit, not succeed.
+
+    ``Path.exists()`` returns True for directories, so the earlier
+    implementation would let a directory named ``voxd`` pass the check
+    and produce a broken systemd unit. ``Path.is_file()`` excludes
+    directories. Copilot 3048402463 on PR #162.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_python = bin_dir / "python"
+    fake_python.write_text("#!/bin/sh\n")
+    fake_python.chmod(0o755)
+    # voxd is a directory, not a file.
+    (bin_dir / "voxd").mkdir()
+
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(fake_python))
+    with pytest.raises(SystemExit, match="voxd binary not found"):
+        _voxd_exec_args()
+
+
 # ---------------------------------------------------------------------------
 # launchd plist content
 # ---------------------------------------------------------------------------
@@ -825,6 +876,65 @@ def test_write_keys_env_handles_unreadable_existing_file_oserror(
     content = keys_path.read_text()
     assert "OPENAI_API_KEY=sk-new" in content
     assert "stale" not in content
+
+
+def test_write_keys_env_never_exposes_world_readable_state(
+    tmp_path: Path,
+) -> None:
+    """keys.env must never exist at wider-than-0600 permissions.
+
+    The earlier implementation used ``Path.write_text`` + ``Path.chmod``,
+    which creates the file via ``open(..., "w")`` — that creates with
+    ``0o666 & ~umask`` (typically 0o644 on umask 0022) and only chmods
+    afterward. The file was world-readable for the few instructions
+    between create and chmod, a real API-key exposure window. The
+    fix uses ``os.open(..., O_CREAT, 0o600)`` which sets the mode at
+    create time. Copilot 3048402515 on PR #162.
+
+    This test sets a permissive umask (0002) that would have produced
+    0o664 under the old code, then asserts the resulting file is
+    exactly 0o600. The umask is restored on teardown.
+    """
+    old_umask = os.umask(0o002)
+    try:
+        keys_path = tmp_path / "keys.env"
+        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+        mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+        assert mode == 0o600, (
+            f"keys.env mode is {oct(mode)} under umask 0002 — the "
+            "os.open path should create the file at exactly 0o600 "
+            "regardless of umask, not rely on a post-write chmod."
+        )
+    finally:
+        os.umask(old_umask)
+
+
+def test_write_keys_env_tightens_parent_dir(tmp_path: Path) -> None:
+    """``_write_keys_env`` enforces mode 0700 on the parent dir.
+
+    The state dir may have been created by an earlier version of vox
+    (or by hand) with umask-widened permissions (0755 on a typical
+    0022 umask). Without this step, a secrets file inside a
+    world-traversable directory would let other local users read the
+    dir listing and mount further attacks. Fixed by chmod'ing the
+    parent to 0700 on every call, even when the dir pre-exists.
+    Copilot 3048402424 on PR #162.
+    """
+    state_root = tmp_path / ".punt-labs" / "vox"
+    state_root.mkdir(parents=True)
+    # Simulate an older install that left the dir at 0755.
+    state_root.chmod(0o755)
+    assert stat_mod.S_IMODE(os.stat(state_root).st_mode) == 0o755
+
+    keys_path = state_root / "keys.env"
+    _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+    mode = stat_mod.S_IMODE(os.stat(state_root).st_mode)
+    assert mode == 0o700, (
+        f"parent dir mode is {oct(mode)} after _write_keys_env; "
+        "the helper must tighten the parent to 0700 so a secrets "
+        "file does not live under a world-traversable dir."
+    )
 
 
 # ---------------------------------------------------------------------------

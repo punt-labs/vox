@@ -115,11 +115,28 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     file was unreadable, the new file will have correct ownership and
     permissions, and the current shell's env vars are the source of
     truth at install time. Copilot 3048295101 on PR #162.
+
+    The file is created via ``os.open`` with an explicit ``mode=0o600``
+    so there is no instant at which the file exists with umask-widened
+    permissions. ``Path.write_text`` would have called ``open(..., "w")``
+    which creates the file with ``0o666 & ~umask`` first and only
+    chmods afterward — a world-readable exposure window on any system
+    with the typical ``umask 0022``. Copilot 3048402515 on PR #162.
+
+    The parent directory is also created-or-tightened to mode 0700 as a
+    belt-and-suspenders step so ``_write_keys_env`` remains self-
+    contained if called independently of ``install()``. Copilot
+    3048402424 on PR #162.
     """
     existing: dict[str, str] = {}
     force_fresh = False
 
-    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    # Create the parent dir at 0700 or tighten it if it already exists.
+    # ``mkdir(mode=)`` only affects creation, so the separate chmod is
+    # needed to enforce the mode on a pre-existing dir (for example if
+    # an earlier version left it at umask-widened 0755).
+    keys_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keys_path.parent.chmod(0o700)
 
     if keys_path.exists():
         try:
@@ -181,8 +198,29 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
                 exc,
             )
 
-    keys_path.write_text(content)
-    keys_path.chmod(0o600)
+    # Atomic create-and-truncate with explicit mode 0600. This replaces
+    # the older ``Path.write_text`` + ``Path.chmod`` sequence, which
+    # left the file world-readable for the few instructions between
+    # the ``open(..., "w")`` inside ``write_text`` (which creates with
+    # ``0o666 & ~umask``) and the subsequent ``chmod(0o600)``.
+    fd = os.open(
+        str(keys_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        os.write(fd, content.encode("utf-8"))
+    finally:
+        os.close(fd)
+    # Belt-and-suspenders: the explicit mode passed to ``os.open`` is
+    # combined with the process umask at creation time, so on an
+    # unusual umask (for example 0077 or an inherited 0000) the
+    # effective creation mode might not be exactly 0o600. Call chmod
+    # afterward to pin it. The file was never world-readable — at
+    # worst it was user-only (0o600 & ~0o077 == 0o600 on a typical
+    # umask, 0o600 & ~0o000 == 0o600 on umask 0000). This chmod only
+    # narrows an already-safe mode to the exact target.
+    os.chmod(keys_path, 0o600)
     return keys_path
 
 
@@ -376,11 +414,24 @@ def _voxd_exec_args() -> list[str]:
     ``uv tool install`` could get baked into ``ExecStart=`` and override
     the current one. Anchoring to ``sys.executable`` eliminates that
     class of bug.
+
+    Validates that the resolved path is an executable *file*, not a
+    directory, symlink loop, or non-executable file. ``Path.exists()``
+    returns True for directories and files without the executable bit,
+    so a broken install would previously land a bad ``ExecStart=`` in
+    the systemd unit and fail at runtime with an opaque systemd error.
+    Fail fast at install time instead. Copilot 3048402463 on PR #162.
     """
     voxd_path = Path(sys.executable).parent / "voxd"
-    if not voxd_path.exists():
+    if not voxd_path.is_file():
         msg = (
             f"voxd binary not found at {voxd_path}. "
+            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+        )
+        raise SystemExit(msg)
+    if not os.access(voxd_path, os.X_OK):
+        msg = (
+            f"voxd at {voxd_path} exists but is not executable. "
             "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
         )
         raise SystemExit(msg)
