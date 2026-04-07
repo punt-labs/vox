@@ -1390,10 +1390,16 @@ def test_ensure_user_dirs_never_chowns_parent(
 
     chowned: list[str] = []
 
-    def _fake_chown(path: str, _uid: int, _gid: int) -> None:
+    def _fake_ownership_change(path: str, _uid: int, _gid: int) -> None:
         chowned.append(str(path))
 
-    monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
+    # Mock BOTH os.chown and os.lchown — _ensure_user_dirs uses lchown
+    # (symlink-safe) but we still want to catch any future caller that
+    # switches back to os.chown and accidentally widens the attack
+    # surface. Also: non-root pytest users can't actually run lchown on
+    # directories they don't own, so mocking is required in CI.
+    monkeypatch.setattr("punt_vox.service.os.chown", _fake_ownership_change)
+    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_ownership_change)
 
     _ensure_user_dirs("jfreeman")
 
