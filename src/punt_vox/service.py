@@ -131,6 +131,13 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     belt-and-suspenders step so ``_write_keys_env`` remains self-
     contained if called independently of ``install()``. Copilot
     3048402424 on PR #162.
+
+    If ``keys_path`` itself exists but is not a regular file (a
+    directory, symlink, FIFO, socket, device node, etc.), the install
+    aborts with a clear ``SystemExit``. Reading or unlinking the path
+    would either crash with ``IsADirectoryError`` or follow an
+    indirection that the user did not intend — neither is safe
+    behaviour for a secrets file. Copilot 3048463694 on PR #162.
     """
     existing: dict[str, str] = {}
     force_fresh = False
@@ -141,6 +148,20 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     # an earlier version left it at umask-widened 0755).
     keys_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     keys_path.parent.chmod(0o700)
+
+    # ``Path.exists()`` follows symlinks; ``Path.is_symlink()`` does
+    # not. Check both with ``lstat`` semantics so we reject symlinks
+    # explicitly even if their target is a regular file. This guards
+    # against directories, symlinks, FIFOs, sockets, and device nodes
+    # at the keys.env path — all of which would either crash the
+    # subsequent ``read_text``/``unlink`` or follow an unintended
+    # indirection.
+    if keys_path.is_symlink() or (keys_path.exists() and not keys_path.is_file()):
+        msg = (
+            f"{keys_path} exists but is not a regular file. "
+            "Remove it manually and re-run install."
+        )
+        raise SystemExit(msg)
 
     if keys_path.exists():
         try:
@@ -569,7 +590,10 @@ def _launchd_install(user: str) -> None:
     tmp_plist.write_text(_launchd_plist_content(user))
     logger.info("Wrote plist to %s", tmp_plist)
 
-    print(_SUDO_NOTICE, file=sys.stderr)
+    # The user-facing sudo notice is printed once by ``install()`` at
+    # the top of the install flow — not here. ``_launchd_install`` is
+    # a private helper and does not own user-facing UI. Cursor Bugbot
+    # 3048462450 on PR #162.
     try:
         subprocess.run(
             [
@@ -775,7 +799,10 @@ def _systemd_install(user: str) -> None:
     tmp_unit.write_text(_systemd_unit_content(user))
     logger.info("Wrote unit to %s", tmp_unit)
 
-    print(_SUDO_NOTICE, file=sys.stderr)
+    # The user-facing sudo notice is printed once by ``install()`` at
+    # the top of the install flow — not here. ``_systemd_install`` is
+    # a private helper and does not own user-facing UI. Cursor Bugbot
+    # 3048462450 on PR #162.
     try:
         subprocess.run(
             [

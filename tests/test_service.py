@@ -939,6 +939,50 @@ def test_write_keys_env_tightens_parent_dir(tmp_path: Path) -> None:
     )
 
 
+def test_write_keys_env_rejects_directory_at_keys_path(tmp_path: Path) -> None:
+    """A directory at ``keys_path`` aborts the install with SystemExit.
+
+    Without this guard, ``read_text`` raises ``IsADirectoryError`` (a
+    subclass of OSError caught by the existing handler), which sets
+    ``force_fresh = True``, and the subsequent ``unlink`` then crashes
+    because you cannot unlink a directory. Fix is an explicit
+    ``is_file()`` check that aborts with a clear error directing the
+    user to remove the offending entry. Copilot 3048463694 on PR #162.
+    """
+    keys_path = tmp_path / "keys.env"
+    keys_path.mkdir()  # directory, not a regular file
+
+    with pytest.raises(SystemExit, match="not a regular file"):
+        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+    # The directory is left intact — the install does NOT silently
+    # delete user content.
+    assert keys_path.is_dir()
+
+
+def test_write_keys_env_rejects_symlink_at_keys_path(tmp_path: Path) -> None:
+    """A symlink at ``keys_path`` aborts the install with SystemExit.
+
+    Even though install runs as the user (so a symlink in the user's
+    own home is not a privilege-escalation vector), a symlink at the
+    keys path is still suspicious — the install intends to write a
+    local secrets file, not follow an indirection. Reject explicitly
+    with a clear error. Copilot 3048463694 on PR #162.
+    """
+    real_target = tmp_path / "elsewhere.txt"
+    real_target.write_text("OPENAI_API_KEY=via-symlink\n")
+    keys_path = tmp_path / "keys.env"
+    keys_path.symlink_to(real_target)
+
+    with pytest.raises(SystemExit, match="not a regular file"):
+        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+    # The symlink and its target are left intact — the install does
+    # NOT silently overwrite or follow.
+    assert keys_path.is_symlink()
+    assert real_target.read_text() == "OPENAI_API_KEY=via-symlink\n"
+
+
 # ---------------------------------------------------------------------------
 # _ensure_user_dirs — end-to-end with tmp HOME
 # ---------------------------------------------------------------------------
