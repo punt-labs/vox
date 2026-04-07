@@ -15,7 +15,6 @@ from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
-    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
@@ -179,10 +178,6 @@ class ElevenLabsProvider:
         if _VOICE_ID_RE.match(name):
             return name
         return name.lower()
-
-    def play_directly(self, request: AudioRequest) -> int | None:
-        """ElevenLabs returns MP3 bytes; use the synthesize-and-cache path."""
-        return None
 
     def check_health(self) -> list[HealthCheck]:
         """Check ElevenLabs API key and subscription status."""

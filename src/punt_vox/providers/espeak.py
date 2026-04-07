@@ -220,7 +220,7 @@ class EspeakProvider:
         rate = request.rate if request.rate is not None else 100
         return voice_cfg, _rate_to_wpm(rate)
 
-    def play_directly(self, request: AudioRequest) -> int | None:
+    def play_directly(self, request: AudioRequest) -> int:
         """Play directly via espeak-ng's built-in audio output.
 
         Spawns ``espeak-ng -v <voice> -s <wpm> <text>`` without ``-w``,

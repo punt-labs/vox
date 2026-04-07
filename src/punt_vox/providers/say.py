@@ -176,7 +176,7 @@ class SayProvider:
         rate = request.rate if request.rate is not None else 100
         return voice_cfg, _rate_to_wpm(rate)
 
-    def play_directly(self, request: AudioRequest) -> int | None:
+    def play_directly(self, request: AudioRequest) -> int:
         """Play directly via the macOS ``say`` command.
 
         Spawns ``say -v <voice> -r <wpm> <text>`` without ``-o``, so

@@ -13,7 +13,6 @@ import boto3
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
-    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
@@ -276,10 +275,6 @@ class PollyProvider:
             )
             raise ValueError(msg)
         return cfg.voice_id
-
-    def play_directly(self, request: AudioRequest) -> int | None:
-        """Polly returns MP3 bytes; use the synthesize-and-cache path."""
-        return None
 
     def check_health(self) -> list[HealthCheck]:
         """Check AWS credentials and Polly API access."""

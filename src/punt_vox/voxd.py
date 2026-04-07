@@ -41,7 +41,12 @@ from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.types import AudioProviderId, AudioRequest, TTSProvider
+from punt_vox.types import (
+    AudioProviderId,
+    AudioRequest,
+    DirectPlayProvider,
+    TTSProvider,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -56,6 +61,11 @@ _DEDUP_WINDOW_SECONDS = 5.0
 
 # Lock to serialize os.environ mutation during synthesis with per-request API keys.
 _env_lock = asyncio.Lock()
+
+# Mutex held by anything that produces audible sound. The playback queue
+# consumer and the direct-play path both acquire it so that two clients
+# (e.g. simultaneous hooks from two Claude sessions) can never overlap.
+_playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +351,20 @@ _SUSPICIOUS_ELAPSED_S = 0.05
 
 _PLAYBACK_TIMEOUT_S = 30.0
 
+# Cap on the stderr blob we keep per playback. ffplay without -loglevel
+# quiet can emit kilobytes of progress lines; we want enough for triage
+# without unbounded growth in memory or log files.
+_MAX_STDERR_LEN = 2000
+
+
+def _truncate_stderr(text: str) -> str:
+    """Return ``text`` clipped to ``_MAX_STDERR_LEN`` with head + tail kept."""
+    if len(text) <= _MAX_STDERR_LEN:
+        return text
+    half = _MAX_STDERR_LEN // 2
+    dropped = len(text) - _MAX_STDERR_LEN
+    return f"{text[:half]}\n... [truncated {dropped} bytes] ...\n{text[-half:]}"
+
 
 def _monotonic() -> float:
     """Indirection for ``time.monotonic`` so tests can stub playback timing.
@@ -505,7 +529,8 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
 
     elapsed = _monotonic() - start
     rc = proc.returncode if proc.returncode is not None else -1
-    stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+    raw_stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+    stderr_text = _truncate_stderr(raw_stderr)
 
     _record_playback_result(ctx, path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
 
@@ -554,11 +579,17 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
 
 
 async def _playback_consumer(ctx: DaemonContext) -> None:
-    """Single consumer: plays audio sequentially."""
+    """Single consumer: plays audio sequentially.
+
+    Holds ``_playback_mutex`` for the duration of each item so the
+    direct-play path can't produce overlapping audio from another
+    coroutine.
+    """
     while True:
         item = await ctx.playback_queue.get()
         logger.info("Playback start: %s", item.path.name)
-        await _play_audio(item.path, ctx)
+        async with _playback_mutex:
+            await _play_audio(item.path, ctx)
         logger.info("Playback done: %s", item.path.name)
         item.notify.set()
         ctx.playback_queue.task_done()
@@ -797,17 +828,26 @@ async def _synthesize_to_file(
                     synth_size,
                     len(text),
                 )
-            else:
-                logger.info(
-                    "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
-                    provider_name,
-                    resolved_voice,
-                    output_path,
-                    synth_size,
-                    len(text),
+                # Delete the broken temp file and fail fast. Caching it
+                # would poison every subsequent identical request.
+                output_path.unlink(missing_ok=True)
+                msg = (
+                    f"synthesis produced missing or empty output file: "
+                    f"{output_path} (provider={provider_name}, "
+                    f"voice={resolved_voice}, chars_in={len(text)})"
                 )
+                raise RuntimeError(msg)
 
-            # Cache the result
+            logger.info(
+                "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
+                provider_name,
+                resolved_voice,
+                output_path,
+                synth_size,
+                len(text),
+            )
+
+            # Only cache verified-good output.
             cache_put(normalized, resolved_voice, provider_name, output_path)
             return output_path
         finally:
@@ -839,9 +879,11 @@ def _run_play_directly_sync(
 ) -> int | None:
     """Construct provider and call ``play_directly`` on a worker thread.
 
-    Mutates ``os.environ`` only if an API key is supplied. Restoring the
-    prior value happens in the same thread, so the env-lock contract is
-    preserved without needing to hold the lock around audio playback.
+    Returns ``None`` if the provider does not implement the
+    ``DirectPlayProvider`` protocol -- the caller will fall back to the
+    synthesize-and-queue path. Mutates ``os.environ`` only if an API key
+    is supplied; restoration happens on the same thread so the env-lock
+    contract is preserved without holding the lock during audio playback.
     """
     env_var = _PROVIDER_API_KEY_VAR.get(provider_name) if api_key else None
     old_value: str | None = None
@@ -850,6 +892,8 @@ def _run_play_directly_sync(
         os.environ[env_var] = api_key
     try:
         provider = provider_factory()
+        if not isinstance(provider, DirectPlayProvider):
+            return None
         return provider.play_directly(request)
     finally:
         if env_var:
@@ -909,8 +953,11 @@ async def _try_direct_play(
 
     start = _monotonic()
     try:
+        # _playback_mutex serializes audible output across all paths --
+        # the queue consumer holds it too. Without this, two hooks firing
+        # at once would overlap because direct-play bypasses the queue.
         if api_key and provider_name in _PROVIDER_API_KEY_VAR:
-            async with _env_lock:
+            async with _env_lock, _playback_mutex:
                 rc = await asyncio.to_thread(
                     _run_play_directly_sync,
                     provider_name,
@@ -919,13 +966,14 @@ async def _try_direct_play(
                     request,
                 )
         else:
-            rc = await asyncio.to_thread(
-                _run_play_directly_sync,
-                provider_name,
-                None,
-                _factory,
-                request,
-            )
+            async with _playback_mutex:
+                rc = await asyncio.to_thread(
+                    _run_play_directly_sync,
+                    provider_name,
+                    None,
+                    _factory,
+                    request,
+                )
     except Exception as exc:
         logger.exception("Direct-play raised for provider=%s", provider_name)
         return exc

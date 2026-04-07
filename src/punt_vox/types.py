@@ -18,6 +18,7 @@ __all__ = [
     "AudioProviderId",
     "AudioRequest",
     "AudioResult",
+    "DirectPlayProvider",
     "HealthCheck",
     "MergeStrategy",
     "SynthesisRequest",
@@ -279,18 +280,22 @@ class TTSProvider(AudioProvider, Protocol):
         """
         ...
 
-    def play_directly(self, request: AudioRequest) -> int | None:
-        """Synthesize and play audio in one step, bypassing the file pipeline.
 
-        Local providers (espeak-ng, macOS say) play directly to the
-        default audio device. Cloud providers return ``None`` because
-        their MP3 output benefits from caching for dedup replay.
+@runtime_checkable
+class DirectPlayProvider(Protocol):
+    """Optional capability: synthesize and play in one step.
 
-        Returns:
-            The subprocess exit code (0 on success), or ``None`` if direct
-            play is not supported -- caller falls back to ``synthesize``
-            + playback queue.
-        """
+    Providers that can play to the default audio device without producing
+    an intermediate file (espeak-ng, macOS say) implement this protocol.
+    Cloud providers (ElevenLabs, OpenAI, Polly) deliberately do not, so
+    their MP3 output keeps flowing through the cache and dedup pipeline.
+
+    Callers use ``isinstance(provider, DirectPlayProvider)`` to test the
+    capability at runtime; the protocol is ``@runtime_checkable``.
+    """
+
+    def play_directly(self, request: AudioRequest) -> int:
+        """Synthesize and play, returning the subprocess exit code."""
         ...
 
 

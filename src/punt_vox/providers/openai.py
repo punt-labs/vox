@@ -15,7 +15,6 @@ from punt_vox.core import split_text
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
-    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
@@ -110,10 +109,6 @@ class OpenAIProvider:
         Language is accepted but not validated — OpenAI voices are multilingual.
         """
         return self._resolve_voice_name(name)
-
-    def play_directly(self, request: AudioRequest) -> int | None:
-        """OpenAI returns MP3 bytes; use the synthesize-and-cache path."""
-        return None
 
     def check_health(self) -> list[HealthCheck]:
         """Check OpenAI API key and model access."""
