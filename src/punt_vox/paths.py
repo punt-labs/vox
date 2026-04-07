@@ -93,17 +93,21 @@ def ensure_user_dirs(state_root: Path) -> None:
     """Create ``state_root`` and its required subdirectories.
 
     Creates ``<state_root>``, ``<state_root>/logs``, ``<state_root>/run``,
-    and ``<state_root>/cache``. The ``run`` dir is chmod 0700 because it
-    holds the auth token. The other dirs inherit the process umask.
+    and ``<state_root>/cache``. All four dirs are chmod 0700 because
+    every one of them holds private per-user state: provider API keys,
+    spoken-text logs, auth token, cached synthesis output.
 
-    Idempotent: safe to call repeatedly. Does not chown — callers under
-    ``sudo`` must invoke this with ``seteuid`` already switched to the
-    target user (or call it as the target user via ``os.fork``).
+    Idempotent: safe to call repeatedly. Does not chown. Under ``sudo``,
+    callers can either invoke this as the target user (for example
+    after ``seteuid`` or in a child process running as that user) or
+    call it as root and chown the created paths afterward — the service
+    module's ``_ensure_user_dirs`` wrapper does the latter after a
+    symlink-safety check on every path component.
     """
     state_root.mkdir(parents=True, exist_ok=True)
-    (state_root / "logs").mkdir(parents=True, exist_ok=True)
-    run = state_root / "run"
-    run.mkdir(parents=True, exist_ok=True)
-    # Enforce 0700 even on pre-existing dirs with looser permissions.
-    run.chmod(0o700)
-    (state_root / "cache").mkdir(parents=True, exist_ok=True)
+    state_root.chmod(0o700)
+    for subdir in ("logs", "run", "cache"):
+        d = state_root / subdir
+        d.mkdir(parents=True, exist_ok=True)
+        # Enforce 0700 even on pre-existing dirs with looser permissions.
+        d.chmod(0o700)

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Path helpers extracted to `punt_vox.paths`**: voxd, service, and client all share one source of truth for per-user state paths. Removed the duplicated `_data_root()`/`_config_dir()`/`_log_dir()`/`_run_dir()` helpers from those modules. The new module is stdlib-only so both the heavy voxd import chain and the minimal client can depend on it.
 - **systemd unit no longer sets `RuntimeDirectory=vox`**: runtime state lives in `$HOME/.punt-labs/vox/run/` now, so systemd does not need to create `/run/vox`.
+- **State directories tightened to mode 0700**: `~/.punt-labs/vox/` and all four subdirectories (`logs`, `run`, `cache`, root) now use mode 0700, same policy as `~/.ssh` and `~/.gnupg`. Previously `logs/` and `cache/` inherited the process umask and could be world-readable on systems with a permissive default, which would leak spoken text, operational details, and cached synthesis output to other local users.
+
+### Security
+
+- **Symlink-safe install under `sudo`**: `_ensure_user_dirs`, `_write_keys_env`, and `_chown_to_user` now refuse to follow symlinks anywhere in the `~/.punt-labs/vox/` chain. Previously `_ensure_user_dirs` would chown `state_root.parent` — if an attacker pre-placed `~/.punt-labs` as a symlink to `/etc`, the privileged `chown` would hand root-owned system paths to the user. Similarly, `_write_keys_env` used `os.open(..., O_CREAT|O_TRUNC)` without `O_NOFOLLOW`, so a symlink at `keys.env` could redirect the privileged root write to any file on the filesystem. The install now: (1) walks every ancestor under `~/.punt-labs/vox` with `lstat` and bails on the first symlink it finds; (2) opens `keys.env` with `O_NOFOLLOW|O_EXCL` and unlinks any pre-existing regular file first; (3) uses `os.lchown` instead of `os.chown` so symlink follow cannot occur at chown time; (4) never chowns `~/.punt-labs` itself, only the directories it created; (5) rejects newlines and NUL bytes in provider values to prevent key=value smuggling into `keys.env`. Cursor Bugbot findings on PR #162.
 
 ## [4.1.0] - 2026-04-06
 

@@ -146,8 +146,16 @@ def _log_voxd_environment() -> None:
 
 
 def _configure_logging(log_dir: Path) -> None:
-    """Configure logging with rotating file and stderr handlers."""
-    log_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    """Configure logging with rotating file and stderr handlers.
+
+    The log dir is per-user now and voxd.log may contain spoken text
+    and operational details, so we force mode 0700 — same policy as
+    ``~/.ssh`` and other private per-user state. We also enforce the
+    mode on pre-existing directories so an upgraded install gets the
+    tightened permissions automatically.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    log_dir.chmod(0o700)
     log_file = log_dir / "voxd.log"
 
     logging.config.dictConfig(

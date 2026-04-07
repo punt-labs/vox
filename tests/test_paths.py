@@ -131,12 +131,18 @@ def test_ensure_user_dirs_creates_all_subdirs(tmp_path: Path) -> None:
     assert (state / "cache").is_dir()
 
 
-def test_ensure_user_dirs_sets_run_dir_mode_0700(tmp_path: Path) -> None:
-    """run_dir holds the auth token -- mode 0700, same as ssh/gpg."""
+def test_ensure_user_dirs_sets_all_subdirs_mode_0700(tmp_path: Path) -> None:
+    """Every state subdir is mode 0700 — same policy as ``~/.ssh``.
+
+    Every directory holds private per-user data: keys, spoken-text
+    logs, auth token, cached audio. Tighten all of them, not just run.
+    """
     state = tmp_path / "state"
     ensure_user_dirs(state)
-    mode = stat.S_IMODE(os.stat(state / "run").st_mode)
-    assert mode == 0o700, f"run_dir mode is {oct(mode)}, expected 0o700"
+    for name in ("", "logs", "run", "cache"):
+        target = state / name if name else state
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        assert mode == 0o700, f"{target} mode is {oct(mode)}, expected 0o700"
 
 
 def test_ensure_user_dirs_is_idempotent(tmp_path: Path) -> None:
@@ -145,5 +151,7 @@ def test_ensure_user_dirs_is_idempotent(tmp_path: Path) -> None:
     ensure_user_dirs(state)
     ensure_user_dirs(state)
     assert (state / "run").is_dir()
-    mode = stat.S_IMODE(os.stat(state / "run").st_mode)
-    assert mode == 0o700
+    for name in ("", "logs", "run", "cache"):
+        target = state / name if name else state
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        assert mode == 0o700

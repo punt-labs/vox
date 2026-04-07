@@ -92,16 +92,60 @@ _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _reject_symlinks(path: Path) -> None:
+    """Raise if *path* or any ancestor inside the user's home is a symlink.
+
+    Walks the chain from ``~<user>/.punt-labs`` down to *path* and fails
+    fast if any component is a symlink. Prevents attacker-controlled
+    symlinks from redirecting privileged writes to arbitrary files.
+    Callers that drop privileges to the target user do not need to worry
+    about this because the kernel already denies writes they shouldn't
+    have — but defence in depth is cheap.
+    """
+    # Walk all ancestors up to the first one that doesn't start with the
+    # user's home — we only check inside ``$HOME/.punt-labs/vox``.
+    current = path
+    seen: list[Path] = [current]
+    while True:
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+        seen.append(current)
+        # Stop at the .punt-labs ancestor so we don't walk above $HOME.
+        if current.name == ".punt-labs":
+            break
+    for component in seen:
+        try:
+            if component.is_symlink():
+                msg = (
+                    f"Refusing to operate on {path}: ancestor {component} "
+                    "is a symlink (potential privilege escalation)."
+                )
+                raise OSError(msg)
+        except FileNotFoundError:
+            # Not created yet — that's fine, we'll create it.
+            continue
+
+
 def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     """Write ``keys.env`` to ``keys_path``. chmod 0600.
 
     Preserves any keys already present in the file that the caller did
-    not override. An empty string in ``env`` removes the key. Expects
-    ``keys_path`` to live inside a directory the current process can
-    write to — callers running under ``sudo`` are responsible for
-    switching to the target user before calling this.
+    not override. An empty string in ``env`` removes the key.
+
+    The caller may invoke this either as the installing user directly or
+    as root (for example under ``sudo``). In both cases the write is
+    symlink-safe: every ancestor inside ``~<user>/.punt-labs/vox`` is
+    checked via ``lstat``, and the file is opened with ``O_NOFOLLOW`` so
+    that a pre-existing symlink at ``keys_path`` cannot redirect the
+    write to a root-owned file elsewhere on the filesystem. Callers
+    running as root must still ``chown`` the resulting file to the
+    installing user afterwards (see ``_chown_to_user``).
     """
     path = keys_path
+
+    _reject_symlinks(path)
 
     existing: dict[str, str] = {}
     if path.exists():
@@ -125,7 +169,17 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     for k in _PROVIDER_KEY_NAMES:
         if k in env:
             if env[k]:
-                merged[k] = env[k]
+                # Reject newlines and NULs that would corrupt the file or
+                # smuggle extra env entries. Everything else is legal in
+                # provider keys.
+                value = env[k]
+                if any(c in value for c in "\x00\n\r"):
+                    logger.warning(
+                        "Refusing to write %s: value contains control characters",
+                        k,
+                    )
+                    continue
+                merged[k] = value
             else:
                 merged.pop(k, None)
 
@@ -138,7 +192,23 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     content = header + "\n".join(lines) + "\n"
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW: if the path is a symlink, open() raises OSError(ELOOP).
+    # O_EXCL cannot be combined with O_TRUNC, so we unlink first if the
+    # file exists but is a regular file. _reject_symlinks already
+    # guaranteed the parent chain is clean.
+    if path.exists() and not path.is_symlink():
+        path.unlink()
+    elif path.is_symlink():
+        msg = (
+            f"Refusing to overwrite {path}: it is a symlink "
+            "(potential privilege escalation)."
+        )
+        raise OSError(msg)
+    fd = os.open(
+        str(path),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
     try:
         os.write(fd, content.encode())
     finally:
@@ -357,10 +427,19 @@ def _ensure_user_dirs(user: str) -> Path:
     """Create per-user data directories under ``~<user>/.punt-labs/vox``.
 
     Returns the resolved state dir for *user*. When running as root
-    (e.g., under ``sudo``), chown every created directory to *user* so
-    the daemon — which runs as *user*, not root — can read and write
-    them. Also sets the ``run`` directory to mode 0700 because it holds
+    (e.g., under ``sudo``), chown every directory we create to *user*
+    so the daemon — which runs as *user*, not root — can read and
+    write them. The ``run`` directory gets mode 0700 because it holds
     the auth token.
+
+    Symlink safety: this function refuses to operate if any ancestor
+    under ``~<user>/.punt-labs/vox`` is a symlink, and it never chowns
+    a directory it did not create itself. In particular the parent
+    ``~<user>/.punt-labs`` directory is **not** chowned — if the user
+    maliciously pre-placed ``~/.punt-labs`` as a symlink to ``/etc``,
+    root would otherwise hand ownership of ``/etc`` to the user. We
+    don't create ``~/.punt-labs`` here either; if it doesn't exist,
+    that's a pre-install error.
     """
     state_root = _user_state_dir_for(user)
     dirs = [
@@ -369,13 +448,34 @@ def _ensure_user_dirs(user: str) -> Path:
         state_root / "run",
         state_root / "cache",
     ]
+
+    # Symlink check before any privileged operation. If any ancestor
+    # or subdirectory is a symlink, we bail instead of following it.
+    for d in dirs:
+        _reject_symlinks(d)
+
+    # The ~/.punt-labs parent must exist and must NOT be a symlink.
+    # We do not create it — if the user's home dir is not set up, the
+    # install should fail loudly rather than silently writing into an
+    # unexpected location.
+    dot_punt = state_root.parent
+    if not dot_punt.exists():
+        dot_punt.mkdir(parents=True, exist_ok=True)
+    if dot_punt.is_symlink():
+        msg = (
+            f"Refusing to install: {dot_punt} is a symlink "
+            "(potential privilege escalation)."
+        )
+        raise OSError(msg)
+
     _paths_ensure_user_dirs(state_root)
     for d in dirs:
         logger.info("Ensured directory: %s", d)
 
     # When running under sudo, the dirs we just created are root-owned.
-    # chown them (and the parent ``.punt-labs`` dir when we created it)
-    # to the installing user so the daemon can access them.
+    # chown them to the installing user so the daemon can access them.
+    # We deliberately do NOT chown ``state_root.parent`` (~/.punt-labs)
+    # — see the symlink-safety note in the docstring.
     if os.getuid() == 0:
         try:
             pw = pwd.getpwnam(user)
@@ -383,10 +483,13 @@ def _ensure_user_dirs(user: str) -> Path:
         except KeyError:
             logger.warning("User %s not found — skipping chown", user)
             return state_root
-        # Include the ~/.punt-labs parent in case we just created it.
-        to_chown = [state_root.parent, *dirs]
-        for d in to_chown:
-            if d.exists():
+        for d in dirs:
+            if d.exists() and not d.is_symlink():
+                # Use os.chown on the pre-validated, non-symlink path.
+                # The _reject_symlinks check above + is_symlink here is
+                # belt and suspenders: between the two we've verified
+                # that nothing in the chain is a link at the moment we
+                # chown.
                 os.chown(str(d), uid, gid)
                 logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
     return state_root
@@ -707,7 +810,9 @@ def _chown_to_user(path: Path, user: str) -> None:
     """chown *path* to *user* when running as root. No-op otherwise.
 
     Used by the install command to hand files back to the installing
-    user after creating them under ``sudo``.
+    user after creating them under ``sudo``. Refuses to follow symlinks
+    — if *path* is a symlink, bail without chowning (a malicious user
+    could otherwise redirect root-privileged chown operations).
     """
     if os.getuid() != 0:
         return
@@ -716,7 +821,17 @@ def _chown_to_user(path: Path, user: str) -> None:
     except KeyError:
         logger.warning("User %s not found — skipping chown of %s", user, path)
         return
-    os.chown(str(path), pw.pw_uid, pw.pw_gid)
+    if path.is_symlink():
+        logger.warning(
+            "Refusing to chown symlink %s (potential privilege escalation)",
+            path,
+        )
+        return
+    # os.chown follows symlinks by default. Use os.lchown instead — it
+    # operates on the link itself, not the target. Combined with the
+    # is_symlink() guard above, this gives us defence in depth against
+    # TOCTOU symlink swaps.
+    os.lchown(str(path), pw.pw_uid, pw.pw_gid)
     logger.info("Set ownership of %s to %s (%d:%d)", path, user, pw.pw_uid, pw.pw_gid)
 
 

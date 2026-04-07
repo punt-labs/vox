@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -1128,18 +1129,26 @@ def test_chown_to_user_noop_when_not_root(
     mock_chown.assert_not_called()
 
 
-@patch("punt_vox.service.os.chown")
+@patch("punt_vox.service.os.lchown")
 @patch("punt_vox.service.pwd.getpwnam")
 @patch("punt_vox.service.os.getuid", return_value=0)
 def test_chown_to_user_chowns_when_root(
     _mock_getuid: MagicMock,
     mock_getpwnam: MagicMock,
-    mock_chown: MagicMock,
+    mock_lchown: MagicMock,
+    tmp_path: Path,
 ) -> None:
-    """Root callers chown the file to the target user."""
+    """Root callers chown the file to the target user.
+
+    Uses ``os.lchown`` (not ``os.chown``) to avoid following symlinks
+    — Cursor Bugbot fix.
+    """
     mock_getpwnam.return_value = MagicMock(pw_uid=1000, pw_gid=1000)
-    _chown_to_user(Path("/fake/keys.env"), "jfreeman")
-    mock_chown.assert_called_once_with("/fake/keys.env", 1000, 1000)
+    # Real (non-symlink) path so the is_symlink() guard passes.
+    target = tmp_path / "keys.env"
+    target.write_text("placeholder")
+    _chown_to_user(target, "jfreeman")
+    mock_lchown.assert_called_once_with(str(target), 1000, 1000)
 
 
 @patch("punt_vox.service.os.chown")
@@ -1179,7 +1188,9 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
 
     Regression test for the v3 install bug where _write_keys_env ran as
     root, left the file root-owned, and the daemon (running as the
-    target user) could not read its own keys.
+    target user) could not read its own keys. Also verifies the
+    symlink-safe chown path introduced in the PR #162 review cycle
+    (uses ``os.lchown``, not ``os.chown``).
     """
     # Simulate sudo: SUDO_USER is set, and os.getuid() returns 0.
     monkeypatch.setenv("SUDO_USER", "jfreeman")
@@ -1200,13 +1211,16 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
     monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
     monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
 
-    # Track chown calls so we can prove the file would have been chowned.
+    # Track ownership calls so we can prove the file would have been
+    # handed back. _ensure_user_dirs uses os.chown on the created
+    # directories; _chown_to_user uses os.lchown on the final file.
     chown_calls: list[tuple[str, int, int]] = []
 
     def _fake_chown(path: str, uid: int, gid: int) -> None:
         chown_calls.append((str(path), uid, gid))
 
     monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
+    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_chown)
 
     install()
 
@@ -1218,6 +1232,13 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
     ), (
         f"keys.env at {expected_keys} was not chowned to jfreeman; "
         f"chown calls: {chown_calls}"
+    )
+    # The ~/.punt-labs parent must NEVER appear in the chown targets —
+    # it could be a symlink to /etc and hand root-owned system paths
+    # to the user.
+    dot_punt = str(fake_home / ".punt-labs")
+    assert not any(call_[0] == dot_punt for call_ in chown_calls), (
+        f"{dot_punt} was chowned — symlink escalation risk"
     )
 
 
@@ -1252,3 +1273,188 @@ def test_ensure_user_dirs_creates_all_subdirs_under_target_user_home(
     assert (expected / "logs").is_dir()
     assert (expected / "run").is_dir()
     assert (expected / "cache").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Symlink-safety regression tests (Cursor Bugbot findings on PR #162)
+# ---------------------------------------------------------------------------
+
+
+def _install_typed_getpwnam_stub(
+    monkeypatch: pytest.MonkeyPatch, pw: MagicMock
+) -> None:
+    """Install a typed, non-lambda stub for ``pwd.getpwnam`` in both modules."""
+
+    def _fake(_user: str) -> MagicMock:
+        return pw
+
+    monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake)
+    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake)
+
+
+def _install_typed_getuid_stub(monkeypatch: pytest.MonkeyPatch, value: int) -> None:
+    def _fake() -> int:
+        return value
+
+    monkeypatch.setattr("punt_vox.service.os.getuid", _fake)
+
+
+def test_ensure_user_dirs_refuses_symlink_punt_labs_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """~/.punt-labs must not be a symlink — would let root chown arbitrary dirs.
+
+    Cursor Bugbot critical finding on PR #162.
+    """
+    fake_home = tmp_path / "home" / "attacker"
+    fake_home.mkdir(parents=True)
+    # Attacker pre-places ~/.punt-labs as a symlink to somewhere sensitive.
+    evil_target = tmp_path / "evil_etc"
+    evil_target.mkdir()
+    os.symlink(str(evil_target), str(fake_home / ".punt-labs"))
+
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
+    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
+
+    with pytest.raises(OSError, match="symlink"):
+        _ensure_user_dirs("attacker")
+
+
+def test_ensure_user_dirs_refuses_symlink_state_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """~/.punt-labs/vox must not be a symlink either."""
+    fake_home = tmp_path / "home" / "attacker"
+    (fake_home / ".punt-labs").mkdir(parents=True)
+    # Attacker pre-places ~/.punt-labs/vox as a symlink.
+    evil_target = tmp_path / "evil"
+    evil_target.mkdir()
+    os.symlink(str(evil_target), str(fake_home / ".punt-labs" / "vox"))
+
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
+    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
+
+    with pytest.raises(OSError, match="symlink"):
+        _ensure_user_dirs("attacker")
+
+
+def test_ensure_user_dirs_never_chowns_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """~/.punt-labs must never appear in the chown target list.
+
+    Cursor Bugbot's original critical finding: chowning
+    ``state_root.parent`` would escalate if the parent was a symlink.
+    Even in the happy path, we never touch the parent.
+    """
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
+    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
+    _install_typed_getuid_stub(monkeypatch, 0)
+
+    chowned: list[str] = []
+
+    def _fake_chown(path: str, _uid: int, _gid: int) -> None:
+        chowned.append(str(path))
+
+    monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
+
+    _ensure_user_dirs("jfreeman")
+
+    dot_punt = str(fake_home / ".punt-labs")
+    assert dot_punt not in chowned, (
+        "_ensure_user_dirs must never chown the ~/.punt-labs parent "
+        "(symlink escalation risk)"
+    )
+
+
+def test_write_keys_env_refuses_symlink_target(tmp_path: Path) -> None:
+    """Attacker pre-places keys.env as symlink to /etc/shadow — must refuse.
+
+    Cursor Bugbot high-severity finding on PR #162.
+    """
+    state_root = tmp_path / "vox"
+    state_root.mkdir()
+    keys_path = state_root / "keys.env"
+    sensitive = tmp_path / "fake_shadow"
+    sensitive.write_text("root:!::")
+    os.symlink(str(sensitive), str(keys_path))
+
+    with pytest.raises(OSError, match="symlink"):
+        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+    # The sensitive file must NOT have been truncated.
+    assert sensitive.read_text() == "root:!::"
+
+
+def test_write_keys_env_refuses_symlink_in_parent_chain(tmp_path: Path) -> None:
+    """A symlink anywhere in ~/.punt-labs/vox chain aborts the write."""
+    fake_home = tmp_path / "home" / "user"
+    (fake_home / ".punt-labs").mkdir(parents=True)
+    real_vox = tmp_path / "real_vox"
+    real_vox.mkdir()
+    # ~/.punt-labs/vox → /elsewhere
+    os.symlink(str(real_vox), str(fake_home / ".punt-labs" / "vox"))
+    keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
+
+    with pytest.raises(OSError, match="symlink"):
+        _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+
+def test_write_keys_env_rejects_control_chars_in_value(tmp_path: Path) -> None:
+    """Values containing newlines or NUL bytes are dropped, not written.
+
+    Prevents an attacker-controlled env var from smuggling extra
+    key=value lines into keys.env.
+    """
+    keys_path = tmp_path / "keys.env"
+    _write_keys_env(
+        {
+            "OPENAI_API_KEY": "sk-legit",
+            "ELEVENLABS_API_KEY": "sk-evil\nAWS_ACCESS_KEY_ID=injected",
+        },
+        keys_path,
+    )
+    content = keys_path.read_text()
+    assert "OPENAI_API_KEY=sk-legit" in content
+    assert "injected" not in content
+    assert "ELEVENLABS_API_KEY" not in content
+
+
+def test_chown_to_user_refuses_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_chown_to_user must not follow a symlink when running as root."""
+    real = tmp_path / "real.txt"
+    real.write_text("sensitive")
+    link = tmp_path / "link"
+    os.symlink(str(real), str(link))
+
+    _install_typed_getuid_stub(monkeypatch, 0)
+    chown_calls: list[tuple[str, int, int]] = []
+    lchown_calls: list[tuple[str, int, int]] = []
+
+    def _fake_chown(path: str, uid: int, gid: int) -> None:
+        chown_calls.append((str(path), uid, gid))
+
+    def _fake_lchown(path: str, uid: int, gid: int) -> None:
+        lchown_calls.append((str(path), uid, gid))
+
+    def _fake_getpwnam(_user: str) -> MagicMock:
+        return MagicMock(pw_uid=1000, pw_gid=1000)
+
+    monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
+    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_lchown)
+    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
+
+    _chown_to_user(link, "testuser")
+
+    assert chown_calls == [], "_chown_to_user must not call os.chown on symlinks"
+    assert lchown_calls == [], (
+        "_chown_to_user must not even lchown when the path is a symlink"
+    )
