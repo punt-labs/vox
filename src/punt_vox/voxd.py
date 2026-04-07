@@ -17,6 +17,7 @@ import json
 import logging
 import logging.config
 import os
+import platform
 import secrets
 import shutil
 import subprocess
@@ -27,7 +28,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from socket import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 import uvicorn
@@ -40,7 +41,7 @@ from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.types import AudioProviderId, AudioRequest
+from punt_vox.types import AudioProviderId, AudioRequest, TTSProvider
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -117,12 +118,17 @@ def _log_voxd_environment() -> None:
     injection without poking at ``/proc``.
     """
     env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
+    # os.getuid/getgid are POSIX-only; fall back gracefully on Windows.
+    getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
+    getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
+    uid: int | str = getuid() if getuid is not None else "<n/a>"
+    gid: int | str = getgid() if getgid is not None else "<n/a>"
     logger.info(
-        "voxd environment: pid=%d uid=%d gid=%d cwd=%s "
+        "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
         "voxd_binary=%s voxd_module=%s env=%s",
         os.getpid(),
-        os.getuid(),
-        os.getgid(),
+        uid,
+        gid,
         os.getcwd(),
         sys.executable,
         __file__,
@@ -349,9 +355,19 @@ def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str]:
     return {k: os.environ.get(k, "<unset>") for k in keys}
 
 
+def _is_darwin() -> bool:
+    """Return True on macOS.
+
+    Wrapped in a function so mypy doesn't narrow ``sys.platform`` to a
+    single value at the call site, which would mark the non-matching
+    branch as unreachable for cross-platform development.
+    """
+    return platform.system() == "Darwin"
+
+
 def _player_binary_name() -> str:
     """Return the platform player binary name."""
-    return "afplay" if sys.platform == "darwin" else "ffplay"
+    return "afplay" if _is_darwin() else "ffplay"
 
 
 def _player_binary_path() -> str | None:
@@ -364,9 +380,9 @@ def _player_command(path: Path) -> list[str]:
 
     No ``-loglevel quiet`` on ffplay -- we want its stream summary and errors.
     """
-    if sys.platform == "darwin":
+    if _is_darwin():
         return ["afplay", str(path)]
-    return ["ffplay", "-nodisp", "-autoexit", str(path)]  # type: ignore[unreachable,unused-ignore]
+    return ["ffplay", "-nodisp", "-autoexit", str(path)]
 
 
 def _record_playback_result(
@@ -802,6 +818,47 @@ async def _synthesize_to_file(
                 os.environ.pop(env_key_name, None)
 
 
+# Providers that synthesize audio directly to the default device. Cloud
+# providers are skipped entirely so we don't pay for provider construction
+# only to discover they don't implement play_directly.
+_LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
+
+# Map of provider name to its expected API key env var. Used by the
+# direct-play env-injection helper.
+_PROVIDER_API_KEY_VAR: dict[str, str] = {
+    "elevenlabs": "ELEVENLABS_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def _run_play_directly_sync(
+    provider_name: str,
+    api_key: str | None,
+    provider_factory: Callable[[], TTSProvider],
+    request: AudioRequest,
+) -> int | None:
+    """Construct provider and call ``play_directly`` on a worker thread.
+
+    Mutates ``os.environ`` only if an API key is supplied. Restoring the
+    prior value happens in the same thread, so the env-lock contract is
+    preserved without needing to hold the lock around audio playback.
+    """
+    env_var = _PROVIDER_API_KEY_VAR.get(provider_name) if api_key else None
+    old_value: str | None = None
+    if env_var and api_key:
+        old_value = os.environ.get(env_var)
+        os.environ[env_var] = api_key
+    try:
+        provider = provider_factory()
+        return provider.play_directly(request)
+    finally:
+        if env_var:
+            if old_value is not None:
+                os.environ[env_var] = old_value
+            else:
+                os.environ.pop(env_var, None)
+
+
 async def _try_direct_play(
     *,
     text: str,
@@ -817,53 +874,61 @@ async def _try_direct_play(
     speaker_boost: bool | None,
     api_key: str | None,
     ctx: DaemonContext,
-) -> int | None:
+) -> int | None | Exception:
     """Attempt direct-to-device playback via the provider.
 
-    Returns the subprocess exit code on success, or ``None`` if the
-    provider doesn't implement direct play (cloud providers) -- the
-    caller then falls back to synthesize-and-queue.
+    Returns one of:
+      * an ``int`` exit code (0 on success) when ``play_directly`` ran,
+      * ``None`` when the provider opts out of direct play, or
+      * an ``Exception`` instance when provider construction or playback
+        raised. The caller is responsible for translating the exception
+        into a websocket error response.
 
-    This matches the shell-level playback path exactly: same binary,
-    same env, same audio session as a user running ``espeak-ng`` or
-    ``say`` directly. No WAV, no ffmpeg, no ffplay.
+    The ``_env_lock`` is only acquired when an API key needs to be
+    injected. Local providers (espeak, say) take a fast path with no
+    cross-request blocking. Audio playback never holds the lock.
     """
     normalized = normalize_for_speech(text)
     if vibe_tags:
         normalized = f"{vibe_tags} {normalized}"
 
-    async with _env_lock:
-        old_key: str | None = None
-        env_key_name: str | None = None
-        if api_key:
-            if provider_name == "elevenlabs":
-                env_key_name = "ELEVENLABS_API_KEY"
-            elif provider_name == "openai":
-                env_key_name = "OPENAI_API_KEY"
-            if env_key_name:
-                old_key = os.environ.get(env_key_name)
-                os.environ[env_key_name] = api_key
+    request = _build_audio_request(
+        normalized,
+        voice,
+        language,
+        rate,
+        stability,
+        similarity,
+        style,
+        speaker_boost,
+        provider_name,
+    )
 
-        try:
-            provider = get_provider(provider_name, config_path=None, model=model)
-            request = _build_audio_request(
-                normalized,
-                voice,
-                language,
-                rate,
-                stability,
-                similarity,
-                style,
-                speaker_boost,
+    def _factory() -> TTSProvider:
+        return get_provider(provider_name, config_path=None, model=model)
+
+    start = _monotonic()
+    try:
+        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
+            async with _env_lock:
+                rc = await asyncio.to_thread(
+                    _run_play_directly_sync,
+                    provider_name,
+                    api_key,
+                    _factory,
+                    request,
+                )
+        else:
+            rc = await asyncio.to_thread(
+                _run_play_directly_sync,
                 provider_name,
+                None,
+                _factory,
+                request,
             )
-            start = _monotonic()
-            rc = await asyncio.to_thread(provider.play_directly, request)
-        finally:
-            if env_key_name and old_key is not None:
-                os.environ[env_key_name] = old_key
-            elif env_key_name and api_key:
-                os.environ.pop(env_key_name, None)
+    except Exception as exc:
+        logger.exception("Direct-play raised for provider=%s", provider_name)
+        return exc
 
     if rc is None:
         return None
@@ -937,36 +1002,46 @@ async def _handle_synthesize(
         len(text),
     )
 
-    # Try direct-play path for local providers (espeak, say) before
-    # falling through to the synthesize-cache-enqueue pipeline. Cloud
-    # providers' play_directly() returns None and we skip this block.
-    direct_rc = await _try_direct_play(
-        text=text,
-        voice=voice,
-        provider_name=provider_name,
-        model=model,
-        language=language,
-        rate=rate,
-        vibe_tags=vibe_tags,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        api_key=api_key,
-        ctx=ctx,
-    )
-    if direct_rc is not None:
-        if direct_rc == 0:
-            await websocket.send_json({"type": "done", "id": request_id})
-        else:
+    # Local providers (espeak, say) play directly to the audio device,
+    # bypassing the synthesize-cache-enqueue pipeline. Cloud providers
+    # are skipped entirely so we don't pay for provider construction.
+    if provider_name in _LOCAL_PROVIDERS:
+        direct_result = await _try_direct_play(
+            text=text,
+            voice=voice,
+            provider_name=provider_name,
+            model=model,
+            language=language,
+            rate=rate,
+            vibe_tags=vibe_tags,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
+            ctx=ctx,
+        )
+        if isinstance(direct_result, Exception):
             await websocket.send_json(
                 {
                     "type": "error",
                     "id": request_id,
-                    "message": f"play_directly failed with rc={direct_rc}",
+                    "message": str(direct_result),
                 }
             )
-        return
+            return
+        if direct_result is not None:
+            if direct_result == 0:
+                await websocket.send_json({"type": "done", "id": request_id})
+            else:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "id": request_id,
+                        "message": f"play_directly failed with rc={direct_result}",
+                    }
+                )
+            return
 
     try:
         output_path = await _synthesize_to_file(
@@ -1121,12 +1196,16 @@ async def _handle_voices(
     )
 
 
-def _health_payload(ctx: DaemonContext) -> dict[str, object]:
-    """Build the shared health payload for both WS and HTTP handlers."""
+def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:
+    """Return the public health payload safe for unauthenticated callers.
+
+    Excludes ``audio_env``, ``player_binary``, and ``last_playback`` so the
+    HTTP ``/health`` route can never leak environment variables or stderr
+    contents to non-localhost listeners.
+    """
     from punt_vox.providers import auto_detect_provider
 
     uptime = time.monotonic() - ctx.start_time
-    audio_env = {k: os.environ.get(k, "") for k in _AUDIO_ENV_KEYS}
     return {
         "status": "ok",
         "uptime_seconds": round(uptime, 1),
@@ -1134,10 +1213,21 @@ def _health_payload(ctx: DaemonContext) -> dict[str, object]:
         "port": ctx.port,
         "active_sessions": ctx.client_count,
         "provider": auto_detect_provider(),
-        "audio_env": audio_env,
-        "player_binary": _player_binary_path(),
-        "last_playback": ctx.last_playback,
     }
+
+
+def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
+    """Return the full diagnostic health payload for authenticated callers.
+
+    Adds the audio environment snapshot, the resolved player binary, and
+    the last playback result. Used only by the WebSocket health handler,
+    which is gated by the auth token.
+    """
+    payload = _health_payload_minimal(ctx)
+    payload["audio_env"] = {k: os.environ.get(k, "") for k in _AUDIO_ENV_KEYS}
+    payload["player_binary"] = _player_binary_path()
+    payload["last_playback"] = ctx.last_playback
+    return payload
 
 
 async def _handle_health(
@@ -1145,8 +1235,8 @@ async def _handle_health(
     websocket: WebSocket,
     ctx: DaemonContext,
 ) -> None:
-    """Handle a 'health' message over WebSocket."""
-    payload = _health_payload(ctx)
+    """Handle a 'health' message over the authenticated WebSocket."""
+    payload = _health_payload_full(ctx)
     payload["type"] = "health"
     await websocket.send_json(payload)
 
@@ -1232,9 +1322,9 @@ async def _ws_route(websocket: WebSocket) -> None:
 
 
 async def _health_route(request: Request) -> JSONResponse:
-    """Health check endpoint."""
+    """Unauthenticated HTTP health endpoint -- minimal payload only."""
     ctx: DaemonContext = request.app.state.ctx
-    return JSONResponse(_health_payload(ctx))
+    return JSONResponse(_health_payload_minimal(ctx))
 
 
 # ---------------------------------------------------------------------------

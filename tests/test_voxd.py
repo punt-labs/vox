@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 
 from punt_vox.voxd import (
     DaemonContext,
-    _health_payload,
+    _handle_synthesize,
+    _health_payload_full,
+    _health_payload_minimal,
+    _health_route,
     _play_audio,
     _try_direct_play,
 )
@@ -145,12 +148,12 @@ class TestPlayAudioObservability:
         assert ctx.last_playback["file"] == str(audio)
 
 
-class TestHealthPayload:
-    """Health payload must expose audio state for vox doctor."""
+class TestHealthPayloadFull:
+    """The authenticated WS health payload exposes audio state for vox doctor."""
 
     def test_includes_audio_env_and_player_binary(self) -> None:
         ctx = _make_ctx()
-        payload = _health_payload(ctx)
+        payload = _health_payload_full(ctx)
 
         assert "audio_env" in payload
         assert "player_binary" in payload
@@ -169,14 +172,52 @@ class TestHealthPayload:
             "stderr": "",
             "ts": 0.0,
         }
-        payload = _health_payload(ctx)
+        payload = _health_payload_full(ctx)
         assert payload["last_playback"] == ctx.last_playback
+
+
+class TestHealthPayloadMinimal:
+    """Unauthenticated HTTP /health must not leak sensitive diagnostic state."""
+
+    def test_excludes_audio_env_and_last_playback(self) -> None:
+        ctx = _make_ctx()
+        payload = _health_payload_minimal(ctx)
+
+        assert "audio_env" not in payload
+        assert "player_binary" not in payload
+        assert "last_playback" not in payload
+        # Public fields are still present.
+        assert payload["status"] == "ok"
+        assert "uptime_seconds" in payload
+        assert "queued" in payload
+
+    def test_http_health_route_returns_minimal_payload(self) -> None:
+        import json
+
+        ctx = _make_ctx()
+        ctx.last_playback = {
+            "file": "/tmp/x.mp3",
+            "rc": 0,
+            "elapsed_s": 0.5,
+            "stderr": "secret stderr",
+            "ts": 0.0,
+        }
+        request = MagicMock()
+        request.app.state.ctx = ctx
+
+        response = asyncio.run(_health_route(request))
+        raw = bytes(response.body)
+        body = json.loads(raw)
+
+        assert "audio_env" not in body
+        assert "last_playback" not in body
+        assert "secret stderr" not in raw.decode()
 
 
 class TestTryDirectPlay:
     """Voxd dispatches to provider.play_directly for local providers."""
 
-    def _run(self, provider: MagicMock, ctx: DaemonContext) -> int | None:
+    def _run(self, provider: MagicMock, ctx: DaemonContext) -> int | None | Exception:
         with patch("punt_vox.voxd.get_provider", return_value=provider):
             return asyncio.run(
                 _try_direct_play(
@@ -231,6 +272,156 @@ class TestTryDirectPlay:
         assert "Direct-play FAILED" in caplog.text
         assert ctx.last_playback is not None
         assert ctx.last_playback["rc"] == 2
+
+    def test_get_provider_exception_returned(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Provider construction failure surfaces as an Exception, not a crash."""
+        ctx = _make_ctx()
+
+        with (
+            caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
+            patch(
+                "punt_vox.voxd.get_provider",
+                side_effect=ValueError("unknown provider"),
+            ),
+        ):
+            result = asyncio.run(
+                _try_direct_play(
+                    text="hello",
+                    voice=None,
+                    provider_name="espeak",
+                    model=None,
+                    language=None,
+                    rate=None,
+                    vibe_tags=None,
+                    stability=None,
+                    similarity=None,
+                    style=None,
+                    speaker_boost=None,
+                    api_key=None,
+                    ctx=ctx,
+                )
+            )
+
+        assert isinstance(result, ValueError)
+        assert "unknown provider" in str(result)
+        assert "Direct-play raised" in caplog.text
+
+    def test_no_api_key_skips_env_lock(self) -> None:
+        """Local providers without an API key must not block on _env_lock."""
+        ctx = _make_ctx()
+        provider = MagicMock()
+        provider.play_directly = MagicMock(return_value=0)
+
+        # Replace _env_lock with one that records every acquire attempt.
+        sentinel_lock = MagicMock(wraps=asyncio.Lock())
+        sentinel_lock.__aenter__ = AsyncMock()
+        sentinel_lock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("punt_vox.voxd.get_provider", return_value=provider),
+            patch("punt_vox.voxd._env_lock", sentinel_lock),
+        ):
+            asyncio.run(
+                _try_direct_play(
+                    text="hello",
+                    voice=None,
+                    provider_name="espeak",
+                    model=None,
+                    language=None,
+                    rate=None,
+                    vibe_tags=None,
+                    stability=None,
+                    similarity=None,
+                    style=None,
+                    speaker_boost=None,
+                    api_key=None,
+                    ctx=ctx,
+                )
+            )
+
+        sentinel_lock.__aenter__.assert_not_called()
+
+    def test_api_key_acquires_env_lock_for_cloud_provider(self) -> None:
+        """API-key path must serialize via _env_lock to protect os.environ."""
+        ctx = _make_ctx()
+        provider = MagicMock()
+        provider.play_directly = MagicMock(return_value=0)
+
+        sentinel_lock = MagicMock()
+        sentinel_lock.__aenter__ = AsyncMock()
+        sentinel_lock.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("punt_vox.voxd.get_provider", return_value=provider),
+            patch("punt_vox.voxd._env_lock", sentinel_lock),
+        ):
+            asyncio.run(
+                _try_direct_play(
+                    text="hello",
+                    voice=None,
+                    provider_name="elevenlabs",
+                    model=None,
+                    language=None,
+                    rate=None,
+                    vibe_tags=None,
+                    stability=None,
+                    similarity=None,
+                    style=None,
+                    speaker_boost=None,
+                    api_key="secret",
+                    ctx=ctx,
+                )
+            )
+
+        sentinel_lock.__aenter__.assert_called_once()
+
+
+class TestHandleSynthesizeShortCircuit:
+    """``_handle_synthesize`` skips _try_direct_play for cloud providers."""
+
+    def test_cloud_provider_skips_direct_play(self) -> None:
+        ctx = _make_ctx()
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "elevenlabs",
+        }
+
+        # Force _synthesize_to_file to raise so the handler exits via the
+        # error branch -- we only care that direct-play was never invoked.
+        with (
+            patch(
+                "punt_vox.voxd._try_direct_play",
+                AsyncMock(return_value=None),
+            ) as mock_direct,
+            patch(
+                "punt_vox.voxd._synthesize_to_file",
+                AsyncMock(side_effect=RuntimeError("stop here")),
+            ),
+        ):
+            asyncio.run(_handle_synthesize(msg, websocket, ctx))
+
+        mock_direct.assert_not_called()
+
+    def test_local_provider_calls_direct_play(self) -> None:
+        ctx = _make_ctx()
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "2", "text": "hello", "provider": "espeak"}
+
+        with patch(
+            "punt_vox.voxd._try_direct_play",
+            AsyncMock(return_value=0),
+        ) as mock_direct:
+            asyncio.run(_handle_synthesize(msg, websocket, ctx))
+
+        mock_direct.assert_called_once()
+        call_kwargs = mock_direct.call_args.kwargs
+        assert call_kwargs["provider_name"] == "espeak"
 
 
 class TestCloudProvidersPlayDirectlyReturnsNone:
