@@ -161,25 +161,28 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 
 **`vox unmute`** and other CLI commands are one-shot WebSocket clients of `voxd`.
 
-### System Paths
+### State Paths
 
-`voxd` stores runtime state in system directories.
+`voxd` runs as a single user (`User=` in the systemd unit, `UserName` in the launchd plist), so all of its state is per-user, not system-shared. Everything lives under the installing user's home directory — no `/etc`, no `/var`, same layout on macOS and Linux.
 
-| Purpose | macOS (Homebrew) | Linux |
-|---------|-----------------|-------|
-| Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
-| Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
-| Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
-| Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |
-| Cache | `~/.punt-labs/vox/cache/` | `~/.punt-labs/vox/cache/` |
+| Purpose | Path |
+|---------|------|
+| Config (API keys) | `~/.punt-labs/vox/keys.env` |
+| Logs | `~/.punt-labs/vox/logs/voxd.log` |
+| Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
+| Cache | `~/.punt-labs/vox/cache/` |
+| Service unit (Linux) | `/etc/systemd/system/voxd.service` |
+| Service plist (macOS) | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` |
 
 ### Service Install
 
 ```bash
-sudo vox daemon install    # writes keys.env, registers service, starts voxd
+sudo vox daemon install    # registers service, writes keys.env, starts voxd
 ```
 
-Requires `sudo` because the service plist/unit goes in a system directory. `voxd` runs as the installing user (not root) — it needs audio device access tied to the desktop session. The plist sets `UserName`; the systemd unit sets `User=`.
+`sudo` is required only to write the unit/plist file into its system directory. The `keys.env` file and all other per-user state are created in the installing user's home dir, owned by that user. The daemon runs as the installing user, not root — it needs audio device access tied to the desktop session.
+
+**Upgrading from v3 or v4.0.x?** If you had cloud provider keys configured before v3.0.0 (2026-03-29), they will work again automatically after you upgrade. v3 moved voxd's config dir to `/etc/vox/` but never migrated your existing `~/.punt-labs/vox/keys.env` — this release reverts the path and your pre-v3 keys come back online without any manual intervention.
 
 ### Session State
 
@@ -220,7 +223,14 @@ vox daemon status                              # Check if daemon is running
 | `TTS_MODEL` | Model override | provider default |
 | `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
-**Daemon API keys:** Run `sudo vox daemon install` from a shell where your API keys are set (e.g., a directory with `.envrc`). The command writes keys to the system config directory (`$(brew --prefix)/etc/vox/keys.env` on macOS, `/etc/vox/keys.env` on Linux, chmod 0600) so the daemon can use premium providers. Run `vox doctor` to verify which providers are active.
+**Daemon API keys:** API keys live in `~/.punt-labs/vox/keys.env`, mode 0600. Edit it with your normal editor — no sudo. After changing keys, restart the daemon to pick them up:
+
+```bash
+sudo systemctl restart voxd                           # Linux
+sudo launchctl kickstart -k system/com.punt-labs.voxd # macOS
+```
+
+`sudo vox daemon install` seeds this file with any provider keys set in your current shell. After the initial install, you never need sudo again to manage your keys. Run `vox doctor` to verify which providers are active.
 
 ## Roadmap
 

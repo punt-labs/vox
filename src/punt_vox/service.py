@@ -4,16 +4,18 @@ Provides ``install`` and ``uninstall`` commands that register voxd as a
 system service (launchd on macOS, systemd on Linux) so the daemon starts
 at boot and restarts on crash.
 
-The service runs ``voxd --port 8421`` as a system-level daemon:
+The service runs ``voxd --port 8421`` as the installing user:
 - macOS: ``/Library/LaunchDaemons/com.punt-labs.voxd.plist``
 - Linux: ``/etc/systemd/system/voxd.service``
 
-Both require ``sudo`` for installation.
+Installation requires ``sudo`` because the unit/plist file itself lives
+in a system directory. All per-user state (keys, logs, runtime state,
+cache) lives under the installing user's ``~/.punt-labs/vox/`` — not in
+``/etc``, ``/var``, or the Homebrew prefix.
 """
 
 from __future__ import annotations
 
-import getpass
 import html
 import logging
 import os
@@ -21,13 +23,20 @@ import platform
 import pwd
 import re
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
+
+from punt_vox.paths import (
+    ensure_user_dirs as _paths_ensure_user_dirs,
+    installing_user as _paths_installing_user,
+    log_dir as _user_log_dir,
+    run_dir as _user_run_dir,
+    user_state_dir_for as _user_state_dir_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,38 +49,18 @@ _SUBPROCESS_TIMEOUT_SECONDS = 5
 
 
 # ---------------------------------------------------------------------------
-# System paths — duplicated from voxd.py to avoid importing heavy providers.
-# TODO: extract into a shared lightweight module.
+# Path helpers — thin wrappers over punt_vox.paths so tests can patch them
+# inside this module. Only the helpers used by service.py itself live here;
+# the full set is in ``punt_vox.paths``.
 # ---------------------------------------------------------------------------
 
 
-def _data_root() -> Path:
-    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
-    if sys.platform == "darwin":
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix"], text=True, timeout=5
-            ).strip()
-            return Path(prefix)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return Path("/usr/local")  # fallback for non-Homebrew macOS
-    return Path("/")  # type: ignore[unreachable,unused-ignore]
-
-
-def _config_dir() -> Path:
-    return _data_root() / "etc" / "vox"
-
-
 def _log_dir() -> Path:
-    return _data_root() / "var" / "log" / "vox"
+    return _user_log_dir()
 
 
 def _run_dir() -> Path:
-    return _data_root() / "var" / "run" / "vox"
-
-
-def _cache_dir() -> Path:
-    return _data_root() / "var" / "cache" / "vox"
+    return _user_run_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -81,11 +70,11 @@ def _cache_dir() -> Path:
 
 def _installing_user() -> str:
     """Get the real user, not root, when running under sudo."""
-    return os.environ.get("SUDO_USER") or getpass.getuser()
+    return _paths_installing_user()
 
 
 # ---------------------------------------------------------------------------
-# Keys.env writing (inline — system config dir, not ~/.punt-labs/vox/)
+# Keys.env writing — writes directly to the installing user's state dir.
 # ---------------------------------------------------------------------------
 
 _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
@@ -103,9 +92,16 @@ _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _write_keys_env(env: dict[str, str], config_dir: Path) -> Path:
-    """Write keys.env to the system config dir.  chmod 0600."""
-    path = config_dir / "keys.env"
+def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
+    """Write ``keys.env`` to ``keys_path``. chmod 0600.
+
+    Preserves any keys already present in the file that the caller did
+    not override. An empty string in ``env`` removes the key. Expects
+    ``keys_path`` to live inside a directory the current process can
+    write to — callers running under ``sudo`` are responsible for
+    switching to the target user before calling this.
+    """
+    path = keys_path
 
     existing: dict[str, str] = {}
     if path.exists():
@@ -135,11 +131,13 @@ def _write_keys_env(env: dict[str, str], config_dir: Path) -> Path:
 
     header = (
         "# vox provider keys — loaded by voxd at startup\n"
-        "# Written by: vox daemon install\n\n"
+        "# Written by: vox daemon install\n"
+        "# Edit with your normal editor — no sudo required.\n\n"
     )
     lines = [f"{k}={v}" for k, v in sorted(merged.items()) if v]
     content = header + "\n".join(lines) + "\n"
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, content.encode())
@@ -330,16 +328,24 @@ def _ensure_port_free() -> None:
 
 
 def _voxd_exec_args() -> list[str]:
-    """Return the command to invoke ``voxd``."""
-    voxd_path = shutil.which("voxd")
-    if voxd_path is None:
+    """Return the command to invoke ``voxd``.
+
+    Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
+    always runs the binary from the same distribution that provided
+    ``vox``. Using ``shutil.which`` would pick up whichever ``voxd`` is
+    first on ``PATH`` — a stale binary from an earlier
+    ``uv tool install`` could get baked into ``ExecStart=`` and override
+    the current one. Anchoring to ``sys.executable`` eliminates that
+    class of bug.
+    """
+    voxd_path = Path(sys.executable).parent / "voxd"
+    if not voxd_path.exists():
         msg = (
-            "voxd binary not found on PATH. "
-            "Install with 'uv tool install punt-vox' "
-            "or ensure ~/.local/bin is on your PATH."
+            f"voxd binary not found at {voxd_path}. "
+            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
         )
         raise SystemExit(msg)
-    return [voxd_path, "--port", str(DEFAULT_PORT)]
+    return [str(voxd_path), "--port", str(DEFAULT_PORT)]
 
 
 # ---------------------------------------------------------------------------
@@ -347,23 +353,43 @@ def _voxd_exec_args() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_system_dirs(user: str) -> None:
-    """Create system data directories with appropriate ownership."""
-    dirs = [_config_dir(), _log_dir(), _run_dir(), _cache_dir()]
+def _ensure_user_dirs(user: str) -> Path:
+    """Create per-user data directories under ``~<user>/.punt-labs/vox``.
+
+    Returns the resolved state dir for *user*. When running as root
+    (e.g., under ``sudo``), chown every created directory to *user* so
+    the daemon — which runs as *user*, not root — can read and write
+    them. Also sets the ``run`` directory to mode 0700 because it holds
+    the auth token.
+    """
+    state_root = _user_state_dir_for(user)
+    dirs = [
+        state_root,
+        state_root / "logs",
+        state_root / "run",
+        state_root / "cache",
+    ]
+    _paths_ensure_user_dirs(state_root)
     for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
         logger.info("Ensured directory: %s", d)
 
-    # On macOS/Linux, set ownership to the installing user (not root).
+    # When running under sudo, the dirs we just created are root-owned.
+    # chown them (and the parent ``.punt-labs`` dir when we created it)
+    # to the installing user so the daemon can access them.
     if os.getuid() == 0:
         try:
             pw = pwd.getpwnam(user)
             uid, gid = pw.pw_uid, pw.pw_gid
-            for d in dirs:
-                os.chown(str(d), uid, gid)
-                logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
         except KeyError:
             logger.warning("User %s not found — skipping chown", user)
+            return state_root
+        # Include the ~/.punt-labs parent in case we just created it.
+        to_chown = [state_root.parent, *dirs]
+        for d in to_chown:
+            if d.exists():
+                os.chown(str(d), uid, gid)
+                logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
+    return state_root
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +555,9 @@ def _systemd_unit_content(user: str) -> str:
     env_block = ("\n" + " " * 8).join(
         [f'Environment="PATH={path_value}"', *audio_lines]
     )
+    # Runtime state lives in the user's home dir (see punt_vox.paths),
+    # so there is no RuntimeDirectory= here — systemd does not need to
+    # create /run/vox.
     return textwrap.dedent(f"""\
         [Unit]
         Description=Voxd text-to-speech daemon
@@ -538,8 +567,6 @@ def _systemd_unit_content(user: str) -> str:
         User={user}
         ExecStart={exec_start}
         {env_block}
-        RuntimeDirectory=vox
-        RuntimeDirectoryMode=0700
         Restart=on-failure
         RestartSec=5
 
@@ -626,17 +653,29 @@ def detect_platform() -> str:
 
 
 def install() -> str:
-    """Install voxd as a system service.  Returns a status message."""
+    """Install voxd as a system service. Returns a status message.
+
+    The system service file itself (``/etc/systemd/system/voxd.service``
+    or ``/Library/LaunchDaemons/com.punt-labs.voxd.plist``) lives in a
+    system directory and requires root to write. Everything else — the
+    provider keys, logs, runtime token, cache — lives under the
+    installing user's home dir and is created with that user's
+    ownership.
+    """
     plat = detect_platform()
     user = _installing_user()
     args = _voxd_exec_args()
 
-    # Create system directories with correct ownership.
-    config_dir = _config_dir()
-    _ensure_system_dirs(user)
+    # Create per-user state directories, chowned to the installing user
+    # when we were launched via sudo.
+    state_root = _ensure_user_dirs(user)
 
-    # Write provider keys to system config dir.
-    keys_path = _write_keys_env(dict(os.environ), config_dir)
+    # Write provider keys into the user's state dir, then chown the
+    # resulting file to the installing user so the daemon (running as
+    # that user) can read its own keys file.
+    keys_path = _user_keys_env_file_for(user)
+    _write_keys_env(dict(os.environ), keys_path)
+    _chown_to_user(keys_path, user)
     logger.info("Wrote provider keys to %s", keys_path)
 
     if plat == "macos":
@@ -652,10 +691,33 @@ def install() -> str:
         f"voxd daemon {status} on port {DEFAULT_PORT}.",
         f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
         f"  Keys:    {keys_path}",
+        f"  State:   {state_root}",
         f"  Command: {exec_display}",
         f"  User:    {user}",
     ]
     return os.linesep.join(lines)
+
+
+def _user_keys_env_file_for(user: str) -> Path:
+    """Return the full path to ``keys.env`` inside *user*'s state dir."""
+    return _user_state_dir_for(user) / "keys.env"
+
+
+def _chown_to_user(path: Path, user: str) -> None:
+    """chown *path* to *user* when running as root. No-op otherwise.
+
+    Used by the install command to hand files back to the installing
+    user after creating them under ``sudo``.
+    """
+    if os.getuid() != 0:
+        return
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        logger.warning("User %s not found — skipping chown of %s", user, path)
+        return
+    os.chown(str(path), pw.pw_uid, pw.pw_gid)
+    logger.info("Set ownership of %s to %s (%d:%d)", path, user, pw.pw_uid, pw.pw_gid)
 
 
 def uninstall() -> str:

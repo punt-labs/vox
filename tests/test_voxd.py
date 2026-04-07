@@ -13,11 +13,15 @@ import pytest
 
 from punt_vox.voxd import (
     DaemonContext,
+    _config_dir,
     _handle_synthesize,
     _health_payload_full,
     _health_payload_minimal,
     _health_route,
+    _load_keys,
+    _log_dir,
     _play_audio,
+    _run_dir,
     _try_direct_play,
 )
 
@@ -616,3 +620,104 @@ class TestDirectPlaySerialization:
             f"direct-play calls overlapped: "
             f"second_start={second_start}, first_end={first_end}"
         )
+
+
+# ---------------------------------------------------------------------------
+# voxd path helpers — per-user state, not /etc or /var
+# ---------------------------------------------------------------------------
+
+
+class TestVoxdPaths:
+    """voxd must read/write state under ~/.punt-labs/vox/, not FHS paths."""
+
+    def test_config_dir_is_user_state(self) -> None:
+        assert _config_dir() == Path.home() / ".punt-labs" / "vox"
+
+    def test_log_dir_is_user_state_logs(self) -> None:
+        assert _log_dir() == Path.home() / ".punt-labs" / "vox" / "logs"
+
+    def test_run_dir_is_user_state_run(self) -> None:
+        assert _run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
+
+    def test_paths_do_not_leak_fhs_dirs(self) -> None:
+        forbidden = ("/etc/vox", "/var/log/vox", "/var/run/vox", "/var/cache/vox")
+        for helper in (_config_dir, _log_dir, _run_dir):
+            resolved = str(helper())
+            for bad in forbidden:
+                assert bad not in resolved, (
+                    f"{helper.__name__} returned forbidden FHS path {resolved}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# _load_keys — reads ~/.punt-labs/vox/keys.env
+# ---------------------------------------------------------------------------
+
+
+class TestLoadKeys:
+    """_load_keys must read from the per-user state dir."""
+
+    def test_loads_keys_from_config_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Keys in keys.env are copied into os.environ."""
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text(
+            "# header\n"
+            "ELEVENLABS_API_KEY=sk-eleven-test\n"
+            "OPENAI_API_KEY=sk-openai-test\n"
+        )
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        loaded = _load_keys(tmp_path)
+
+        assert "ELEVENLABS_API_KEY" in loaded
+        assert "OPENAI_API_KEY" in loaded
+        import os as _os
+
+        assert _os.environ["ELEVENLABS_API_KEY"] == "sk-eleven-test"
+        assert _os.environ["OPENAI_API_KEY"] == "sk-openai-test"
+
+    def test_missing_keys_file_returns_empty(self, tmp_path: Path) -> None:
+        """No keys.env file means no loaded keys — not a crash."""
+        loaded = _load_keys(tmp_path)
+        assert loaded == frozenset()
+
+    def test_existing_env_not_overwritten(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Keys already in os.environ are preserved (env wins over file)."""
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("ELEVENLABS_API_KEY=from-file\n")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "from-env")
+
+        loaded = _load_keys(tmp_path)
+
+        assert "ELEVENLABS_API_KEY" not in loaded
+        import os as _os
+
+        assert _os.environ["ELEVENLABS_API_KEY"] == "from-env"
+
+    def test_ignores_unknown_keys(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Only known provider keys are loaded — random env vars are ignored."""
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("HACKER_BACKDOOR=root\nELEVENLABS_API_KEY=sk-real\n")
+        monkeypatch.delenv("HACKER_BACKDOOR", raising=False)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        loaded = _load_keys(tmp_path)
+
+        assert "HACKER_BACKDOOR" not in loaded
+        assert "ELEVENLABS_API_KEY" in loaded
+        import os as _os
+
+        assert "HACKER_BACKDOOR" not in _os.environ

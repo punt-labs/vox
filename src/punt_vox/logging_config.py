@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 import logging.config
-from pathlib import Path
 
-VOX_DATA_DIR = Path.home() / ".punt-labs" / "vox"
-_LOG_DIR = VOX_DATA_DIR / "logs"
+from punt_vox.paths import log_dir as _paths_log_dir, user_state_dir
+
+# Kept as a module constant for backward compatibility with cache.py,
+# keys.py, and playback.py. Resolves to ``~/.punt-labs/vox/``.
+VOX_DATA_DIR = user_state_dir()
+_LOG_DIR = _paths_log_dir()
 _LOG_FILE = _LOG_DIR / "tts.log"
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

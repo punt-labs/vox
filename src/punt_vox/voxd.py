@@ -20,7 +20,6 @@ import os
 import platform
 import secrets
 import shutil
-import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable
@@ -40,6 +39,11 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
+from punt_vox.paths import (
+    config_dir as _user_config_dir,
+    log_dir as _user_log_dir,
+    run_dir as _user_run_dir,
+)
 from punt_vox.providers import auto_detect_provider, get_provider
 from punt_vox.types import (
     AudioProviderId,
@@ -69,33 +73,28 @@ _playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
-# System paths
+# Per-user state paths
+#
+# These are thin wrappers over ``punt_vox.paths`` so tests can monkey-patch
+# them without reaching across modules. The source of truth is
+# ``punt_vox.paths``; every path resolves to a subdirectory of
+# ``~/.punt-labs/vox/`` — same on macOS and Linux.
 # ---------------------------------------------------------------------------
 
 
-def _data_root() -> Path:
-    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
-    if sys.platform == "darwin":
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix"], text=True, timeout=5
-            ).strip()
-            return Path(prefix)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return Path("/usr/local")  # fallback for non-Homebrew macOS
-    return Path("/")  # type: ignore[unreachable,unused-ignore]
-
-
 def _config_dir() -> Path:
-    return _data_root() / "etc" / "vox"
+    """Directory holding ``keys.env``."""
+    return _user_config_dir()
 
 
 def _log_dir() -> Path:
-    return _data_root() / "var" / "log" / "vox"
+    """Directory holding ``voxd.log`` and rotated logs."""
+    return _user_log_dir()
 
 
 def _run_dir() -> Path:
-    return _data_root() / "var" / "run" / "vox"
+    """Directory holding ``serve.port`` and ``serve.token`` (mode 0700)."""
+    return _user_run_dir()
 
 
 # ---------------------------------------------------------------------------

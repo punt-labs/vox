@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **voxd state location regression**: PR #130 (the v3 architecture rewrite) moved per-user voxd state from `~/.punt-labs/vox/` to FHS system paths (`/etc/vox/`, `/var/log/vox/`, `/var/run/vox/`). This stranded existing users' API keys silently on upgrade and required sudo to edit personal API tokens. State is now back in `~/.punt-labs/vox/`. Users who had cloud provider keys configured before v3 (commit 49879af) will see them work again automatically — the keys were never deleted, voxd just stopped reading from the right location.
+- **Stale `voxd` binary in systemd unit**: `daemon install` resolved `voxd` via `shutil.which()` and could bake a stale binary from an earlier `uv tool install` into the systemd `ExecStart=`. Now resolves from `Path(sys.executable).parent / "voxd"` so the unit always runs the same distribution that provides `vox`.
+
+### Changed
+
+- **Path helpers extracted to `punt_vox.paths`**: voxd, service, and client all share one source of truth for per-user state paths. Removed the duplicated `_data_root()`/`_config_dir()`/`_log_dir()`/`_run_dir()` helpers from those modules. The new module is stdlib-only so both the heavy voxd import chain and the minimal client can depend on it.
+- **systemd unit no longer sets `RuntimeDirectory=vox`**: runtime state lives in `$HOME/.punt-labs/vox/run/` now, so systemd does not need to create `/run/vox`.
+
 ## [4.1.0] - 2026-04-06
 
 ### Added
