@@ -21,9 +21,11 @@ from punt_vox.service import (
     _kill_stale_daemon,  # pyright: ignore[reportPrivateUsage]
     _launchd_install,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
+    _launchd_stop,  # pyright: ignore[reportPrivateUsage]
     _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
     _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
     _systemd_install,  # pyright: ignore[reportPrivateUsage]
+    _systemd_stop,  # pyright: ignore[reportPrivateUsage]
     _systemd_unit_content,  # pyright: ignore[reportPrivateUsage]
     _voxd_exec_args,  # pyright: ignore[reportPrivateUsage]
     _write_keys_env,  # pyright: ignore[reportPrivateUsage]
@@ -1001,9 +1003,12 @@ def test_install_runs_as_user_creates_keys_env(
     # Give install() provider keys to snapshot.
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
     monkeypatch.setenv("TTS_PROVIDER", "openai")
-    # Stub the port pre-flight so the test does not poke the host's
-    # real port 8421.
+    # Stub the port pre-flight and the service-manager stops so the
+    # test does not poke the host's real port 8421 or shell out to
+    # sudo launchctl/systemctl.
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+    monkeypatch.setattr("punt_vox.service._launchd_stop", lambda: None)
+    monkeypatch.setattr("punt_vox.service._systemd_stop", lambda: None)
 
     # Stub geteuid so the install() root-refusal check passes on CI
     # images that run pytest as uid 0 (e.g. Docker).
@@ -1132,14 +1137,16 @@ def test_launchd_install_invokes_expected_sudo_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_launchd_install issues four sudo subprocess calls in order.
+    """``_launchd_install`` issues three sudo subprocess calls in order.
 
-    Order: ``sudo install`` (places plist), ``sudo launchctl unload``
-    (idempotent, ``check=False``), ``sudo launchctl load``, ``sudo
-    launchctl kickstart -k system/<label>`` (force restart so the
-    running daemon picks up the new ``ExecStart``). The ``kickstart
-    -k`` step is the regression guard for Cursor Bugbot 3048294138 /
-    Copilot 3048295072.
+    Order: ``sudo install`` (places plist), ``sudo launchctl load``,
+    ``sudo launchctl kickstart -k system/<label>`` (force restart so
+    the running daemon picks up the new ``ExecStart``). The upfront
+    ``launchctl unload`` has been hoisted out to ``_launchd_stop``,
+    which ``install()`` calls BEFORE ``_ensure_port_free`` — so it is
+    not part of this standalone test. The ``kickstart -k`` step is
+    the regression guard for Cursor Bugbot 3048294138 / Copilot
+    3048295072.
     """
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
@@ -1161,18 +1168,16 @@ def test_launchd_install_invokes_expected_sudo_commands(
     _launchd_install("jfreeman")
 
     sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
-    assert len(sudo_calls) == 4, (
-        f"Expected 4 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
+    assert len(sudo_calls) == 3, (
+        f"Expected 3 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
     )
     # Call 1: install plist into /Library/LaunchDaemons
     assert sudo_calls[0][0][0][:2] == ["sudo", "install"]
     assert "/Library/LaunchDaemons/com.punt-labs.voxd.plist" in sudo_calls[0][0][0]
-    # Call 2: unload (idempotent)
-    assert sudo_calls[1][0][0][:3] == ["sudo", "launchctl", "unload"]
-    # Call 3: load
-    assert sudo_calls[2][0][0][:3] == ["sudo", "launchctl", "load"]
-    # Call 4: kickstart -k to force restart
-    assert sudo_calls[3][0][0] == [
+    # Call 2: load
+    assert sudo_calls[1][0][0][:3] == ["sudo", "launchctl", "load"]
+    # Call 3: kickstart -k to force restart
+    assert sudo_calls[2][0][0] == [
         "sudo",
         "launchctl",
         "kickstart",
@@ -1240,8 +1245,8 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
 
     The tmp file must exist at ``~/.punt-labs/vox/voxd.service.tmp``
     when the first ``sudo install`` fires so ``install(1)`` has
-    something to copy. After all four sudo calls complete, the tmp
-    file is removed.
+    something to copy. After all sudo calls complete, the tmp file
+    is removed.
     """
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
@@ -1335,10 +1340,13 @@ def test_install_does_not_chown_anything(
     monkeypatch.setattr("punt_vox.service._systemd_install", _noop_install)
     monkeypatch.setattr("punt_vox.service._launchd_status", _always_running)
     monkeypatch.setattr("punt_vox.service._systemd_status", _always_running)
-    # Stub the port pre-flight so the test does not poke at the host's
-    # real port 8421 (which might be holding a developer's running
-    # daemon — this test must be hermetic).
+    # Stub the port pre-flight and the service-manager stops so the
+    # test does not poke at the host's real port 8421 (which might be
+    # holding a developer's running daemon — this test must be
+    # hermetic) or shell out to sudo launchctl/systemctl.
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+    monkeypatch.setattr("punt_vox.service._launchd_stop", lambda: None)
+    monkeypatch.setattr("punt_vox.service._systemd_stop", lambda: None)
 
     # Force non-root uid so the install root-refusal check passes on
     # CI images that run pytest as uid 0.
@@ -1382,6 +1390,8 @@ def test_install_reports_not_running(
     (bin_dir / "python").chmod(0o755)
     monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
     monkeypatch.setattr("punt_vox.service._ensure_port_free", lambda: None)
+    monkeypatch.setattr("punt_vox.service._launchd_stop", lambda: None)
+    monkeypatch.setattr("punt_vox.service._systemd_stop", lambda: None)
 
     def _euid_nonroot() -> int:
         return 1000
@@ -1390,6 +1400,193 @@ def test_install_reports_not_running(
 
     result = install()
     assert "not yet running" in result
+
+
+# ---------------------------------------------------------------------------
+# install() — pre-flight stop before port check (Cursor Bugbot 3048416720)
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service._systemd_status", return_value=True)
+@patch("punt_vox.service._systemd_install")
+@patch("punt_vox.service.detect_platform", return_value="linux")
+def test_install_runs_systemd_stop_before_port_check(
+    _mock_platform: MagicMock,
+    _mock_systemd_install: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``install()`` must stop voxd via systemctl BEFORE the port check.
+
+    Without the pre-flight stop, systemd's ``Restart=on-failure`` would
+    respawn the daemon the instant ``_ensure_port_free`` kills the
+    stale process, leaving the upgrade racy and the old binary alive.
+    This test records the order of events (``_systemd_stop`` call and
+    ``_ensure_port_free`` call) and asserts the stop happens first.
+    Cursor Bugbot 3048416720 on PR #162.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
+    call_order: list[str] = []
+
+    def _record_stop() -> None:
+        call_order.append("systemd_stop")
+
+    def _record_port_free() -> None:
+        call_order.append("ensure_port_free")
+
+    monkeypatch.setattr("punt_vox.service._systemd_stop", _record_stop)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", _record_port_free)
+
+    install()
+
+    assert "systemd_stop" in call_order, "install() did not call _systemd_stop"
+    assert "ensure_port_free" in call_order, "install() did not call _ensure_port_free"
+    assert call_order.index("systemd_stop") < call_order.index("ensure_port_free"), (
+        f"_systemd_stop must run before _ensure_port_free, got order: {call_order}"
+    )
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service._launchd_install")
+@patch("punt_vox.service.detect_platform", return_value="macos")
+def test_install_runs_launchd_stop_before_port_check(
+    _mock_platform: MagicMock,
+    _mock_launchd_install: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``install()`` must unload voxd from launchd BEFORE the port check.
+
+    Without the pre-flight unload, launchd's ``KeepAlive=true`` would
+    respawn the daemon the instant ``_ensure_port_free`` kills the
+    stale process, leaving the upgrade racy and the old binary alive.
+    This test records the order of events (``_launchd_stop`` call and
+    ``_ensure_port_free`` call) and asserts the stop happens first.
+    Cursor Bugbot 3048416720 on PR #162.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
+    call_order: list[str] = []
+
+    def _record_stop() -> None:
+        call_order.append("launchd_stop")
+
+    def _record_port_free() -> None:
+        call_order.append("ensure_port_free")
+
+    monkeypatch.setattr("punt_vox.service._launchd_stop", _record_stop)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", _record_port_free)
+
+    install()
+
+    assert "launchd_stop" in call_order, "install() did not call _launchd_stop"
+    assert "ensure_port_free" in call_order, "install() did not call _ensure_port_free"
+    assert call_order.index("launchd_stop") < call_order.index("ensure_port_free"), (
+        f"_launchd_stop must run before _ensure_port_free, got order: {call_order}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _launchd_stop / _systemd_stop — pre-flight helpers (idempotent)
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.subprocess.run")
+@patch("punt_vox.service._LAUNCHD_PLIST")
+def test_launchd_stop_noop_when_plist_missing(
+    mock_plist: MagicMock,
+    mock_run: MagicMock,
+) -> None:
+    """Fresh install (no prior plist): _launchd_stop skips the sudo call."""
+    mock_plist.exists.return_value = False
+    _launchd_stop()
+    mock_run.assert_not_called()
+
+
+@patch("punt_vox.service.subprocess.run")
+@patch("punt_vox.service._LAUNCHD_PLIST")
+def test_launchd_stop_unloads_when_plist_present(
+    mock_plist: MagicMock,
+    mock_run: MagicMock,
+) -> None:
+    """Existing plist: _launchd_stop issues sudo launchctl unload -w."""
+    mock_plist.exists.return_value = True
+    mock_run.return_value = MagicMock(returncode=0)
+
+    _launchd_stop()
+
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    # The first four args are the fixed prefix — the fifth is the plist
+    # path which comes from the mocked _LAUNCHD_PLIST, so we only
+    # verify the prefix and the kwargs.
+    assert call_args[0][0][:4] == ["sudo", "launchctl", "unload", "-w"]
+    # check=False — unload is allowed to fail when not actually loaded
+    assert call_args[1]["check"] is False
+
+
+@patch("punt_vox.service.subprocess.run")
+@patch("punt_vox.service._SYSTEMD_UNIT")
+def test_systemd_stop_noop_when_unit_missing(
+    mock_unit: MagicMock,
+    mock_run: MagicMock,
+) -> None:
+    """Fresh install (no prior unit): _systemd_stop skips the sudo call."""
+    mock_unit.exists.return_value = False
+    _systemd_stop()
+    mock_run.assert_not_called()
+
+
+@patch("punt_vox.service.subprocess.run")
+@patch("punt_vox.service._SYSTEMD_UNIT")
+def test_systemd_stop_stops_when_unit_present(
+    mock_unit: MagicMock,
+    mock_run: MagicMock,
+) -> None:
+    """Existing unit: _systemd_stop issues sudo systemctl stop voxd."""
+    mock_unit.exists.return_value = True
+    mock_run.return_value = MagicMock(returncode=0)
+
+    _systemd_stop()
+
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    assert call_args[0][0] == ["sudo", "systemctl", "stop", "voxd"]
+    # check=False — stop is allowed to fail when not actually running
+    assert call_args[1]["check"] is False
 
 
 # ---------------------------------------------------------------------------

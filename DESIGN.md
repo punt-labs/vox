@@ -1353,25 +1353,32 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 
 ### Decision
 
-`vox daemon install` runs as the invoking user from start to finish. The command refuses to run under `sudo` (`os.geteuid() == 0` check at the top of `install()`). All per-user filesystem writes under `~/.punt-labs/vox/` happen with normal user permissions — no chown, no `fchown`, no `O_NOFOLLOW`, no symlink walks, no `SUDO_USER` lookup. The privileged surface shrinks to exactly four `subprocess.run(["sudo", ...])` calls per platform, each touching only a system directory the user could not write to anyway:
+`vox daemon install` runs as the invoking user from start to finish. The command refuses to run under `sudo` (`os.geteuid() == 0` check at the top of `install()`). All per-user filesystem writes under `~/.punt-labs/vox/` happen with normal user permissions — no chown, no `fchown`, no `O_NOFOLLOW`, no symlink walks, no `SUDO_USER` lookup. The privileged surface shrinks to five `subprocess.run(["sudo", ...])` calls on Linux and four on macOS, each touching only a system directory the user could not write to anyway:
 
-**Linux:**
-1. `sudo install -m 644 -o root -g root <tmp> /etc/systemd/system/voxd.service`
-2. `sudo systemctl daemon-reload`
-3. `sudo systemctl enable voxd`
-4. `sudo systemctl restart voxd`
+**Linux (5 calls):**
+1. `sudo systemctl stop voxd` (pre-flight, skipped on fresh install)
+2. `sudo install -m 644 -o root -g root <tmp> /etc/systemd/system/voxd.service`
+3. `sudo systemctl daemon-reload`
+4. `sudo systemctl enable voxd`
+5. `sudo systemctl restart voxd`
 
-**macOS:**
-1. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
-2. `sudo launchctl unload -w <plist>` (idempotent, `check=False`)
+**macOS (4 calls):**
+1. `sudo launchctl unload -w <plist>` (pre-flight, skipped on fresh install)
+2. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
 3. `sudo launchctl load -w <plist>`
 4. `sudo launchctl kickstart -k system/com.punt-labs.voxd`
 
 The unit/plist content is written to a user-owned tmp file first (`~/.punt-labs/vox/voxd.service.tmp` or `com.punt-labs.voxd.plist.tmp`), then placed into the system directory via `install(1)` — a single privileged file write per platform.
 
-### Why Four Calls, Not Three
+### Why the Pre-flight Stop
 
-Review round 2 found that `systemctl enable --now` does not restart an already-running service, so on upgrade the running voxd would keep the stale `ExecStart` baked in from the previous unit. The four-call Linux shape uses `enable` + `restart` as separate primitives: `enable` is the boot-persistence step (idempotent), `restart` is the unconditional cycle. The four-call macOS shape adds `launchctl kickstart -k` after `load` — `load` on an already-loaded plist is a no-op and does not restart the daemon, so `kickstart -k` is the only primitive that forces a reload of the new `ExecStart`.
+Review round 3 (Cursor Bugbot 3048416720) found that `install()` was calling `_ensure_port_free` (which issues a direct `os.kill(SIGTERM)` to the stale voxd PID) before running the platform-specific install path. On macOS, launchd's `KeepAlive=true` immediately respawned the killed daemon with the OLD plist; on Linux, systemd's `Restart=on-failure` treated the kill as a failure exit and restarted the process under the old unit. The upgrade flow was racing against the service manager.
+
+The fix is a pre-flight stop through the service manager (`_launchd_stop` on macOS, `_systemd_stop` on Linux) BEFORE `_ensure_port_free` runs. That tells the manager "I am going to kill this, do not respawn it." The subsequent port check is then idempotent: anything still listening is stale state that survived a manager crash and is safe to kill outright. Both pre-flight helpers are idempotent — fresh installs with no prior unit file skip the sudo call entirely, so the fresh-install shape is 4 calls on Linux and 3 on macOS (pre-flight is a no-op; unit write + reload + enable + restart for Linux, install + load + kickstart for macOS).
+
+### Why Restart, Not Enable --now
+
+Review round 2 found that `systemctl enable --now` does not restart an already-running service, so on upgrade the running voxd would keep the stale `ExecStart` baked in from the previous unit. The Linux install shape uses `enable` + `restart` as separate primitives: `enable` is the boot-persistence step (idempotent), `restart` is the unconditional cycle. The macOS shape adds `launchctl kickstart -k` after `load` — `load` on an already-loaded plist is a no-op and does not restart the daemon, so `kickstart -k` is the only primitive that forces a reload of the new `ExecStart`.
 
 ### Why Refuse `sudo` Instead of Silently Demoting
 

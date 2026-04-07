@@ -11,8 +11,12 @@ The service runs ``voxd --port 8421`` as the installing user:
 Privilege scope: ``vox daemon install`` runs as the installing user.
 Per-user state under ``~/.punt-labs/vox/`` — keys, logs, runtime state,
 cache — is created with normal user permissions. The only privileged
-operations are four ``sudo`` subprocess calls per platform that place
-the system service file and reload/enable/restart the daemon manager.
+operations are five ``sudo`` subprocess calls on Linux (pre-flight
+stop, install, daemon-reload, enable, restart) and four on macOS
+(pre-flight unload, install, load, kickstart) — each touches only a
+system directory the user could not write to anyway. Fresh installs
+skip the pre-flight stop (idempotent no-op when there is no prior unit
+file) so the fresh-install shape is 4 calls on Linux and 3 on macOS.
 This keeps every file write to a user-controlled directory
 unprivileged and eliminates the class of attacks that arose when the
 entire install ran as root inside ``$HOME``. See DES-029 in
@@ -510,14 +514,35 @@ def _launchd_plist_content(user: str) -> str:
     """)
 
 
+def _launchd_stop() -> None:
+    """Unload voxd from launchd if loaded. Idempotent.
+
+    Called as a pre-flight step by ``install()`` before
+    ``_ensure_port_free`` so launchd's ``KeepAlive=true`` does not
+    respawn the daemon the instant the port-cleanup step kills it.
+    ``check=False`` because launchctl exits non-zero when the label
+    is not registered (fresh install with no prior plist) — that
+    path is expected, not an error. Cursor Bugbot 3048416720 on
+    PR #162.
+    """
+    if not _LAUNCHD_PLIST.exists():
+        # Nothing to unload on a truly fresh install. Skip the sudo
+        # invocation entirely so fresh installs only prompt for the
+        # password inside ``_launchd_install``.
+        return
+    subprocess.run(
+        ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+        check=False,
+    )
+    logger.info("Unloaded any previously-loaded %s", _LABEL)
+
+
 def _launchd_install(user: str) -> None:
-    """Install the launchd plist. Sudo is invoked four times.
+    """Install the launchd plist. Sudo is invoked three times.
 
     1. ``sudo install`` the plist into ``/Library/LaunchDaemons``.
-    2. ``sudo launchctl unload -w`` any previously-loaded version
-       (``check=False`` — idempotent, no-op on fresh install).
-    3. ``sudo launchctl load -w`` the freshly installed plist.
-    4. ``sudo launchctl kickstart -k system/<label>`` to force a
+    2. ``sudo launchctl load -w`` the freshly installed plist.
+    3. ``sudo launchctl kickstart -k system/<label>`` to force a
        restart even if launchd considers the service already running
        with the old ExecStart baked in.
 
@@ -525,13 +550,19 @@ def _launchd_install(user: str) -> None:
     then placed into the system directory via ``install(1)``, so the
     only privileged file write is the single ``install`` invocation.
 
+    Upgrade sequencing note: the unload step that used to live in the
+    middle of this function was hoisted out to ``_launchd_stop`` and
+    is now called by ``install()`` BEFORE ``_ensure_port_free``. That
+    prevents launchd's ``KeepAlive=true`` from respawning voxd the
+    instant ``_ensure_port_free`` kills the stale process. Cursor
+    Bugbot 3048416720 on PR #162.
+
     Why kickstart? ``launchctl load`` on an already-loaded plist is a
     no-op — it does not restart the daemon to pick up the new
-    ``ExecStart``. On upgrade from an older install, the running voxd
-    would keep its stale binary/args until the user rebooted. The
-    ``kickstart -k`` primitive (``-k`` means "kill and restart if
-    running; start if not") is the only supported way to force that
-    reload. Cursor Bugbot 3048294138 / Copilot 3048295072 on PR #162.
+    ``ExecStart``. The ``kickstart -k`` primitive (``-k`` means "kill
+    and restart if running; start if not") is the only supported way
+    to force that reload. Cursor Bugbot 3048294138 / Copilot
+    3048295072 on PR #162.
     """
     state_root = _paths_user_state_dir()
     tmp_plist = state_root / "com.punt-labs.voxd.plist.tmp"
@@ -556,14 +587,6 @@ def _launchd_install(user: str) -> None:
             check=True,
         )
         logger.info("Installed %s", _LAUNCHD_PLIST)
-
-        # Unload any previously-loaded version. ``check=False`` because
-        # launchctl exits non-zero when the label is not registered
-        # (fresh install); that path is expected, not an error.
-        subprocess.run(
-            ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
-            check=False,
-        )
 
         subprocess.run(
             ["sudo", "launchctl", "load", "-w", str(_LAUNCHD_PLIST)],
@@ -694,6 +717,29 @@ def _systemd_unit_content(user: str) -> str:
     """)
 
 
+def _systemd_stop() -> None:
+    """Stop voxd under systemd if running. Idempotent.
+
+    Called as a pre-flight step by ``install()`` before
+    ``_ensure_port_free`` so systemd's ``Restart=on-failure`` does
+    not revive the daemon the instant the port-cleanup step kills
+    it. ``check=False`` because systemctl exits non-zero when the
+    unit is not loaded (fresh install with no prior unit file) —
+    that path is expected, not an error. Cursor Bugbot 3048416720
+    on PR #162.
+    """
+    if not _SYSTEMD_UNIT.exists():
+        # Nothing to stop on a truly fresh install. Skip the sudo
+        # invocation entirely so fresh installs only prompt for the
+        # password inside ``_systemd_install``.
+        return
+    subprocess.run(
+        ["sudo", "systemctl", "stop", "voxd"],
+        check=False,
+    )
+    logger.info("Stopped any previously-running voxd.service")
+
+
 def _systemd_install(user: str) -> None:
     """Install the systemd unit. Sudo is invoked four times.
 
@@ -708,6 +754,13 @@ def _systemd_install(user: str) -> None:
     The unit content is written to a user-owned tmp file first and
     then placed into the system directory via ``install(1)``, so the
     only privileged file write is the single ``install`` invocation.
+
+    Upgrade sequencing note: ``install()`` calls ``_systemd_stop``
+    BEFORE this function (and before ``_ensure_port_free``) so
+    systemd's ``Restart=on-failure`` cannot revive the daemon the
+    instant the port-cleanup step kills it. Without that pre-flight
+    stop, the old voxd respawns mid-install and the upgrade flow
+    races against itself. Cursor Bugbot 3048416720 on PR #162.
 
     Why restart, not ``enable --now``? ``enable --now`` only starts
     the service if it is not already running — on upgrade from an
@@ -857,13 +910,26 @@ def install() -> str:
     _write_keys_env(dict(os.environ), keys_path)
     logger.info("Wrote provider keys to %s", keys_path)
 
-    # Pre-flight: kill any stale voxd holding the port. This runs
-    # before the platform-specific install path so that ``launchctl
-    # load`` / ``systemctl restart`` does not race against a leftover
-    # process bound to ``DEFAULT_PORT``. The platform-specific install
-    # paths themselves are kept narrow — exactly four ``sudo``
-    # subprocess calls each — so this cleanup happens here as the
-    # user, not inside the privileged section.
+    # Pre-flight stop through the service manager. This MUST happen
+    # before ``_ensure_port_free`` because ``_kill_stale_daemon``
+    # issues a direct ``os.kill(SIGTERM)``, and the service manager
+    # (launchd's ``KeepAlive=true``, systemd's ``Restart=on-failure``)
+    # would immediately respawn the killed daemon with the OLD unit
+    # file. Telling the manager to stop first makes the subsequent
+    # port check idempotent: anything still listening is stale state
+    # that survived a manager crash and is safe to kill outright.
+    # Cursor Bugbot 3048416720 on PR #162.
+    print(_SUDO_NOTICE, file=sys.stderr)
+    if plat == "macos":
+        _launchd_stop()
+    else:
+        _systemd_stop()
+
+    # Pre-flight: kill any stale voxd holding the port. Runs after
+    # the manager-level stop so ``KeepAlive`` / ``Restart`` cannot
+    # race against the kill. Also handles the edge case where voxd
+    # was started outside the service manager (``vox daemon`` or
+    # a direct ``voxd`` invocation).
     _ensure_port_free()
 
     if plat == "macos":
