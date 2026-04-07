@@ -88,8 +88,11 @@ def _config_dir() -> Path:
 
 
 def _log_dir() -> Path:
-    """Directory holding ``voxd.log`` and rotated logs."""
-    return _user_log_dir()
+    """Directory holding ``voxd.log`` and rotated logs (mode 0700)."""
+    path = _user_log_dir()
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+    return path
 
 
 def _run_dir() -> Path:

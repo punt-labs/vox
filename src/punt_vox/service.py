@@ -24,6 +24,7 @@ import pwd
 import re
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import textwrap
@@ -127,42 +128,161 @@ def _reject_symlinks(path: Path) -> None:
             continue
 
 
-def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
-    """Write ``keys.env`` to ``keys_path``. chmod 0600.
+def _write_keys_env(
+    env: dict[str, str],
+    keys_path: Path,
+    target_uid: int | None = None,
+    target_gid: int | None = None,
+) -> Path:
+    """Write ``keys.env`` to ``keys_path``. chmod 0600. Symlink-safe.
 
     Preserves any keys already present in the file that the caller did
     not override. An empty string in ``env`` removes the key.
 
-    The caller may invoke this either as the installing user directly or
-    as root (for example under ``sudo``). In both cases the write is
-    symlink-safe: every ancestor inside ``~<user>/.punt-labs/vox`` is
-    checked via ``lstat``, and the file is opened with ``O_NOFOLLOW`` so
-    that a pre-existing symlink at ``keys_path`` cannot redirect the
-    write to a root-owned file elsewhere on the filesystem. Callers
-    running as root must still ``chown`` the resulting file to the
-    installing user afterwards (see ``_chown_to_user``).
+    Callers may invoke this either as the installing user directly or as
+    root (for example under ``sudo``). When called as root, pass the
+    installing user's ``target_uid``/``target_gid`` so the resulting file
+    is handed back via ``fchown`` on the open descriptor — symlink-safe,
+    no separate chown step on the path.
+
+    Symlink protection has three layers:
+
+    1. ``_reject_symlinks`` walks the parent chain and refuses if any
+       ancestor under ``~<user>/.punt-labs`` is a symlink.
+    2. The file is opened with ``O_NOFOLLOW`` so a pre-existing symlink
+       at ``keys_path`` cannot redirect the write. New files use
+       ``O_CREAT | O_EXCL`` to fail loudly if anything was raced into
+       place.
+    3. When the file already exists, the open descriptor is verified
+       with ``fstat`` — must be a regular file, must be owned by
+       ``target_uid`` (or the current process when target_uid is None).
+       Anything that fails verification is treated as an
+       attack-in-progress and aborts with ``SystemExit``.
+
+    All ownership and mode changes happen via ``fchown``/``fchmod`` on
+    the open file descriptor, not via path-based ``chown``/``chmod``,
+    so a TOCTOU symlink swap between open and ownership change cannot
+    redirect the privileged operation.
     """
     path = keys_path
 
     _reject_symlinks(path)
 
     existing: dict[str, str] = {}
-    if path.exists():
+    is_new_file = not path.exists()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Determine effective target uid for fstat verification. When the
+    # caller did not pass one, fall back to the current process uid —
+    # that's the right answer for non-sudo usage.
+    effective_uid = target_uid if target_uid is not None else os.getuid()
+
+    def _open_new(target_path: Path) -> int:
+        """Open a fresh keys.env with O_CREAT|O_EXCL|O_NOFOLLOW."""
         try:
-            text = path.read_text()
-            for line in text.splitlines():
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if "=" not in stripped:
-                    continue
-                key, _, value = stripped.partition("=")
-                key = key.strip()
-                value = value.strip()
-                if key:
-                    existing[key] = value
+            return os.open(
+                str(target_path),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
         except OSError as exc:
-            logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
+            msg = (
+                f"Refusing to write {target_path}: open failed ({exc}). "
+                "Possible symlink attack — refusing to follow."
+            )
+            logger.error(msg)
+            raise SystemExit(msg) from exc
+
+    def _open_existing(target_path: Path) -> int:
+        """Open an existing keys.env with O_NOFOLLOW, no O_CREAT."""
+        try:
+            return os.open(str(target_path), os.O_RDWR | os.O_NOFOLLOW)
+        except OSError as exc:
+            msg = (
+                f"Refusing to write {target_path}: open failed ({exc}). "
+                "Possible symlink attack — refusing to follow."
+            )
+            logger.error(msg)
+            raise SystemExit(msg) from exc
+
+    fd: int
+    if is_new_file:
+        # Atomic create-and-fail-if-exists. O_NOFOLLOW + O_EXCL together
+        # mean: cannot be tricked by a symlink, and cannot race against
+        # an attacker pre-creating the file between the exists() check
+        # and now (since O_EXCL is atomic at the kernel level).
+        try:
+            fd = _open_new(path)
+        except SystemExit:
+            # Check whether the failure was a race with an attacker or
+            # a legitimate pre-existing file.
+            if not path.exists():
+                raise
+            # Pre-existing file — fall through to the existing-file
+            # verification path.
+            is_new_file = False
+            fd = _open_existing(path)
+    else:
+        fd = _open_existing(path)
+
+    if not is_new_file:
+        # Verify the open descriptor before any writes.
+
+        try:
+            st = os.fstat(fd)
+        except OSError as exc:
+            os.close(fd)
+            msg = f"Refusing to write {path}: fstat failed ({exc})."
+            logger.error(msg)
+            raise SystemExit(msg) from exc
+
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            msg = (
+                f"Refusing to write {path}: not a regular file "
+                f"(mode={oct(st.st_mode)}). Attack-in-progress."
+            )
+            logger.error(msg)
+            raise SystemExit(msg)
+
+        if st.st_uid != effective_uid:
+            os.close(fd)
+            msg = (
+                f"Refusing to write {path}: owned by uid={st.st_uid}, "
+                f"expected uid={effective_uid}. Attack-in-progress."
+            )
+            logger.error(msg)
+            raise SystemExit(msg)
+
+        # Read existing content from the verified fd before truncating.
+        try:
+            chunks: list[bytes] = []
+            while True:
+                buf = os.read(fd, 65536)
+                if not buf:
+                    break
+                chunks.append(buf)
+            text = b"".join(chunks).decode("utf-8", errors="replace")
+        except OSError as exc:
+            logger.warning(
+                "Could not read existing %s from fd: %s — will overwrite",
+                path,
+                exc,
+            )
+            text = ""
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key:
+                existing[key] = value
 
     merged = dict(existing)
     for k in _PROVIDER_KEY_NAMES:
@@ -190,29 +310,22 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     lines = [f"{k}={v}" for k, v in sorted(merged.items()) if v]
     content = header + "\n".join(lines) + "\n"
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # O_NOFOLLOW: if the path is a symlink, open() raises OSError(ELOOP).
-    # O_EXCL cannot be combined with O_TRUNC, so we unlink first if the
-    # file exists but is a regular file. _reject_symlinks already
-    # guaranteed the parent chain is clean.
-    if path.exists() and not path.is_symlink():
-        path.unlink()
-    elif path.is_symlink():
-        msg = (
-            f"Refusing to overwrite {path}: it is a symlink "
-            "(potential privilege escalation)."
-        )
-        raise OSError(msg)
-    fd = os.open(
-        str(path),
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        0o600,
-    )
     try:
+        # Truncate-and-write. ftruncate operates on the fd, not the path,
+        # so it cannot be redirected by a symlink swap.
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, content.encode())
+        # fchown/fchmod on the fd are symlink-safe by construction —
+        # the kernel knows which inode this fd points at and cannot be
+        # tricked into modifying a different file. Skip fchown when
+        # running as the target user already (uid match) to avoid
+        # unnecessary syscalls.
+        if os.getuid() == 0 and target_uid is not None:
+            os.fchown(fd, target_uid, target_gid if target_gid is not None else -1)
+        os.fchmod(fd, 0o600)
     finally:
         os.close(fd)
-    path.chmod(0o600)
     return path
 
 
@@ -453,19 +566,30 @@ def _ensure_user_dirs(user: str) -> Path:
     for d in dirs:
         _reject_symlinks(d)
 
-    # The ~/.punt-labs parent must exist and must NOT be a symlink.
-    # We do not create it — if the user's home dir is not set up, the
-    # install should fail loudly rather than silently writing into an
-    # unexpected location.
+    # The ~/.punt-labs parent must already exist and must NOT be a
+    # symlink. We deliberately do NOT create it here: under ``sudo``
+    # the creation would run as root, leave a root-owned directory,
+    # and we then refuse to chown it (because the parent could be a
+    # symlink trap). The end state would be a root-owned ``.punt-labs``
+    # the daemon cannot write into. If the parent is missing, fail
+    # fast with a clear message so the operator creates it as
+    # themselves before rerunning install. Other Punt Labs agent
+    # tools (beadle, biff, ethos) already live under ``.punt-labs``,
+    # so by the time ``vox daemon install`` runs the parent almost
+    # always exists.
     dot_punt = state_root.parent
-    if not dot_punt.exists():
-        dot_punt.mkdir(parents=True, exist_ok=True)
     if dot_punt.is_symlink():
         msg = (
             f"Refusing to install: {dot_punt} is a symlink "
             "(potential privilege escalation)."
         )
         raise OSError(msg)
+    if not dot_punt.exists():
+        msg = (
+            f"{dot_punt} does not exist. Create it as your user before "
+            f"running 'sudo vox daemon install': mkdir -p {dot_punt}"
+        )
+        raise SystemExit(msg)
 
     _paths_ensure_user_dirs(state_root)
     for d in dirs:
@@ -777,12 +901,25 @@ def install() -> str:
     # when we were launched via sudo.
     state_root = _ensure_user_dirs(user)
 
-    # Write provider keys into the user's state dir, then chown the
-    # resulting file to the installing user so the daemon (running as
-    # that user) can read its own keys file.
+    # Write provider keys into the user's state dir. When running under
+    # sudo we hand the file back to the installing user via fchown on
+    # the open descriptor inside ``_write_keys_env`` itself — symlink-
+    # safe, no separate chown step on the path.
     keys_path = _user_keys_env_file_for(user)
-    _write_keys_env(dict(os.environ), keys_path)
-    _chown_to_user(keys_path, user)
+    target_uid: int | None = None
+    target_gid: int | None = None
+    if os.getuid() == 0:
+        try:
+            pw = pwd.getpwnam(user)
+            target_uid, target_gid = pw.pw_uid, pw.pw_gid
+        except KeyError:
+            logger.warning("User %s not found — keys.env will be owned by root", user)
+    _write_keys_env(
+        dict(os.environ),
+        keys_path,
+        target_uid=target_uid,
+        target_gid=target_gid,
+    )
     logger.info("Wrote provider keys to %s", keys_path)
 
     if plat == "macos":
@@ -808,35 +945,6 @@ def install() -> str:
 def _user_keys_env_file_for(user: str) -> Path:
     """Return the full path to ``keys.env`` inside *user*'s state dir."""
     return _user_state_dir_for(user) / "keys.env"
-
-
-def _chown_to_user(path: Path, user: str) -> None:
-    """chown *path* to *user* when running as root. No-op otherwise.
-
-    Used by the install command to hand files back to the installing
-    user after creating them under ``sudo``. Refuses to follow symlinks
-    — if *path* is a symlink, bail without chowning (a malicious user
-    could otherwise redirect root-privileged chown operations).
-    """
-    if os.getuid() != 0:
-        return
-    try:
-        pw = pwd.getpwnam(user)
-    except KeyError:
-        logger.warning("User %s not found — skipping chown of %s", user, path)
-        return
-    if path.is_symlink():
-        logger.warning(
-            "Refusing to chown symlink %s (potential privilege escalation)",
-            path,
-        )
-        return
-    # os.chown follows symlinks by default. Use os.lchown instead — it
-    # operates on the link itself, not the target. Combined with the
-    # is_symlink() guard above, this gives us defence in depth against
-    # TOCTOU symlink swaps.
-    os.lchown(str(path), pw.pw_uid, pw.pw_gid)
-    logger.info("Set ownership of %s to %s (%d:%d)", path, user, pw.pw_uid, pw.pw_gid)
 
 
 def uninstall() -> str:

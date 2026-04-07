@@ -12,7 +12,6 @@ import pytest
 
 from punt_vox.service import (
     DEFAULT_PORT,
-    _chown_to_user,  # pyright: ignore[reportPrivateUsage]
     _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
     _ensure_user_dirs,  # pyright: ignore[reportPrivateUsage]
     _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
@@ -831,7 +830,6 @@ def test_systemd_install_upgrade(
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -854,7 +852,6 @@ def test_install_returns_running_status(
     _mock_keys_path: MagicMock,
     _mock_dirs: MagicMock,
     _mock_keys: MagicMock,
-    _mock_chown: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
 ) -> None:
@@ -866,7 +863,6 @@ def test_install_returns_running_status(
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -889,7 +885,6 @@ def test_install_calls_ensure_user_dirs(
     _mock_keys_path: MagicMock,
     mock_dirs: MagicMock,
     _mock_keys: MagicMock,
-    _mock_chown: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
 ) -> None:
@@ -900,7 +895,6 @@ def test_install_calls_ensure_user_dirs(
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -923,14 +917,13 @@ def test_install_calls_write_keys_env(
     _mock_keys_path: MagicMock,
     _mock_dirs: MagicMock,
     mock_keys: MagicMock,
-    _mock_chown: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
 ) -> None:
     """install() writes provider keys to the user's keys.env path."""
     install()
     mock_keys.assert_called_once()
-    # First arg is a dict (os.environ), second is keys_path (Path)
+    # First positional arg is a dict (os.environ), second is keys_path (Path)
     args = mock_keys.call_args[0]
     assert isinstance(args[0], dict)
     assert isinstance(args[1], Path)
@@ -940,7 +933,6 @@ def test_install_calls_write_keys_env(
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -956,28 +948,88 @@ def test_install_calls_write_keys_env(
 )
 @patch("punt_vox.service._installing_user", return_value="testuser")
 @patch("punt_vox.service.detect_platform", return_value="macos")
-def test_install_chowns_keys_to_user(
+def test_install_passes_target_uid_to_write_keys_env_under_sudo(
     _mock_platform: MagicMock,
     _mock_user: MagicMock,
     _mock_args: MagicMock,
     _mock_keys_path: MagicMock,
     _mock_dirs: MagicMock,
-    _mock_keys: MagicMock,
-    mock_chown: MagicMock,
+    mock_keys: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """install() hands the resulting keys.env back to the installing user."""
+    """Under sudo, install() passes target uid/gid to _write_keys_env.
+
+    The keys file is then handed back to the installing user via
+    ``fchown`` on the open descriptor inside ``_write_keys_env`` —
+    symlink-safe. This replaces the legacy ``_chown_to_user`` path-based
+    chown that ran after the write.
+    """
+
+    def _fake_root() -> int:
+        return 0
+
+    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_root)
+
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000)
+
+    def _fake_getpwnam(_user: str) -> MagicMock:
+        return fake_pw
+
+    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
+
     install()
-    mock_chown.assert_called_once()
-    args = mock_chown.call_args[0]
-    assert isinstance(args[0], Path)
-    assert args[1] == "testuser"
+    mock_keys.assert_called_once()
+    kwargs = mock_keys.call_args.kwargs
+    assert kwargs["target_uid"] == 1000
+    assert kwargs["target_gid"] == 1000
 
 
 @patch("punt_vox.service._launchd_status", return_value=True)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
+@patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
+@patch(
+    "punt_vox.service._ensure_user_dirs",
+    return_value=Path("/fake/home/.punt-labs/vox"),
+)
+@patch(
+    "punt_vox.service._user_keys_env_file_for",
+    return_value=Path("/fake/home/.punt-labs/vox/keys.env"),
+)
+@patch(
+    "punt_vox.service._voxd_exec_args",
+    return_value=["/usr/local/bin/voxd", "--port", "8421"],
+)
+@patch("punt_vox.service._installing_user", return_value="testuser")
+@patch("punt_vox.service.detect_platform", return_value="macos")
+def test_install_passes_no_target_uid_when_not_root(
+    _mock_platform: MagicMock,
+    _mock_user: MagicMock,
+    _mock_args: MagicMock,
+    _mock_keys_path: MagicMock,
+    _mock_dirs: MagicMock,
+    mock_keys: MagicMock,
+    _mock_launchd: MagicMock,
+    _mock_status: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the installer runs as the user, no target_uid is needed."""
+
+    def _fake_user() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.getuid", _fake_user)
+
+    install()
+    mock_keys.assert_called_once()
+    kwargs = mock_keys.call_args.kwargs
+    assert kwargs["target_uid"] is None
+    assert kwargs["target_gid"] is None
+
+
+@patch("punt_vox.service._launchd_status", return_value=True)
+@patch("punt_vox.service._launchd_install")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -1000,7 +1052,6 @@ def test_install_passes_user_to_launchd(
     _mock_keys_path: MagicMock,
     _mock_dirs: MagicMock,
     _mock_keys: MagicMock,
-    _mock_chown: MagicMock,
     mock_launchd: MagicMock,
     _mock_status: MagicMock,
 ) -> None:
@@ -1011,7 +1062,6 @@ def test_install_passes_user_to_launchd(
 
 @patch("punt_vox.service._launchd_status", return_value=False)
 @patch("punt_vox.service._launchd_install")
-@patch("punt_vox.service._chown_to_user")
 @patch("punt_vox.service._write_keys_env", return_value=Path("/fake/keys.env"))
 @patch(
     "punt_vox.service._ensure_user_dirs",
@@ -1034,7 +1084,6 @@ def test_install_reports_not_running(
     _mock_keys_path: MagicMock,
     _mock_dirs: MagicMock,
     _mock_keys: MagicMock,
-    _mock_chown: MagicMock,
     _mock_launchd: MagicMock,
     _mock_status: MagicMock,
 ) -> None:
@@ -1147,58 +1196,14 @@ def test_user_keys_env_file_for_routes_to_home(mock_getpwnam: MagicMock) -> None
 
 
 # ---------------------------------------------------------------------------
-# _chown_to_user — runs only under root
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.os.chown")
-@patch("punt_vox.service.os.getuid", return_value=1000)
-def test_chown_to_user_noop_when_not_root(
-    _mock_getuid: MagicMock, mock_chown: MagicMock
-) -> None:
-    """Non-root callers must never try to chown — would EPERM."""
-    _chown_to_user(Path("/fake"), "jfreeman")
-    mock_chown.assert_not_called()
-
-
-@patch("punt_vox.service.os.lchown")
-@patch("punt_vox.service.pwd.getpwnam")
-@patch("punt_vox.service.os.getuid", return_value=0)
-def test_chown_to_user_chowns_when_root(
-    _mock_getuid: MagicMock,
-    mock_getpwnam: MagicMock,
-    mock_lchown: MagicMock,
-    tmp_path: Path,
-) -> None:
-    """Root callers chown the file to the target user.
-
-    Uses ``os.lchown`` (not ``os.chown``) to avoid following symlinks
-    — Cursor Bugbot fix.
-    """
-    mock_getpwnam.return_value = MagicMock(pw_uid=1000, pw_gid=1000)
-    # Real (non-symlink) path so the is_symlink() guard passes.
-    target = tmp_path / "keys.env"
-    target.write_text("placeholder")
-    _chown_to_user(target, "jfreeman")
-    mock_lchown.assert_called_once_with(str(target), 1000, 1000)
-
-
-@patch("punt_vox.service.os.chown")
-@patch("punt_vox.service.pwd.getpwnam", side_effect=KeyError("unknown"))
-@patch("punt_vox.service.os.getuid", return_value=0)
-def test_chown_to_user_ignores_unknown_user(
-    _mock_getuid: MagicMock,
-    _mock_getpwnam: MagicMock,
-    mock_chown: MagicMock,
-) -> None:
-    """Unknown user does not crash and skips chown."""
-    _chown_to_user(Path("/fake"), "ghost")
-    mock_chown.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # install() under sudo: keys.env must end up owned by the installing user
 # ---------------------------------------------------------------------------
+
+# NOTE: ``_chown_to_user`` was removed by the PR #162 review cycle —
+# ``_write_keys_env`` now performs the ownership change via ``fchown``
+# on an already-opened file descriptor, which is fundamentally
+# symlink-safe (the fd points at a verified inode, not a path).
+# Tests for the old path-based helper were deleted with the helper.
 
 
 @patch("punt_vox.service._launchd_status", return_value=True)
@@ -1221,8 +1226,9 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
     Regression test for the v3 install bug where _write_keys_env ran as
     root, left the file root-owned, and the daemon (running as the
     target user) could not read its own keys. Also verifies the
-    symlink-safe chown path introduced in the PR #162 review cycle
-    (uses ``os.lchown``, not ``os.chown``).
+    symlink-safe ownership path introduced in the PR #162 review cycle:
+    ``_ensure_user_dirs`` uses ``os.lchown`` on the directories and
+    ``_write_keys_env`` uses ``os.fchown`` on the open keys.env fd.
     """
     # Simulate sudo: SUDO_USER is set, and os.getuid() returns 0.
     monkeypatch.setenv("SUDO_USER", "jfreeman")
@@ -1233,8 +1239,10 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
     monkeypatch.setattr("punt_vox.service.os.getuid", _fake_geteuid_zero)
 
     # Route home dir resolution to a fake home under tmp_path.
+    # The ~/.punt-labs parent must already exist — the install command
+    # refuses to create it under sudo (would leave it root-owned).
     fake_home = tmp_path / "home" / "jfreeman"
-    fake_home.mkdir(parents=True)
+    (fake_home / ".punt-labs").mkdir(parents=True)
     fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
 
     def _fake_getpwnam(_user: str) -> MagicMock:
@@ -1243,35 +1251,48 @@ def test_install_under_sudo_chowns_keys_env_to_sudo_user(
     monkeypatch.setattr("punt_vox.paths.pwd.getpwnam", _fake_getpwnam)
     monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
 
-    # Track ownership calls so we can prove the file would have been
-    # handed back. _ensure_user_dirs uses os.chown on the created
-    # directories; _chown_to_user uses os.lchown on the final file.
-    chown_calls: list[tuple[str, int, int]] = []
+    # Track directory ownership calls. os.chown and os.lchown are used
+    # by _ensure_user_dirs on the created directories; os.fchown is
+    # used by _write_keys_env on the open keys.env descriptor.
+    dir_chown_calls: list[tuple[str, int, int]] = []
+    fchown_calls: list[tuple[int, int, int]] = []
 
     def _fake_chown(path: str, uid: int, gid: int) -> None:
-        chown_calls.append((str(path), uid, gid))
+        dir_chown_calls.append((str(path), uid, gid))
+
+    def _fake_fchown(fd: int, uid: int, gid: int) -> None:
+        fchown_calls.append((fd, uid, gid))
 
     monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
     monkeypatch.setattr("punt_vox.service.os.lchown", _fake_chown)
+    monkeypatch.setattr("punt_vox.service.os.fchown", _fake_fchown)
 
     install()
 
     expected_keys = fake_home / ".punt-labs" / "vox" / "keys.env"
-    # _chown_to_user should have handed the keys.env back to jfreeman
-    assert any(
-        call_[0] == str(expected_keys) and call_[1] == 1000 and call_[2] == 1000
-        for call_ in chown_calls
-    ), (
-        f"keys.env at {expected_keys} was not chowned to jfreeman; "
-        f"chown calls: {chown_calls}"
+    # _ensure_user_dirs should have chowned each created directory to
+    # jfreeman. keys.env itself is handed back via fchown (fd-based,
+    # symlink-safe), so we check fchown was called with the target uid.
+    assert any(call_[1] == 1000 and call_[2] == 1000 for call_ in fchown_calls), (
+        f"os.fchown was not called with target uid/gid for {expected_keys}; "
+        f"fchown calls: {fchown_calls}"
+    )
+    # The parent vox directory must also be chowned to the user (so the
+    # daemon can actually write inside it).
+    vox_dir = str(fake_home / ".punt-labs" / "vox")
+    assert any(call_[0] == vox_dir for call_ in dir_chown_calls), (
+        f"vox state dir at {vox_dir} was not handed back to jfreeman; "
+        f"dir chown calls: {dir_chown_calls}"
     )
     # The ~/.punt-labs parent must NEVER appear in the chown targets —
     # it could be a symlink to /etc and hand root-owned system paths
     # to the user.
     dot_punt = str(fake_home / ".punt-labs")
-    assert not any(call_[0] == dot_punt for call_ in chown_calls), (
+    assert not any(call_[0] == dot_punt for call_ in dir_chown_calls), (
         f"{dot_punt} was chowned — symlink escalation risk"
     )
+    # keys.env must exist on disk after install.
+    assert expected_keys.exists(), f"install() failed to create {expected_keys}"
 
 
 # ---------------------------------------------------------------------------
@@ -1285,7 +1306,7 @@ def test_ensure_user_dirs_creates_all_subdirs_under_target_user_home(
 ) -> None:
     """End-to-end: calling _ensure_user_dirs creates the tree and returns root."""
     fake_home = tmp_path / "home" / "testuser"
-    fake_home.mkdir(parents=True)
+    (fake_home / ".punt-labs").mkdir(parents=True)
     fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
 
     def _fake_getpwnam(_user: str) -> MagicMock:
@@ -1372,6 +1393,27 @@ def test_ensure_user_dirs_refuses_symlink_state_root(
         _ensure_user_dirs("attacker")
 
 
+def test_ensure_user_dirs_fails_when_dot_punt_labs_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing ~/.punt-labs is a pre-install error — don't create it as root.
+
+    Creating the parent under sudo would leave it root-owned and the
+    daemon could never write into it. Fail fast with a clear message
+    telling the user to create the dir themselves first.
+    """
+    fake_home = tmp_path / "home" / "nouser"
+    fake_home.mkdir(parents=True)
+    # Note: ~/.punt-labs is NOT created
+
+    fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
+    _install_typed_getpwnam_stub(monkeypatch, fake_pw)
+
+    with pytest.raises(SystemExit, match="does not exist"):
+        _ensure_user_dirs("nouser")
+
+
 def test_ensure_user_dirs_never_chowns_parent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1383,7 +1425,7 @@ def test_ensure_user_dirs_never_chowns_parent(
     Even in the happy path, we never touch the parent.
     """
     fake_home = tmp_path / "home" / "jfreeman"
-    fake_home.mkdir(parents=True)
+    (fake_home / ".punt-labs").mkdir(parents=True)
     fake_pw = MagicMock(pw_uid=1000, pw_gid=1000, pw_dir=str(fake_home))
     _install_typed_getpwnam_stub(monkeypatch, fake_pw)
     _install_typed_getuid_stub(monkeypatch, 0)
@@ -1463,36 +1505,10 @@ def test_write_keys_env_rejects_control_chars_in_value(tmp_path: Path) -> None:
     assert "ELEVENLABS_API_KEY" not in content
 
 
-def test_chown_to_user_refuses_symlink(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """_chown_to_user must not follow a symlink when running as root."""
-    real = tmp_path / "real.txt"
-    real.write_text("sensitive")
-    link = tmp_path / "link"
-    os.symlink(str(real), str(link))
-
-    _install_typed_getuid_stub(monkeypatch, 0)
-    chown_calls: list[tuple[str, int, int]] = []
-    lchown_calls: list[tuple[str, int, int]] = []
-
-    def _fake_chown(path: str, uid: int, gid: int) -> None:
-        chown_calls.append((str(path), uid, gid))
-
-    def _fake_lchown(path: str, uid: int, gid: int) -> None:
-        lchown_calls.append((str(path), uid, gid))
-
-    def _fake_getpwnam(_user: str) -> MagicMock:
-        return MagicMock(pw_uid=1000, pw_gid=1000)
-
-    monkeypatch.setattr("punt_vox.service.os.chown", _fake_chown)
-    monkeypatch.setattr("punt_vox.service.os.lchown", _fake_lchown)
-    monkeypatch.setattr("punt_vox.service.pwd.getpwnam", _fake_getpwnam)
-
-    _chown_to_user(link, "testuser")
-
-    assert chown_calls == [], "_chown_to_user must not call os.chown on symlinks"
-    assert lchown_calls == [], (
-        "_chown_to_user must not even lchown when the path is a symlink"
-    )
+# NOTE: test_chown_to_user_refuses_symlink removed — the helper it
+# tested (``_chown_to_user``) was replaced by fd-based ``fchown`` inside
+# ``_write_keys_env`` during the PR #162 review cycle. The equivalent
+# symlink-safety guarantee is now tested by
+# ``test_write_keys_env_refuses_symlink_target`` — if an attacker
+# pre-places ``keys.env`` as a symlink, the ``O_NOFOLLOW`` open fails
+# and the privileged fchown never runs at all.
