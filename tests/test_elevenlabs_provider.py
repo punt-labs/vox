@@ -277,9 +277,25 @@ class TestElevenLabsProviderRateMessage:
 
 
 class TestElevenLabsProviderDefaultModel:
-    def test_default_model(self) -> None:
+    def test_default_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Clear TTS_MODEL to validate the code default, not an env override.
+        monkeypatch.delenv("TTS_MODEL", raising=False)
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider._model == "eleven_flash_v2_5"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
+
+    def test_default_supports_expressive_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default model must render /vibe tags as performance cues.
+
+        The /vibe feature is the headline product differentiator; a default
+        model that can't interpret bracket-style tags silently breaks it
+        for every user who never sets TTS_MODEL explicitly.
+        """
+        # Clear TTS_MODEL to validate the code default, not an env override.
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        provider = ElevenLabsProvider(client=MagicMock())
+        assert provider.supports_expressive_tags is True
 
     def test_explicit_model(self) -> None:
         provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
@@ -300,7 +316,7 @@ class TestElevenLabsProviderDefaultModel:
         assert provider.supports_expressive_tags is True
 
     def test_expressive_tags_not_supported_on_flash(self) -> None:
-        provider = ElevenLabsProvider(client=MagicMock())
+        provider = ElevenLabsProvider(model="eleven_flash_v2_5", client=MagicMock())
         assert provider.supports_expressive_tags is False
 
     def test_expressive_tags_not_supported_on_turbo(self) -> None:
@@ -323,7 +339,7 @@ class TestElevenLabsProviderCharLimits:
 
     def test_flash_single_call_under_40k(self) -> None:
         """eleven_flash_v2_5 should use single call for text under 40k."""
-        provider = ElevenLabsProvider(client=MagicMock())
+        provider = ElevenLabsProvider(model="eleven_flash_v2_5", client=MagicMock())
         text = "a" * 10_000
         request = SynthesisRequest(text=text, voice="matilda")
         with (

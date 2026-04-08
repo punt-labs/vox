@@ -25,8 +25,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ElevenLabsProvider"]
 
-# Default model — low latency, 32 languages, half the cost of v3.
-_DEFAULT_MODEL = "eleven_flash_v2_5"
+# Default model — eleven_v3 is the only model today that interprets
+# bracket-style expressive tags ([excited], [weary], [sighs]) which the
+# /vibe feature is built around. Using a non-expressive default (flash
+# or turbo) silently makes the TTS engine speak the literal text "excited"
+# etc instead of rendering the tag, which is worse than not having the
+# feature at all. Users who want lower cost or lower latency can still
+# override via TTS_MODEL=eleven_flash_v2_5.
+_DEFAULT_MODEL = "eleven_v3"
 
 # Character limits per model (from ElevenLabs docs).
 _MODEL_CHAR_LIMITS: dict[str, int] = {
@@ -89,8 +95,10 @@ class ElevenLabsProvider:
     """ElevenLabs TTS provider.
 
     Implements the TTSProvider protocol using the ElevenLabs SDK.
-    Defaults to eleven_flash_v2_5 (low latency, 32 languages).
-    Override with TTS_MODEL env var (e.g. eleven_v3 for 70+ languages).
+    Defaults to eleven_v3 — the only model that interprets bracket-style
+    expressive tags (``[excited]``, ``[weary]``, ``[sighs]``) which the
+    ``/vibe`` feature is built around. Override with ``TTS_MODEL`` env
+    var for lower cost or latency (e.g. ``eleven_flash_v2_5``).
     """
 
     def __init__(
