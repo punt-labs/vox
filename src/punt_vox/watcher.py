@@ -185,8 +185,8 @@ def make_notification_consumer(
             return
 
         now = time.monotonic()
-        last = last_fired.get(event.signal, 0.0)
-        if now - last < throttle_seconds:
+        last = last_fired.get(event.signal)
+        if last is not None and now - last < throttle_seconds:
             logger.debug("Throttled %s (%.1fs since last)", event.signal, now - last)
             return
         last_fired[event.signal] = now
