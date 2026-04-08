@@ -20,6 +20,27 @@ _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 _LEADING_TAGS_RE = re.compile(r"^(\s*\[[^\]\n]+\]\s*)+")  # one-or-more tags
 
 
+def split_leading_expressive_tags(text: str) -> tuple[str, str]:
+    """Split leading bracket-style expressive tags off the front of *text*.
+
+    Returns ``(tags, body)`` where ``tags`` is the leading bracket
+    portion (e.g. ``"[serious] [calm]"``, with no trailing whitespace)
+    and ``body`` is everything after. When ``text`` does not begin with
+    a tag, returns ``("", text)``.
+
+    This split exists so callers can pull the tags off BEFORE running
+    the body through :func:`punt_vox.normalize.normalize_for_speech`,
+    which discards brackets as non-prosody punctuation. Without the
+    early split, ``[serious] hello`` becomes ``serious hello`` after
+    normalization and the brackets cannot be stripped — the literal
+    word ``serious`` survives into the final TTS input.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(0).strip(), text[match.end() :]
+
+
 def strip_expressive_tags(text: str) -> str:
     """Remove leading bracket-style expressive tags from *text*.
 
@@ -35,8 +56,8 @@ def strip_expressive_tags(text: str) -> str:
     (e.g. ``voxd``) both use, with no config-file or session-state
     coupling.
     """
-    stripped = _LEADING_TAGS_RE.sub("", text)
-    return stripped if stripped.strip() else text
+    _tags, body = split_leading_expressive_tags(text)
+    return body if body.strip() else text
 
 
 def resolve_voice_and_language(

@@ -916,10 +916,17 @@ class TestModelSupportsExpressiveTags:
 class TestApplyVibeForSynthesis:
     """``_apply_vibe_for_synthesis`` gates vibe-tag handling on capability.
 
-    Closes vox-fhl. With an expressive model, vibe_tags get prepended.
-    With a non-expressive model, vibe_tags are dropped AND any leading
-    bracket tags in the user's text get stripped so the synthesis
-    engine never receives ``[serious]`` to read as the literal word.
+    Closes vox-fhl. The helper takes RAW text (NOT yet normalized) and
+    runs ``normalize_for_speech`` on the body itself, after splitting
+    leading bracket tags off. The order matters because
+    ``normalize_for_speech`` discards brackets via its non-prosody
+    punctuation filter — if normalization runs first, ``[serious]``
+    becomes ``serious`` and the bare word survives into TTS input on
+    every non-expressive provider.
+
+    With an expressive model, vibe_tags + leading user tags get
+    re-attached after normalization. With a non-expressive model,
+    both are dropped entirely.
     """
 
     def test_expressive_model_prepends_vibe_tags(
@@ -1009,16 +1016,71 @@ class TestApplyVibeForSynthesis:
         result = _apply_vibe_for_synthesis("[serious] Notice", None, "espeak", None)
         assert result == "Notice"
 
-    def test_degenerate_text_only_tags_returns_original(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_degenerate_text_only_tags_non_expressive_returns_empty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If the entire text is tags, stripping would empty it. Return original.
+        """Tags-only input on a non-expressive model returns empty body.
 
-        Speaking the literal '[serious]' is bad, but emitting silence is
-        worse — at least the operator hears something is happening.
+        The body after splitting leading tags is empty, so there is
+        nothing speakable. Returning the literal "[serious]" would have
+        the TTS engine speak the word "serious" (the exact bug the
+        capability gate exists to prevent). Returning empty is correct
+        — the synthesize handler upstream is responsible for catching
+        empty input as a no-op.
         """
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis(
             "[serious]", None, "elevenlabs", "eleven_flash_v2_5"
         )
-        assert result == "[serious]"
+        assert result == ""
+
+    def test_degenerate_text_only_tags_expressive_keeps_tags(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Tags-only input on an expressive model keeps the tags as content.
+
+        The model interprets the tag as a performance directive. There
+        is no body, but the tag itself is the message.
+        """
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis("[sighs]", None, "elevenlabs", "eleven_v3")
+        assert result == "[sighs]"
+
+    def test_normalizes_body_through_production_call_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression test for the bug Copilot found on the first attempt.
+
+        The helper must run ``normalize_for_speech`` on the body itself
+        (so snake_case/camelCase get expanded). Earlier versions of this
+        fix called ``_apply_vibe_for_synthesis(normalize_for_speech(text))``
+        from voxd, which meant the helper saw already-normalized text
+        and ``strip_expressive_tags`` could not match the brackets that
+        normalization had already eaten. The fix moves normalization
+        INSIDE the helper, after the leading-tag split.
+        """
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        # snake_case body so we can prove normalize_for_speech ran on it.
+        result = _apply_vibe_for_synthesis(
+            "[serious] my_function works", None, "polly", None
+        )
+        # Body is normalized (underscores → spaces) AND the leading bracket
+        # tag is gone — neither as brackets nor as the bare word "serious".
+        assert result == "my function works"
+        assert "serious" not in result
+        assert "[" not in result
+        assert "_" not in result
+
+    def test_expressive_model_normalizes_body_too(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Expressive path also runs normalize on the body, just keeps tags."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "[whisper] my_function works", None, "elevenlabs", "eleven_v3"
+        )
+        assert result == "[whisper] my function works"
