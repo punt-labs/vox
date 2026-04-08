@@ -59,6 +59,72 @@ sh install.sh
 
 </details>
 
+## Configure providers
+
+The Quick Start gets you running with the OS's built-in voice — `say` on macOS, `espeak-ng` on Linux. For a natural-sounding voice, configure any cloud provider. For `/vibe` expressive tags (`[excited]`, `[weary]`, `[sighs]`, etc) you need ElevenLabs specifically — that's the only provider that supports them today.
+
+### 1. Get an API key
+
+| Provider | Where to sign up | Free tier |
+|---|---|---|
+| **ElevenLabs** (recommended) | [elevenlabs.io](https://elevenlabs.io/sign-up) → [Settings → API Keys](https://elevenlabs.io/app/settings/api-keys) | 10k characters/month |
+| **OpenAI** | [platform.openai.com](https://platform.openai.com) → [API Keys](https://platform.openai.com/api-keys) | None — pay-as-you-go |
+| **AWS Polly** | Any AWS account; create an IAM user with the `AmazonPollyReadOnlyAccess` policy | 5M chars/month, first 12 months |
+
+### 2. Add the keys to `~/.punt-labs/vox/keys.env`
+
+The keys file is in your home directory and owned by you — open it in your normal editor, no sudo:
+
+```bash
+nano ~/.punt-labs/vox/keys.env   # or vi, code, etc
+```
+
+Paste any of these lines that apply. All are optional; vox auto-detects which providers are configured.
+
+```ini
+# ElevenLabs — recommended
+ELEVENLABS_API_KEY=sk_...
+
+# OpenAI
+OPENAI_API_KEY=sk-proj-...
+
+# AWS Polly via an aws CLI profile (recommended if you use the AWS CLI)
+AWS_PROFILE=default
+AWS_DEFAULT_REGION=us-east-1
+
+# AWS Polly via raw credentials (alternative to a profile)
+# AWS_ACCESS_KEY_ID=AKIA...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_DEFAULT_REGION=us-east-1
+
+# Optional: pin a specific provider.
+# Auto-detect order: ElevenLabs > OpenAI > Polly > say (macOS) / espeak (Linux).
+TTS_PROVIDER=elevenlabs
+```
+
+### 3. Restart the daemon to pick up the changes
+
+```bash
+# Linux
+sudo systemctl restart voxd
+
+# macOS
+sudo launchctl kickstart -k system/com.punt-labs.voxd
+```
+
+This is the only sudo prompt for routine key management — `systemctl` and `launchctl` are system-level daemon managers and always require root to manage services. Editing `keys.env` itself is sudo-free.
+
+### 4. Verify
+
+```bash
+vox doctor                         # report system checks and the daemon's active provider
+vox unmute "hello from vox"        # speak through the default provider
+```
+
+`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox unmute` should speak the phrase through your speakers within a few seconds.
+
+If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
+
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
@@ -223,18 +289,9 @@ vox daemon status                              # Check if daemon is running
 | `TTS_MODEL` | Model override | provider default |
 | `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
 
-**Daemon API keys:** API keys live in `~/.punt-labs/vox/keys.env`, mode 0600. You can edit it with your normal editor — no sudo required for the edit itself.
+Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.punt-labs/vox/keys.env`, not in your shell rc. See [Configure providers](#configure-providers) for the full walkthrough.
 
-**To apply key changes, restart the daemon (requires sudo for systemctl/launchctl):**
-
-```bash
-sudo systemctl restart voxd                           # Linux
-sudo launchctl kickstart -k system/com.punt-labs.voxd # macOS
-```
-
-The restart step prompts for sudo because `systemctl` and `launchctl` are system-level daemon managers. Editing `keys.env` and restarting the daemon are two separate operations: the edit is sudo-free, the restart is not.
-
-`vox daemon install` seeds `keys.env` with any provider keys set in your current shell. It runs as your normal user and only prompts for sudo once — to place the system service unit into its system directory and start the service. Run `vox doctor` to verify which providers are active.
+`vox daemon install` also seeds `keys.env` with any provider keys that happen to be set in the shell that runs the install, so setting them in `.envrc` or similar before running the installer works too. Either way, edits after install go directly into the file.
 
 ## Roadmap
 

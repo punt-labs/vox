@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **README setup walkthrough for cloud providers**: added a `Configure providers` section between Quick Start and Features. Covers acquiring API keys (ElevenLabs, OpenAI, AWS Polly) with signup and free-tier details, editing `~/.punt-labs/vox/keys.env` with a normal editor (no sudo), restarting the daemon via `systemctl`/`launchctl` to apply changes, and verifying with `vox doctor` + `vox unmute`. AWS Polly section documents both the `AWS_PROFILE` path (recommended for users who already use the AWS CLI) and raw `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` credentials. Slimmed the Environment Variables section to cross-reference Configure providers instead of duplicating the edit/restart instructions.
+
 ### Fixed
 
 - **`vox daemon install` no longer requires `sudo` for everything**: install runs as the user. Per-user state under `~/.punt-labs/vox/` is created with normal user permissions — no chown, no fchown, no symlink defenses. Sudo escalation is scoped to three subprocess calls per platform on a fresh install (place the unit/plist via `install(1)`, register with the service manager, start the daemon), growing to four on macOS and five on Linux when upgrading a previously-installed service (the extra calls stop the old daemon via the service manager so launchd's `KeepAlive=true` and systemd's `Restart=on-failure` cannot respawn it mid-upgrade). Eliminates the entire class of symlink-attack and chown-ordering bugs that existed when the entire install ran as root inside a user-controlled directory. See DES-029 for the full rationale.
