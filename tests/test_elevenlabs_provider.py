@@ -277,17 +277,23 @@ class TestElevenLabsProviderRateMessage:
 
 
 class TestElevenLabsProviderDefaultModel:
-    def test_default_model(self) -> None:
+    def test_default_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Clear TTS_MODEL to validate the code default, not an env override.
+        monkeypatch.delenv("TTS_MODEL", raising=False)
         provider = ElevenLabsProvider(client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
-    def test_default_supports_expressive_tags(self) -> None:
+    def test_default_supports_expressive_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The default model must render /vibe tags as performance cues.
 
         The /vibe feature is the headline product differentiator; a default
         model that can't interpret bracket-style tags silently breaks it
         for every user who never sets TTS_MODEL explicitly.
         """
+        # Clear TTS_MODEL to validate the code default, not an env override.
+        monkeypatch.delenv("TTS_MODEL", raising=False)
         provider = ElevenLabsProvider(client=MagicMock())
         assert provider.supports_expressive_tags is True
 
