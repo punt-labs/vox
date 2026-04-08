@@ -46,6 +46,7 @@ from punt_vox.paths import (
     run_dir as _user_run_dir,
 )
 from punt_vox.providers import auto_detect_provider, get_provider
+from punt_vox.resolve import split_leading_expressive_tags
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -776,6 +777,78 @@ def _build_audio_request(
     )
 
 
+def _model_supports_expressive_tags(provider_name: str, model: str | None) -> bool:
+    """Whether the given provider+model combo interprets bracket-style tags.
+
+    Pure lookup: does NOT construct the provider or touch any SDK client,
+    so it can run before voxd enters the env-mutation lock that the real
+    synthesize path needs. ElevenLabs is the only provider whose answer
+    depends on the model — all others return False unconditionally.
+
+    The ``ElevenLabsProvider`` import is deferred inside the function so
+    voxd does not eagerly load the ElevenLabs SDK at module import time
+    on systems whose users only ever run espeak/say. Mirrors the lazy
+    pattern in :mod:`punt_vox.providers`.
+    """
+    if provider_name == "elevenlabs":
+        from punt_vox.providers.elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider.model_supports_expressive_tags(model)
+    return False
+
+
+def _apply_vibe_for_synthesis(
+    raw_text: str,
+    vibe_tags: str | None,
+    provider_name: str,
+    model: str | None,
+) -> str:
+    """Compose the final synthesis text from raw input + vibe + capability.
+
+    Takes the user's RAW ``raw_text`` (NOT yet normalized). The order of
+    operations matters because :func:`punt_vox.normalize.normalize_for_speech`
+    discards brackets via its non-prosody-punctuation filter. If we let
+    normalization run before stripping or before splitting tags, then
+    ``[serious] hello`` becomes ``serious hello`` and the literal word
+    ``serious`` survives into the TTS input on every non-expressive
+    provider. We have to peel the leading tags off first.
+
+    Steps:
+
+    1. Split leading bracket tags off the raw text into ``leading_tags``
+       and ``raw_body``. The split is whitespace-aware and only matches
+       at the very front of the string — embedded ``[tag]`` mid-sentence
+       is left to normalization (which strips its brackets).
+    2. Run ``normalize_for_speech`` on ``raw_body`` only, never on the
+       tags themselves.
+    3. If the active model supports expressive tags, re-attach them in
+       order: ``vibe_tags`` (session-level) first, then the user's own
+       leading tags, then the normalized body.
+    4. If the active model does NOT support expressive tags, drop both
+       ``vibe_tags`` and the user's leading tags. Return only the
+       normalized body so the TTS engine never sees a bracket character
+       or the bare word inside one.
+    """
+    expressive = _model_supports_expressive_tags(provider_name, model)
+
+    leading_tags, raw_body = split_leading_expressive_tags(raw_text)
+    body = normalize_for_speech(raw_body)
+
+    if not expressive:
+        # Drop both vibe_tags and user-supplied leading tags. The body has
+        # no bracket characters left because we split them off above.
+        return body
+
+    parts: list[str] = []
+    if vibe_tags:
+        parts.append(vibe_tags.strip())
+    if leading_tags:
+        parts.append(leading_tags)
+    if body:
+        parts.append(body)
+    return " ".join(parts)
+
+
 async def _synthesize_to_file(
     text: str,
     voice: str | None,
@@ -797,9 +870,10 @@ async def _synthesize_to_file(
     """
     resolved_voice = voice or ""
 
-    normalized = normalize_for_speech(text)
-    if vibe_tags:
-        normalized = f"{vibe_tags} {normalized}"
+    # _apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
+    # on the body itself (after splitting leading bracket tags off, which
+    # would otherwise be eaten by normalization).
+    normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
 
     # Check cache first
     cached = cache_get(normalized, resolved_voice, provider_name)
@@ -959,9 +1033,10 @@ async def _try_direct_play(
     injected. Local providers (espeak, say) take a fast path with no
     cross-request blocking. Audio playback never holds the lock.
     """
-    normalized = normalize_for_speech(text)
-    if vibe_tags:
-        normalized = f"{vibe_tags} {normalized}"
+    # _apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
+    # on the body itself (after splitting leading bracket tags off, which
+    # would otherwise be eaten by normalization).
+    normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
 
     request = _build_audio_request(
         normalized,
