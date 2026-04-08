@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from punt_vox.watcher import (
     _SIGNAL_CHIMES,  # pyright: ignore[reportPrivateUsage]
@@ -247,10 +248,6 @@ class TestNotificationConsumer:
             consumer(event)
             mock_chime.assert_called_once_with("tests-pass", "happy")
 
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Flaky on CI — _announce_voice mock not called (tts-2sj)",
-    )
     def test_throttles_same_signal(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.md"
         config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
@@ -266,10 +263,6 @@ class TestNotificationConsumer:
             consumer(event)  # throttled
             assert mock_voice.call_count == 1
 
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Flaky on CI — _announce_voice mock not called (tts-2sj)",
-    )
     def test_different_signals_not_throttled(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.md"
         config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
@@ -283,6 +276,39 @@ class TestNotificationConsumer:
             consumer(e1)
             consumer(e2)
             assert mock_voice.call_count == 2
+
+    def test_first_call_fires_when_monotonic_below_throttle_window(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression test for vox-2sj.
+
+        On a freshly-booted CI runner, time.monotonic() returns a small value
+        (seconds since boot). Earlier code defaulted last_fired[signal] to 0.0
+        and computed `now - 0 < throttle_seconds`, which incorrectly throttled
+        the first event for a signal whenever uptime was less than the
+        throttle window. The fix uses None as the sentinel for "never fired"
+        and only checks the throttle when there is an actual prior fire.
+
+        This test mocks time.monotonic to return a value smaller than the
+        throttle window, simulating the CI runner condition.
+        """
+        config_path = tmp_path / "config.md"
+        config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        consumer = make_notification_consumer(
+            config_path=config_path, throttle_seconds=100.0
+        )
+        event = SessionEvent(
+            signal="tests-pass", timestamp=time.time(), source_text="ok"
+        )
+
+        with (
+            patch("punt_vox.watcher.time.monotonic", return_value=5.0),
+            patch("punt_vox.watcher._announce_voice") as mock_voice,
+        ):
+            consumer(event)
+            assert mock_voice.call_count == 1, (
+                "first event must fire even when monotonic() < throttle_seconds"
+            )
 
     def test_skips_when_no_config_file(self, tmp_path: Path) -> None:
         consumer = make_notification_consumer(config_path=tmp_path / "missing.md")
