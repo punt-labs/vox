@@ -61,7 +61,7 @@ sh install.sh
 
 ## Configure providers
 
-The Quick Start gets you running with the OS's built-in voice — `say` on macOS, `espeak-ng` on Linux. For natural voice and `/vibe` expressive tags, configure at least one cloud provider. ElevenLabs gives the full experience.
+The Quick Start gets you running with the OS's built-in voice — `say` on macOS, `espeak-ng` on Linux. For a natural-sounding voice, configure any cloud provider. For `/vibe` expressive tags (`[excited]`, `[weary]`, `[sighs]`, etc) you need ElevenLabs specifically — that's the only provider that supports them today.
 
 ### 1. Get an API key
 
@@ -117,11 +117,11 @@ This is the only sudo prompt for routine key management — `systemctl` and `lau
 ### 4. Verify
 
 ```bash
-vox doctor                         # lists active providers
+vox doctor                         # report system checks and the daemon's active provider
 vox unmute "hello from vox"        # speak through the default provider
 ```
 
-`vox doctor` shows each provider it can reach and highlights the active default. `vox unmute` should speak the phrase through your speakers within a few seconds.
+`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox unmute` should speak the phrase through your speakers within a few seconds.
 
 If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
