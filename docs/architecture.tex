@@ -223,18 +223,29 @@ file in the project directory.  The daemon never reads it.
 \subsection{Service Install and Identity}
 
 \begin{verbatim}
-sudo vox daemon install
+vox daemon install
 \end{verbatim}
 
-Requires \texttt{sudo} because the service plist (macOS) or unit
-(Linux) is written to a system directory.  \texttt{voxd} runs as the
-\emph{installing user}, not root---it needs audio device access tied
-to the desktop session.  The LaunchDaemon plist sets
-\texttt{UserName}; the systemd unit sets \texttt{User=}.
-
-On macOS, \texttt{voxd} detects the Homebrew prefix at startup via
-\texttt{brew --prefix} (default \texttt{/opt/homebrew} on Apple
-Silicon, \texttt{/usr/local} on Intel).
+Runs as the invoking user.  \texttt{install()} refuses to run with
+\texttt{os.geteuid() == 0}, so users who run \texttt{sudo vox daemon
+install} out of habit get an explicit error directing them to
+re-run without sudo.  Per-user state under
+\texttt{\textasciitilde/.punt-labs/vox/} (keys, logs, runtime state,
+cache) is created with normal user permissions---no chown, no
+symlink defenses.  Sudo escalation is scoped to five
+\texttt{subprocess.run(["sudo", \ldots])} calls on Linux and four on
+macOS: a pre-flight stop through the service manager (so
+\texttt{KeepAlive=true} / \texttt{Restart=on-failure} does not
+respawn the daemon mid-upgrade), writing the service file into its
+system directory via \texttt{install(1)}, reloading the daemon
+manager, enabling the service at boot, and cycling the running
+process so upgrades pick up the new \texttt{ExecStart}.  Fresh
+installs skip the pre-flight stop (idempotent no-op when there is
+no prior unit file).  \texttt{voxd} runs as the \emph{installing
+user}, not root---it needs audio device access tied to the desktop
+session.  The LaunchDaemon plist sets \texttt{UserName}; the
+systemd unit sets \texttt{User=}.  See DES-029 in
+\texttt{DESIGN.md} for the full privilege-scoping rationale.
 
 \subsection{Data Paths}
 

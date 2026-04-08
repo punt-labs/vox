@@ -100,8 +100,9 @@ fi
 
 info "Installing $PACKAGE..."
 
-# Clean up root-owned __pycache__ left by previous 'sudo vox daemon install'.
-# Without this, uv tool install fails with Permission denied on Linux.
+# Clean up root-owned __pycache__ left by older ``sudo vox daemon install``
+# flows (pre-sudo-scoping refactor). Without this, uv tool install fails
+# with Permission denied on Linux upgrades from those older versions.
 _uv_tools="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/$PACKAGE"
 if [ -d "$_uv_tools" ] && [ -n "$(find "$_uv_tools" -name __pycache__ -user root -print -quit 2>/dev/null)" ]; then
   sudo find "$_uv_tools" -name __pycache__ -user root -exec rm -rf {} + 2>/dev/null || true
@@ -122,12 +123,12 @@ ok "$BINARY $(command -v "$BINARY")"
 
 # --- Step 5: Install daemon ---
 
-info "Installing vox daemon (requires sudo for system service)..."
+info "Installing vox daemon (will prompt once for sudo when placing the system service)..."
 _vox_path="$(command -v "$BINARY")"
-if sudo PYTHONDONTWRITEBYTECODE=1 PATH="$PATH" "$_vox_path" daemon install; then
+if "$_vox_path" daemon install; then
   ok "vox daemon installed"
 else
-  warn "Could not install vox daemon (run 'sudo PYTHONDONTWRITEBYTECODE=1 PATH=\$PATH $(command -v vox) daemon install' manually)"
+  warn "Could not install vox daemon (run '$_vox_path daemon install' manually)"
 fi
 
 # --- Step 6: Register marketplace ---

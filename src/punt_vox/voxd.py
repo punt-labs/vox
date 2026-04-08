@@ -20,7 +20,6 @@ import os
 import platform
 import secrets
 import shutil
-import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable
@@ -40,6 +39,12 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
+from punt_vox.paths import (
+    config_dir as _user_config_dir,
+    ensure_user_dirs,
+    log_dir as _user_log_dir,
+    run_dir as _user_run_dir,
+)
 from punt_vox.providers import auto_detect_provider, get_provider
 from punt_vox.types import (
     AudioProviderId,
@@ -69,33 +74,46 @@ _playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
-# System paths
+# Per-user state paths
+#
+# These are thin wrappers over ``punt_vox.paths`` so tests can monkey-patch
+# them without reaching across modules. The source of truth is
+# ``punt_vox.paths``; every path resolves to a subdirectory of
+# ``~/.punt-labs/vox/`` — same on macOS and Linux.
 # ---------------------------------------------------------------------------
 
 
-def _data_root() -> Path:
-    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
-    if sys.platform == "darwin":
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix"], text=True, timeout=5
-            ).strip()
-            return Path(prefix)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return Path("/usr/local")  # fallback for non-Homebrew macOS
-    return Path("/")  # type: ignore[unreachable,unused-ignore]
-
-
 def _config_dir() -> Path:
-    return _data_root() / "etc" / "vox"
+    """Directory holding ``keys.env``.
+
+    Pure path resolution — no ``mkdir``, no ``chmod``. ``main()``
+    calls :func:`punt_vox.paths.ensure_user_dirs` at startup, which
+    creates every per-user subdirectory with mode 0700 (and tightens
+    pre-existing dirs that were created under a looser umask).
+    Callers rely on that contract — this helper is a pure view of the
+    path, nothing more.
+    """
+    return _user_config_dir()
 
 
 def _log_dir() -> Path:
-    return _data_root() / "var" / "log" / "vox"
+    """Directory holding ``voxd.log`` and rotated logs.
+
+    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
+    guaranteed by the ``ensure_user_dirs`` call at the top of
+    ``main()``; this helper does not create or chmod anything.
+    """
+    return _user_log_dir()
 
 
 def _run_dir() -> Path:
-    return _data_root() / "var" / "run" / "vox"
+    """Directory holding ``serve.port`` and ``serve.token``.
+
+    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
+    guaranteed by the ``ensure_user_dirs`` call at the top of
+    ``main()``.
+    """
+    return _user_run_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +165,14 @@ def _log_voxd_environment() -> None:
 
 
 def _configure_logging(log_dir: Path) -> None:
-    """Configure logging with rotating file and stderr handlers."""
-    log_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    """Configure logging with rotating file and stderr handlers.
+
+    The log directory is expected to already exist at mode 0700 —
+    :func:`punt_vox.paths.ensure_user_dirs` runs at the top of
+    :func:`main` and creates (or tightens) every per-user subdirectory
+    before the first log handler is attached. This function is pure
+    logging configuration.
+    """
     log_file = log_dir / "voxd.log"
 
     logging.config.dictConfig(
@@ -270,7 +294,9 @@ def _read_or_create_token(run_dir: Path) -> str:
         return token
 
     token = secrets.token_urlsafe(32)
-    token_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # The parent run dir is guaranteed to exist at mode 0700 by
+    # ``ensure_user_dirs`` at the top of ``main()``. No defensive
+    # mkdir here — it would just duplicate that contract.
     fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, token.encode())
@@ -286,8 +312,9 @@ def _read_or_create_token(run_dir: Path) -> str:
 
 
 def _write_port_file(run_dir: Path, port: int) -> None:
+    # ``run_dir`` is guaranteed to exist by the ``ensure_user_dirs``
+    # call at the top of ``main()``; no defensive mkdir here.
     port_file = run_dir / "serve.port"
-    port_file.parent.mkdir(parents=True, exist_ok=True)
     port_file.write_text(str(port))
     logger.info("Wrote port file: %s (port %d)", port_file, port)
 
@@ -1416,6 +1443,16 @@ def main(
     host: str = typer.Option(DEFAULT_HOST, "--host", help="Listen host"),
 ) -> None:
     """Start the voxd audio server daemon."""
+    # Create (or tighten) per-user state dirs before anything else
+    # touches the filesystem. ``ensure_user_dirs`` forces mode 0700 on
+    # ``~/.punt-labs/vox`` and its ``logs``/``run``/``cache``
+    # subdirectories, including pre-existing dirs that were created
+    # under a looser umask in earlier versions. Every subsequent
+    # ``Path.mkdir(..., exist_ok=True)`` call in voxd inherits the
+    # already-tightened permissions because the directory is already
+    # present with mode 0700.
+    ensure_user_dirs()
+
     run_dir = _run_dir()
     config_dir = _config_dir()
     log_dir = _log_dir()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -14,7 +14,6 @@ from punt_vox.client import (
     VoxClientSync,
     VoxdConnectionError,
     VoxdProtocolError,
-    _data_root,  # pyright: ignore[reportPrivateUsage]
     _run_dir,  # pyright: ignore[reportPrivateUsage]
     read_port_file,
     read_token_file,
@@ -25,29 +24,9 @@ from punt_vox.client import (
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.client.sys")
-@patch("punt_vox.client.subprocess")
-def test_data_root_macos(mock_subprocess: MagicMock, mock_sys: MagicMock) -> None:
-    mock_sys.platform = "darwin"
-    mock_subprocess.check_output.return_value = "/opt/homebrew\n"
-    assert _data_root() == Path("/opt/homebrew")
-
-
-@patch("punt_vox.client.sys")
-@patch("punt_vox.client.subprocess")
-def test_data_root_macos_fallback(
-    mock_subprocess: MagicMock, mock_sys: MagicMock
-) -> None:
-    mock_sys.platform = "darwin"
-    mock_subprocess.check_output.side_effect = FileNotFoundError()
-    mock_subprocess.SubprocessError = FileNotFoundError
-    assert _data_root() == Path("/usr/local")
-
-
-def test_run_dir() -> None:
-    """_run_dir is data_root / var / run / vox."""
-    with patch("punt_vox.client._data_root", return_value=Path("/prefix")):
-        assert _run_dir() == Path("/prefix/var/run/vox")
+def test_run_dir_is_user_state() -> None:
+    """_run_dir is ``~/.punt-labs/vox/run`` — same on macOS and Linux."""
+    assert _run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
 
 
 # ---------------------------------------------------------------------------

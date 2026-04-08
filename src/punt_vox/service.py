@@ -4,11 +4,23 @@ Provides ``install`` and ``uninstall`` commands that register voxd as a
 system service (launchd on macOS, systemd on Linux) so the daemon starts
 at boot and restarts on crash.
 
-The service runs ``voxd --port 8421`` as a system-level daemon:
+The service runs ``voxd --port 8421`` as the installing user:
 - macOS: ``/Library/LaunchDaemons/com.punt-labs.voxd.plist``
 - Linux: ``/etc/systemd/system/voxd.service``
 
-Both require ``sudo`` for installation.
+Privilege scope: ``vox daemon install`` runs as the installing user.
+Per-user state under ``~/.punt-labs/vox/`` — keys, logs, runtime state,
+cache — is created with normal user permissions. The only privileged
+operations are five ``sudo`` subprocess calls on Linux (pre-flight
+stop, install, daemon-reload, enable, restart) and four on macOS
+(pre-flight unload, install, load, kickstart) — each touches only a
+system directory the user could not write to anyway. Fresh installs
+skip the pre-flight stop (idempotent no-op when there is no prior unit
+file) so the fresh-install shape is 4 calls on Linux and 3 on macOS.
+This keeps every file write to a user-controlled directory
+unprivileged and eliminates the class of attacks that arose when the
+entire install ran as root inside ``$HOME``. See DES-029 in
+``DESIGN.md`` for the full rationale.
 """
 
 from __future__ import annotations
@@ -21,13 +33,20 @@ import platform
 import pwd
 import re
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
+
+from punt_vox.paths import (
+    ensure_user_dirs as _paths_ensure_user_dirs,
+    keys_env_file as _paths_keys_env_file,
+    log_dir as _paths_log_dir,
+    run_dir as _user_run_dir,
+    user_state_dir as _paths_user_state_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,54 +57,25 @@ _LABEL = "com.punt-labs.voxd"
 _KILL_TIMEOUT_SECONDS = 5
 _SUBPROCESS_TIMEOUT_SECONDS = 5
 
+_SUDO_NOTICE = (
+    "Installing voxd as a system service. You may be prompted for your sudo password."
+)
+
 
 # ---------------------------------------------------------------------------
-# System paths — duplicated from voxd.py to avoid importing heavy providers.
-# TODO: extract into a shared lightweight module.
+# Path helpers — thin wrappers over punt_vox.paths so tests can patch them
+# inside this module. All paths resolve from the current process's home
+# dir because install now runs as the invoking user — no sudo escalation,
+# no ``SUDO_USER`` fallback, no cross-user resolution.
 # ---------------------------------------------------------------------------
-
-
-def _data_root() -> Path:
-    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
-    if sys.platform == "darwin":
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix"], text=True, timeout=5
-            ).strip()
-            return Path(prefix)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return Path("/usr/local")  # fallback for non-Homebrew macOS
-    return Path("/")  # type: ignore[unreachable,unused-ignore]
-
-
-def _config_dir() -> Path:
-    return _data_root() / "etc" / "vox"
-
-
-def _log_dir() -> Path:
-    return _data_root() / "var" / "log" / "vox"
 
 
 def _run_dir() -> Path:
-    return _data_root() / "var" / "run" / "vox"
-
-
-def _cache_dir() -> Path:
-    return _data_root() / "var" / "cache" / "vox"
+    return _user_run_dir()
 
 
 # ---------------------------------------------------------------------------
-# User detection
-# ---------------------------------------------------------------------------
-
-
-def _installing_user() -> str:
-    """Get the real user, not root, when running under sudo."""
-    return os.environ.get("SUDO_USER") or getpass.getuser()
-
-
-# ---------------------------------------------------------------------------
-# Keys.env writing (inline — system config dir, not ~/.punt-labs/vox/)
+# Keys.env writing — writes directly to the installing user's state dir.
 # ---------------------------------------------------------------------------
 
 _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
@@ -103,50 +93,160 @@ _PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _write_keys_env(env: dict[str, str], config_dir: Path) -> Path:
-    """Write keys.env to the system config dir.  chmod 0600."""
-    path = config_dir / "keys.env"
+def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
+    """Write ``keys.env`` to ``keys_path``. chmod 0600.
 
+    Preserves any keys already present in the file that the caller did
+    not override. An empty string in ``env`` removes the key.
+
+    Runs as the installing user in a user-owned directory. The
+    kernel's normal permission checks are sufficient — no fd-based
+    ownership dance or path-hardening is needed when the process
+    cannot write outside its own home.
+
+    Values containing ``\\n``, ``\\r``, or ``\\x00`` are rejected (not
+    a privilege defense, just input sanitization — without this an
+    attacker-controlled env var could smuggle extra key=value lines
+    into the file).
+
+    If an existing ``keys.env`` is unreadable (permission error,
+    corruption, not-a-regular-file, non-UTF-8 bytes), the merge is
+    skipped, the broken file is unlinked, and a fresh file is written
+    from *env* alone. Unlinking the broken file is necessary because
+    a chmod 000 or otherwise permission-locked inode blocks a naive
+    truncating write too — the only reliable recovery is to remove it
+    and create a new inode. Overwrite is the right policy: the old
+    file was unreadable, the new file will have correct ownership and
+    permissions, and the current shell's env vars are the source of
+    truth at install time. Copilot 3048295101 on PR #162.
+
+    The file is created via ``os.open`` with an explicit ``mode=0o600``
+    so there is no instant at which the file exists with umask-widened
+    permissions. ``Path.write_text`` would have called ``open(..., "w")``
+    which creates the file with ``0o666 & ~umask`` first and only
+    chmods afterward — a world-readable exposure window on any system
+    with the typical ``umask 0022``. Copilot 3048402515 on PR #162.
+
+    The parent directory is also created-or-tightened to mode 0700 as a
+    belt-and-suspenders step so ``_write_keys_env`` remains self-
+    contained if called independently of ``install()``. Copilot
+    3048402424 on PR #162.
+
+    If ``keys_path`` itself exists but is not a regular file (a
+    directory, symlink, FIFO, socket, device node, etc.), the install
+    aborts with a clear ``SystemExit``. Reading or unlinking the path
+    would either crash with ``IsADirectoryError`` or follow an
+    indirection that the user did not intend — neither is safe
+    behaviour for a secrets file. Copilot 3048463694 on PR #162.
+    """
     existing: dict[str, str] = {}
-    if path.exists():
+    force_fresh = False
+
+    # Create the parent dir at 0700 or tighten it if it already exists.
+    # ``mkdir(mode=)`` only affects creation, so the separate chmod is
+    # needed to enforce the mode on a pre-existing dir (for example if
+    # an earlier version left it at umask-widened 0755).
+    keys_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keys_path.parent.chmod(0o700)
+
+    # ``Path.exists()`` follows symlinks; ``Path.is_symlink()`` does
+    # not. Check both with ``lstat`` semantics so we reject symlinks
+    # explicitly even if their target is a regular file. This guards
+    # against directories, symlinks, FIFOs, sockets, and device nodes
+    # at the keys.env path — all of which would either crash the
+    # subsequent ``read_text``/``unlink`` or follow an unintended
+    # indirection.
+    if keys_path.is_symlink() or (keys_path.exists() and not keys_path.is_file()):
+        msg = (
+            f"{keys_path} exists but is not a regular file. "
+            "Remove it manually and re-run install."
+        )
+        raise SystemExit(msg)
+
+    if keys_path.exists():
         try:
-            text = path.read_text()
-            for line in text.splitlines():
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if "=" not in stripped:
-                    continue
-                key, _, value = stripped.partition("=")
-                key = key.strip()
-                value = value.strip()
-                if key:
-                    existing[key] = value
-        except OSError as exc:
-            logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
+            existing_text = keys_path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Could not read existing %s: %s — will overwrite with env values",
+                keys_path,
+                exc,
+            )
+            existing_text = ""
+            force_fresh = True
+        for line in existing_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key:
+                existing[key] = value
 
     merged = dict(existing)
     for k in _PROVIDER_KEY_NAMES:
         if k in env:
             if env[k]:
-                merged[k] = env[k]
+                value = env[k]
+                if any(c in value for c in "\x00\n\r"):
+                    logger.warning(
+                        "Refusing to write %s: value contains control characters",
+                        k,
+                    )
+                    continue
+                merged[k] = value
             else:
                 merged.pop(k, None)
 
     header = (
         "# vox provider keys — loaded by voxd at startup\n"
-        "# Written by: vox daemon install\n\n"
+        "# Written by: vox daemon install\n"
+        "# Edit with your normal editor — no sudo required.\n\n"
     )
     lines = [f"{k}={v}" for k, v in sorted(merged.items()) if v]
     content = header + "\n".join(lines) + "\n"
 
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if force_fresh:
+        # The existing inode was unreadable — chmod 000 or similar
+        # blocks a truncating write too. Unlink so we can create a
+        # fresh inode with the correct mode. ``missing_ok=True``
+        # because a concurrent unlink would be fine too.
+        try:
+            keys_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "Could not unlink unreadable %s: %s — write may fail",
+                keys_path,
+                exc,
+            )
+
+    # Atomic create-and-truncate with explicit mode 0600. This replaces
+    # the older ``Path.write_text`` + ``Path.chmod`` sequence, which
+    # left the file world-readable for the few instructions between
+    # the ``open(..., "w")`` inside ``write_text`` (which creates with
+    # ``0o666 & ~umask``) and the subsequent ``chmod(0o600)``.
+    fd = os.open(
+        str(keys_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
     try:
-        os.write(fd, content.encode())
+        os.write(fd, content.encode("utf-8"))
     finally:
         os.close(fd)
-    path.chmod(0o600)
-    return path
+    # Belt-and-suspenders: the explicit mode passed to ``os.open`` is
+    # combined with the process umask at creation time, so on an
+    # unusual umask (for example 0077 or an inherited 0000) the
+    # effective creation mode might not be exactly 0o600. Call chmod
+    # afterward to pin it. The file was never world-readable — at
+    # worst it was user-only (0o600 & ~0o077 == 0o600 on a typical
+    # umask, 0o600 & ~0o000 == 0o600 on umask 0000). This chmod only
+    # narrows an already-safe mode to the exact target.
+    os.chmod(keys_path, 0o600)
+    return keys_path
 
 
 # ---------------------------------------------------------------------------
@@ -330,16 +430,37 @@ def _ensure_port_free() -> None:
 
 
 def _voxd_exec_args() -> list[str]:
-    """Return the command to invoke ``voxd``."""
-    voxd_path = shutil.which("voxd")
-    if voxd_path is None:
+    """Return the command to invoke ``voxd``.
+
+    Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
+    always runs the binary from the same distribution that provided
+    ``vox``. Using ``shutil.which`` would pick up whichever ``voxd`` is
+    first on ``PATH`` — a stale binary from an earlier
+    ``uv tool install`` could get baked into ``ExecStart=`` and override
+    the current one. Anchoring to ``sys.executable`` eliminates that
+    class of bug.
+
+    Validates that the resolved path is an executable *file*, not a
+    directory, symlink loop, or non-executable file. ``Path.exists()``
+    returns True for directories and files without the executable bit,
+    so a broken install would previously land a bad ``ExecStart=`` in
+    the systemd unit and fail at runtime with an opaque systemd error.
+    Fail fast at install time instead. Copilot 3048402463 on PR #162.
+    """
+    voxd_path = Path(sys.executable).parent / "voxd"
+    if not voxd_path.is_file():
         msg = (
-            "voxd binary not found on PATH. "
-            "Install with 'uv tool install punt-vox' "
-            "or ensure ~/.local/bin is on your PATH."
+            f"voxd binary not found at {voxd_path}. "
+            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
         )
         raise SystemExit(msg)
-    return [voxd_path, "--port", str(DEFAULT_PORT)]
+    if not os.access(voxd_path, os.X_OK):
+        msg = (
+            f"voxd at {voxd_path} exists but is not executable. "
+            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+        )
+        raise SystemExit(msg)
+    return [str(voxd_path), "--port", str(DEFAULT_PORT)]
 
 
 # ---------------------------------------------------------------------------
@@ -347,23 +468,17 @@ def _voxd_exec_args() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_system_dirs(user: str) -> None:
-    """Create system data directories with appropriate ownership."""
-    dirs = [_config_dir(), _log_dir(), _run_dir(), _cache_dir()]
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
-        logger.info("Ensured directory: %s", d)
+def _ensure_user_dirs() -> Path:
+    """Create per-user state directories under ``~/.punt-labs/vox``.
 
-    # On macOS/Linux, set ownership to the installing user (not root).
-    if os.getuid() == 0:
-        try:
-            pw = pwd.getpwnam(user)
-            uid, gid = pw.pw_uid, pw.pw_gid
-            for d in dirs:
-                os.chown(str(d), uid, gid)
-                logger.info("Set ownership of %s to %s (%d:%d)", d, user, uid, gid)
-        except KeyError:
-            logger.warning("User %s not found — skipping chown", user)
+    Returns the resolved state dir. Runs as the installing user, so
+    ``punt_vox.paths.ensure_user_dirs`` is sufficient — no chown, no
+    walk of parent components, no privileged fallback.
+    """
+    state_root = _paths_user_state_dir()
+    _paths_ensure_user_dirs(state_root)
+    logger.info("Ensured directory tree under %s", state_root)
+    return state_root
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +494,11 @@ def _launchd_plist_content(user: str) -> str:
     # Plist XML reads <string> values literally — use html.escape for
     # XML-safe encoding (not shlex.quote, which adds shell quotes).
     program_args = "\n".join(f"        <string>{html.escape(a)}</string>" for a in args)
-    log_dir = _log_dir()
+    # Route the log dir through the centralized helper in
+    # ``punt_vox.paths`` so this generator stays in sync if the
+    # subdirectory layout ever changes there. Cursor Bugbot 3048378758
+    # on PR #162.
+    log_dir = _paths_log_dir()
     stdout_log = html.escape(str(log_dir / "voxd-stdout.log"))
     stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
@@ -416,42 +535,116 @@ def _launchd_plist_content(user: str) -> str:
     """)
 
 
-def _launchd_install(user: str) -> None:
-    # Unload first if already loaded — launchctl load fails with I/O error
-    # if the plist is already loaded (happens on every upgrade).  Must happen
-    # BEFORE _ensure_port_free() so launchd doesn't restart the killed process.
-    if _LAUNCHD_PLIST.exists():
-        result = subprocess.run(
-            ["launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
-            check=False,  # may not be loaded
-        )
-        if result.returncode == 0:
-            logger.info("Unloaded existing %s", _LABEL)
-        else:
-            logger.debug(
-                "launchctl unload exited %d (may not have been loaded)",
-                result.returncode,
-            )
+def _launchd_stop() -> None:
+    """Unload voxd from launchd if loaded. Idempotent.
 
-    _ensure_port_free()
-
-    _LAUNCHD_PLIST.write_text(_launchd_plist_content(user))
-    logger.info("Wrote %s", _LAUNCHD_PLIST)
-
+    Called as a pre-flight step by ``install()`` before
+    ``_ensure_port_free`` so launchd's ``KeepAlive=true`` does not
+    respawn the daemon the instant the port-cleanup step kills it.
+    ``check=False`` because launchctl exits non-zero when the label
+    is not registered (fresh install with no prior plist) — that
+    path is expected, not an error. Cursor Bugbot 3048416720 on
+    PR #162.
+    """
+    if not _LAUNCHD_PLIST.exists():
+        # Nothing to unload on a truly fresh install. Skip the sudo
+        # invocation entirely so fresh installs only prompt for the
+        # password inside ``_launchd_install``.
+        return
     subprocess.run(
-        ["launchctl", "load", "-w", str(_LAUNCHD_PLIST)],
-        check=True,
+        ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+        check=False,
     )
-    logger.info("Loaded %s into launchd", _LABEL)
+    logger.info("Unloaded any previously-loaded %s", _LABEL)
+
+
+def _launchd_install(user: str) -> None:
+    """Install the launchd plist. Sudo is invoked three times.
+
+    1. ``sudo install`` the plist into ``/Library/LaunchDaemons``.
+    2. ``sudo launchctl load -w`` the freshly installed plist.
+    3. ``sudo launchctl kickstart -k system/<label>`` to force a
+       restart even if launchd considers the service already running
+       with the old ExecStart baked in.
+
+    The plist content is written to a user-owned tmp file first and
+    then placed into the system directory via ``install(1)``, so the
+    only privileged file write is the single ``install`` invocation.
+
+    Upgrade sequencing note: the unload step that used to live in the
+    middle of this function was hoisted out to ``_launchd_stop`` and
+    is now called by ``install()`` BEFORE ``_ensure_port_free``. That
+    prevents launchd's ``KeepAlive=true`` from respawning voxd the
+    instant ``_ensure_port_free`` kills the stale process. Cursor
+    Bugbot 3048416720 on PR #162.
+
+    Why kickstart? ``launchctl load`` on an already-loaded plist is a
+    no-op — it does not restart the daemon to pick up the new
+    ``ExecStart``. The ``kickstart -k`` primitive (``-k`` means "kill
+    and restart if running; start if not") is the only supported way
+    to force that reload. Cursor Bugbot 3048294138 / Copilot
+    3048295072 on PR #162.
+    """
+    state_root = _paths_user_state_dir()
+    tmp_plist = state_root / "com.punt-labs.voxd.plist.tmp"
+    tmp_plist.write_text(_launchd_plist_content(user))
+    logger.info("Wrote plist to %s", tmp_plist)
+
+    # The user-facing sudo notice is printed once by ``install()`` at
+    # the top of the install flow — not here. ``_launchd_install`` is
+    # a private helper and does not own user-facing UI. Cursor Bugbot
+    # 3048462450 on PR #162.
+    try:
+        subprocess.run(
+            [
+                "sudo",
+                "install",
+                "-m",
+                "644",
+                "-o",
+                "root",
+                "-g",
+                "wheel",
+                str(tmp_plist),
+                str(_LAUNCHD_PLIST),
+            ],
+            check=True,
+        )
+        logger.info("Installed %s", _LAUNCHD_PLIST)
+
+        subprocess.run(
+            ["sudo", "launchctl", "load", "-w", str(_LAUNCHD_PLIST)],
+            check=True,
+        )
+        logger.info("Loaded %s into launchd", _LABEL)
+
+        # Force a restart so the running voxd picks up the new
+        # ExecStart from the freshly installed plist, rather than
+        # continuing to run with the stale args baked in at the
+        # previous launchctl load.
+        subprocess.run(
+            ["sudo", "launchctl", "kickstart", "-k", f"system/{_LABEL}"],
+            check=True,
+        )
+        logger.info("Kickstarted %s", _LABEL)
+    finally:
+        try:
+            tmp_plist.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove tmp plist %s", tmp_plist)
 
 
 def _launchd_uninstall() -> None:
     if _LAUNCHD_PLIST.exists():
+        print(_SUDO_NOTICE, file=sys.stderr)
         subprocess.run(
-            ["launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+            ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
             check=False,  # may already be unloaded
         )
-        _LAUNCHD_PLIST.unlink()
+        subprocess.run(
+            ["sudo", "rm", "-f", str(_LAUNCHD_PLIST)],
+            check=True,
+        )
         logger.info("Removed %s", _LAUNCHD_PLIST)
     else:
         logger.info("No plist found at %s — nothing to uninstall", _LAUNCHD_PLIST)
@@ -492,9 +685,8 @@ def _systemd_audio_env_lines(user: str) -> list[str]:
     Some setups also require PULSE_SERVER or DBUS_SESSION_BUS_ADDRESS.
     Only includes variables that are actually set at install time.
 
-    When XDG_RUNTIME_DIR is absent (common under ``sudo``, which strips
-    session env vars), compute the standard path from the target user's
-    UID: ``/run/user/<uid>``.
+    When ``XDG_RUNTIME_DIR`` is absent, compute the standard path from
+    *user*'s UID: ``/run/user/<uid>``.
     """
     audio_vars = ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS")
     lines: list[str] = []
@@ -506,8 +698,8 @@ def _systemd_audio_env_lines(user: str) -> list[str]:
                 continue
             # Percent signs are special in systemd unit files.
             lines.append(f'Environment="{name}={value.replace("%", "%%")}"')
-    # Deterministic fallback: sudo strips XDG_RUNTIME_DIR, but the
-    # standard path is always /run/user/<uid> on systemd machines.
+    # Deterministic fallback for XDG_RUNTIME_DIR: the standard path is
+    # always /run/user/<uid> on systemd machines.
     if not any(line.startswith('Environment="XDG_RUNTIME_DIR=') for line in lines):
         try:
             uid = pwd.getpwnam(user).pw_uid
@@ -529,6 +721,9 @@ def _systemd_unit_content(user: str) -> str:
     env_block = ("\n" + " " * 8).join(
         [f'Environment="PATH={path_value}"', *audio_lines]
     )
+    # Runtime state lives in the user's home dir (see punt_vox.paths),
+    # so there is no RuntimeDirectory= here — systemd does not need to
+    # create /run/vox.
     return textwrap.dedent(f"""\
         [Unit]
         Description=Voxd text-to-speech daemon
@@ -538,8 +733,6 @@ def _systemd_unit_content(user: str) -> str:
         User={user}
         ExecStart={exec_start}
         {env_block}
-        RuntimeDirectory=vox
-        RuntimeDirectoryMode=0700
         Restart=on-failure
         RestartSec=5
 
@@ -548,48 +741,125 @@ def _systemd_unit_content(user: str) -> str:
     """)
 
 
+def _systemd_stop() -> None:
+    """Stop voxd under systemd if running. Idempotent.
+
+    Called as a pre-flight step by ``install()`` before
+    ``_ensure_port_free`` so systemd's ``Restart=on-failure`` does
+    not revive the daemon the instant the port-cleanup step kills
+    it. ``check=False`` because systemctl exits non-zero when the
+    unit is not loaded (fresh install with no prior unit file) —
+    that path is expected, not an error. Cursor Bugbot 3048416720
+    on PR #162.
+    """
+    if not _SYSTEMD_UNIT.exists():
+        # Nothing to stop on a truly fresh install. Skip the sudo
+        # invocation entirely so fresh installs only prompt for the
+        # password inside ``_systemd_install``.
+        return
+    subprocess.run(
+        ["sudo", "systemctl", "stop", "voxd"],
+        check=False,
+    )
+    logger.info("Stopped any previously-running voxd.service")
+
+
 def _systemd_install(user: str) -> None:
-    # Stop if already running — systemd won't pick up new unit config
-    # from enable --now alone.  Must happen BEFORE _ensure_port_free()
-    # so systemd doesn't restart the killed process (Restart=on-failure).
-    if _SYSTEMD_UNIT.exists():
-        result = subprocess.run(
-            ["systemctl", "stop", "voxd"],
-            check=False,  # may not be running
+    """Install the systemd unit. Sudo is invoked four times.
+
+    1. ``sudo install`` the unit into ``/etc/systemd/system``.
+    2. ``sudo systemctl daemon-reload`` so systemd picks up the new
+       unit file.
+    3. ``sudo systemctl enable voxd`` to persist the unit across
+       reboots (idempotent — safe to run on every install).
+    4. ``sudo systemctl restart voxd`` to unconditionally (re)start
+       the service with the current unit content.
+
+    The unit content is written to a user-owned tmp file first and
+    then placed into the system directory via ``install(1)``, so the
+    only privileged file write is the single ``install`` invocation.
+
+    Upgrade sequencing note: ``install()`` calls ``_systemd_stop``
+    BEFORE this function (and before ``_ensure_port_free``) so
+    systemd's ``Restart=on-failure`` cannot revive the daemon the
+    instant the port-cleanup step kills it. Without that pre-flight
+    stop, the old voxd respawns mid-install and the upgrade flow
+    races against itself. Cursor Bugbot 3048416720 on PR #162.
+
+    Why restart, not ``enable --now``? ``enable --now`` only starts
+    the service if it is not already running — on upgrade from an
+    older install, it would leave the previous voxd process alive
+    with the stale ``ExecStart``. ``systemctl restart`` is the only
+    primitive that unconditionally cycles the process through the
+    freshly-loaded unit file. Cursor Bugbot 3048294138 / Copilot
+    3048295072 on PR #162.
+    """
+    state_root = _paths_user_state_dir()
+    tmp_unit = state_root / "voxd.service.tmp"
+    tmp_unit.write_text(_systemd_unit_content(user))
+    logger.info("Wrote unit to %s", tmp_unit)
+
+    # The user-facing sudo notice is printed once by ``install()`` at
+    # the top of the install flow — not here. ``_systemd_install`` is
+    # a private helper and does not own user-facing UI. Cursor Bugbot
+    # 3048462450 on PR #162.
+    try:
+        subprocess.run(
+            [
+                "sudo",
+                "install",
+                "-m",
+                "644",
+                "-o",
+                "root",
+                "-g",
+                "root",
+                str(tmp_unit),
+                str(_SYSTEMD_UNIT),
+            ],
+            check=True,
         )
-        if result.returncode == 0:
-            logger.info("Stopped existing voxd.service")
-        else:
-            logger.debug(
-                "systemctl stop exited %d (may not have been running)",
-                result.returncode,
-            )
+        logger.info("Installed %s", _SYSTEMD_UNIT)
 
-    _ensure_port_free()
+        subprocess.run(
+            ["sudo", "systemctl", "daemon-reload"],
+            check=True,
+        )
 
-    _SYSTEMD_UNIT.write_text(_systemd_unit_content(user))
-    logger.info("Wrote %s", _SYSTEMD_UNIT)
+        subprocess.run(
+            ["sudo", "systemctl", "enable", "voxd"],
+            check=True,
+        )
 
-    subprocess.run(
-        ["systemctl", "daemon-reload"],
-        check=True,
-    )
-    subprocess.run(
-        ["systemctl", "enable", "--now", "voxd"],
-        check=True,
-    )
-    logger.info("Enabled and started voxd.service")
+        # Unconditional restart. ``enable`` alone will not restart a
+        # running service, so on upgrade we would leak the old binary
+        # until reboot. ``restart`` starts it if stopped and cycles it
+        # if running — exactly the semantics we want here.
+        subprocess.run(
+            ["sudo", "systemctl", "restart", "voxd"],
+            check=True,
+        )
+        logger.info("Enabled and restarted voxd.service")
+    finally:
+        try:
+            tmp_unit.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove tmp unit %s", tmp_unit)
 
 
 def _systemd_uninstall() -> None:
     if _SYSTEMD_UNIT.exists():
+        print(_SUDO_NOTICE, file=sys.stderr)
         subprocess.run(
-            ["systemctl", "disable", "--now", "voxd"],
+            ["sudo", "systemctl", "disable", "--now", "voxd"],
             check=False,  # may already be stopped
         )
-        _SYSTEMD_UNIT.unlink()
         subprocess.run(
-            ["systemctl", "daemon-reload"],
+            ["sudo", "rm", "-f", str(_SYSTEMD_UNIT)],
+            check=True,
+        )
+        subprocess.run(
+            ["sudo", "systemctl", "daemon-reload"],
             check=False,
         )
         logger.info("Removed %s", _SYSTEMD_UNIT)
@@ -626,18 +896,68 @@ def detect_platform() -> str:
 
 
 def install() -> str:
-    """Install voxd as a system service.  Returns a status message."""
+    """Install voxd as a system service. Returns a status message.
+
+    Must be run as a normal user, not as root or under ``sudo``. The
+    command prompts for your sudo password itself when it needs to
+    install the system service unit; running it under ``sudo``
+    instead would cause all per-user state to be created under
+    ``/root/.punt-labs/vox/`` and the generated systemd unit to
+    specify ``User=root`` — both wrong. Copilot 3048295090 on PR #162.
+
+    Runs as the invoking user. Per-user state under
+    ``~/.punt-labs/vox/`` — keys, logs, runtime state, cache — is
+    created with normal user permissions. The system service file
+    (``/etc/systemd/system/voxd.service`` or
+    ``/Library/LaunchDaemons/com.punt-labs.voxd.plist``) is placed via
+    a small set of ``sudo`` subprocess calls; that is the only
+    privileged work.
+    """
+    # Refuse to run as root. ``os.geteuid`` is POSIX-only but so is
+    # every platform we install on.
+    if os.geteuid() == 0:
+        msg = (
+            "vox daemon install must be run as your normal user, not root "
+            "or sudo. vox will prompt for your sudo password when it needs "
+            "to install the system service unit. Re-run without sudo:\n\n"
+            "    vox daemon install\n"
+        )
+        raise SystemExit(msg)
+
     plat = detect_platform()
-    user = _installing_user()
+    user = getpass.getuser()
     args = _voxd_exec_args()
 
-    # Create system directories with correct ownership.
-    config_dir = _config_dir()
-    _ensure_system_dirs(user)
+    # Create per-user state directories as the invoking user.
+    state_root = _ensure_user_dirs()
 
-    # Write provider keys to system config dir.
-    keys_path = _write_keys_env(dict(os.environ), config_dir)
+    # Write provider keys into the user's state dir. Normal user
+    # permissions — no chown, no fd tricks.
+    keys_path = _paths_keys_env_file()
+    _write_keys_env(dict(os.environ), keys_path)
     logger.info("Wrote provider keys to %s", keys_path)
+
+    # Pre-flight stop through the service manager. This MUST happen
+    # before ``_ensure_port_free`` because ``_kill_stale_daemon``
+    # issues a direct ``os.kill(SIGTERM)``, and the service manager
+    # (launchd's ``KeepAlive=true``, systemd's ``Restart=on-failure``)
+    # would immediately respawn the killed daemon with the OLD unit
+    # file. Telling the manager to stop first makes the subsequent
+    # port check idempotent: anything still listening is stale state
+    # that survived a manager crash and is safe to kill outright.
+    # Cursor Bugbot 3048416720 on PR #162.
+    print(_SUDO_NOTICE, file=sys.stderr)
+    if plat == "macos":
+        _launchd_stop()
+    else:
+        _systemd_stop()
+
+    # Pre-flight: kill any stale voxd holding the port. Runs after
+    # the manager-level stop so ``KeepAlive`` / ``Restart`` cannot
+    # race against the kill. Also handles the edge case where voxd
+    # was started outside the service manager (``vox daemon`` or
+    # a direct ``voxd`` invocation).
+    _ensure_port_free()
 
     if plat == "macos":
         _launchd_install(user)
@@ -652,6 +972,7 @@ def install() -> str:
         f"voxd daemon {status} on port {DEFAULT_PORT}.",
         f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
         f"  Keys:    {keys_path}",
+        f"  State:   {state_root}",
         f"  Command: {exec_display}",
         f"  User:    {user}",
     ]

@@ -11,14 +11,14 @@ import base64
 import binascii
 import json
 import logging
-import subprocess
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
 import websockets
 import websockets.asyncio.client
+
+from punt_vox.paths import run_dir as _user_run_dir
 
 logger = logging.getLogger(__name__)
 
@@ -43,25 +43,13 @@ class VoxdProtocolError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Path resolution (duplicated from voxd.py to avoid importing heavy deps)
+# Path resolution — delegated to punt_vox.paths so every module agrees.
 # ---------------------------------------------------------------------------
 
 
-def _data_root() -> Path:
-    """Resolve system data root: Homebrew prefix on macOS, / on Linux."""
-    if sys.platform == "darwin":
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix"], text=True, timeout=5
-            ).strip()
-            return Path(prefix)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return Path("/usr/local")
-    return Path("/")  # type: ignore[unreachable,unused-ignore]
-
-
 def _run_dir() -> Path:
-    return _data_root() / "var" / "run" / "vox"
+    """Return ``~/.punt-labs/vox/run`` — holds ``serve.port`` / ``serve.token``."""
+    return _user_run_dir()
 
 
 def read_port_file() -> int | None:

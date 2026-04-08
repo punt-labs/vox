@@ -1236,9 +1236,9 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited th
 
 ### Design
 
-A dedicated config file at the system config directory — `$(brew --prefix)/etc/vox/keys.env` on macOS, `/etc/vox/keys.env` on Linux. Simple `KEY=VALUE` format, chmod 0600.
+A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and Linux). Simple `KEY=VALUE` format, chmod 0600.
 
-**Write path:** `sudo vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the system config file.
+**Write path:** `vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the per-user config file at `~/.punt-labs/vox/keys.env`. Runs as the installing user — no sudo for the file write.
 
 **Read path:** `voxd` calls `_load_keys()` at startup, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
 - launchd/systemd daemon: loads all keys from file (nothing in env)
@@ -1260,7 +1260,7 @@ The daemon generated a fresh auth token (`secrets.token_urlsafe(32)`) on every s
 
 ### Decision
 
-The auth token is generated once and persisted to `<run_dir>/serve.token` (chmod 0600). It is stable across daemon restarts. In v3, the run dir is a system path: `$(brew --prefix)/var/run/vox/` on macOS, `/var/run/vox/` on Linux.
+The auth token is generated once and persisted to `<run_dir>/serve.token` (chmod 0600). It is stable across daemon restarts. The run dir is `~/.punt-labs/vox/run/` on both macOS and Linux.
 
 - `voxd` startup (`_read_or_create_token()`): reads the token from file. If the file is missing, generates and persists one.
 - The token file is NOT removed on daemon shutdown (unlike `serve.port`, which is removed to signal the daemon is down).
@@ -1279,9 +1279,9 @@ The original design (regenerate on install) was simpler but broke the reconnecti
 
 ## DES-027: Data Directory Migration to ~/.punt-labs/vox/
 
-**Status:** SUPERSEDED by DES-028
+**Status:** SETTLED (reinstated after DES-028 rollback)
 
-> **Note:** DES-027 migrated daemon data from `~/.punt-vox/` to `~/.punt-labs/vox/`. DES-028 (v3) subsequently moved all daemon data to system paths: `$(brew --prefix)/etc/vox/`, `$(brew --prefix)/var/run/vox/`, etc. on macOS; FHS paths on Linux. Home directory paths are now client-side only (`.vox/config.md` in project dirs).
+> **Note:** DES-027 migrated daemon data from `~/.punt-vox/` to `~/.punt-labs/vox/`. DES-028 (v3) briefly moved daemon data to system paths (`/etc/vox/`, `/var/log/vox/`, `/var/run/vox/` on Linux; Homebrew-prefix equivalents on macOS), but that move stranded user API keys on upgrade and required sudo to edit personal tokens. It was rolled back in the v4.x branch and daemon state lives under `~/.punt-labs/vox/` on both platforms again. See DES-028 for the settled state and the rollback rationale.
 
 ## DES-028: Vox v3 — Audio Server Architecture
 
@@ -1296,7 +1296,7 @@ The v2 daemon tried to know which project a client belonged to. It resolved CWDs
 One machine, one set of speakers, one audio daemon (`voxd`). Clients send text + parameters. The daemon synthesizes and plays. It knows nothing about projects, sessions, CWDs, or Claude Code.
 
 **Two entry points, one package:**
-- `voxd` — system-level audio daemon. Owns speakers, providers, playback queue, dedup, cache. System paths (Homebrew prefix on macOS, FHS on Linux).
+- `voxd` — per-user audio daemon. Owns speakers, providers, playback queue, dedup, cache. All daemon state lives under `~/.punt-labs/vox/` on both macOS and Linux.
 - `vox` — everything else. CLI, MCP server (`vox mcp`), hook handlers. All are clients of `voxd`.
 
 **Wire protocol:** WebSocket + JSON messages. Streaming-capable for future real-time voice conversation.
@@ -1305,7 +1305,7 @@ One machine, one set of speakers, one audio daemon (`voxd`). Clients send text +
 
 **Hooks:** Three-layer dispatch unchanged (hooks.md standard). Python handlers call `voxd` via WebSocket client. No in-process synthesis.
 
-**Service install:** System-level. macOS: `/Library/LaunchDaemons/` with `UserName` = installing user. Linux: `/etc/systemd/system/` with `User` = installing user. Requires sudo.
+**Service install:** System-level unit file, per-user daemon identity. macOS: `/Library/LaunchDaemons/com.punt-labs.voxd.plist` with `UserName` = installing user. Linux: `/etc/systemd/system/voxd.service` with `User=` installing user. `vox daemon install` runs as the normal user and prompts once for a sudo password when it places the unit file; all per-user state under `~/.punt-labs/vox/` is created with normal user permissions.
 
 ### Why Not Keep the Proxy Architecture
 
@@ -1317,18 +1317,73 @@ HTTP request/response can't do bidirectional streaming. Real-time voice conversa
 
 ### System Paths
 
-| Purpose | macOS (Homebrew) | Linux |
-|---------|-----------------|-------|
-| Config | `$(brew --prefix)/etc/vox/keys.env` | `/etc/vox/keys.env` |
-| Cache | `~/.punt-labs/vox/cache/` | `~/.punt-labs/vox/cache/` |
-| Logs | `$(brew --prefix)/var/log/vox/voxd.log` | `/var/log/vox/voxd.log` |
-| Runtime | `$(brew --prefix)/var/run/vox/serve.{port,token}` | `/var/run/vox/serve.{port,token}` |
-| Service | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` | `/etc/systemd/system/voxd.service` |
+All per-user state lives under the installing user's home dir — same layout on macOS and Linux. Only the system service unit lives in a platform-specific system directory.
 
-### Why System Paths, Not Home Directory
+| Purpose | Path |
+|---------|------|
+| Config (API keys) | `~/.punt-labs/vox/keys.env` |
+| Logs | `~/.punt-labs/vox/logs/voxd.log` |
+| Runtime (port, token) | `~/.punt-labs/vox/run/serve.{port,token}` |
+| Cache | `~/.punt-labs/vox/cache/` |
+| Service (macOS) | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` |
+| Service (Linux) | `/etc/systemd/system/voxd.service` |
 
-The daemon serves the machine, not a user. One set of speakers. Data belongs in system directories (`/Library/LaunchDaemons/`, Homebrew `var/`, FHS `/var/`). Home directory paths caused the v2 path resolution bugs — the daemon's CWD was `/` under launchd but all paths assumed `~`.
+### Why Per-User Paths, Not System Directories
+
+The v3 rewrite (DES-028 original) tried FHS system paths (`/etc/vox/`, `/var/log/vox/`, `/var/run/vox/`) on Linux and Homebrew-prefix equivalents on macOS. That was wrong: `voxd` runs as a single user (`User=` in the systemd unit, `UserName` in the launchd plist), so its state is per-user, not system-shared. The system-path model stranded existing users' API keys on upgrade, required sudo to edit personal tokens, and created a chown mismatch where the file voxd was told to read was owned by root. State now lives under `~/.punt-labs/vox/` on both platforms — same as any other per-user daemon (`~/.ssh`, `~/.gnupg`, `~/.aws`, and the other Punt Labs agent tools under `~/.punt-labs/`).
 
 ### Service Identity
 
-`voxd` runs as the installing user, not root. Audio device access (CoreAudio on macOS, PulseAudio/PipeWire on Linux) is tied to the desktop session user. The LaunchDaemon plist sets `UserName` to `$SUDO_USER`; the systemd unit sets `User=` to `$SUDO_USER`. The service install requires sudo only because the plist/unit file goes in a system directory — the daemon process itself has normal user privileges.
+`voxd` runs as the installing user, not root. Audio device access (CoreAudio on macOS, PulseAudio/PipeWire on Linux) is tied to the desktop session user. The LaunchDaemon plist sets `UserName` to the installing user; the systemd unit sets `User=` to the installing user. `vox daemon install` itself runs as the normal user and refuses to start under `sudo` — it prompts for a sudo password only to place the unit/plist file into its system directory and to reload the daemon manager. Every per-user file is created with normal user permissions. See DES-029 for the privilege-scoping rationale.
+
+## DES-029: Scope `sudo` to System Service Installation Only
+
+**Status:** SETTLED
+
+### Problem
+
+The initial v4 `vox daemon install` ran the entire install command under `sudo`. The CLI wrapper was `sudo vox daemon install` and the Python code was left to handle "I am running as root but the data belongs to $SUDO_USER." That meant: reading `SUDO_USER` from the environment, resolving the target user's home dir via `pwd.getpwnam`, chowning every created directory back to that user, opening `keys.env` with `O_NOFOLLOW|O_EXCL|O_CREAT`, verifying the open descriptor with `fstat`, calling `fchown` on the descriptor, rejecting symlinks anywhere in the ancestor chain — an increasingly baroque pile of privilege-defense code whose only purpose was to protect root from a user-controlled directory tree.
+
+Each review round added another layer: Cursor Bugbot found that chowning `state_root.parent` (`~/.punt-labs`) could hand root-owned system paths to the user if the parent was a symlink, so the code added an explicit parent-symlink check. Another round found that `O_TRUNC` without `O_NOFOLLOW` could redirect the privileged write to `/etc/shadow`, so the code added `O_NOFOLLOW`. Another round found that the plist baked in `/var/root/.punt-labs/` paths because `Path.home()` under `sudo` pointed at root's home, so the code added `_user_state_dir_for(target_user)`. The stack kept growing. No finding was invalid — all of them were real — but each one was paying down interest on the wrong architectural choice.
+
+### Rejected Alternatives
+
+1. **Keep root-inside-$HOME and harden each review-cycle finding individually** — sustainable only as long as review rounds keep finding every hole. Symlink/TOCTOU/chown-ordering bugs compound quickly in privileged code. The surface was already three layers deep (path walk, `O_NOFOLLOW`, `fchown` on the fd) and still growing.
+2. **Use `sudo -u $SUDO_USER` to re-exec the user-owned portion** — gets the permissions right but introduces two process boundaries mid-command, complicates error propagation, and still leaves "the parent process runs as root" as the user's observable reality.
+
+### Decision
+
+`vox daemon install` runs as the invoking user from start to finish. The command refuses to run under `sudo` (`os.geteuid() == 0` check at the top of `install()`). All per-user filesystem writes under `~/.punt-labs/vox/` happen with normal user permissions — no chown, no `fchown`, no `O_NOFOLLOW`, no symlink walks, no `SUDO_USER` lookup. The privileged surface shrinks to five `subprocess.run(["sudo", ...])` calls on Linux and four on macOS, each touching only a system directory the user could not write to anyway:
+
+**Linux (5 calls):**
+1. `sudo systemctl stop voxd` (pre-flight, skipped on fresh install)
+2. `sudo install -m 644 -o root -g root <tmp> /etc/systemd/system/voxd.service`
+3. `sudo systemctl daemon-reload`
+4. `sudo systemctl enable voxd`
+5. `sudo systemctl restart voxd`
+
+**macOS (4 calls):**
+1. `sudo launchctl unload -w <plist>` (pre-flight, skipped on fresh install)
+2. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
+3. `sudo launchctl load -w <plist>`
+4. `sudo launchctl kickstart -k system/com.punt-labs.voxd`
+
+The unit/plist content is written to a user-owned tmp file first (`~/.punt-labs/vox/voxd.service.tmp` or `com.punt-labs.voxd.plist.tmp`), then placed into the system directory via `install(1)` — a single privileged file write per platform.
+
+### Why the Pre-flight Stop
+
+Review round 3 (Cursor Bugbot 3048416720) found that `install()` was calling `_ensure_port_free` (which issues a direct `os.kill(SIGTERM)` to the stale voxd PID) before running the platform-specific install path. On macOS, launchd's `KeepAlive=true` immediately respawned the killed daemon with the OLD plist; on Linux, systemd's `Restart=on-failure` treated the kill as a failure exit and restarted the process under the old unit. The upgrade flow was racing against the service manager.
+
+The fix is a pre-flight stop through the service manager (`_launchd_stop` on macOS, `_systemd_stop` on Linux) BEFORE `_ensure_port_free` runs. That tells the manager "I am going to kill this, do not respawn it." The subsequent port check is then idempotent: anything still listening is stale state that survived a manager crash and is safe to kill outright. Both pre-flight helpers are idempotent — fresh installs with no prior unit file skip the sudo call entirely, so the fresh-install shape is 4 calls on Linux and 3 on macOS (pre-flight is a no-op; unit write + reload + enable + restart for Linux, install + load + kickstart for macOS).
+
+### Why Restart, Not Enable --now
+
+Review round 2 found that `systemctl enable --now` does not restart an already-running service, so on upgrade the running voxd would keep the stale `ExecStart` baked in from the previous unit. The Linux install shape uses `enable` + `restart` as separate primitives: `enable` is the boot-persistence step (idempotent), `restart` is the unconditional cycle. The macOS shape adds `launchctl kickstart -k` after `load` — `load` on an already-loaded plist is a no-op and does not restart the daemon, so `kickstart -k` is the only primitive that forces a reload of the new `ExecStart`.
+
+### Why Refuse `sudo` Instead of Silently Demoting
+
+If a user runs `sudo vox daemon install` out of habit, the three wrong things happen: `getpass.getuser()` returns `root`, `Path.home()` resolves to `/root`, and all per-user state lands under `/root/.punt-labs/vox/` (invisible to the normal user, and the generated systemd unit has `User=root`, so the daemon runs as root and loses audio device access). Silently demoting with `os.seteuid` + `os.setegid` would fix the ownership but would leave the habits unchanged — the user would still run the command wrong next time, and the failure mode would become "works on my machine." Explicit refusal with a clear error message retrains the habit.
+
+### Why This Deletes More Code Than It Adds
+
+The initial refactor commit shipped -443 net lines across 10 files. The deletions were all the defensive code that no longer has anything to defend: `_reject_symlinks`, `_chown_to_user`, `_user_keys_env_file_for`, `_user_state_dir_for`, `_installing_user`, the `target_uid`/`target_gid` parameters of `_write_keys_env`, the `_open_new`/`_open_existing`/`O_NOFOLLOW`/`O_EXCL`/`fstat`/`fchown` dance, the `SUDO_USER` environment lookup, the parent-symlink check, the `os.lchown` calls in `_ensure_user_dirs`, and every test that exercised those code paths. The only defensive code that survived is the control-character validation in `_write_keys_env` (rejecting `\n`/`\r`/`\x00` in env values) — that is input sanitization, not a privilege defense, and applies equally when the process runs as the user.
