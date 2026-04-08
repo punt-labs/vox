@@ -265,15 +265,20 @@ def unmute(
             if speaker_boost is not None:
                 kwargs["speaker_boost"] = speaker_boost
 
-            request_id = client.synthesize(seg_text, **kwargs)
-            results.append(
-                {
-                    "id": request_id,
-                    "text": seg_text,
-                    "voice": seg_voice,
-                    "provider": effective_provider,
-                }
-            )
+            result = client.synthesize(seg_text, **kwargs)
+            entry: dict[str, object] = {
+                "id": result.request_id,
+                "text": seg_text,
+                "voice": seg_voice,
+                "provider": effective_provider,
+            }
+            if result.deduped:
+                entry["deduped"] = True
+                if result.original_played_at is not None:
+                    entry["original_played_at"] = result.original_played_at
+                if result.ttl_seconds_remaining is not None:
+                    entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+            results.append(entry)
     except VoxdConnectionError as exc:
         return _error(str(exc))
     except Exception as exc:

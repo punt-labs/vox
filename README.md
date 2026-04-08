@@ -264,6 +264,7 @@ punt-vox is also a standalone TTS tool, independent of Claude Code.
 
 ```bash
 vox unmute "Hello world"                       # Synthesize + play
+vox unmute "Wall broadcast" --once 600         # Dedup identical text within 600s (for N-session broadcasts)
 vox record "Hello world" -o hello.mp3          # Synthesize + save
 vox record --from segments.json                # From JSON segments file
 vox vibe excited                               # Set session mood

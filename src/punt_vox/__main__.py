@@ -169,6 +169,19 @@ SpeakerBoostFlag = Annotated[
     bool,
     typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost."),
 ]
+OnceOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--once",
+        help=(
+            "Deduplicate identical text within N seconds. When set, voxd "
+            "skips the play if the same text was played within the window "
+            "(e.g. when multiple Claude Code sessions broadcast the same "
+            "biff wall). Omit to play every time. Must be a positive "
+            "integer when set."
+        ),
+    ),
+]
 FromOpt = Annotated[
     Path | None,
     typer.Option("--from", help="JSON file with segments array.", exists=True),
@@ -216,9 +229,21 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
+    once: OnceOpt = None,
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
+    # Negative values are a user error. Zero is accepted and treated
+    # as unset (no dedup) — matches the server-side semantics so the
+    # two surfaces are consistent. Scripts can safely pass
+    # ``--once ${ONCE_TTL:-0}`` as a default.
+    if once is not None and once < 0:
+        raise typer.BadParameter(
+            "--once must be a non-negative integer (seconds). "
+            "Use 0 or omit the flag to disable dedup."
+        )
+    if once == 0:
+        once = None
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -227,7 +252,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     for seg_text in segments:
         seg_text = normalize_for_speech(seg_text)
         try:
-            request_id = client.synthesize(
+            result = client.synthesize(
                 seg_text,
                 voice=voice,
                 provider=provider,
@@ -238,8 +263,16 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                 similarity=similarity,
                 style=style,
                 speaker_boost=boost,
+                once=once,
             )
-            _emit({"id": request_id}, seg_text)
+            payload: dict[str, object] = {"id": result.request_id}
+            if result.deduped:
+                payload["deduped"] = True
+                if result.original_played_at is not None:
+                    payload["original_played_at"] = result.original_played_at
+                if result.ttl_seconds_remaining is not None:
+                    payload["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+            _emit(payload, seg_text)
         except VoxdConnectionError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc

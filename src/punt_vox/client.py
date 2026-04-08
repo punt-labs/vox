@@ -12,6 +12,7 @@ import binascii
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,35 @@ import websockets.asyncio.client
 from punt_vox.paths import run_dir as _user_run_dir
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Result types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SynthesizeResult:
+    """Result of a ``synthesize`` call on voxd.
+
+    When ``deduped`` is False, the request was sent to TTS and played
+    through the audio device. When ``deduped`` is True, the caller passed
+    an ``once=<ttl>`` window and the server found an identical text
+    already played within that window — the audio was NOT re-played.
+    The user heard the message from a prior call. The caller should
+    treat this as success, not an error.
+
+    Non-deduped results have ``original_played_at`` and
+    ``ttl_seconds_remaining`` both set to ``None``.
+
+    See bead vox-0e9 for the biff-wall use case that motivated this.
+    """
+
+    request_id: str
+    deduped: bool = False
+    original_played_at: float | None = None
+    ttl_seconds_remaining: float | None = None
+
 
 # ---------------------------------------------------------------------------
 # Timeouts (seconds)
@@ -234,8 +264,17 @@ class VoxClient:
         style: float | None = None,
         speaker_boost: bool | None = None,
         api_key: str | None = None,
-    ) -> str:
-        """Send synthesize request. Returns request ID. Audio plays on server."""
+        once: int | None = None,
+    ) -> SynthesizeResult:
+        """Send synthesize request. Audio plays on server.
+
+        Returns a ``SynthesizeResult`` carrying the request id and any
+        dedup status. On a dedup hit (caller passed ``once=<ttl>`` and
+        the server found an identical text within the window), the
+        returned ``deduped`` field is True and the audio is NOT played
+        a second time. The caller should treat a deduped result as
+        success, not failure.
+        """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "synthesize",
@@ -263,11 +302,29 @@ class VoxClient:
             msg["speaker_boost"] = speaker_boost
         if api_key is not None:
             msg["api_key"] = api_key
+        if once is not None:
+            msg["once"] = once
 
-        await self._send_and_drain(
+        responses = await self._send_and_drain(
             msg, timeout=_TIMEOUT_SYNTHESIS, terminal_type="done"
         )
-        return request_id
+        terminal = responses[-1] if responses else {}
+        if terminal.get("deduped"):
+            return SynthesizeResult(
+                request_id=request_id,
+                deduped=True,
+                original_played_at=(
+                    float(terminal["original_played_at"])
+                    if "original_played_at" in terminal
+                    else None
+                ),
+                ttl_seconds_remaining=(
+                    float(terminal["ttl_seconds_remaining"])
+                    if "ttl_seconds_remaining" in terminal
+                    else None
+                ),
+            )
+        return SynthesizeResult(request_id=request_id)
 
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
@@ -396,9 +453,17 @@ class VoxClientSync:
         finally:
             await client.close()
 
-    def synthesize(self, text: str, **kwargs: Any) -> str:
-        """Send synthesize request. Returns request ID."""
-        return self._run(self._call("synthesize", text, **kwargs))  # type: ignore[no-any-return]
+    def synthesize(self, text: str, **kwargs: Any) -> SynthesizeResult:
+        """Send synthesize request. Audio plays on server.
+
+        See :class:`SynthesizeResult` for the returned fields — in
+        particular the ``deduped`` flag that surfaces when the caller
+        passed ``once=<ttl>`` and the server found an identical text
+        already played within the window.
+        """
+        return self._run(  # type: ignore[no-any-return]
+            self._call("synthesize", text, **kwargs)
+        )
 
     def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
