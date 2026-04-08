@@ -46,6 +46,8 @@ from punt_vox.paths import (
     run_dir as _user_run_dir,
 )
 from punt_vox.providers import auto_detect_provider, get_provider
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
+from punt_vox.resolve import strip_expressive_tags
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -776,6 +778,40 @@ def _build_audio_request(
     )
 
 
+def _model_supports_expressive_tags(provider_name: str, model: str | None) -> bool:
+    """Whether the given provider+model combo interprets bracket-style tags.
+
+    Pure lookup: does NOT construct the provider or touch any SDK client,
+    so it can run before voxd enters the env-mutation lock that the real
+    synthesize path needs. ElevenLabs is the only provider whose answer
+    depends on the model — all others return False unconditionally and
+    will speak any literal ``[tag]`` in the text as the bare word inside
+    the brackets unless the caller strips them first.
+    """
+    if provider_name == "elevenlabs":
+        return ElevenLabsProvider.model_supports_expressive_tags(model)
+    return False
+
+
+def _apply_vibe_for_synthesis(
+    text: str, vibe_tags: str | None, provider_name: str, model: str | None
+) -> str:
+    """Decide what text to actually synthesize given the vibe state and model.
+
+    If the active model supports expressive tags, prepend ``vibe_tags`` to
+    the text (the existing behavior — the model interprets the bracket
+    cues as performance directions). Otherwise, strip any leading bracket
+    tags from the text and DROP ``vibe_tags`` entirely so the synthesis
+    engine never receives literal ``[serious]`` and speaks it as the word
+    "serious".
+    """
+    if _model_supports_expressive_tags(provider_name, model):
+        if vibe_tags:
+            return f"{vibe_tags} {text}"
+        return text
+    return strip_expressive_tags(text)
+
+
 async def _synthesize_to_file(
     text: str,
     voice: str | None,
@@ -797,9 +833,9 @@ async def _synthesize_to_file(
     """
     resolved_voice = voice or ""
 
-    normalized = normalize_for_speech(text)
-    if vibe_tags:
-        normalized = f"{vibe_tags} {normalized}"
+    normalized = _apply_vibe_for_synthesis(
+        normalize_for_speech(text), vibe_tags, provider_name, model
+    )
 
     # Check cache first
     cached = cache_get(normalized, resolved_voice, provider_name)
@@ -959,9 +995,9 @@ async def _try_direct_play(
     injected. Local providers (espeak, say) take a fast path with no
     cross-request blocking. Audio playback never holds the lock.
     """
-    normalized = normalize_for_speech(text)
-    if vibe_tags:
-        normalized = f"{vibe_tags} {normalized}"
+    normalized = _apply_vibe_for_synthesis(
+        normalize_for_speech(text), vibe_tags, provider_name, model
+    )
 
     request = _build_audio_request(
         normalized,

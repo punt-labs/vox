@@ -323,6 +323,44 @@ class TestElevenLabsProviderDefaultModel:
         provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
         assert provider.supports_expressive_tags is False
 
+    def test_model_supports_expressive_tags_classmethod_v3(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Static lookup must return True for eleven_v3 without instantiation."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
+
+    def test_model_supports_expressive_tags_classmethod_flash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Static lookup must return False for non-expressive models."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert (
+            ElevenLabsProvider.model_supports_expressive_tags("eleven_flash_v2_5")
+            is False
+        )
+
+    def test_model_supports_expressive_tags_classmethod_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """None argument must resolve to the code default (eleven_v3 → True)."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
+
+    def test_model_supports_expressive_tags_classmethod_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When model arg is None, the TTS_MODEL env var wins over the default."""
+        monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
+        assert ElevenLabsProvider.model_supports_expressive_tags(None) is False
+
+    def test_model_supports_expressive_tags_classmethod_explicit_beats_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit model arg wins over the TTS_MODEL env var."""
+        monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
+        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
+
 
 class TestElevenLabsProviderCharLimits:
     def test_v3_chunks_above_5k(self) -> None:

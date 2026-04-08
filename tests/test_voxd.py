@@ -14,6 +14,7 @@ import pytest
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
     DaemonContext,
+    _apply_vibe_for_synthesis,
     _config_dir,
     _handle_synthesize,
     _health_payload_full,
@@ -21,6 +22,7 @@ from punt_vox.voxd import (
     _health_route,
     _load_keys,
     _log_dir,
+    _model_supports_expressive_tags,
     _play_audio,
     _run_dir,
     _try_direct_play,
@@ -865,3 +867,158 @@ class TestVoxdPathHelpersArePure:
 
         assert result == expected
         assert not expected.exists()
+
+
+class TestModelSupportsExpressiveTags:
+    """``_model_supports_expressive_tags`` lookup for vibe-tag gating.
+
+    Closes vox-fhl. The function must be a pure capability check that
+    runs BEFORE provider construction (so it can fire outside the
+    env-mutation lock that the real synthesize path needs).
+    """
+
+    def test_elevenlabs_v3_supports(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert _model_supports_expressive_tags("elevenlabs", "eleven_v3") is True
+
+    def test_elevenlabs_flash_does_not_support(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert (
+            _model_supports_expressive_tags("elevenlabs", "eleven_flash_v2_5") is False
+        )
+
+    def test_elevenlabs_default_supports(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """None model resolves to the eleven_v3 default which supports tags."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        assert _model_supports_expressive_tags("elevenlabs", None) is True
+
+    def test_polly_never_supports(self) -> None:
+        assert _model_supports_expressive_tags("polly", None) is False
+        assert _model_supports_expressive_tags("polly", "neural") is False
+
+    def test_openai_never_supports(self) -> None:
+        assert _model_supports_expressive_tags("openai", None) is False
+        assert _model_supports_expressive_tags("openai", "tts-1-hd") is False
+
+    def test_say_never_supports(self) -> None:
+        assert _model_supports_expressive_tags("say", None) is False
+
+    def test_espeak_never_supports(self) -> None:
+        assert _model_supports_expressive_tags("espeak", None) is False
+
+    def test_unknown_provider_never_supports(self) -> None:
+        """Defensive default for any provider name not in the lookup."""
+        assert _model_supports_expressive_tags("future_provider", "any") is False
+
+
+class TestApplyVibeForSynthesis:
+    """``_apply_vibe_for_synthesis`` gates vibe-tag handling on capability.
+
+    Closes vox-fhl. With an expressive model, vibe_tags get prepended.
+    With a non-expressive model, vibe_tags are dropped AND any leading
+    bracket tags in the user's text get stripped so the synthesis
+    engine never receives ``[serious]`` to read as the literal word.
+    """
+
+    def test_expressive_model_prepends_vibe_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "Hello world", "[excited]", "elevenlabs", "eleven_v3"
+        )
+        assert result == "[excited] Hello world"
+
+    def test_expressive_model_passthrough_when_no_vibe_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "Hello world", None, "elevenlabs", "eleven_v3"
+        )
+        assert result == "Hello world"
+
+    def test_expressive_model_preserves_user_tags_in_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """User-supplied tags pass through to a model that can interpret them."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "[whisper] Quiet message", None, "elevenlabs", "eleven_v3"
+        )
+        assert result == "[whisper] Quiet message"
+
+    def test_non_expressive_model_drops_vibe_tags(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the model can't interpret tags, the vibe_tags MUST not appear."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "Hello world", "[serious]", "elevenlabs", "eleven_flash_v2_5"
+        )
+        assert result == "Hello world"
+        assert "[serious]" not in result
+        assert "serious" not in result
+
+    def test_non_expressive_model_strips_user_tags_from_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """User-supplied bracket tags MUST be stripped to avoid literal speech."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "[serious] Hello world", None, "elevenlabs", "eleven_flash_v2_5"
+        )
+        assert result == "Hello world"
+        assert "serious" not in result
+
+    def test_non_expressive_model_strips_user_tags_even_with_vibe_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Combined: user text has tags AND vibe is set; both must vanish."""
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "[whisper] Quiet message",
+            "[excited]",
+            "elevenlabs",
+            "eleven_flash_v2_5",
+        )
+        assert result == "Quiet message"
+        assert "whisper" not in result
+        assert "excited" not in result
+
+    def test_polly_strips_user_tags(self) -> None:
+        """Polly never supports tags — user-supplied tags must be stripped."""
+        result = _apply_vibe_for_synthesis(
+            "[serious] Important", "[calm]", "polly", None
+        )
+        assert result == "Important"
+
+    def test_openai_strips_user_tags(self) -> None:
+        result = _apply_vibe_for_synthesis("[whisper] Hello", None, "openai", "tts-1")
+        assert result == "Hello"
+
+    def test_say_strips_user_tags(self) -> None:
+        result = _apply_vibe_for_synthesis(
+            "[excited] Greetings", "[happy]", "say", None
+        )
+        assert result == "Greetings"
+
+    def test_espeak_strips_user_tags(self) -> None:
+        result = _apply_vibe_for_synthesis("[serious] Notice", None, "espeak", None)
+        assert result == "Notice"
+
+    def test_degenerate_text_only_tags_returns_original(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the entire text is tags, stripping would empty it. Return original.
+
+        Speaking the literal '[serious]' is bad, but emitting silence is
+        worse — at least the operator hears something is happening.
+        """
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        result = _apply_vibe_for_synthesis(
+            "[serious]", None, "elevenlabs", "eleven_flash_v2_5"
+        )
+        assert result == "[serious]"

@@ -130,6 +130,21 @@ class ElevenLabsProvider:
     def supports_expressive_tags(self) -> bool:
         return self._model in self._EXPRESSIVE_MODELS
 
+    @classmethod
+    def model_supports_expressive_tags(cls, model: str | None) -> bool:
+        """Static lookup: would the given model support expressive tags?
+
+        Resolves the model the same way ``__init__`` does (explicit param,
+        ``TTS_MODEL`` env var, then ``_DEFAULT_MODEL``) and checks
+        membership in the expressive set. Pure: does not construct the
+        provider or touch the ElevenLabs SDK. Lets callers gate vibe-tag
+        handling on capability before paying the cost of instantiation
+        (and before entering any env-mutation lock that the real
+        synthesize path needs).
+        """
+        effective = model or os.environ.get("TTS_MODEL") or _DEFAULT_MODEL
+        return effective in cls._EXPRESSIVE_MODELS
+
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
         output_path = resolve_output_path(request)
         return self.synthesize(request, output_path)

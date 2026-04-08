@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from punt_vox.config import write_field, write_fields
-from punt_vox.resolve import apply_vibe
+from punt_vox.resolve import apply_vibe, strip_expressive_tags
 from punt_vox.server import (
     SessionState,
     notify,
@@ -126,6 +126,42 @@ class TestApplyVibe:
         _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe("Hello world", expressive_tags=True, override_tags="")
         assert result == "[calm] Hello world"
+
+
+class TestStripExpressiveTags:
+    """Tests for strip_expressive_tags — the underlying primitive."""
+
+    def test_strips_single_leading_tag(self) -> None:
+        assert strip_expressive_tags("[serious] Hello world") == "Hello world"
+
+    def test_strips_multiple_leading_tags(self) -> None:
+        assert strip_expressive_tags("[serious] [calm] Hello world") == "Hello world"
+
+    def test_strips_tag_with_leading_whitespace(self) -> None:
+        assert strip_expressive_tags("   [excited] Hello") == "Hello"
+
+    def test_strips_tag_with_punctuation_inside(self) -> None:
+        assert (
+            strip_expressive_tags("[dramatic tone] Important message")
+            == "Important message"
+        )
+
+    def test_passes_through_text_with_no_tags(self) -> None:
+        assert strip_expressive_tags("Hello world") == "Hello world"
+
+    def test_only_strips_leading_tags_not_embedded(self) -> None:
+        assert strip_expressive_tags("Hello [serious] world") == "Hello [serious] world"
+
+    def test_returns_original_when_stripping_would_empty_text(self) -> None:
+        # Degenerate case: text was nothing but tags. Returning empty would
+        # produce silence, which is worse than speaking the literal text.
+        assert strip_expressive_tags("[serious]") == "[serious]"
+
+    def test_returns_original_when_stripping_would_leave_only_whitespace(self) -> None:
+        assert strip_expressive_tags("[serious]   ") == "[serious]   "
+
+    def test_empty_string_passes_through(self) -> None:
+        assert strip_expressive_tags("") == ""
 
 
 # ---------------------------------------------------------------------------

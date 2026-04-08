@@ -20,6 +20,25 @@ _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 _LEADING_TAGS_RE = re.compile(r"^(\s*\[[^\]\n]+\]\s*)+")  # one-or-more tags
 
 
+def strip_expressive_tags(text: str) -> str:
+    """Remove leading bracket-style expressive tags from *text*.
+
+    For use when the active provider+model does not interpret bracket
+    tags as performance cues. Without stripping, a model like
+    ``eleven_flash_v2_5`` (or any non-ElevenLabs provider) would speak
+    ``[serious] Hello world`` as the literal phrase
+    ``serious Hello world``.
+
+    Returns the original text if stripping would leave the result
+    empty (degenerate case where the text was nothing but tags).
+    Stand-alone helper that ``apply_vibe`` and external callers
+    (e.g. ``voxd``) both use, with no config-file or session-state
+    coupling.
+    """
+    stripped = _LEADING_TAGS_RE.sub("", text)
+    return stripped if stripped.strip() else text
+
+
 def resolve_voice_and_language(
     provider: TTSProvider,
     voice: str | None,
@@ -96,8 +115,7 @@ def apply_vibe(
     expression tag (e.g. ``[calm]``) to avoid doubling.
     """
     if not expressive_tags:
-        stripped = _LEADING_TAGS_RE.sub("", text)
-        return stripped if stripped.strip() else text
+        return strip_expressive_tags(text)
     tags = override_tags or _config.read_field(
         "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
     )
