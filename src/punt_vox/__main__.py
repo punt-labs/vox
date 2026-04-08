@@ -233,8 +233,17 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
-    if once is not None and once <= 0:
-        raise typer.BadParameter("--once must be a positive integer (seconds).")
+    # Negative values are a user error. Zero is accepted and treated
+    # as unset (no dedup) — matches the server-side semantics so the
+    # two surfaces are consistent. Scripts can safely pass
+    # ``--once ${ONCE_TTL:-0}`` as a default.
+    if once is not None and once < 0:
+        raise typer.BadParameter(
+            "--once must be a non-negative integer (seconds). "
+            "Use 0 or omit the flag to disable dedup."
+        )
+    if once == 0:
+        once = None
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None

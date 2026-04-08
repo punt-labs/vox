@@ -677,6 +677,20 @@ class DedupHit:
     TTL expires, the next identical request will play fresh."""
 
 
+_ONCE_DEDUP_MAX_TTL_SECONDS: float = 3600.0
+"""Hard cap on per-call ``once`` TTL to bound memory usage. Any caller
+passing a larger value is clamped to this cap with a log warning. The
+biff wall use case targets 600 seconds; 3600 is 6x that, more than
+enough headroom without letting a stray ``once=99999999`` wedge
+``OnceDedup._seen`` with long-lived entries."""
+
+_ONCE_DEDUP_MAX_ENTRIES: int = 1024
+"""Hard cap on the number of tracked keys. Entries are evicted in
+insertion order (oldest first) when the cap is reached. Defensive
+against pathological workloads that insert thousands of unique texts
+faster than the time-based pruner can drop them."""
+
+
 class OnceDedup:
     """Opt-in in-memory dedup for speech with per-call TTL.
 
@@ -696,11 +710,25 @@ class OnceDedup:
     ``once`` parameter play every time, even if identical to a recent
     one. This preserves the property that ``vox unmute "hello"`` twice
     in quick succession on the CLI produces two audible plays.
+
+    Per-caller TTL semantics: each caller's ``ttl_seconds`` applies to
+    THEIR query, not to the stored entry. The dedup question each
+    caller asks is "was this text played in the last ttl_seconds?" — a
+    caller passing ``once=60`` will see dedup only if the original play
+    was within 60 seconds, regardless of whether an earlier caller
+    passed ``once=600``. This matches the intuitive "dedupe within N
+    seconds" semantic.
+
+    Concurrency: ``check_and_record`` is atomic under voxd's
+    single-threaded asyncio event loop. A failed synthesis path MUST
+    call ``rollback`` to remove the zombie entry; otherwise the next
+    identical call would be incorrectly deduped against a playback
+    that never happened.
     """
 
     def __init__(self) -> None:
-        # key -> (inserted_monotonic, inserted_wall_clock, ttl_seconds)
-        self._seen: dict[str, tuple[float, float, float]] = {}
+        # key -> (inserted_monotonic, inserted_wall_clock)
+        self._seen: dict[str, tuple[float, float]] = {}
 
     def check_and_record(self, text: str, ttl_seconds: float) -> DedupHit | None:
         """Check for a recent duplicate; record this call if none found.
@@ -708,10 +736,14 @@ class OnceDedup:
         Args:
             text: The speech text. Used as the dedup key via ``md5``.
             ttl_seconds: Dedup window in seconds. Must be positive.
+                Values above ``_ONCE_DEDUP_MAX_TTL_SECONDS`` are
+                clamped to the cap with a log warning.
 
         Returns:
             ``None`` if no duplicate exists within the window — the
-            caller should proceed with synthesis + playback.
+            caller should proceed with synthesis + playback and call
+            ``rollback(text)`` on failure so the zombie entry is
+            removed.
             ``DedupHit(...)`` if a duplicate was found — the caller
             should skip the play and return the hit to its client so
             the client can render an observable "deduped" response.
@@ -722,6 +754,13 @@ class OnceDedup:
         if ttl_seconds <= 0:
             msg = f"ttl_seconds must be positive, got {ttl_seconds}"
             raise ValueError(msg)
+        if ttl_seconds > _ONCE_DEDUP_MAX_TTL_SECONDS:
+            logger.warning(
+                "OnceDedup: ttl_seconds=%.1f exceeds cap %.1f, clamping",
+                ttl_seconds,
+                _ONCE_DEDUP_MAX_TTL_SECONDS,
+            )
+            ttl_seconds = _ONCE_DEDUP_MAX_TTL_SECONDS
 
         key = hashlib.md5(text.encode()).hexdigest()
         now_mono = time.monotonic()
@@ -729,27 +768,45 @@ class OnceDedup:
 
         existing = self._seen.get(key)
         if existing is not None:
-            inserted_mono, inserted_wall, existing_ttl = existing
+            inserted_mono, inserted_wall = existing
             age = now_mono - inserted_mono
-            if age < existing_ttl:
+            # Per-caller semantics: the dedup fires only if the age is
+            # within THIS caller's ttl_seconds, not the stored entry's.
+            if age < ttl_seconds:
                 return DedupHit(
                     original_played_at=inserted_wall,
-                    ttl_seconds_remaining=existing_ttl - age,
+                    ttl_seconds_remaining=ttl_seconds - age,
                 )
 
-        self._seen[key] = (now_mono, now_wall, ttl_seconds)
+        self._seen[key] = (now_mono, now_wall)
 
-        # Prune expired entries opportunistically. An entry whose age
-        # exceeds twice its own TTL is safe to drop — the 2x margin
-        # matches the legacy AudioDedup cleanup policy and gives slow
-        # callers a window to see a stable dedup-hit response.
-        self._seen = {
-            k: (m, w, t)
-            for k, (m, w, t) in self._seen.items()
-            if (now_mono - m) < (2 * t)
-        }
+        # Opportunistic time-based prune: drop entries older than the
+        # cap so we never accumulate entries beyond the cap horizon.
+        cutoff = now_mono - _ONCE_DEDUP_MAX_TTL_SECONDS
+        self._seen = {k: (m, w) for k, (m, w) in self._seen.items() if m > cutoff}
+
+        # Hard cap on dict size. If somehow the time prune left us with
+        # more than _ONCE_DEDUP_MAX_ENTRIES, evict oldest-first. This is
+        # defensive against pathological inserts at a rate faster than
+        # the time pruner can keep up.
+        if len(self._seen) > _ONCE_DEDUP_MAX_ENTRIES:
+            sorted_items = sorted(self._seen.items(), key=lambda kv: kv[1][0])
+            keep = sorted_items[-_ONCE_DEDUP_MAX_ENTRIES:]
+            self._seen = dict(keep)
 
         return None
+
+    def rollback(self, text: str) -> None:
+        """Remove a recorded entry for *text*, if present.
+
+        Used when synthesis or playback fails after
+        ``check_and_record`` returned None: without a rollback, the
+        zombie entry would incorrectly dedup subsequent retries
+        against a playback that never happened. Idempotent — safe
+        to call when no entry exists.
+        """
+        key = hashlib.md5(text.encode()).hexdigest()
+        self._seen.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1244,8 +1301,12 @@ async def _handle_synthesize(
     resolved_voice = voice or ""
 
     # Opt-in dedup: only when the caller explicitly sets `once` to a
-    # positive TTL. With `once` absent or null, every request plays —
-    # the legacy always-on 5s dedup for speech was removed in vox-0e9.
+    # positive TTL. With `once` absent, null, or 0, every request plays
+    # — the legacy always-on 5s dedup for speech was removed in vox-0e9.
+    # When we record an entry, track that fact so we can roll it back
+    # on synthesis/playback failure; otherwise a failed request would
+    # leave a zombie dedup entry that incorrectly suppresses retries.
+    dedup_recorded = False
     if once is not None and once > 0:
         hit = ctx.once_dedup.check_and_record(text, float(once))
         if hit is not None:
@@ -1267,6 +1328,18 @@ async def _handle_synthesize(
                 }
             )
             return
+        dedup_recorded = True
+
+    def _rollback_dedup() -> None:
+        """Remove the dedup entry we recorded above, if any.
+
+        Called on every failure path between the record call and the
+        successful completion of playback. Without this, a failure
+        would leave a zombie entry in ``ctx.once_dedup._seen`` that
+        would incorrectly dedup the next retry of the same text.
+        """
+        if dedup_recorded:
+            ctx.once_dedup.rollback(text)
 
     logger.info(
         "Synthesize: id=%s provider=%s voice=%s chars=%d",
@@ -1296,6 +1369,7 @@ async def _handle_synthesize(
             ctx=ctx,
         )
         if isinstance(direct_result, Exception):
+            _rollback_dedup()
             await websocket.send_json(
                 {
                     "type": "error",
@@ -1308,6 +1382,7 @@ async def _handle_synthesize(
             if direct_result == 0:
                 await websocket.send_json({"type": "done", "id": request_id})
             else:
+                _rollback_dedup()
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -1333,6 +1408,7 @@ async def _handle_synthesize(
             api_key,
         )
     except Exception as exc:
+        _rollback_dedup()
         logger.exception("Synthesis failed for id=%s", request_id)
         await websocket.send_json(
             {"type": "error", "id": request_id, "message": str(exc)}

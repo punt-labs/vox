@@ -1204,25 +1204,133 @@ class TestOnceDedup:
         with pytest.raises(ValueError, match="positive"):
             dedup.check_and_record("text", ttl_seconds=-1)
 
-    def test_pruning_drops_doubly_expired_entries(
+    def test_pruning_drops_entries_older_than_max_ttl(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Opportunistic prune-on-insert drops entries older than 2x ttl."""
+        """Opportunistic prune-on-insert drops entries older than the global cap.
+
+        The cap (``_ONCE_DEDUP_MAX_TTL_SECONDS``) bounds how long any
+        single entry can live in ``_seen``, regardless of what TTL the
+        original caller requested. This prevents pathological
+        ``once=99999999`` callers from wedging long-lived entries.
+        """
+        from punt_vox.voxd import _ONCE_DEDUP_MAX_TTL_SECONDS
+
         dedup = OnceDedup()
 
         clock = [1000.0]
         monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
         monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
 
-        dedup.check_and_record("text-a", ttl_seconds=10)
+        dedup.check_and_record("text-a", ttl_seconds=600)
         assert len(dedup._seen) == 1
 
-        # Advance past 2x the TTL (10s) so the entry is prunable.
-        clock[0] = 1025.0
+        # Advance past the global cap so the entry is prunable.
+        clock[0] = 1000.0 + _ONCE_DEDUP_MAX_TTL_SECONDS + 100.0
 
         # Insert a different text — this triggers the prune loop.
-        dedup.check_and_record("text-b", ttl_seconds=10)
+        dedup.check_and_record("text-b", ttl_seconds=600)
         assert len(dedup._seen) == 1
+
+    def test_rollback_removes_entry(self) -> None:
+        """rollback(text) drops the entry so a subsequent call plays again."""
+        dedup = OnceDedup()
+        first = dedup.check_and_record("wall msg", ttl_seconds=600)
+        assert first is None
+
+        # Simulate a failed synthesis — the dedup entry was recorded
+        # but the audio never actually played. Rollback must remove it.
+        dedup.rollback("wall msg")
+
+        # A retry should NOT be deduped.
+        retry = dedup.check_and_record("wall msg", ttl_seconds=600)
+        assert retry is None
+
+    def test_rollback_is_idempotent(self) -> None:
+        """rollback on an unrecorded text is a no-op, not an error."""
+        dedup = OnceDedup()
+        # Never called check_and_record for this text.
+        dedup.rollback("unknown text")  # Must not raise.
+
+    def test_per_caller_ttl_shrinks_effective_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each caller's own ttl_seconds decides if an entry is fresh enough.
+
+        Copilot reviewer 3053861452: the first caller's TTL should NOT
+        silently extend the dedup window for a later caller that asks
+        for a shorter one. Each caller answers its own question of
+        "was this played in the last N seconds?"
+        """
+        dedup = OnceDedup()
+        clock = [1000.0]
+        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
+
+        # First caller records with a long window.
+        first = dedup.check_and_record("text", ttl_seconds=600)
+        assert first is None
+
+        # 50 seconds later, a second caller asks with a 30s window.
+        clock[0] = 1050.0
+        second = dedup.check_and_record("text", ttl_seconds=30)
+        # age=50 > caller's ttl of 30 → NOT a hit from the second
+        # caller's perspective. Must not dedupe.
+        assert second is None
+
+        # Immediately after, a third caller asks with a 120s window.
+        third = dedup.check_and_record("text", ttl_seconds=120)
+        # age is now 0 (the second caller's record_and_record reset
+        # the entry) so third caller asks "was this played in the
+        # last 120s?" — yes, just now. DedupHit.
+        assert third is not None
+
+    def test_ttl_above_cap_gets_clamped(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Callers passing a TTL above the cap are clamped with a log warning."""
+        from punt_vox.voxd import _ONCE_DEDUP_MAX_TTL_SECONDS
+
+        dedup = OnceDedup()
+        clock = [1000.0]
+        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            first = dedup.check_and_record("text", ttl_seconds=99_999_999)
+        assert first is None
+        assert "clamping" in caplog.text
+
+        # Advance past the cap; entry should be prunable.
+        clock[0] = 1000.0 + _ONCE_DEDUP_MAX_TTL_SECONDS + 1.0
+        second = dedup.check_and_record("text", ttl_seconds=10)
+        assert second is None  # entry was pruned, no hit
+
+    def test_hard_cap_on_dict_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When more than _ONCE_DEDUP_MAX_ENTRIES inserted, oldest evicted."""
+        from punt_vox.voxd import _ONCE_DEDUP_MAX_ENTRIES
+
+        dedup = OnceDedup()
+        clock = [1000.0]
+        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
+
+        # Fill the cache past the cap. Each insert advances the clock
+        # slightly so the eviction order is deterministic.
+        for i in range(_ONCE_DEDUP_MAX_ENTRIES + 50):
+            clock[0] = 1000.0 + (i * 0.001)
+            dedup.check_and_record(f"text-{i}", ttl_seconds=600)
+
+        import hashlib
+
+        def _md5(s: str) -> str:
+            return hashlib.md5(s.encode()).hexdigest()
+
+        # Dict size is bounded by the hard cap.
+        assert len(dedup._seen) == _ONCE_DEDUP_MAX_ENTRIES
+        # The oldest insertions were evicted; the newest remain.
+        assert _md5("text-0") not in dedup._seen
+        assert _md5(f"text-{_ONCE_DEDUP_MAX_ENTRIES + 49}") in dedup._seen
 
 
 class TestChimeDedup:
