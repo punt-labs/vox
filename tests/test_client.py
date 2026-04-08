@@ -168,9 +168,12 @@ class TestVoxClientSynthesize:
         client = VoxClient(port=8421, token="tok")
         client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        request_id = await client.synthesize("Hello world")
-        assert isinstance(request_id, str)
-        assert len(request_id) == 12
+        result = await client.synthesize("Hello world")
+        assert isinstance(result.request_id, str)
+        assert len(result.request_id) == 12
+        assert result.deduped is False
+        assert result.original_played_at is None
+        assert result.ttl_seconds_remaining is None
 
         # Verify the message sent to the server.
         sent_raw = mock_ws.send.call_args[0][0]
@@ -462,8 +465,9 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            request_id = sync_client.synthesize("Hello")
-            assert isinstance(request_id, str)
+            result = sync_client.synthesize("Hello")
+            assert isinstance(result.request_id, str)
+            assert result.deduped is False
 
     def test_chime(self) -> None:
         mock_ws = _make_mock_ws()

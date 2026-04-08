@@ -628,26 +628,128 @@ async def _playback_consumer(ctx: DaemonContext) -> None:
 # ---------------------------------------------------------------------------
 
 
-class AudioDedup:
-    """In-memory dedup: skip identical audio within a time window."""
+class ChimeDedup:
+    """Always-on in-memory dedup for chime signals.
+
+    Chimes are event markers (tests-pass, lint-fail, git-push-ok, etc)
+    and a user does not want to hear the same event chime twice in rapid
+    succession. Unlike speech, chime deduplication is always on and
+    keyed only on the signal name. The window matches the legacy
+    `AudioDedup` default so the user-visible chime behavior is
+    unchanged from versions prior to vox-0e9.
+    """
 
     def __init__(self, window: float = _DEDUP_WINDOW_SECONDS) -> None:
         self._window = window
         self._seen: dict[str, float] = {}
 
-    def should_play(self, text: str, voice: str, provider: str) -> bool:
-        """Return True if this audio should play (not a duplicate)."""
-        payload = f"{text}\0{voice}\0{provider}"
-        key = hashlib.md5(payload.encode()).hexdigest()
+    def should_play(self, signal: str) -> bool:
+        """Return True if this chime should play (not a recent duplicate)."""
+        key = hashlib.md5(f"chime:{signal}".encode()).hexdigest()
         now = time.monotonic()
         last = self._seen.get(key)
         if last is not None and (now - last) < self._window:
             return False
         self._seen[key] = now
-        # Prune old entries
         cutoff = now - self._window * 2
         self._seen = {k: v for k, v in self._seen.items() if v > cutoff}
         return True
+
+
+@dataclass(frozen=True)
+class DedupHit:
+    """Returned when an opt-in speech dedup catches a duplicate request.
+
+    The caller made a synthesize/direct_play request with ``once=<ttl>``
+    and an identical text was already played within the TTL window. The
+    user has already heard the message — the caller should NOT treat
+    this as an error or retry. The fields support observability (logging
+    "wall skipped, already played 53s ago") and future UI surfaces.
+    """
+
+    original_played_at: float
+    """Wall-clock ``time.time()`` of the original play, in seconds since
+    the epoch. Safe to serialize, safe to compare against other wall
+    clocks. NOT ``time.monotonic()``."""
+
+    ttl_seconds_remaining: float
+    """How many more seconds this dedup key remains valid. When the
+    TTL expires, the next identical request will play fresh."""
+
+
+class OnceDedup:
+    """Opt-in in-memory dedup for speech with per-call TTL.
+
+    Callers pass ``once=<ttl_seconds>`` on a synthesize or direct_play
+    WebSocket message (or the ``vox unmute --once <seconds>`` CLI flag)
+    to suppress duplicate plays of identical text within their chosen
+    window. Identical text spoken with different voices or providers
+    collapses — the dedup key is ``md5(text)`` only.
+
+    The motivating use case is ``biff wall``: N Claude Code sessions
+    in the same repo independently shell out to ``vox unmute`` on the
+    same broadcast text, and the user should hear the announcement
+    exactly once. See bead vox-0e9.
+
+    Unlike the legacy always-on ``AudioDedup``, this class is only
+    invoked when the caller explicitly opts in. Requests without an
+    ``once`` parameter play every time, even if identical to a recent
+    one. This preserves the property that ``vox unmute "hello"`` twice
+    in quick succession on the CLI produces two audible plays.
+    """
+
+    def __init__(self) -> None:
+        # key -> (inserted_monotonic, inserted_wall_clock, ttl_seconds)
+        self._seen: dict[str, tuple[float, float, float]] = {}
+
+    def check_and_record(self, text: str, ttl_seconds: float) -> DedupHit | None:
+        """Check for a recent duplicate; record this call if none found.
+
+        Args:
+            text: The speech text. Used as the dedup key via ``md5``.
+            ttl_seconds: Dedup window in seconds. Must be positive.
+
+        Returns:
+            ``None`` if no duplicate exists within the window — the
+            caller should proceed with synthesis + playback.
+            ``DedupHit(...)`` if a duplicate was found — the caller
+            should skip the play and return the hit to its client so
+            the client can render an observable "deduped" response.
+
+        Raises:
+            ValueError: if ``ttl_seconds`` is zero or negative.
+        """
+        if ttl_seconds <= 0:
+            msg = f"ttl_seconds must be positive, got {ttl_seconds}"
+            raise ValueError(msg)
+
+        key = hashlib.md5(text.encode()).hexdigest()
+        now_mono = time.monotonic()
+        now_wall = time.time()
+
+        existing = self._seen.get(key)
+        if existing is not None:
+            inserted_mono, inserted_wall, existing_ttl = existing
+            age = now_mono - inserted_mono
+            if age < existing_ttl:
+                return DedupHit(
+                    original_played_at=inserted_wall,
+                    ttl_seconds_remaining=existing_ttl - age,
+                )
+
+        self._seen[key] = (now_mono, now_wall, ttl_seconds)
+
+        # Prune expired entries opportunistically. An entry whose age
+        # exceeds twice its own TTL is safe to drop — the 2x margin
+        # matches the legacy AudioDedup cleanup policy and gives slow
+        # callers a window to see a stable dedup-hit response.
+        self._seen = {
+            k: (m, w, t)
+            for k, (m, w, t) in self._seen.items()
+            if (now_mono - m) < (2 * t)
+        }
+
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +769,8 @@ class DaemonContext:
         self.start_time: float = time.monotonic()
         self.auth_token: str | None = auth_token
         self.port: int = port
-        self.dedup = AudioDedup()
+        self.chime_dedup = ChimeDedup()
+        self.once_dedup = OnceDedup()
         self.client_count: int = 0
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
         self.last_playback: dict[str, object] | None = None
@@ -1136,13 +1239,34 @@ async def _handle_synthesize(
     speaker_boost_raw = msg.get("speaker_boost")
     speaker_boost = bool(speaker_boost_raw) if speaker_boost_raw is not None else None
     api_key = _parse_optional_str(msg, "api_key")
+    once = _parse_optional_int(msg, "once")
 
-    # Dedup check
     resolved_voice = voice or ""
-    if not ctx.dedup.should_play(text, resolved_voice, provider_name):
-        logger.info("Dedup: skipping duplicate synthesis for id=%s", request_id)
-        await websocket.send_json({"type": "done", "id": request_id})
-        return
+
+    # Opt-in dedup: only when the caller explicitly sets `once` to a
+    # positive TTL. With `once` absent or null, every request plays —
+    # the legacy always-on 5s dedup for speech was removed in vox-0e9.
+    if once is not None and once > 0:
+        hit = ctx.once_dedup.check_and_record(text, float(once))
+        if hit is not None:
+            logger.info(
+                "Dedup hit: id=%s text=%d chars original_played_at=%.3f "
+                "ttl_remaining=%.1fs",
+                request_id,
+                len(text),
+                hit.original_played_at,
+                hit.ttl_seconds_remaining,
+            )
+            await websocket.send_json(
+                {
+                    "type": "done",
+                    "id": request_id,
+                    "deduped": True,
+                    "original_played_at": hit.original_played_at,
+                    "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+                }
+            )
+            return
 
     logger.info(
         "Synthesize: id=%s provider=%s voice=%s chars=%d",
@@ -1303,8 +1427,10 @@ async def _handle_chime(
         )
         return
 
-    # Dedup chimes too
-    if not ctx.dedup.should_play(f"chime:{signal}", "", ""):
+    # Chimes are always deduped with a fixed window — user explicitly
+    # confirmed this behavior is desired in vox-0e9 scoping. Unlike
+    # speech, chimes do not opt in via a `once` flag.
+    if not ctx.chime_dedup.should_play(signal):
         logger.info("Dedup: skipping duplicate chime %s", signal)
         await websocket.send_json({"type": "done", "id": ""})
         return

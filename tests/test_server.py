@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from punt_vox.client import SynthesizeResult
 from punt_vox.config import write_field, write_fields
 from punt_vox.resolve import (
     apply_vibe,
@@ -408,7 +409,7 @@ class TestUnmute:
 
     def test_simple_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req123"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req123")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(unmute(text="Hello world"))
@@ -420,7 +421,7 @@ class TestUnmute:
 
     def test_segments(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req456"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req456")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(
@@ -448,7 +449,7 @@ class TestUnmute:
         srv._state.vibe_signals = "tests-pass@14:00"
 
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req789"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req789")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         unmute(text="Done.", vibe_tags="[warm] [satisfied]")
@@ -473,7 +474,7 @@ class TestUnmute:
         import punt_vox.server as srv
 
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req_prov"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_prov")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         unmute(text="Hello", provider="openai")
@@ -483,7 +484,7 @@ class TestUnmute:
         import punt_vox.server as srv
 
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req_mod"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_mod")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         unmute(text="Hello", model="eleven_v3")
@@ -508,7 +509,7 @@ class TestUnmute:
     ) -> None:
         """Top-level language param is forwarded to voxd synthesize."""
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req_lang"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_lang")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         unmute(text="Guten Tag", language="de")
@@ -521,7 +522,7 @@ class TestUnmute:
     ) -> None:
         """Per-segment language overrides the top-level default."""
         mock_client = MagicMock()
-        mock_client.synthesize.return_value = "req_lang2"
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_lang2")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         unmute(

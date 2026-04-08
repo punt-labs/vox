@@ -32,9 +32,11 @@ class TestUnmuteCommand:
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
+        from punt_vox.client import SynthesizeResult
+
         monkeypatch.chdir(tmp_path)
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = "abc123"
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
 
         runner = CliRunner()
         result = runner.invoke(app, ["unmute", "hello"])
@@ -51,9 +53,11 @@ class TestUnmuteCommand:
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
+        from punt_vox.client import SynthesizeResult
+
         monkeypatch.chdir(tmp_path)
         mock_instance = mock_client_cls.return_value
-        mock_instance.synthesize.return_value = "abc123"
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
 
         runner = CliRunner()
         result = runner.invoke(app, ["unmute", "Hallo", "--voice", "hans"])
