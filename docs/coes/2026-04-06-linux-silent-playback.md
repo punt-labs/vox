@@ -1,8 +1,23 @@
-# vox-linux-issue.md
+# COE: Linux silent playback (2026-04-06)
 
-**Status:** Open. Audio playback silent on Linux despite multiple "fix" attempts.
-**Host:** okinos (Linux, jfreeman, espeak-ng provider, no API keys)
-**Date:** 2026-04-06
+**Status:** Resolved 2026-04-07 (one day after writing).
+**Host:** okinos (Linux, jfreeman, espeak-ng provider, no API keys).
+**Date opened:** 2026-04-06.
+
+## Resolution
+
+All four threads in this postmortem are now closed:
+
+- **Observability failure** (the "real problem" called out at the top): fixed in PR #158. `voxd._play_audio` now captures the spawn command, audio session env, exit code, elapsed wall time, file size, and full stderr; startup logs the full process environment; synthesis fails fast on 0-byte output; the health WebSocket exposes `audio_env`, `player_binary`, and `last_playback`. Merged as part of v4.1.0.
+- **Audio session env vars missing from systemd unit** (`XDG_RUNTIME_DIR`, `PULSE_SERVER`, `DBUS_SESSION_BUS_ADDRESS`): fixed in PR #157, merged in v4.1.0. The install command now captures these at install time and injects them into the systemd unit, with a `/run/user/<uid>` fallback when sudo strips the env.
+- **Stale `voxd` binary baked into systemd ExecStart** (the hypothesis section at the bottom): confirmed and fixed in PR #162. `_voxd_exec_args()` now resolves from `Path(sys.executable).parent / "voxd"` instead of `shutil.which("voxd")`, eliminating the class of bugs where an old `uv tool install` binary on `$PATH` wins over the current install.
+- **Underlying architectural regression** (per-user state stranded at FHS paths): fixed in PR #162. `voxd` state is back under `~/.punt-labs/vox/`, the install runs as the user and scopes `sudo` to 3–5 subprocess calls per platform, and pre-v3 keys at `~/.punt-labs/vox/keys.env` load again automatically with no migration needed.
+
+Retained in `docs/coes/` as institutional memory: the five-whys, the observability critique, the investigation protocol, the list of hypotheses checked and ruled out. These are still useful reading for anyone debugging silent-playback failures in a daemon.
+
+---
+
+## Original content (from the day the issue was open)
 
 ## The real problem (read this first)
 
