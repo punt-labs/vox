@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from punt_vox.watcher import (
     _SIGNAL_CHIMES,  # pyright: ignore[reportPrivateUsage]
@@ -247,10 +248,6 @@ class TestNotificationConsumer:
             consumer(event)
             mock_chime.assert_called_once_with("tests-pass", "happy")
 
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Flaky on CI — _announce_voice mock not called (tts-2sj)",
-    )
     def test_throttles_same_signal(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.md"
         config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
@@ -266,10 +263,6 @@ class TestNotificationConsumer:
             consumer(event)  # throttled
             assert mock_voice.call_count == 1
 
-    @pytest.mark.skipif(
-        os.environ.get("CI") == "true",
-        reason="Flaky on CI — _announce_voice mock not called (tts-2sj)",
-    )
     def test_different_signals_not_throttled(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.md"
         config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
