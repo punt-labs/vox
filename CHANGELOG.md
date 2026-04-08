@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-04-07
+
 ### Documentation
 
 - **README setup walkthrough for cloud providers**: added a `Configure providers` section between Quick Start and Features. Covers acquiring API keys (ElevenLabs, OpenAI, AWS Polly) with signup and free-tier details, editing `~/.punt-labs/vox/keys.env` with a normal editor (no sudo), restarting the daemon via `systemctl`/`launchctl` to apply changes, and verifying with `vox doctor` + `vox unmute`. AWS Polly section documents both the `AWS_PROFILE` path (recommended for users who already use the AWS CLI) and raw `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` credentials. Slimmed the Environment Variables section to cross-reference Configure providers instead of duplicating the edit/restart instructions.
