@@ -125,6 +125,26 @@ vox unmute "hello from vox"        # speak through the default provider
 
 If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
+## Upgrading
+
+`uv tool upgrade punt-vox` replaces the wheel on disk, but it does **not** restart the long-running `voxd` daemon. Until you cycle the daemon, any change that touches daemon behavior — new WebSocket fields, new dedup semantics, new CLI flags that voxd has to parse — will silently be ignored by the old process. Always restart the daemon after an upgrade:
+
+```bash
+# macOS or Linux — identical command now
+uv tool upgrade punt-vox
+sudo vox daemon restart
+```
+
+`vox daemon restart` stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/voxd.log` on failure.
+
+To confirm the daemon and the installed wheel agree:
+
+```bash
+vox doctor
+```
+
+`vox doctor` now reports the running daemon version alongside the reachability check. When the running daemon does not match the wheel installed on disk, doctor emits a yellow `⚠ Daemon: running ... (version X — wheel has Y, run 'sudo vox daemon restart' to refresh)` warning. Exit code stays 0 — the daemon is still functional — but the warning catches stale daemons at smoke-test time instead of in production.
+
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
@@ -206,6 +226,17 @@ The full experience --- natural voice with expressive tags that respond to `/vib
 | espeak-ng | — | en | Zero-config on Linux, offline |
 
 Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > say (macOS) / espeak (Linux).
+
+### Per-call API keys for billing isolation
+
+`vox unmute` accepts a `--api-key <value>` flag that scopes a single synthesis call to a specific provider key, overriding whatever is in `keys.env` for that one request only:
+
+```bash
+vox unmute "billable to project A" --api-key sk_A
+vox unmute "billable to project B" --api-key sk_B
+```
+
+This is **not** multi-tenant isolation — vox is a single-user tool. The use case is one user who holds multiple keys from the same provider (e.g. two ElevenLabs keys, one per project) and wants to attribute synthesis costs to the right project without juggling environment variables. The key is forwarded to `voxd` over the local WebSocket, injected into the provider's environment for the duration of one synthesis request, and then restored. It is never persisted to disk, never written to logs, never echoed to stdout, and never visible to other concurrent requests on the same daemon.
 
 ## Architecture
 
