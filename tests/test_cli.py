@@ -1038,7 +1038,7 @@ class TestDoctorCommand:
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(
-                f"{_CLI}._installed_wheel_version",
+                f"{_CLI}.installed_version",
                 return_value=installed_version,
             ),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
@@ -1154,7 +1154,7 @@ class TestDoctorCommand:
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
             patch(
                 f"{_CLI}._claude_desktop_config_path",
                 return_value=tmp_path / "nope.json",
@@ -1428,7 +1428,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service.detect_platform", return_value="linux"),
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
+            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1478,7 +1478,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service.detect_platform", return_value="macos"),
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
+            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1576,7 +1576,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service.detect_platform", return_value="linux"),
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
+            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1621,7 +1621,7 @@ class TestDaemonRestartCommand:
             patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_CLI}.time.sleep") as mock_sleep,
-            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
+            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1657,7 +1657,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service._ensure_port_free"),
             patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1720,7 +1720,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service._ensure_port_free"),
             patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import os
@@ -31,7 +30,7 @@ from punt_vox.config import (
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
-from punt_vox.paths import log_dir
+from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
 
 logger = logging.getLogger(__name__)
@@ -787,24 +786,6 @@ _OPTIONAL = "\u25cb"
 _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
 
 
-def _installed_wheel_version() -> str:
-    """Return the ``punt-vox`` version installed as a wheel on disk.
-
-    Uses ``importlib.metadata.version`` so the value reflects the
-    actual wheel metadata, not a hard-coded source constant. When
-    running from an uninstalled source tree, falls back to
-    ``punt_vox.__version__``. This matches the same fallback
-    semantics used by the voxd daemon at startup (see
-    ``punt_vox.voxd._resolve_daemon_version``), so doctor's
-    comparison is apples-to-apples when both sides resolve via the
-    fallback.
-    """
-    try:
-        return importlib.metadata.version("punt-vox")
-    except importlib.metadata.PackageNotFoundError:
-        return __version__
-
-
 def _claude_desktop_config_path() -> Path:
     return (
         Path.home()
@@ -887,8 +868,8 @@ def doctor() -> None:
         provider_name = str(health.get("provider", "unknown"))
         port = health.get("port", "?")
         running_version = str(health.get("daemon_version", ""))
-        installed_version = _installed_wheel_version()
-        if running_version and running_version != installed_version:
+        wheel_version = installed_version()
+        if running_version and running_version != wheel_version:
             # vox-nmb: a stale voxd survives `uv tool upgrade punt-vox`
             # because the wheel on disk was swapped but the long-running
             # daemon process was not cycled. Warn loudly but do not
@@ -896,7 +877,7 @@ def doctor() -> None:
             _check(
                 _WARN,
                 f"Daemon: running on port {port} (version {running_version}"
-                f" \u2014 wheel has {installed_version},"
+                f" \u2014 wheel has {wheel_version},"
                 f" run 'vox daemon restart' to refresh)",
             )
         else:
@@ -1386,7 +1367,7 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         # command would print success while the stale daemon continues
         # to answer — which is exactly the bug vox-nmb exists to prevent.
         running_version = str(health.get("daemon_version", ""))
-        wheel_version = _installed_wheel_version()
+        wheel_version = installed_version()
         log_path = log_dir() / "voxd.log"
         if not running_version:
             # Pre-cef3e8a daemons do not self-report a version. Fail

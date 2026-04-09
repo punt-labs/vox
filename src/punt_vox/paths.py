@@ -18,6 +18,7 @@ minimal client can depend on it without pulling providers.
 
 from __future__ import annotations
 
+import importlib.metadata
 from pathlib import Path
 
 _STATE_DIR_NAME = ".punt-labs"
@@ -87,3 +88,27 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
         d.mkdir(parents=True, exist_ok=True)
         # Enforce 0700 even on pre-existing dirs with looser permissions.
         d.chmod(0o700)
+
+
+def installed_version() -> str:
+    """Return the installed ``punt-vox`` package version.
+
+    Reads ``importlib.metadata.version("punt-vox")`` and falls back
+    to ``punt_vox.__version__`` when the package metadata is not
+    available (e.g., running from an uninstalled source tree during
+    development). Used by both the ``vox doctor`` daemon-staleness
+    check and by voxd at startup when populating the health response.
+    Centralizing the fallback here guarantees doctor and voxd resolve
+    the same value when both fall back, so the comparison in
+    ``vox daemon restart`` is apples-to-apples.
+    """
+    try:
+        return importlib.metadata.version("punt-vox")
+    except importlib.metadata.PackageNotFoundError:
+        # Inline import — hoisting would create a cycle because
+        # punt_vox.__init__ is at the top of the module graph and
+        # several modules in this package import paths.py during
+        # their own import (voxd.py, service.py, __main__.py).
+        from punt_vox import __version__
+
+        return __version__

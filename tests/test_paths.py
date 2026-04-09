@@ -8,14 +8,18 @@ per-OS splits, no FHS system paths.
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
+import re
 import stat
 from pathlib import Path
+from unittest.mock import patch
 
 from punt_vox.paths import (
     cache_dir,
     config_dir,
     ensure_user_dirs,
+    installed_version,
     keys_env_file,
     log_dir,
     run_dir,
@@ -103,3 +107,41 @@ def test_ensure_user_dirs_is_idempotent(tmp_path: Path) -> None:
         target = state / name if name else state
         mode = stat.S_IMODE(os.stat(target).st_mode)
         assert mode == 0o700
+
+
+# ---------------------------------------------------------------------------
+# installed_version -- shared version resolution for doctor and voxd
+# ---------------------------------------------------------------------------
+
+
+def test_installed_version_returns_string() -> None:
+    """Returns the currently installed punt-vox version as a semver string.
+
+    The exact value changes on every release, so assert the shape
+    rather than the literal string.
+    """
+    result = installed_version()
+    assert isinstance(result, str)
+    assert re.match(r"^\d+\.\d+\.\d+", result), (
+        f"expected semver-prefixed string, got {result!r}"
+    )
+
+
+def test_installed_version_fallback_on_missing_metadata() -> None:
+    """When importlib.metadata has no record of punt-vox, fall back to __version__.
+
+    This path fires when running from an uninstalled source tree. The
+    fallback must match ``punt_vox.__version__`` exactly so that
+    ``vox doctor`` and voxd report the same value when both resolve
+    via the fallback.
+    """
+    from punt_vox import __version__
+
+    with patch.object(
+        importlib.metadata,
+        "version",
+        side_effect=importlib.metadata.PackageNotFoundError("punt-vox"),
+    ):
+        result = installed_version()
+
+    assert result == __version__

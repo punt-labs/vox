@@ -12,7 +12,6 @@ import base64
 import contextlib
 import hashlib
 import hmac
-import importlib.metadata
 import importlib.resources
 import json
 import logging
@@ -45,6 +44,7 @@ from punt_vox.normalize import normalize_for_speech
 from punt_vox.paths import (
     config_dir as _user_config_dir,
     ensure_user_dirs,
+    installed_version,
     log_dir as _user_log_dir,
     run_dir as _user_run_dir,
 )
@@ -817,27 +817,6 @@ class OnceDedup:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_daemon_version() -> str:
-    """Return the installed ``punt-vox`` package version.
-
-    Reads from ``importlib.metadata`` so the value reflects the wheel on
-    disk, not a hard-coded source constant. When the daemon is running
-    from an uninstalled source tree (typical in development), the
-    metadata lookup may fail — fall back to ``punt_vox.__version__`` in
-    that case.
-
-    Called once at voxd startup via ``DaemonContext.__init__`` and the
-    result is cached on the context so every health request is a plain
-    dict read, not a metadata scan.
-    """
-    try:
-        return importlib.metadata.version("punt-vox")
-    except importlib.metadata.PackageNotFoundError:
-        from punt_vox import __version__
-
-        return __version__
-
-
 class DaemonContext:
     """Shared mutable state for the voxd process."""
 
@@ -856,9 +835,9 @@ class DaemonContext:
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
         self.last_playback: dict[str, object] | None = None
         # Cached once at startup so /health does not hit importlib.metadata
-        # on every request. See ``_resolve_daemon_version`` for fallback
-        # semantics when running from an uninstalled source tree.
-        self.daemon_version: str = _resolve_daemon_version()
+        # on every request. See ``punt_vox.paths.installed_version`` for
+        # fallback semantics when running from an uninstalled source tree.
+        self.daemon_version: str = installed_version()
 
 
 # ---------------------------------------------------------------------------
