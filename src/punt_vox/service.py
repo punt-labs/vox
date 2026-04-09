@@ -418,12 +418,23 @@ def _kill_stale_daemon() -> bool:
 
 
 def _ensure_port_free() -> None:
-    """Kill stale daemon if present; abort if port remains occupied."""
+    """Kill stale daemon if present; abort if port remains occupied.
+
+    The post-kill re-check must target the ACTUAL port the daemon was
+    last known to bind, not ``DEFAULT_PORT``. ``_kill_stale_daemon``
+    already reads the port file — if the daemon was running on a
+    non-default port (e.g. someone set ``VOX_PORT=9001`` in the
+    systemd unit), checking ``DEFAULT_PORT`` here would trivially pass
+    even though the real port is still occupied. ``vox daemon restart``
+    is the first public code path to exercise this outside of
+    ``install()``, so the latent bug only now becomes reachable.
+    """
     _kill_stale_daemon()
-    pids = _find_pid_on_port(DEFAULT_PORT)
+    target_port = read_port_file() or DEFAULT_PORT
+    pids = _find_pid_on_port(target_port)
     if pids:
         msg = (
-            f"Port {DEFAULT_PORT} is still in use (PIDs: {pids})."
+            f"Port {target_port} is still in use (PIDs: {pids})."
             " Stop the process and retry."
         )
         raise SystemExit(msg)

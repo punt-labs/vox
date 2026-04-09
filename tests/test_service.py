@@ -742,6 +742,80 @@ def test_ensure_port_free_succeeds_when_clear(
     _ensure_port_free()  # Should not raise
 
 
+def test_ensure_port_free_uses_port_file_not_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-kill port re-check targets the port file, not ``DEFAULT_PORT``.
+
+    Regression guard: before the fix, ``_ensure_port_free`` called
+    ``_find_pid_on_port(DEFAULT_PORT)`` even though the daemon may have
+    been running on a non-default port recorded in the port file. A
+    daemon stuck on port 9999 would silently pass the contention check
+    because port 8421 was free.
+    """
+    captured: list[int] = []
+
+    def fake_find(port: int) -> list[int]:
+        captured.append(port)
+        return []
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: 9999)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: True)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    _ensure_port_free()
+
+    assert captured == [9999], (
+        f"_ensure_port_free checked the wrong port: expected [9999], got {captured}"
+    )
+
+
+def test_ensure_port_free_error_message_reports_actual_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SystemExit message must name the ACTUAL port, not DEFAULT_PORT.
+
+    Without this, the operator would go hunting for whatever is on
+    8421 when the contention is actually on a different port.
+    """
+
+    def fake_find(_port: int) -> list[int]:
+        return [5555]
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: 9999)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: False)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    with pytest.raises(SystemExit, match="Port 9999 is still in use"):
+        _ensure_port_free()
+
+
+def test_ensure_port_free_falls_back_to_default_when_port_file_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No port file on disk: fall back to ``DEFAULT_PORT`` for the re-check.
+
+    ``install()`` runs this helper on clean hosts where no daemon has
+    ever bound a port — ``read_port_file`` returns None. The fallback
+    preserves the install() flow.
+    """
+    from punt_vox.service import DEFAULT_PORT
+
+    captured: list[int] = []
+
+    def fake_find(port: int) -> list[int]:
+        captured.append(port)
+        return []
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: None)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: False)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    _ensure_port_free()
+
+    assert captured == [DEFAULT_PORT]
+
+
 # ---------------------------------------------------------------------------
 # _write_keys_env — path and permissions
 # ---------------------------------------------------------------------------
