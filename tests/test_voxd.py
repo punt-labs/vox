@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydub import AudioSegment  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
@@ -36,6 +39,26 @@ from punt_vox.voxd import (
 def _make_ctx() -> DaemonContext:
     """Build a DaemonContext without touching real files or auth."""
     return DaemonContext(auth_token=None, port=0)
+
+
+_VALID_MP3_BYTES: bytes | None = None
+
+
+def _get_valid_mp3_bytes() -> bytes:
+    """Return a cached slice of valid MP3 bytes.
+
+    ``pydub``'s ``_pad_audio_file`` in core.py feeds the synthesized
+    file to ffmpeg for silence-tail appending. ffmpeg rejects any file
+    that is not valid MP3, so stub providers must write real audio.
+    Generating 50ms of silence is cheap and cached.
+    """
+    global _VALID_MP3_BYTES
+    if _VALID_MP3_BYTES is None:
+        silence: Any = AudioSegment.silent(duration=50)  # pyright: ignore[reportUnknownMemberType]
+        buf = io.BytesIO()
+        silence.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
+        _VALID_MP3_BYTES = buf.getvalue()  # pyright: ignore[reportConstantRedefinition]
+    return _VALID_MP3_BYTES
 
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
@@ -584,6 +607,218 @@ class TestStderrTruncation:
         assert out.endswith("B")
         # Marker reports the dropped byte count.
         assert str(len(text) - _MAX_STDERR_LEN) in out
+
+
+class TestApiKeyPassthroughIntegration:
+    """End-to-end api_key flow: WebSocket -> _handle_record -> provider.
+
+    Verification of vox-a3e: a single user maintaining multiple provider
+    keys (key-A for billing project alpha, key-B for billing project
+    bravo) can scope a single synthesize/record call to a specific key
+    without leaking that key into the process environment beyond the
+    single request, and without cross-call contamination.
+
+    The test drives the real Starlette app via ``starlette.testclient``,
+    sends record messages over a real WebSocket, and registers a stub
+    provider via ``punt_vox.voxd.get_provider``. The stub inspects
+    ``os.environ[ELEVENLABS_API_KEY]`` at the moment the factory is
+    called — that is the exact point where the per-call key is visible
+    to the provider code. Recording the observed value proves the
+    passthrough is working and isolated per call.
+    """
+
+    def _build_stub_provider(self, observed: list[str | None]) -> type:
+        """Return a stub TTSProvider class that records the observed api key."""
+        from punt_vox.types import (
+            AudioProviderId,
+            AudioRequest,
+            AudioResult,
+            HealthCheck,
+        )
+
+        valid_mp3 = _get_valid_mp3_bytes()
+
+        class _StubProvider:
+            name = "elevenlabs"
+            default_voice = "matilda"
+            supports_expressive_tags = False
+
+            def __init__(self) -> None:
+                # Read env at factory time — this is the point at which
+                # voxd's ``_synthesize_to_file`` has mutated os.environ
+                # for a per-call key. Record whatever is there (including
+                # None when the caller did not pass ``api_key``).
+                observed.append(os.environ.get("ELEVENLABS_API_KEY"))
+
+            def synthesize(
+                self, request: AudioRequest, output_path: Path
+            ) -> AudioResult:
+                output_path.write_bytes(valid_mp3)
+                return AudioResult(
+                    path=output_path,
+                    text=request.text,
+                    provider=AudioProviderId.elevenlabs,
+                    voice="matilda",
+                )
+
+            def generate_audio(self, request: AudioRequest) -> AudioResult:
+                raise NotImplementedError
+
+            def generate_audios(self, requests: object) -> list[AudioResult]:
+                raise NotImplementedError
+
+            def resolve_voice(self, name: str, language: str | None = None) -> str:
+                return name or "matilda"
+
+            def get_default_voice(self, language: str) -> str:
+                return "matilda"
+
+            def list_voices(self, language: str | None = None) -> list[str]:
+                return ["matilda"]
+
+            def infer_language_from_voice(self, voice: str) -> str | None:
+                return None
+
+            def check_health(self) -> list[HealthCheck]:
+                return []
+
+        return _StubProvider
+
+    def _run_record(
+        self,
+        api_key: str | None,
+        observed: list[str | None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict[str, object]:
+        """Send a record message over a real WebSocket and return the response."""
+        from starlette.testclient import TestClient
+
+        from punt_vox.voxd import build_app
+
+        stub_provider_cls = self._build_stub_provider(observed)
+
+        def fake_get_provider(
+            name: str,
+            *,
+            config_path: object = None,
+            model: str | None = None,
+        ) -> object:
+            assert name == "elevenlabs"
+            return stub_provider_cls()
+
+        monkeypatch.setattr("punt_vox.voxd.get_provider", fake_get_provider)
+
+        # Disable the cache so every call reaches the stub factory.
+        def _cache_miss(_text: str, _voice: str, _provider: str) -> Path | None:
+            return None
+
+        def _cache_noop(_text: str, _voice: str, _provider: str, _path: Path) -> None:
+            return None
+
+        monkeypatch.setattr("punt_vox.voxd.cache_get", _cache_miss)
+        monkeypatch.setattr("punt_vox.voxd.cache_put", _cache_noop)
+
+        ctx = DaemonContext(auth_token=None, port=0)
+        app = build_app(ctx)
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "test-rec",
+            "text": "billable synthesis",
+            "provider": "elevenlabs",
+            "voice": "matilda",
+        }
+        if api_key is not None:
+            msg["api_key"] = api_key
+
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            ws.send_json(msg)
+            response: dict[str, object] = ws.receive_json()
+
+        return response
+
+    def test_first_call_key_reaches_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sending ``api_key=key-alpha`` exposes exactly that key to the provider."""
+        # Clear any ambient ELEVENLABS_API_KEY so the baseline is well-defined.
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        observed: list[str | None] = []
+
+        response = self._run_record("test-key-alpha-billing", observed, monkeypatch)
+
+        assert response.get("type") == "audio"
+        assert len(observed) == 1
+        assert observed[0] == "test-key-alpha-billing"
+
+    def test_second_call_key_does_not_leak_from_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two sequential calls with different keys: each provider sees its own.
+
+        This is the load-bearing invariant for single-user multi-key
+        billing isolation. If voxd leaked key-alpha into the second
+        call, the user would be billed under the wrong project.
+        """
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        observed: list[str | None] = []
+
+        # Call 1 — key alpha
+        self._run_record("test-key-alpha-billing", observed, monkeypatch)
+        # Call 2 — key bravo (fresh app instance, but shares os.environ)
+        self._run_record("test-key-bravo-billing", observed, monkeypatch)
+
+        assert observed == [
+            "test-key-alpha-billing",
+            "test-key-bravo-billing",
+        ]
+        # Neither key leaked back into the process environment after
+        # the calls returned.
+        assert os.environ.get("ELEVENLABS_API_KEY") is None
+
+    def test_no_api_key_falls_back_to_ambient_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``api_key=None`` leaves whatever is already in os.environ alone.
+
+        This is the keys.env-fallback path: when the caller does not
+        pass a per-call key, voxd does not touch ``os.environ``, so
+        the provider factory sees whatever the keys.env loader put
+        there at daemon startup (or whatever the current test ambient
+        env has). The key invariant is that no cross-call mutation
+        happens.
+        """
+        # Set a sentinel ambient key — the provider should see it.
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "ambient-fallback-key")
+        observed: list[str | None] = []
+
+        self._run_record(None, observed, monkeypatch)
+
+        assert len(observed) == 1
+        assert observed[0] == "ambient-fallback-key"
+        # Ambient key still present — no cross-call mutation.
+        assert os.environ.get("ELEVENLABS_API_KEY") == "ambient-fallback-key"
+
+    def test_previously_set_ambient_key_restored_after_per_call_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Per-call key is restored to the ambient value after the call.
+
+        voxd's ``_synthesize_to_file`` saves the old env value, sets
+        the per-call key, runs the provider, then restores the old
+        value in a ``finally`` block. This test verifies the restore.
+        """
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "ambient-persistent-key")
+        observed: list[str | None] = []
+
+        self._run_record("per-call-override", observed, monkeypatch)
+
+        assert observed == ["per-call-override"]
+        # After the call, the original ambient value is back.
+        assert os.environ.get("ELEVENLABS_API_KEY") == "ambient-persistent-key"
 
 
 class TestSynthesizeFailFast:
