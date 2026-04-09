@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydub import AudioSegment  # pyright: ignore[reportMissingTypeStubs]
+from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
@@ -39,26 +38,6 @@ from punt_vox.voxd import (
 def _make_ctx() -> DaemonContext:
     """Build a DaemonContext without touching real files or auth."""
     return DaemonContext(auth_token=None, port=0)
-
-
-_VALID_MP3_BYTES: bytes | None = None
-
-
-def _get_valid_mp3_bytes() -> bytes:
-    """Return a cached slice of valid MP3 bytes.
-
-    ``pydub``'s ``_pad_audio_file`` in core.py feeds the synthesized
-    file to ffmpeg for silence-tail appending. ffmpeg rejects any file
-    that is not valid MP3, so stub providers must write real audio.
-    Generating 50ms of silence is cheap and cached.
-    """
-    global _VALID_MP3_BYTES
-    if _VALID_MP3_BYTES is None:
-        silence: Any = AudioSegment.silent(duration=50)  # pyright: ignore[reportUnknownMemberType]
-        buf = io.BytesIO()
-        silence.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
-        _VALID_MP3_BYTES = buf.getvalue()  # pyright: ignore[reportConstantRedefinition]
-    return _VALID_MP3_BYTES
 
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
