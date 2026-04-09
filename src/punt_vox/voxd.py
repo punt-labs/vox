@@ -1520,10 +1520,7 @@ async def _handle_record(
     # instead of a bound import so tests that monkey-patch
     # ``punt_vox.cache.CACHE_DIR`` to a tmp dir stay in sync with the
     # handler's view of what counts as a cache-owned path.
-    try:
-        is_cache_owned = output_path.is_relative_to(_cache_module.CACHE_DIR)
-    except ValueError:  # pragma: no cover - is_relative_to is py3.9+, guard anyway
-        is_cache_owned = False
+    is_cache_owned = output_path.is_relative_to(_cache_module.CACHE_DIR)
     if not is_cache_owned:
         output_path.unlink(missing_ok=True)  # clean up temp file
     encoded = base64.b64encode(audio_data).decode("ascii")
