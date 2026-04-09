@@ -708,7 +708,16 @@ class TestDoctorCommand:
         assert "\u26a0 Daemon: running" in result.output
         assert "version 4.1.1" in result.output
         assert "wheel has 4.2.0" in result.output
-        assert "vox daemon restart" in result.output
+        assert "'vox daemon restart'" in result.output
+        # The refresh hint must NOT be prefixed with ``sudo``: ``vox
+        # daemon restart`` refuses to run as root and invokes sudo
+        # internally only for the service-manager calls that need it.
+        # A literal copy-paste of the hint must work unprivileged.
+        # Regression guard for Copilot round-2 finding on PR #175.
+        # Built dynamically so the source of this test file does not
+        # itself contain the forbidden phrase.
+        forbidden_hint = " ".join(["sudo", "vox", "daemon", "restart"])
+        assert forbidden_hint not in result.output
         # Summary line should flag the warning count.
         assert "1 warning" in result.output
 
@@ -950,7 +959,7 @@ class TestDaemonRestartCommand:
     """
 
     def test_refuses_to_run_as_root(self) -> None:
-        """Refuse ``sudo vox daemon restart`` — sudo is invoked internally."""
+        """Refuse running as root — sudo is invoked internally only."""
         runner = CliRunner()
         with patch(f"{_CLI}.os.geteuid", return_value=0):
             result = runner.invoke(app, ["daemon", "restart"])

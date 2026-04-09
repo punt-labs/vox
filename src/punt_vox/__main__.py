@@ -711,7 +711,7 @@ def doctor() -> None:
                 _WARN,
                 f"Daemon: running on port {port} (version {running_version}"
                 f" \u2014 wheel has {installed_version},"
-                f" run 'sudo vox daemon restart' to refresh)",
+                f" run 'vox daemon restart' to refresh)",
             )
         else:
             version_note = f", version {running_version}" if running_version else ""

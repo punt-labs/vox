@@ -132,10 +132,10 @@ If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` ca
 ```bash
 # macOS or Linux — identical command now
 uv tool upgrade punt-vox
-sudo vox daemon restart
+vox daemon restart
 ```
 
-`vox daemon restart` stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/voxd.log` on failure.
+Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/voxd.log` on failure.
 
 To confirm the daemon and the installed wheel agree:
 
@@ -143,7 +143,7 @@ To confirm the daemon and the installed wheel agree:
 vox doctor
 ```
 
-`vox doctor` now reports the running daemon version alongside the reachability check. When the running daemon does not match the wheel installed on disk, doctor emits a yellow `⚠ Daemon: running ... (version X — wheel has Y, run 'sudo vox daemon restart' to refresh)` warning. Exit code stays 0 — the daemon is still functional — but the warning catches stale daemons at smoke-test time instead of in production.
+`vox doctor` now reports the running daemon version alongside the reachability check. When the running daemon does not match the wheel installed on disk, doctor emits a yellow `⚠ Daemon: running ... (version X — wheel has Y, run 'vox daemon restart' to refresh)` warning. Exit code stays 0 — the daemon is still functional — but the warning catches stale daemons at smoke-test time instead of in production.
 
 ## Features
 
