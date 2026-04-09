@@ -4,14 +4,25 @@ Caches synthesized audio files by (text, voice, provider) tuple so that
 repeated hook invocations with the same quip phrase skip the TTS API
 entirely.  Content-addressed by hash.
 
-The anonymous path (``api_key is None``) uses MD5 for backward
-compatibility with cache entries written before per-call api_key support
-existed. The api_key path uses SHA-256 because static analyzers (CodeQL
-``py/weak-sensitive-data-hashing``) flag MD5 as inappropriate for any
-digest that ingests secret material, even for non-password uses like
-filenames. The two digests have different hex lengths (32 vs 64) so the
-same cache directory holds both without any risk of collision between
-paths.
+This module serves the **anonymous** cache only — calls that use the
+ambient provider credential from ``keys.env``. Per-call provider
+credential overrides (vox-a3e single-user multi-key billing isolation)
+bypass this module entirely at the voxd call site: see the cache
+guards in ``_synthesize_to_file`` in ``src/punt_vox/voxd.py``. That
+design keeps all sensitive credential material out of any digest this
+module computes. CodeQL's ``py/weak-sensitive-data-hashing`` rule
+(correctly) flags any regular cryptographic hash — MD5, SHA-1,
+SHA-256, and friends — as inappropriate for hashing password-class
+input, and the only lint-clean alternatives are password KDFs
+(Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts) whose
+per-call cost is unacceptable for a cache filename computation.
+
+The bypass also closes a correctness hazard an earlier draft of PR
+#175 had: a per-call billing scope that accepts cached bytes from
+another scope is violating the whole point of the isolation. Scripts
+that want cache hits for repeated quips should use ``keys.env`` (the
+anonymous path); scripts that want billing attribution should accept
+that every call re-synthesizes.
 
 No dependencies on other vox modules — this is a standalone cache layer.
 """
@@ -34,73 +45,37 @@ CACHE_DIR = VOX_DATA_DIR / "cache"
 MAX_ENTRIES = 500
 
 
-def cache_key(
-    text: str,
-    voice: str | None,
-    provider: str | None,
-    api_key: str | None = None,
-) -> str:
-    """Compute a deterministic cache filename from synthesis parameters.
+def cache_key(text: str, voice: str | None, provider: str | None) -> str:
+    """Compute the cache filename stem for a synthesis request.
 
-    When ``api_key`` is ``None`` (the default anonymous path, including
-    the hook quip cache), the digest is
-    ``md5("text\\0voice\\0provider")`` — **exactly** the three-segment
-    payload used before per-call api_key support existed. Cache entries
-    written by older vox versions therefore remain reachable after
+    Anonymous-call cache only. Per-call credential overrides bypass
+    the cache at the voxd call site (see the module docstring and
+    the cache guards in ``_synthesize_to_file`` in
+    ``src/punt_vox/voxd.py``) so no sensitive data ever reaches this
+    function. The MD5 digest is byte-identical to pre-v4.2.1 format
+    so existing on-disk cache entries remain reachable after
     upgrade. Filename shape: ``<32 hex chars>.mp3``.
-
-    When ``api_key`` is set (per-call billing isolation, vox-a3e), the
-    digest is ``sha256("text\\0voice\\0provider\\0api_key")``. SHA-256
-    is used instead of MD5 because CodeQL's
-    ``py/weak-sensitive-data-hashing`` rule — correctly — flags MD5 as
-    inappropriate for any hashing that ingests secret material, even
-    for non-password use cases like filenames. SHA-256's collision
-    resistance also eliminates any theoretical risk of a
-    key-substitution attack producing a cache-key collision. Filename
-    shape: ``<64 hex chars>.mp3``.
-
-    The two digest lengths differ (32 hex vs 64 hex), so the anonymous
-    and per-key filename spaces cannot collide and the same cache
-    directory holds both without a subdirectory split.
-
-    An empty string is normalized to ``None`` as defense-in-depth: the
-    CLI already rejects ``--api-key ""`` via ``typer.BadParameter``
-    before any call reaches this function, but normalizing here ensures
-    a future caller that bypasses the CLI still falls into the
-    backward-compat MD5 path for effectively-anonymous calls instead of
-    silently landing in a separate SHA-256 partition keyed on the empty
-    string.
     """
-    if not api_key:
-        api_key = None
-    if api_key is None:
-        payload = f"{text}\0{voice or ''}\0{provider or ''}".encode()
-        # MD5 is deliberate on this branch: the input contains no
-        # sensitive material (text/voice/provider are non-secret), and
-        # the digest must stay byte-identical to pre-v4.2.1 so existing
-        # on-disk cache entries remain reachable after upgrade. The
-        # api_key branch below uses SHA-256.
-        digest = hashlib.md5(payload).hexdigest()
-        return f"{digest}.mp3"
-    payload = f"{text}\0{voice or ''}\0{provider or ''}\0{api_key}".encode()
-    digest = hashlib.sha256(payload).hexdigest()
+    payload = f"{text}\0{voice or ''}\0{provider or ''}".encode()
+    # MD5 is deliberate here: the input contains no sensitive material
+    # (text/voice/provider are non-secret), and the digest must stay
+    # byte-identical to pre-v4.2.1 so existing on-disk cache entries
+    # remain reachable after upgrade. Per-call credential overrides
+    # never reach this function — see the module docstring.
+    digest = hashlib.md5(payload).hexdigest()
     return f"{digest}.mp3"
 
 
-def cache_get(
-    text: str,
-    voice: str | None,
-    provider: str | None,
-    api_key: str | None = None,
-) -> Path | None:
+def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None:
     """Look up a cached MP3 file.
 
     Returns the path if the file exists and is non-empty.  Touches the
     file's mtime on hit so LRU eviction works correctly.  Returns None
-    on miss. ``api_key`` partitions the cache per provider credential
-    — see ``cache_key`` for the full rationale.
+    on miss. Anonymous cache only — per-call credential overrides
+    bypass this layer entirely at the voxd call site so no sensitive
+    data ever reaches ``cache_key``.
     """
-    path = CACHE_DIR / cache_key(text, voice, provider, api_key)
+    path = CACHE_DIR / cache_key(text, voice, provider)
     if not path.exists():
         return None
     if path.stat().st_size == 0:
@@ -117,20 +92,20 @@ def cache_put(
     voice: str | None,
     provider: str | None,
     source: Path,
-    api_key: str | None = None,
 ) -> Path | None:
     """Copy a synthesized MP3 into the cache.
 
     Returns the cached path on success, or None if the source file
     does not exist or is empty.  Evicts oldest entries when the cache
-    exceeds ``MAX_ENTRIES``. ``api_key`` partitions the cache per
-    provider credential — see ``cache_key`` for the full rationale.
+    exceeds ``MAX_ENTRIES``. Anonymous cache only — per-call
+    credential overrides bypass this layer entirely at the voxd call
+    site so no sensitive data ever reaches ``cache_key``.
     """
     if not source.exists() or source.stat().st_size == 0:
         return None
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    dest = CACHE_DIR / cache_key(text, voice, provider, api_key)
+    dest = CACHE_DIR / cache_key(text, voice, provider)
 
     # Reject symlinks to prevent local symlink attacks
     if dest.is_symlink():

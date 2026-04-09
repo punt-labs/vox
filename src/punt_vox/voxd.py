@@ -38,6 +38,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
@@ -1049,11 +1050,19 @@ async def _synthesize_to_file(
     style: float | None,
     speaker_boost: bool | None,
     api_key: str | None,
+    request_id: str = "",
 ) -> Path:
     """Run TTS synthesis and return the output path.
 
     Handles API key injection, provider construction, and caching.
     Raises on failure.
+
+    When ``api_key`` is set, the cache is bypassed on both the lookup
+    and the store so the per-call billing scope (vox-a3e) never reads
+    bytes that were synthesized under a different key and never leaves
+    bytes behind that a later call on a different key could reuse. The
+    anonymous path (``api_key is None``) uses the MD5-keyed on-disk
+    cache unchanged. See ``src/punt_vox/cache.py`` for the rationale.
     """
     resolved_voice = voice or ""
 
@@ -1062,13 +1071,20 @@ async def _synthesize_to_file(
     # would otherwise be eaten by normalization).
     normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
 
-    # Check cache first. Include api_key in the digest so per-call key
-    # overrides do not collide with anonymous or other-key cache entries
-    # — vox-a3e requires each provider key to see its own synthesis
-    # invocation for billing attribution to work.
-    cached = cache_get(normalized, resolved_voice, provider_name, api_key)
-    if cached is not None:
-        return cached
+    # Cache lookup: anonymous calls only. Per-call api_key scopes
+    # bypass the cache entirely so a billing-isolated call never
+    # reads bytes synthesized under a different key (or no key).
+    # CodeQL py/weak-sensitive-data-hashing also required that we
+    # never feed the api_key into any digest in cache.py.
+    if api_key is None:
+        cached = cache_get(normalized, resolved_voice, provider_name)
+        if cached is not None:
+            return cached
+    else:
+        logger.debug(
+            "Per-call api_key set; bypassing cache for this request (id=%s)",
+            request_id,
+        )
 
     # Serialize env mutation + synthesis to avoid concurrent os.environ races.
     async with _env_lock:
@@ -1136,10 +1152,12 @@ async def _synthesize_to_file(
                 len(text),
             )
 
-            # Only cache verified-good output. The api_key partitions
-            # the cache per credential so billing isolation (vox-a3e)
-            # survives subsequent identical-text requests on other keys.
-            cache_put(normalized, resolved_voice, provider_name, output_path, api_key)
+            # Only cache verified-good output, and only on the
+            # anonymous path. Per-call api_key scopes skip cache_put
+            # so a billing-isolated call can never leave bytes behind
+            # that a later call on a different key could reuse.
+            if api_key is None:
+                cache_put(normalized, resolved_voice, provider_name, output_path)
             return output_path
         finally:
             # Restore API key
@@ -1436,6 +1454,7 @@ async def _handle_synthesize(
             style,
             speaker_boost,
             api_key,
+            request_id=request_id,
         )
     except Exception as exc:
         _rollback_dedup()
@@ -1504,6 +1523,7 @@ async def _handle_record(
             style,
             speaker_boost,
             api_key,
+            request_id=request_id,
         )
     except Exception as exc:
         logger.exception("Record synthesis failed for id=%s", request_id)
@@ -1513,7 +1533,20 @@ async def _handle_record(
         return
 
     audio_data = output_path.read_bytes()
-    output_path.unlink(missing_ok=True)  # clean up temp file
+    # Only unlink tempfiles produced by a fresh synthesis. Cache-hit
+    # paths return the on-disk entry directly, and removing it would
+    # poison every subsequent identical request — including the
+    # anti-poison invariant TestCacheApiKeyBypass exercises. The
+    # CACHE_DIR lookup goes through the module (``_cache_module``)
+    # instead of a bound import so tests that monkey-patch
+    # ``punt_vox.cache.CACHE_DIR`` to a tmp dir stay in sync with the
+    # handler's view of what counts as a cache-owned path.
+    try:
+        is_cache_owned = output_path.is_relative_to(_cache_module.CACHE_DIR)
+    except ValueError:  # pragma: no cover - is_relative_to is py3.9+, guard anyway
+        is_cache_owned = False
+    if not is_cache_owned:
+        output_path.unlink(missing_ok=True)  # clean up temp file
     encoded = base64.b64encode(audio_data).decode("ascii")
     await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
 

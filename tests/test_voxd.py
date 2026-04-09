@@ -832,22 +832,33 @@ class TestApiKeyPassthroughIntegration:
         assert os.environ.get("ELEVENLABS_API_KEY") == "ambient-persistent-key"
 
 
-class TestCacheApiKeyIsolation:
-    """Cache partition by api_key — vox-a3e billing isolation regression.
+class TestCacheApiKeyBypass:
+    """Cache bypass when ``api_key`` is set — vox-a3e billing isolation.
 
-    Before the fix, the on-disk cache key digest was
-    ``md5(text|voice|provider)``. A second call with identical
-    text/voice/provider but a different ``api_key`` hit the cached bytes
-    from the first call and the provider was never invoked — so the
-    second key was never charged. This completely defeated the single-
-    user multi-key billing scenario the per-call ``api_key`` feature
-    exists to support.
+    The round-3 design tried to *partition* the cache by ``api_key`` by
+    folding the key into the digest. CodeQL's
+    ``py/weak-sensitive-data-hashing`` rule correctly flagged that: a
+    regular cryptographic hash is inappropriate for hashing password-
+    class material even for a filename-only use case, and the only
+    lint-clean alternatives are password KDFs (Argon2, scrypt, bcrypt,
+    PBKDF2) whose per-call cost is unacceptable for cache filenames.
 
-    These tests drive the real voxd WebSocket code path against the
-    REAL cache (``cache_get``/``cache_put`` are not mocked). Each test
-    patches ``punt_vox.cache.CACHE_DIR`` to a tmp directory so no user
-    state is touched, counts provider instantiations, and verifies the
-    partition invariant directly from observable behavior.
+    Round 4 switches to **cache bypass**: per-call api_key calls skip
+    ``cache_get`` and ``cache_put`` entirely at the voxd call site,
+    so no sensitive data ever reaches ``cache.py``. The correctness
+    story also improves — a billing-isolated call can never read bytes
+    synthesized under a different key, and can never leave bytes
+    behind that a different key could later reuse.
+
+    These tests drive the real voxd WebSocket code path. The bypass
+    tests use spies on ``cache_get``/``cache_put`` to prove the
+    bypass-not-call behavior directly. The no-poison test uses the
+    real on-disk cache (``cache.py``'s ``cache_get``/``cache_put``
+    untouched, ``CACHE_DIR`` pointed at a tmp dir) to prove that an
+    api_key synthesis does not disturb the anonymous cache entry for
+    the same text. The provider-distinct test is inherited from the
+    round-3 suite and locks in that per-call api_key values still
+    reach the provider correctly.
     """
 
     def _build_counting_provider(self, calls: list[str | None]) -> type:
@@ -917,9 +928,9 @@ class TestCacheApiKeyIsolation:
     ) -> dict[str, object]:
         """Send a ``record`` message over a real WebSocket and return the response.
 
-        Does NOT patch ``cache_get``/``cache_put`` — the real cache is
-        what's under test. The caller is responsible for pointing
-        ``punt_vox.cache.CACHE_DIR`` at a tmp directory via monkeypatch.
+        Does NOT patch ``cache_get``/``cache_put`` — the caller is
+        responsible for patching them (with spies or with a tmp
+        ``CACHE_DIR``) before invoking this helper.
         """
         from starlette.testclient import TestClient
 
@@ -960,23 +971,187 @@ class TestCacheApiKeyIsolation:
 
         return response
 
-    def test_same_text_different_keys_hit_provider_twice(
+    def test_api_key_call_bypasses_cache_get_and_put(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Two calls with identical text but different keys: both reach the provider.
+        """Per-call api_key synthesis must not call cache_get or cache_put.
 
-        This is the load-bearing regression. Before the fix, the second
-        call returned a cache hit and the provider was never invoked on
-        key B — meaning key B was never charged and billing isolation
-        silently broke.
+        Spy-based assertion (not mock-return-value): we replace the two
+        cache entry points with functions that record their call args
+        in a list, then drive the real voxd WebSocket handler twice —
+        once anonymously, once with an api_key. The anonymous call
+        MUST hit both spies; the api_key call MUST hit neither.
+
+        Spies record actual behavior directly. A mock-return-value
+        approach would only prove the code handled whatever fake
+        return value the test injected, which does not distinguish
+        "the bypass works" from "cache_get was called and returned
+        None".
+        """
+        # Real CACHE_DIR pointed at tmp so the backing cache.py code
+        # never touches user state if a spy somehow lets the real
+        # functions through.
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+
+        get_calls: list[tuple[object, ...]] = []
+        put_calls: list[tuple[object, ...]] = []
+
+        def spy_cache_get(*args: object) -> Path | None:
+            get_calls.append(args)
+            return None  # Never hit — force synthesis on the anon path.
+
+        def spy_cache_put(*args: object) -> Path | None:
+            put_calls.append(args)
+            # Return the source path unchanged so the handler keeps
+            # using it for the record response.
+            source = args[3]
+            assert isinstance(source, Path)
+            return source
+
+        monkeypatch.setattr("punt_vox.voxd.cache_get", spy_cache_get)
+        monkeypatch.setattr("punt_vox.voxd.cache_put", spy_cache_put)
+
+        calls: list[str | None] = []
+
+        # Call 1: anonymous — both spies MUST fire.
+        resp1 = self._run_record(
+            api_key=None,
+            text="bypass test phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp1.get("type") == "audio"
+        assert len(get_calls) == 1, (
+            f"anonymous call: expected cache_get spy to fire once, "
+            f"got {len(get_calls)}: {get_calls}"
+        )
+        assert len(put_calls) == 1, (
+            f"anonymous call: expected cache_put spy to fire once, "
+            f"got {len(put_calls)}: {put_calls}"
+        )
+
+        # Call 2: api_key set — NEITHER spy may fire. The cache_get /
+        # cache_put call counts stay locked at 1 (from call 1).
+        resp2 = self._run_record(
+            api_key="sk_bypass_test",
+            text="bypass test phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp2.get("type") == "audio"
+        assert len(get_calls) == 1, (
+            f"api_key call must bypass cache_get, got {len(get_calls)} "
+            f"total calls: {get_calls}"
+        )
+        assert len(put_calls) == 1, (
+            f"api_key call must bypass cache_put, got {len(put_calls)} "
+            f"total calls: {put_calls}"
+        )
+        # And the provider was invoked twice total (once per call),
+        # proving the api_key call actually synthesized rather than
+        # returning an early short-circuit.
+        assert len(calls) == 2, (
+            f"expected provider called twice (once anon, once api_key), "
+            f"got {len(calls)}: {calls}"
+        )
+
+    def test_api_key_call_does_not_poison_anonymous_cache(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An api_key synthesis must not disturb the anonymous cache entry.
+
+        Sequence:
+          1. Anonymous call — provider runs, writes cache entry for
+             the (text, voice, provider) tuple.
+          2. Anonymous call (same text) — cache hit, provider NOT
+             called again.
+          3. api_key call (same text) — cache BYPASSED, provider IS
+             called (proving bypass-not-read).
+          4. Anonymous call (same text) — cache hit from step 1 is
+             STILL REACHABLE (proving bypass-not-write: the api_key
+             call did not overwrite or evict the anon entry).
+
+        Uses the real on-disk cache module (not mocked) with
+        ``CACHE_DIR`` redirected to a tmp dir.
+        """
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+        calls: list[str | None] = []
+
+        # Step 1: anonymous, cold cache — provider runs.
+        resp1 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp1.get("type") == "audio"
+        assert len(calls) == 1, f"step 1 should synthesize, got calls={calls}"
+
+        # Step 2: anonymous again — cache hit, no provider call.
+        resp2 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp2.get("type") == "audio"
+        assert len(calls) == 1, (
+            f"step 2 should hit cache (no new provider call), got calls={calls}"
+        )
+
+        # Step 3: api_key set — cache BYPASSED, provider runs again.
+        resp3 = self._run_record(
+            api_key="sk_poison_test",
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp3.get("type") == "audio"
+        assert len(calls) == 2, (
+            f"step 3: api_key call must bypass cache and synthesize, "
+            f"expected 2 provider calls total, got calls={calls}"
+        )
+
+        # Step 4: anonymous again — the original cache entry from step
+        # 1 must STILL be reachable. If the api_key call had poisoned
+        # the anon cache (e.g. overwritten the file or removed it),
+        # we would see a 3rd provider call here.
+        resp4 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp4.get("type") == "audio"
+        assert len(calls) == 2, (
+            f"step 4: anonymous cache entry was POISONED by the api_key "
+            f"call; anon call should still hit cache, got calls={calls}"
+        )
+
+    def test_per_call_keys_reach_provider_distinct(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Two consecutive api_key calls reach the provider with the right key.
+
+        This locks in the core billing-isolation invariant: each
+        per-call api_key value is visible to the provider factory at
+        construction time, and the two values do not cross-contaminate.
+        Both calls use the same text so the assertion would fail if a
+        future refactor accidentally reintroduced a shared cache across
+        api_key scopes.
         """
         monkeypatch.setenv("ELEVENLABS_API_KEY", "")
         monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
         calls: list[str | None] = []
 
-        # Call 1 — key alpha
         resp1 = self._run_record(
             api_key="sk_A",
             text="billable phrase",
@@ -984,13 +1159,7 @@ class TestCacheApiKeyIsolation:
             monkeypatch=monkeypatch,
         )
         assert resp1.get("type") == "audio"
-        assert len(calls) == 1, (
-            f"after key A, expected provider called 1x, got {len(calls)}: {calls}"
-        )
 
-        # Call 2 — key bravo, identical text. A cache hit here would
-        # mean the provider never sees key B and billing isolation is
-        # broken. The fix requires provider to be called a second time.
         resp2 = self._run_record(
             api_key="sk_B",
             text="billable phrase",
@@ -998,83 +1167,10 @@ class TestCacheApiKeyIsolation:
             monkeypatch=monkeypatch,
         )
         assert resp2.get("type") == "audio"
-        assert len(calls) == 2, (
-            f"CACHE COLLISION: key B got a cache hit from key A; "
-            f"provider call count {len(calls)}: {calls}"
-        )
-        # Each factory saw its own key at construction time.
-        assert calls == ["sk_A", "sk_B"]
 
-    def test_same_text_same_key_hits_cache(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        """Two calls with identical text AND identical key: second is a cache hit.
-
-        Same key means same billing scope, so the cache should do its
-        normal de-duplication job and avoid a redundant provider call.
-        """
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "")
-        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
-        calls: list[str | None] = []
-
-        # Call 1 — key alpha, provider runs, writes cache entry.
-        resp1 = self._run_record(
-            api_key="sk_A",
-            text="billable phrase",
-            calls=calls,
-            monkeypatch=monkeypatch,
-        )
-        assert resp1.get("type") == "audio"
-        assert len(calls) == 1
-
-        # Call 2 — same key, same text. Should be a cache hit → provider
-        # factory is NOT called a second time.
-        resp2 = self._run_record(
-            api_key="sk_A",
-            text="billable phrase",
-            calls=calls,
-            monkeypatch=monkeypatch,
-        )
-        assert resp2.get("type") == "audio"
-        assert len(calls) == 1, (
-            f"expected cache hit on repeat key-A call, provider calls={calls}"
-        )
-
-    def test_none_api_key_backward_compat(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        """Two calls with ``api_key=None``: the second hits the cache.
-
-        Anonymous calls (the hook path and most CLI usage) must not
-        lose cache efficiency. The fix includes an empty-string segment
-        in the digest so existing anonymous entries still hit.
-        """
-        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
-        calls: list[str | None] = []
-
-        resp1 = self._run_record(
-            api_key=None,
-            text="anonymous phrase",
-            calls=calls,
-            monkeypatch=monkeypatch,
-        )
-        assert resp1.get("type") == "audio"
-        assert len(calls) == 1
-
-        resp2 = self._run_record(
-            api_key=None,
-            text="anonymous phrase",
-            calls=calls,
-            monkeypatch=monkeypatch,
-        )
-        assert resp2.get("type") == "audio"
-        assert len(calls) == 1, (
-            f"anonymous repeat call should hit cache, provider calls={calls}"
+        # Two distinct provider constructions, each seeing its own key.
+        assert calls == ["sk_A", "sk_B"], (
+            f"expected provider constructions to see ['sk_A', 'sk_B'], got {calls}"
         )
 
 

@@ -284,6 +284,10 @@ error. This is **not** multi-tenant isolation — vox is a single-user
 tool. The feature is for attributing synthesis cost to the right
 project within one user's account, not for isolating tenants.
 
+Per-call `api_key` calls bypass the synthesis cache so every
+invocation reaches the provider; use anonymous calls (`keys.env`) for
+cache hits.
+
 ## Architecture
 
 ```
