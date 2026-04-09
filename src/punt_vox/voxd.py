@@ -12,6 +12,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import importlib.metadata
 import importlib.resources
 import json
 import logging
@@ -814,6 +815,27 @@ class OnceDedup:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_daemon_version() -> str:
+    """Return the installed ``punt-vox`` package version.
+
+    Reads from ``importlib.metadata`` so the value reflects the wheel on
+    disk, not a hard-coded source constant. When the daemon is running
+    from an uninstalled source tree (typical in development), the
+    metadata lookup may fail — fall back to ``punt_vox.__version__`` in
+    that case.
+
+    Called once at voxd startup via ``DaemonContext.__init__`` and the
+    result is cached on the context so every health request is a plain
+    dict read, not a metadata scan.
+    """
+    try:
+        return importlib.metadata.version("punt-vox")
+    except importlib.metadata.PackageNotFoundError:
+        from punt_vox import __version__
+
+        return __version__
+
+
 class DaemonContext:
     """Shared mutable state for the voxd process."""
 
@@ -831,6 +853,10 @@ class DaemonContext:
         self.client_count: int = 0
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
         self.last_playback: dict[str, object] | None = None
+        # Cached once at startup so /health does not hit importlib.metadata
+        # on every request. See ``_resolve_daemon_version`` for fallback
+        # semantics when running from an uninstalled source tree.
+        self.daemon_version: str = _resolve_daemon_version()
 
 
 # ---------------------------------------------------------------------------
@@ -1572,20 +1598,24 @@ def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
     """Return the full diagnostic health payload for authenticated callers.
 
     Adds the audio environment snapshot, the resolved player binary, the
-    last playback result, and the running process id. Used only by the
-    WebSocket health handler, which is gated by the auth token.
+    last playback result, the running process id, and the cached daemon
+    version. Used only by the WebSocket health handler, which is gated
+    by the auth token.
 
     The ``pid`` field is used by ``vox daemon restart`` to confirm the
-    daemon has come back up as a fresh process, and lets the caller log
-    a concrete pid in the success message. It is not exposed on the
-    unauthenticated HTTP ``/health`` route — the minimal payload stays
-    minimal.
+    daemon has come back up as a fresh process. The ``daemon_version``
+    field is used by ``vox doctor`` to warn when the running daemon
+    does not match the wheel installed on disk (vox-nmb). Neither is
+    exposed on the unauthenticated HTTP ``/health`` route — version
+    info is a fingerprinting aid for targeted exploitation, and the
+    minimal payload stays minimal.
     """
     payload = _health_payload_minimal(ctx)
     payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
     payload["player_binary"] = _player_binary_path()
     payload["last_playback"] = ctx.last_playback
     payload["pid"] = os.getpid()
+    payload["daemon_version"] = ctx.daemon_version
     return payload
 
 

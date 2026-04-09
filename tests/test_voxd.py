@@ -173,6 +173,53 @@ class TestHealthPayloadFull:
         assert "PULSE_SERVER" in audio_env
         assert "DBUS_SESSION_BUS_ADDRESS" in audio_env
 
+    def test_includes_daemon_version_matching_installed_package(self) -> None:
+        """Authenticated payload carries daemon_version from importlib.metadata.
+
+        This is the server-side half of the vox-nmb fix: ``vox doctor``
+        reads this field and compares it against the wheel installed on
+        disk, warning the user if they diverge. The field must match
+        ``importlib.metadata.version("punt-vox")`` so the comparison is
+        meaningful.
+        """
+        import importlib.metadata
+
+        ctx = _make_ctx()
+        payload = _health_payload_full(ctx)
+
+        assert "daemon_version" in payload
+        # The context caches the version at init — verify it matches the
+        # installed wheel.
+        try:
+            expected = importlib.metadata.version("punt-vox")
+        except importlib.metadata.PackageNotFoundError:
+            from punt_vox import __version__
+
+            expected = __version__
+        assert payload["daemon_version"] == expected
+
+    def test_daemon_version_cached_on_context(self) -> None:
+        """DaemonContext caches the version once at init — not per request."""
+        ctx = _make_ctx()
+        # Mutate the cached value; subsequent health calls must reflect
+        # the cached state, proving there's no per-call metadata lookup.
+        ctx.daemon_version = "99.99.99-test-sentinel"
+        payload = _health_payload_full(ctx)
+        assert payload["daemon_version"] == "99.99.99-test-sentinel"
+
+    def test_includes_pid(self) -> None:
+        """Authenticated payload includes os.getpid() so restart can verify.
+
+        ``vox daemon restart`` reads this field to confirm the daemon
+        came back up and surfaces the new pid in the success message.
+        """
+        import os as _os
+
+        ctx = _make_ctx()
+        payload = _health_payload_full(ctx)
+        assert "pid" in payload
+        assert payload["pid"] == _os.getpid()
+
     def test_unset_audio_env_uses_sentinel(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -214,6 +261,35 @@ class TestHealthPayloadMinimal:
         assert payload["status"] == "ok"
         assert "uptime_seconds" in payload
         assert "queued" in payload
+
+    def test_excludes_daemon_version_and_pid(self) -> None:
+        """Public /health must not fingerprint the running version or pid.
+
+        Exposing ``daemon_version`` to anonymous callers makes it trivial
+        to identify stale daemons running exploitable versions.
+        ``pid`` is likewise a diagnostic-only detail. Both fields are
+        authenticated-only.
+        """
+        ctx = _make_ctx()
+        payload = _health_payload_minimal(ctx)
+
+        assert "daemon_version" not in payload
+        assert "pid" not in payload
+
+    def test_http_health_route_excludes_daemon_version(self) -> None:
+        """The HTTP /health response body must not carry daemon_version."""
+        import json
+
+        ctx = _make_ctx()
+        ctx.daemon_version = "1.2.3-fingerprint-sentinel"
+        request = MagicMock()
+        request.app.state.ctx = ctx
+
+        response = asyncio.run(_health_route(request))
+        body = json.loads(bytes(response.body))
+
+        assert "daemon_version" not in body
+        assert "1.2.3-fingerprint-sentinel" not in bytes(response.body).decode()
 
     def test_http_health_route_returns_minimal_payload(self) -> None:
         import json
