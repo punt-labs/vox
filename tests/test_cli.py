@@ -151,12 +151,34 @@ class TestUnmuteCommand:
         assert result_json.exit_code == 0
         assert secret not in result_json.output
 
-    def test_unmute_api_key_empty_raises(self) -> None:
-        """An empty --api-key is a user error, not a silent fallback."""
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_api_key_empty_argv_normalized_to_none(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An empty ``--api-key ""`` normalizes to None (anonymous path).
+
+        Symmetric with ``VOX_API_KEY=""``: both mean "no key on this
+        path, fall through to file/stdin or anonymous". Replaces the
+        previous behavior that raised BadParameter, which shadowed
+        mutual-exclusion errors when the env var happened to be set to
+        the empty string in CI. Regression guard for Cursor Bugbot on
+        PR #175.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
         runner = CliRunner()
         result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
-        assert result.exit_code != 0
-        assert "cannot be empty" in result.output
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] is None
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_no_api_key_omits_kwarg(
@@ -585,6 +607,137 @@ class TestApiKeyInputPaths:
         call_kwargs = mock_instance.synthesize.call_args[1]
         assert call_kwargs["api_key"] is None
         assert "warning: --api-key on the command line" not in result.stderr
+
+    # ------------------------------------------------------------------
+    # Empty VOX_API_KEY must not shadow mutual exclusion.
+    #
+    # Real-world trigger: a CI pipeline exports VOX_API_KEY="" globally
+    # (because some jobs use vox and others don't) and then tries to
+    # pass --api-key-file or --api-key-stdin on a specific call. Before
+    # the fix the empty env var short-circuited to a "cannot be empty"
+    # BadParameter before the mutual exclusion check ran. After the
+    # fix the empty env string is normalized to None and the file or
+    # stdin path proceeds. Regression guard for Cursor Bugbot on PR
+    # #175.
+    # ------------------------------------------------------------------
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_empty_vox_api_key_env_does_not_block_file_path(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``VOX_API_KEY=""`` + ``--api-key-file <path>`` uses the file.
+
+        The empty env var must not masquerade as a fourth source, nor
+        raise a "cannot be empty" error that hides the intended file
+        path from the user.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("VOX_API_KEY", "")
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_file_from_empty_env\n", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["unmute", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_file_from_empty_env"
+        assert "cannot be empty" not in result.output
+        assert "mutually exclusive" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_empty_vox_api_key_env_does_not_block_stdin_path(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``VOX_API_KEY=""`` + ``--api-key-stdin`` uses the piped value."""
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("VOX_API_KEY", "")
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["unmute", "hello", "--api-key-stdin"],
+            input="sk_stdin_from_empty_env\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_stdin_from_empty_env"
+        assert "cannot be empty" not in result.output
+        assert "mutually exclusive" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_empty_vox_api_key_env_alone_anonymous(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``VOX_API_KEY=""`` with no other source: anonymous, not an error.
+
+        voxd falls back to the ambient keys.env default.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("VOX_API_KEY", "")
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello"])
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] is None
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_explicit_empty_argv_api_key_also_normalized(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Literal ``--api-key ""`` on argv normalizes to None.
+
+        Locks in symmetric behavior with the env-var path: both the
+        empty env value and an explicit empty argv value mean "no
+        key", not "user error". Pairs with
+        ``test_unmute_api_key_empty_argv_normalized_to_none`` above in
+        TestUnmuteCommand, but lives here as well so the full
+        empty-source story sits in one place.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] is None
 
 
 # ---------------------------------------------------------------------------

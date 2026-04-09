@@ -443,13 +443,20 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     if once == 0:
         once = None
 
-    # Empty string is a user error — typer will accept "" as a value
-    # for an Optional[str] flag, but an empty API key can never be
-    # correct and would silently fall back to the keys.env default.
-    # Reject it so the user does not think they're scoping by key
-    # when they're not. Applies to --api-key and VOX_API_KEY alike.
-    if api_key is not None and not api_key:
-        raise typer.BadParameter("--api-key cannot be empty.")
+    # Empty string from ``VOX_API_KEY=""`` or a literal ``--api-key ""``
+    # is normalized to ``None`` so it does not shadow the mutual
+    # exclusion rules in ``_resolve_api_key``. Real-world trigger: a CI
+    # pipeline that exports ``VOX_API_KEY=""`` globally (because some
+    # jobs use vox and others don't) would otherwise be unable to pass
+    # ``--api-key-file`` or ``--api-key-stdin`` — typer hands the empty
+    # env value to ``api_key``, and without this normalization the
+    # mutual-exclusion check counts it as a fourth source. The
+    # individual readers (``_read_api_key_file``, ``_read_api_key_stdin``)
+    # still reject their own empty content with their own BadParameter
+    # messages, so there is no silent fall-through for paths where
+    # emptiness is actually a user error. Cursor Bugbot on PR #175.
+    if api_key == "":
+        api_key = None
 
     # Resolve the per-call API key from exactly one of the four
     # supported sources (file, stdin, env var, argv) and fire a
