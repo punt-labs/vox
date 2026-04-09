@@ -469,6 +469,33 @@ class TestVoxClientSync:
             assert isinstance(result.request_id, str)
             assert result.deduped is False
 
+    def test_synthesize_forwards_api_key(self) -> None:
+        """Sync wrapper forwards api_key through to the WebSocket message.
+
+        The CLI --api-key flag calls VoxClientSync.synthesize(api_key=...),
+        so this is the load-bearing wiring that carries the billing key
+        from the command line into the ``synthesize`` JSON envelope.
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "playing", "id": "x"}),
+                json.dumps({"type": "done", "id": "x"}),
+            ]
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            sync_client.synthesize("Bill to project A", api_key="sk_project_a")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["api_key"] == "sk_project_a"
+        assert sent["text"] == "Bill to project A"
+
     def test_chime(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(

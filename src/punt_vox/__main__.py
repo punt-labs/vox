@@ -9,11 +9,13 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 
 from punt_vox import __version__
@@ -28,6 +30,7 @@ from punt_vox.config import (
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
+from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,150 @@ def _validate_voice_settings(
         if value is not None and not 0.0 <= value <= 1.0:
             msg = f"{name} must be between 0.0 and 1.0, got {value}"
             raise typer.BadParameter(msg)
+
+
+# ---------------------------------------------------------------------------
+# API key resolution
+#
+# The per-call API key feature exists for single-user billing isolation:
+# one user holding multiple provider keys and wanting to attribute cost
+# to a specific project on a specific call. The secret is forwarded to
+# voxd over the local WebSocket and injected into the provider env for
+# one synthesize request.
+#
+# Passing ``--api-key <value>`` literally on the command line exposes
+# the value through ``ps`` (and, on Linux, ``/proc/<pid>/cmdline``),
+# shell history, and terminal recordings. That's a real credential
+# disclosure path even though voxd does not log or persist the key.
+# Three safer input paths are supported; ``--api-key`` is retained
+# for back-compat and demo use with a stderr warning when the value
+# came from argv (not from the ``VOX_API_KEY`` env var).
+#
+# The four sources are mutually exclusive: specifying more than one
+# raises ``typer.BadParameter``. Priority (only one may be set):
+#   1. ``--api-key-file <path>``
+#   2. ``--api-key-stdin``
+#   3. ``VOX_API_KEY`` env var (or ``--api-key <value>`` — typer treats
+#      both as populating the same ``api_key`` parameter; we distinguish
+#      them via ``ctx.get_parameter_source`` to decide whether to warn)
+# ---------------------------------------------------------------------------
+
+
+_API_KEY_ARGV_WARNING = (
+    "warning: --api-key on the command line is visible via 'ps' and "
+    "shell history. Prefer VOX_API_KEY env var, --api-key-file <path>, "
+    "or --api-key-stdin for real credentials."
+)
+
+
+def _read_api_key_file(path: Path) -> str:
+    """Read a per-call API key from a file.
+
+    Rejects missing paths, non-files, and empty files. Strips trailing
+    whitespace and newlines. Warns (but does not fail) when the file
+    has any group or other permission bits set, matching the advisory
+    style used by the install path for ``keys.env`` permission
+    handling.
+
+    The check is ``mode & 0o077`` (any group or other bit), not
+    ``mode & 0o004`` (the other-read bit only). On shared Unix systems
+    a file at 0640 is readable by anyone in the owning group
+    (``nobody``, ``www-data``, a shared-dev group, etc.) — the
+    narrower check let that exposure slide silently. The only safe
+    mode for a credential file is 0600. Copilot on PR #175.
+    """
+    if not path.is_file():
+        msg = f"--api-key-file: {path} is not a file"
+        raise typer.BadParameter(msg)
+    mode = path.stat().st_mode
+    if mode & 0o077:
+        typer.echo(
+            f"warning: --api-key-file: {path} is accessible to group "
+            f"or other users (mode {oct(mode & 0o777)}). Run "
+            f"'chmod 600 {path}' to tighten permissions.",
+            err=True,
+        )
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        msg = f"--api-key-file: {path} is empty"
+        raise typer.BadParameter(msg)
+    return value
+
+
+def _read_api_key_stdin() -> str:
+    """Read a per-call API key from stdin (one line).
+
+    Refuses to read when stdin is a tty — the user almost certainly
+    meant to pipe the key in, and blocking on an interactive prompt
+    would be a surprising default. Strips trailing whitespace and
+    rejects empty input.
+    """
+    if sys.stdin.isatty():
+        msg = "--api-key-stdin requires piped input (stdin is a tty)"
+        raise typer.BadParameter(msg)
+    line = sys.stdin.readline().strip()
+    if not line:
+        msg = "--api-key-stdin: received empty input"
+        raise typer.BadParameter(msg)
+    return line
+
+
+def _resolve_api_key(
+    ctx: typer.Context,
+    api_key: str | None,
+    api_key_file: Path | None,
+    api_key_stdin: bool,
+) -> str | None:
+    """Resolve the per-call API key from the first configured source.
+
+    Enforces mutual exclusion between ``--api-key-file``,
+    ``--api-key-stdin``, and ``--api-key``/``VOX_API_KEY``. Fires a
+    stderr warning when ``--api-key`` was passed literally on the
+    command line (source == COMMANDLINE) because argv is visible to
+    local process introspection and shell history. The env-var path
+    (source == ENVIRONMENT) does not warn: while environment variables
+    are not secret, they are generally less exposed to casual local
+    observation than argv.
+
+    Returns None when no source is configured — the call is anonymous
+    and voxd falls back to the ambient ``keys.env`` value.
+    """
+    file_set = api_key_file is not None
+    stdin_set = api_key_stdin
+    argv_or_env_set = api_key is not None
+    sources_set = int(file_set) + int(stdin_set) + int(argv_or_env_set)
+    if sources_set > 1:
+        named: list[str] = []
+        if file_set:
+            named.append("--api-key-file")
+        if stdin_set:
+            named.append("--api-key-stdin")
+        if argv_or_env_set:
+            # Distinguish argv vs env var so the error points at the
+            # right input surface. Users piping a key via env var and
+            # then also writing --api-key-file by mistake should see
+            # "VOX_API_KEY", not "--api-key".
+            source = ctx.get_parameter_source("api_key")
+            if source is click.core.ParameterSource.ENVIRONMENT:
+                named.append("VOX_API_KEY")
+            else:
+                named.append("--api-key")
+        conflict = ", ".join(named)
+        msg = (
+            f"Specify at most one API key source; got {conflict}. "
+            "These are mutually exclusive."
+        )
+        raise typer.BadParameter(msg)
+    if api_key_file is not None:
+        return _read_api_key_file(api_key_file)
+    if api_key_stdin:
+        return _read_api_key_stdin()
+    if api_key is not None:
+        source = ctx.get_parameter_source("api_key")
+        if source is click.core.ParameterSource.COMMANDLINE:
+            typer.echo(_API_KEY_ARGV_WARNING, err=True)
+        return api_key
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +329,53 @@ OnceOpt = Annotated[
         ),
     ),
 ]
+ApiKeyOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--api-key",
+        envvar="VOX_API_KEY",
+        help=(
+            "Per-call provider API key. Forwarded to voxd over the local "
+            "WebSocket and used for this single synthesis request only. "
+            "Lets a single user maintain multiple ElevenLabs/OpenAI keys "
+            "for per-project billing attribution without juggling "
+            "environment variables. Not persisted, not logged, never "
+            "echoed to stdout. vox is single-user — this is cost-tracking, "
+            "not multi-tenant isolation. Passing --api-key literally on "
+            "the command line exposes the value via 'ps' and shell history; "
+            "prefer VOX_API_KEY env var, --api-key-file, or --api-key-stdin "
+            "for real credentials."
+        ),
+    ),
+]
+ApiKeyFileOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--api-key-file",
+        help=(
+            "Read per-call provider API key from a file. Safer than "
+            "--api-key on the command line because the value never "
+            "appears in argv, shell history, or 'ps'. The file should "
+            "be mode 0600; vox warns if any group or other permission "
+            "bits are set. Empty files and non-files are rejected. "
+            "Trailing whitespace and newlines are stripped."
+        ),
+    ),
+]
+ApiKeyStdinFlag = Annotated[
+    bool,
+    typer.Option(
+        "--api-key-stdin",
+        help=(
+            "Read per-call provider API key from stdin (one line). "
+            "Safer than --api-key on the command line because the "
+            "value never appears in argv. Intended for piped input "
+            "from a password manager, e.g. 'pass show vox/project | "
+            "vox unmute ... --api-key-stdin'. Refuses to read from a "
+            "tty."
+        ),
+    ),
+]
 FromOpt = Annotated[
     Path | None,
     typer.Option("--from", help="JSON file with segments array.", exists=True),
@@ -218,6 +412,7 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 
 @app.command()
 def unmute(  # pyright: ignore[reportUnusedFunction]
+    ctx: typer.Context,
     text: TextArg = None,
     from_file: FromOpt = None,
     voice: VoiceOpt = None,
@@ -230,6 +425,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
     once: OnceOpt = None,
+    api_key: ApiKeyOpt = None,
+    api_key_file: ApiKeyFileOpt = None,
+    api_key_stdin: ApiKeyStdinFlag = False,
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
@@ -244,6 +442,27 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
         )
     if once == 0:
         once = None
+
+    # Empty string from ``VOX_API_KEY=""`` or a literal ``--api-key ""``
+    # is normalized to ``None`` so it does not shadow the mutual
+    # exclusion rules in ``_resolve_api_key``. Real-world trigger: a CI
+    # pipeline that exports ``VOX_API_KEY=""`` globally (because some
+    # jobs use vox and others don't) would otherwise be unable to pass
+    # ``--api-key-file`` or ``--api-key-stdin`` — typer hands the empty
+    # env value to ``api_key``, and without this normalization the
+    # mutual-exclusion check counts it as a fourth source. The
+    # individual readers (``_read_api_key_file``, ``_read_api_key_stdin``)
+    # still reject their own empty content with their own BadParameter
+    # messages, so there is no silent fall-through for paths where
+    # emptiness is actually a user error. Cursor Bugbot on PR #175.
+    if api_key == "":
+        api_key = None
+
+    # Resolve the per-call API key from exactly one of the four
+    # supported sources (file, stdin, env var, argv) and fire a
+    # stderr warning when the argv path was used. See
+    # ``_resolve_api_key`` for the full rationale.
+    resolved_api_key = _resolve_api_key(ctx, api_key, api_key_file, api_key_stdin)
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -264,6 +483,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                 style=style,
                 speaker_boost=boost,
                 once=once,
+                api_key=resolved_api_key,
             )
             payload: dict[str, object] = {"id": result.request_id}
             if result.deduped:
@@ -570,6 +790,7 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 _PASS = "\u2713"
 _FAIL = "\u2717"
 _OPTIONAL = "\u25cb"
+_WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
 
 
 def _claude_desktop_config_path() -> Path:
@@ -587,11 +808,12 @@ def doctor() -> None:
     """Check system health for vox."""
     passed = 0
     failed = 0
+    warned = 0
     lines: list[str] = []
     checks: list[dict[str, object]] = []
 
     def _check(symbol: str, message: str, *, required: bool = True) -> None:
-        nonlocal passed, failed
+        nonlocal passed, failed, warned
         lines.append(f"{symbol} {message}")
         checks.append(
             {
@@ -605,6 +827,8 @@ def doctor() -> None:
             passed += 1
         elif symbol == _FAIL and required:
             failed += 1
+        elif symbol == _WARN:
+            warned += 1
 
     # Python version
     v = sys.version_info
@@ -649,13 +873,27 @@ def doctor() -> None:
     try:
         health = VoxClientSync().health()
         provider_name = str(health.get("provider", "unknown"))
-        sessions = health.get("active_sessions", "?")
         port = health.get("port", "?")
-        _check(
-            _PASS,
-            f"Daemon: running on port {port} ({sessions} sessions,"
-            f" provider: {provider_name})",
-        )
+        running_version = str(health.get("daemon_version", ""))
+        wheel_version = installed_version()
+        if running_version and running_version != wheel_version:
+            # vox-nmb: a stale voxd survives `uv tool upgrade punt-vox`
+            # because the wheel on disk was swapped but the long-running
+            # daemon process was not cycled. Warn loudly but do not
+            # fail — the daemon is still functional, just out of date.
+            _check(
+                _WARN,
+                f"Daemon: running on port {port} (version {running_version}"
+                f" \u2014 wheel has {wheel_version},"
+                f" run 'vox daemon restart' to refresh)",
+            )
+        else:
+            version_note = f", version {running_version}" if running_version else ""
+            _check(
+                _PASS,
+                f"Daemon: running on port {port}"
+                f" (provider: {provider_name}{version_note})",
+            )
     except VoxdConnectionError:
         _check(
             _FAIL,
@@ -727,9 +965,17 @@ def doctor() -> None:
             " \u2014 check permissions or use --output-dir",
         )
 
-    text_parts = ["=" * 40, *lines, "=" * 40, f"{passed} passed, {failed} failed"]
+    summary = f"{passed} passed, {failed} failed"
+    if warned > 0:
+        summary += f", {warned} warning" + ("s" if warned > 1 else "")
+    text_parts = ["=" * 40, *lines, "=" * 40, summary]
     _emit(
-        {"passed": passed, "failed": failed, "checks": checks},
+        {
+            "passed": passed,
+            "failed": failed,
+            "warned": warned,
+            "checks": checks,
+        },
         "\n".join(text_parts),
     )
 
@@ -1016,6 +1262,175 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
     result = svc_uninstall()
     typer.echo(result)
+
+
+@daemon_app.command("restart")
+def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Restart the voxd system service and verify it is back up.
+
+    Use this after ``uv tool upgrade punt-vox`` so the running daemon
+    picks up the new wheel. A plain ``uv tool upgrade`` replaces the
+    on-disk binary but does not cycle the long-running voxd process —
+    so changes to the WebSocket protocol or playback behavior do not
+    take effect until the service is restarted. ``vox daemon restart``
+    is the supported way to do that.
+
+    Runs as your normal user, NOT under ``sudo``. vox will prompt once
+    for your sudo password when it drives ``systemctl``/``launchctl``
+    itself. Running under sudo yourself would corrupt the sudo state
+    the service manager uses.
+    """
+    from punt_vox.service import (
+        _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
+        _launchd_stop,  # pyright: ignore[reportPrivateUsage]
+        _systemd_stop,  # pyright: ignore[reportPrivateUsage]
+        detect_platform,
+    )
+
+    # Refuse Windows before touching ``os.geteuid``. ``geteuid`` is
+    # POSIX-only and raises ``AttributeError`` on Windows, which would
+    # surface as a confusing crash for anyone experimenting with vox on
+    # an unsupported platform (or a Windows-based test harness). vox
+    # daemon restart has the same OS matrix as ``vox daemon install``
+    # (macOS + Linux), so match the CLI's other platform-refusal
+    # messages: explain the scope and stop cleanly. Cursor Bugbot on
+    # PR #175.
+    if sys.platform == "win32":
+        raise typer.BadParameter(
+            "vox daemon restart is only supported on macOS and Linux; "
+            "Windows does not have a comparable system service manager."
+        )
+    if os.geteuid() == 0:
+        raise typer.BadParameter(
+            "vox daemon restart must be run as your normal user, not root "
+            "or sudo. vox will prompt for your sudo password when it drives "
+            "systemctl/launchctl. Re-run without sudo:\n\n"
+            "    vox daemon restart\n"
+        )
+
+    plat = detect_platform()
+
+    logger.info("Stopping voxd via service manager...")
+    if plat == "macos":
+        _launchd_stop()
+    else:
+        _systemd_stop()
+
+    logger.info("Waiting for port to free...")
+    # ``_ensure_port_free`` raises ``SystemExit(msg)`` on port contention
+    # that survives the stop + kill attempt. Typer's runner swallows
+    # ``SystemExit`` without printing the message argument, so the user
+    # would otherwise see a silent exit-1 with no indication of why the
+    # restart aborted. Translate the raised message into a typer error
+    # with the same code path and log hint as the other failure modes.
+    try:
+        _ensure_port_free()
+    except SystemExit as exc:
+        reason = str(exc) if exc.code not in (0, None) else ""
+        detail = f": {reason}" if reason else ""
+        typer.echo(
+            f"Error: port still occupied after service manager stop{detail}\n"
+            f"Check the logs at {log_dir() / 'voxd.log'}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    logger.info("Starting voxd via service manager...")
+    try:
+        if plat == "macos":
+            subprocess.run(
+                [
+                    "sudo",
+                    "launchctl",
+                    "load",
+                    "-w",
+                    "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+                ],
+                check=True,
+            )
+            subprocess.run(
+                ["sudo", "launchctl", "kickstart", "-k", "system/com.punt-labs.voxd"],
+                check=True,
+            )
+        else:
+            subprocess.run(
+                ["sudo", "systemctl", "start", "voxd"],
+                check=True,
+            )
+    except subprocess.CalledProcessError as exc:
+        log_path = log_dir() / "voxd.log"
+        typer.echo(
+            f"Error: service manager failed to start voxd: {exc}\n"
+            f"Check the logs at {log_path}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    logger.info("Waiting for voxd to come back up...")
+    deadline = time.monotonic() + 5.0
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            health = VoxClientSync().health()
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            last_exc = exc
+            time.sleep(0.2)
+            continue
+        pid = health.get("pid", "?")
+        port = health.get("port", "?")
+
+        # Load-bearing verification for vox-nmb: a silent stop failure
+        # (systemctl lost the unit, dbus quirk, _is_vox_daemon_process
+        # returning False, etc.) can leave the OLD daemon alive, and
+        # ``systemctl start voxd`` exits 0 as a no-op when the unit is
+        # already active. Without this version check, the restart
+        # command would print success while the stale daemon continues
+        # to answer — which is exactly the bug vox-nmb exists to prevent.
+        running_version = str(health.get("daemon_version", ""))
+        wheel_version = installed_version()
+        log_path = log_dir() / "voxd.log"
+        if not running_version:
+            # Pre-cef3e8a daemons do not self-report a version. Fail
+            # closed: we cannot prove the restart picked up new code,
+            # and the symptom we're trying to detect (stale daemon)
+            # would look exactly like this.
+            typer.echo(
+                "Error: restarted daemon did not report a version. Expected "
+                f"{wheel_version}. Check {log_path} — the daemon may be "
+                "running pre-feat/install-verify-hardening code that cannot "
+                "self-report its version.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if running_version != wheel_version:
+            typer.echo(
+                f"Error: daemon reports version {running_version} but wheel is "
+                f"{wheel_version}. The restart did not pick up the new code. "
+                f"Check {log_path}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        _emit(
+            {
+                "restarted": True,
+                "pid": pid,
+                "port": port,
+                "daemon_version": running_version,
+            },
+            f"voxd restarted (pid={pid}, listening on port {port}, "
+            f"version {running_version})",
+        )
+        return
+
+    log_path = log_dir() / "voxd.log"
+    reason = f": {last_exc}" if last_exc is not None else ""
+    typer.echo(
+        f"Error: voxd did not come back up within 5s{reason}\n"
+        f"Check the logs at {log_path}",
+        err=True,
+    )
+    raise typer.Exit(code=1)
 
 
 @daemon_app.command("status")

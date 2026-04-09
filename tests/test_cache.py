@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -59,6 +60,29 @@ class TestCacheKey:
     def test_separator_prevents_collision(self) -> None:
         # "ab" + "c" vs "a" + "bc" must differ
         assert cache_key("ab", "c", "p") != cache_key("a", "bc", "p")
+
+    def test_backward_compat_with_pre_v421_cache(self) -> None:
+        # Load-bearing backward-compat invariant: any change to
+        # ``cache_key`` that breaks the on-disk filename for anonymous
+        # calls orphans every cache entry written by an earlier vox
+        # version. The digest must be **byte-identical** to the
+        # pre-v4.2.1 format, which was
+        # ``md5(f"{text}\\0{voice}\\0{provider}".encode())``.
+        #
+        # This test also proves confirmation (3) for the PR #175
+        # round-4 fix: the api_key parameter has been removed from
+        # ``cache_key``, and the anonymous filename for an ordinary
+        # (text, voice, provider) call is exactly what the pre-PR code
+        # produced. Per-call api_key scopes do not reach cache.py at
+        # all — the bypass happens in voxd._synthesize_to_file.
+        text, voice, provider = "hello", "matilda", "elevenlabs"
+        legacy_digest = hashlib.md5(f"{text}\0{voice}\0{provider}".encode()).hexdigest()
+        assert cache_key(text, voice, provider) == f"{legacy_digest}.mp3"
+        # And for the None-voice / None-provider case the historical
+        # format substituted empty strings — same invariant applies.
+        text2 = "greetings"
+        legacy_digest_2 = hashlib.md5(f"{text2}\0\0".encode()).hexdigest()
+        assert cache_key(text2, None, None) == f"{legacy_digest_2}.mp3"
 
 
 # ---------------------------------------------------------------------------

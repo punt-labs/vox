@@ -22,6 +22,7 @@ from punt_vox.service import (
     _launchd_install,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _launchd_stop,  # pyright: ignore[reportPrivateUsage]
+    _remove_port_file,  # pyright: ignore[reportPrivateUsage]
     _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
     _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
     _systemd_install,  # pyright: ignore[reportPrivateUsage]
@@ -740,6 +741,143 @@ def test_ensure_port_free_succeeds_when_clear(
 ) -> None:
     """_ensure_port_free succeeds when no PIDs on port after kill."""
     _ensure_port_free()  # Should not raise
+
+
+def test_ensure_port_free_uses_port_file_not_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-kill port re-check targets the port file, not ``DEFAULT_PORT``.
+
+    Regression guard: before the fix, ``_ensure_port_free`` called
+    ``_find_pid_on_port(DEFAULT_PORT)`` even though the daemon may have
+    been running on a non-default port recorded in the port file. A
+    daemon stuck on port 9999 would silently pass the contention check
+    because port 8421 was free.
+    """
+    captured: list[int] = []
+
+    def fake_find(port: int) -> list[int]:
+        captured.append(port)
+        return []
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: 9999)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: True)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    _ensure_port_free()
+
+    assert captured == [9999], (
+        f"_ensure_port_free checked the wrong port: expected [9999], got {captured}"
+    )
+
+
+def test_ensure_port_free_error_message_reports_actual_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SystemExit message must name the ACTUAL port, not DEFAULT_PORT.
+
+    Without this, the operator would go hunting for whatever is on
+    8421 when the contention is actually on a different port.
+    """
+
+    def fake_find(_port: int) -> list[int]:
+        return [5555]
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: 9999)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: False)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    with pytest.raises(SystemExit, match="Port 9999 is still in use"):
+        _ensure_port_free()
+
+
+def test_ensure_port_free_falls_back_to_default_when_port_file_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No port file on disk: fall back to ``DEFAULT_PORT`` for the re-check.
+
+    ``install()`` runs this helper on clean hosts where no daemon has
+    ever bound a port — ``read_port_file`` returns None. The fallback
+    preserves the install() flow.
+    """
+    from punt_vox.service import DEFAULT_PORT
+
+    captured: list[int] = []
+
+    def fake_find(port: int) -> list[int]:
+        captured.append(port)
+        return []
+
+    monkeypatch.setattr("punt_vox.service.read_port_file", lambda: None)
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", lambda: False)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", fake_find)
+
+    _ensure_port_free()
+
+    assert captured == [DEFAULT_PORT]
+
+
+def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Port file read MUST happen BEFORE ``_kill_stale_daemon`` runs.
+
+    ``_kill_stale_daemon`` calls ``_remove_port_file`` on the happy
+    path (successful SIGTERM against a voxd on a non-default port).
+    If the port-file read happens AFTER the kill, ``read_port_file``
+    returns None and the target port falls back to ``DEFAULT_PORT``,
+    resurrecting the bug the port-file path is meant to close.
+
+    Regression guard for Cursor Bugbot on PR #175. This test uses a
+    real on-disk port file and a spy ``_kill_stale_daemon`` that
+    calls the real ``_remove_port_file``, so the sequence dependency
+    is exercised end-to-end rather than mocked away.
+    """
+    # Point the port file at tmp_path and write a non-default port.
+    monkeypatch.setattr("punt_vox.service._run_dir", lambda: tmp_path)
+    port_file = tmp_path / "serve.port"
+    port_file.write_text("9999\n", encoding="utf-8")
+
+    kill_called: list[bool] = []
+
+    def spy_kill() -> bool:
+        kill_called.append(True)
+        # Simulate the real _kill_stale_daemon happy-path: the kill
+        # succeeded, so the port file is removed. This is the exact
+        # behaviour of the real helper (see service.py line ~412).
+        _remove_port_file()
+        return True
+
+    captured_port: list[int] = []
+
+    def spy_find(port: int) -> list[int]:
+        captured_port.append(port)
+        return []
+
+    monkeypatch.setattr("punt_vox.service._kill_stale_daemon", spy_kill)
+    monkeypatch.setattr("punt_vox.service._find_pid_on_port", spy_find)
+
+    _ensure_port_free()
+
+    # _kill_stale_daemon was called (proves we exercised the happy-path
+    # branch that drops the port file).
+    assert kill_called == [True], (
+        "_kill_stale_daemon was not called — the test did not exercise "
+        "the ordering-sensitive path"
+    )
+    # Load-bearing assertion: the post-kill re-check must target 9999,
+    # not DEFAULT_PORT. If the read happens after the kill, the port
+    # file is gone and target_port falls back to DEFAULT_PORT (8421).
+    assert captured_port == [9999], (
+        f"_find_pid_on_port was called with {captured_port}, not [9999]. "
+        f"This means the port-file read happened AFTER _kill_stale_daemon "
+        f"removed the file, and target_port fell back to DEFAULT_PORT."
+    )
+    assert DEFAULT_PORT not in captured_port, (
+        f"fallback to DEFAULT_PORT={DEFAULT_PORT} indicates the read "
+        f"happened after _kill_stale_daemon dropped the port file"
+    )
 
 
 # ---------------------------------------------------------------------------

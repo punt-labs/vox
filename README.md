@@ -125,6 +125,26 @@ vox unmute "hello from vox"        # speak through the default provider
 
 If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
+## Upgrading
+
+`uv tool upgrade punt-vox` replaces the wheel on disk, but it does **not** restart the long-running `voxd` daemon. Until you cycle the daemon, any change that touches daemon behavior — new WebSocket fields, new dedup semantics, new CLI flags that voxd has to parse — will silently be ignored by the old process. Always restart the daemon after an upgrade:
+
+```bash
+# macOS or Linux — identical command now
+uv tool upgrade punt-vox
+vox daemon restart
+```
+
+Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/voxd.log` on failure.
+
+To confirm the daemon and the installed wheel agree:
+
+```bash
+vox doctor
+```
+
+`vox doctor` now reports the running daemon version alongside the reachability check. When the running daemon does not match the wheel installed on disk, doctor emits a yellow `⚠ Daemon: running ... (version X — wheel has Y, run 'vox daemon restart' to refresh)` warning. Exit code stays 0 — the daemon is still functional — but the warning catches stale daemons at smoke-test time instead of in production.
+
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
@@ -206,6 +226,72 @@ The full experience --- natural voice with expressive tags that respond to `/vib
 | espeak-ng | — | en | Zero-config on Linux, offline |
 
 Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > say (macOS) / espeak (Linux).
+
+### Per-call API keys for billing isolation
+
+If you maintain multiple provider API keys for cost attribution (for
+example, separate ElevenLabs keys for different projects), you can
+pass a per-call override for any `vox unmute` invocation. The override
+is per-call only: never persisted to `keys.env`, never logged by the
+daemon, never echoed to stdout, never visible to concurrent requests
+on the same daemon. Four input paths are supported, from most to
+least secure:
+
+1. **Environment variable** (recommended for scripting):
+
+   ```bash
+   export VOX_API_KEY=$(pass show vox/proj_a)
+   vox unmute "billable to project A"
+   ```
+
+   On Linux, `VOX_API_KEY` is exposed via `/proc/<pid>/environ`,
+   which is typically only readable by the process owner. macOS has
+   no Linux-style `/proc` filesystem so env vars are not exposed
+   that way by default, but they are still generally less visible
+   than `argv` (which `ps` prints on any shared system). Either way,
+   env vars are materially safer than passing the key literally on
+   the command line.
+
+2. **File** (recommended for stored keys):
+
+   ```bash
+   vox unmute "billable to project A" \
+     --api-key-file ~/.config/vox/key_project_a.txt
+   ```
+
+   The file should be mode 0600 (owner read/write only). `vox` warns
+   if any group or other permission bits are set and suggests
+   `chmod 600`.
+
+3. **Standard input** (recommended for password managers):
+
+   ```bash
+   pass show vox/proj_a | vox unmute "billable to project A" --api-key-stdin
+   ```
+
+   Reads one line from stdin. Refuses to read from a tty so a
+   forgotten pipe fails loudly instead of blocking on an interactive
+   prompt.
+
+4. **Command line** (demo only — **not** for real credentials):
+
+   ```bash
+   vox unmute "billable to project A" --api-key sk_demo_key
+   ```
+
+   **Warning**: `--api-key` on the command line exposes the value
+   via `ps` (and, on Linux, `/proc/*/cmdline`), shell history, and
+   terminal recordings. `vox` prints a stderr warning whenever you
+   use it. Use one of the other three paths for real credentials.
+
+The four paths are mutually exclusive; specifying more than one is an
+error. This is **not** multi-tenant isolation — vox is a single-user
+tool. The feature is for attributing synthesis cost to the right
+project within one user's account, not for isolating tenants.
+
+Per-call `api_key` calls bypass the synthesis cache so every
+invocation reaches the provider; use anonymous calls (`keys.env`) for
+cache hits.
 
 ## Architecture
 

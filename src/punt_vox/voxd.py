@@ -21,6 +21,7 @@ import platform
 import secrets
 import shutil
 import sys
+import tempfile
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -36,12 +37,14 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.paths import (
     config_dir as _user_config_dir,
     ensure_user_dirs,
+    installed_version,
     log_dir as _user_log_dir,
     run_dir as _user_run_dir,
 )
@@ -831,6 +834,10 @@ class DaemonContext:
         self.client_count: int = 0
         self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
         self.last_playback: dict[str, object] | None = None
+        # Cached once at startup so /health does not hit importlib.metadata
+        # on every request. See ``punt_vox.paths.installed_version`` for
+        # fallback semantics when running from an uninstalled source tree.
+        self.daemon_version: str = installed_version()
 
 
 # ---------------------------------------------------------------------------
@@ -1022,11 +1029,19 @@ async def _synthesize_to_file(
     style: float | None,
     speaker_boost: bool | None,
     api_key: str | None,
+    request_id: str = "",
 ) -> Path:
     """Run TTS synthesis and return the output path.
 
     Handles API key injection, provider construction, and caching.
     Raises on failure.
+
+    When ``api_key`` is set, the cache is bypassed on both the lookup
+    and the store so the per-call billing scope (vox-a3e) never reads
+    bytes that were synthesized under a different key and never leaves
+    bytes behind that a later call on a different key could reuse. The
+    anonymous path (``api_key is None``) uses the MD5-keyed on-disk
+    cache unchanged. See ``src/punt_vox/cache.py`` for the rationale.
     """
     resolved_voice = voice or ""
 
@@ -1035,10 +1050,20 @@ async def _synthesize_to_file(
     # would otherwise be eaten by normalization).
     normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
 
-    # Check cache first
-    cached = cache_get(normalized, resolved_voice, provider_name)
-    if cached is not None:
-        return cached
+    # Cache lookup: anonymous calls only. Per-call api_key scopes
+    # bypass the cache entirely so a billing-isolated call never
+    # reads bytes synthesized under a different key (or no key).
+    # CodeQL py/weak-sensitive-data-hashing also required that we
+    # never feed the api_key into any digest in cache.py.
+    if api_key is None:
+        cached = cache_get(normalized, resolved_voice, provider_name)
+        if cached is not None:
+            return cached
+    else:
+        logger.debug(
+            "Per-call api_key set; bypassing cache for this request (id=%s)",
+            request_id,
+        )
 
     # Serialize env mutation + synthesis to avoid concurrent os.environ races.
     async with _env_lock:
@@ -1067,8 +1092,6 @@ async def _synthesize_to_file(
                 provider_name,
             )
             client = TTSClient(provider)
-
-            import tempfile
 
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 output_path = Path(tmp.name)
@@ -1108,8 +1131,12 @@ async def _synthesize_to_file(
                 len(text),
             )
 
-            # Only cache verified-good output.
-            cache_put(normalized, resolved_voice, provider_name, output_path)
+            # Only cache verified-good output, and only on the
+            # anonymous path. Per-call api_key scopes skip cache_put
+            # so a billing-isolated call can never leave bytes behind
+            # that a later call on a different key could reuse.
+            if api_key is None:
+                cache_put(normalized, resolved_voice, provider_name, output_path)
             return output_path
         finally:
             # Restore API key
@@ -1406,6 +1433,7 @@ async def _handle_synthesize(
             style,
             speaker_boost,
             api_key,
+            request_id=request_id,
         )
     except Exception as exc:
         _rollback_dedup()
@@ -1474,6 +1502,7 @@ async def _handle_record(
             style,
             speaker_boost,
             api_key,
+            request_id=request_id,
         )
     except Exception as exc:
         logger.exception("Record synthesis failed for id=%s", request_id)
@@ -1483,7 +1512,17 @@ async def _handle_record(
         return
 
     audio_data = output_path.read_bytes()
-    output_path.unlink(missing_ok=True)  # clean up temp file
+    # Only unlink tempfiles produced by a fresh synthesis. Cache-hit
+    # paths return the on-disk entry directly, and removing it would
+    # poison every subsequent identical request — including the
+    # anti-poison invariant TestCacheApiKeyBypass exercises. The
+    # CACHE_DIR lookup goes through the module (``_cache_module``)
+    # instead of a bound import so tests that monkey-patch
+    # ``punt_vox.cache.CACHE_DIR`` to a tmp dir stay in sync with the
+    # handler's view of what counts as a cache-owned path.
+    is_cache_owned = output_path.is_relative_to(_cache_module.CACHE_DIR)
+    if not is_cache_owned:
+        output_path.unlink(missing_ok=True)  # clean up temp file
     encoded = base64.b64encode(audio_data).decode("ascii")
     await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
 
@@ -1571,14 +1610,25 @@ def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:
 def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
     """Return the full diagnostic health payload for authenticated callers.
 
-    Adds the audio environment snapshot, the resolved player binary, and
-    the last playback result. Used only by the WebSocket health handler,
-    which is gated by the auth token.
+    Adds the audio environment snapshot, the resolved player binary, the
+    last playback result, the running process id, and the cached daemon
+    version. Used only by the WebSocket health handler, which is gated
+    by the auth token.
+
+    The ``pid`` field is used by ``vox daemon restart`` to confirm the
+    daemon has come back up as a fresh process. The ``daemon_version``
+    field is used by ``vox doctor`` to warn when the running daemon
+    does not match the wheel installed on disk (vox-nmb). Neither is
+    exposed on the unauthenticated HTTP ``/health`` route — version
+    info is a fingerprinting aid for targeted exploitation, and the
+    minimal payload stays minimal.
     """
     payload = _health_payload_minimal(ctx)
     payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
     payload["player_binary"] = _player_binary_path()
     payload["last_playback"] = ctx.last_playback
+    payload["pid"] = os.getpid()
+    payload["daemon_version"] = ctx.daemon_version
     return payload
 
 

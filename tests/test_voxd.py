@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
@@ -173,6 +175,53 @@ class TestHealthPayloadFull:
         assert "PULSE_SERVER" in audio_env
         assert "DBUS_SESSION_BUS_ADDRESS" in audio_env
 
+    def test_includes_daemon_version_matching_installed_package(self) -> None:
+        """Authenticated payload carries daemon_version from importlib.metadata.
+
+        This is the server-side half of the vox-nmb fix: ``vox doctor``
+        reads this field and compares it against the wheel installed on
+        disk, warning the user if they diverge. The field must match
+        ``importlib.metadata.version("punt-vox")`` so the comparison is
+        meaningful.
+        """
+        import importlib.metadata
+
+        ctx = _make_ctx()
+        payload = _health_payload_full(ctx)
+
+        assert "daemon_version" in payload
+        # The context caches the version at init — verify it matches the
+        # installed wheel.
+        try:
+            expected = importlib.metadata.version("punt-vox")
+        except importlib.metadata.PackageNotFoundError:
+            from punt_vox import __version__
+
+            expected = __version__
+        assert payload["daemon_version"] == expected
+
+    def test_daemon_version_cached_on_context(self) -> None:
+        """DaemonContext caches the version once at init — not per request."""
+        ctx = _make_ctx()
+        # Mutate the cached value; subsequent health calls must reflect
+        # the cached state, proving there's no per-call metadata lookup.
+        ctx.daemon_version = "99.99.99-test-sentinel"
+        payload = _health_payload_full(ctx)
+        assert payload["daemon_version"] == "99.99.99-test-sentinel"
+
+    def test_includes_pid(self) -> None:
+        """Authenticated payload includes os.getpid() so restart can verify.
+
+        ``vox daemon restart`` reads this field to confirm the daemon
+        came back up and surfaces the new pid in the success message.
+        """
+        import os as _os
+
+        ctx = _make_ctx()
+        payload = _health_payload_full(ctx)
+        assert "pid" in payload
+        assert payload["pid"] == _os.getpid()
+
     def test_unset_audio_env_uses_sentinel(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -214,6 +263,35 @@ class TestHealthPayloadMinimal:
         assert payload["status"] == "ok"
         assert "uptime_seconds" in payload
         assert "queued" in payload
+
+    def test_excludes_daemon_version_and_pid(self) -> None:
+        """Public /health must not fingerprint the running version or pid.
+
+        Exposing ``daemon_version`` to anonymous callers makes it trivial
+        to identify stale daemons running exploitable versions.
+        ``pid`` is likewise a diagnostic-only detail. Both fields are
+        authenticated-only.
+        """
+        ctx = _make_ctx()
+        payload = _health_payload_minimal(ctx)
+
+        assert "daemon_version" not in payload
+        assert "pid" not in payload
+
+    def test_http_health_route_excludes_daemon_version(self) -> None:
+        """The HTTP /health response body must not carry daemon_version."""
+        import json
+
+        ctx = _make_ctx()
+        ctx.daemon_version = "1.2.3-fingerprint-sentinel"
+        request = MagicMock()
+        request.app.state.ctx = ctx
+
+        response = asyncio.run(_health_route(request))
+        body = json.loads(bytes(response.body))
+
+        assert "daemon_version" not in body
+        assert "1.2.3-fingerprint-sentinel" not in bytes(response.body).decode()
 
     def test_http_health_route_returns_minimal_payload(self) -> None:
         import json
@@ -508,6 +586,571 @@ class TestStderrTruncation:
         assert out.endswith("B")
         # Marker reports the dropped byte count.
         assert str(len(text) - _MAX_STDERR_LEN) in out
+
+
+class TestApiKeyPassthroughIntegration:
+    """End-to-end api_key flow: WebSocket -> _handle_record -> provider.
+
+    Verification of vox-a3e: a single user maintaining multiple provider
+    keys (key-A for billing project alpha, key-B for billing project
+    bravo) can scope a single synthesize/record call to a specific key
+    without leaking that key into the process environment beyond the
+    single request, and without cross-call contamination.
+
+    The test drives the real Starlette app via ``starlette.testclient``,
+    sends record messages over a real WebSocket, and registers a stub
+    provider via ``punt_vox.voxd.get_provider``. The stub inspects
+    ``os.environ[ELEVENLABS_API_KEY]`` at the moment the factory is
+    called — that is the exact point where the per-call key is visible
+    to the provider code. Recording the observed value proves the
+    passthrough is working and isolated per call.
+    """
+
+    def _build_stub_provider(self, observed: list[str | None]) -> type:
+        """Return a stub TTSProvider class that records the observed api key."""
+        from punt_vox.types import (
+            AudioProviderId,
+            AudioRequest,
+            AudioResult,
+            HealthCheck,
+        )
+
+        valid_mp3 = _get_valid_mp3_bytes()
+
+        class _StubProvider:
+            name = "elevenlabs"
+            default_voice = "matilda"
+            supports_expressive_tags = False
+
+            def __init__(self) -> None:
+                # Read env at factory time — this is the point at which
+                # voxd's ``_synthesize_to_file`` has mutated os.environ
+                # for a per-call key. Record whatever is there (including
+                # None when the caller did not pass ``api_key``).
+                observed.append(os.environ.get("ELEVENLABS_API_KEY"))
+
+            def synthesize(
+                self, request: AudioRequest, output_path: Path
+            ) -> AudioResult:
+                output_path.write_bytes(valid_mp3)
+                return AudioResult(
+                    path=output_path,
+                    text=request.text,
+                    provider=AudioProviderId.elevenlabs,
+                    voice="matilda",
+                )
+
+            def generate_audio(self, request: AudioRequest) -> AudioResult:
+                raise NotImplementedError
+
+            def generate_audios(self, requests: object) -> list[AudioResult]:
+                raise NotImplementedError
+
+            def resolve_voice(self, name: str, language: str | None = None) -> str:
+                return name or "matilda"
+
+            def get_default_voice(self, language: str) -> str:
+                return "matilda"
+
+            def list_voices(self, language: str | None = None) -> list[str]:
+                return ["matilda"]
+
+            def infer_language_from_voice(self, voice: str) -> str | None:
+                return None
+
+            def check_health(self) -> list[HealthCheck]:
+                return []
+
+        return _StubProvider
+
+    def _run_record(
+        self,
+        api_key: str | None,
+        observed: list[str | None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict[str, object]:
+        """Send a record message over a real WebSocket and return the response."""
+        from starlette.testclient import TestClient
+
+        from punt_vox.voxd import build_app
+
+        stub_provider_cls = self._build_stub_provider(observed)
+
+        def fake_get_provider(
+            name: str,
+            *,
+            config_path: object = None,
+            model: str | None = None,
+        ) -> object:
+            assert name == "elevenlabs"
+            return stub_provider_cls()
+
+        monkeypatch.setattr("punt_vox.voxd.get_provider", fake_get_provider)
+
+        # Disable the cache so every call reaches the stub factory.
+        def _cache_miss(
+            _text: str,
+            _voice: str,
+            _provider: str,
+            _api_key: str | None = None,
+        ) -> Path | None:
+            return None
+
+        def _cache_noop(
+            _text: str,
+            _voice: str,
+            _provider: str,
+            _path: Path,
+            _api_key: str | None = None,
+        ) -> None:
+            return None
+
+        monkeypatch.setattr("punt_vox.voxd.cache_get", _cache_miss)
+        monkeypatch.setattr("punt_vox.voxd.cache_put", _cache_noop)
+
+        ctx = DaemonContext(auth_token=None, port=0)
+        app = build_app(ctx)
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "test-rec",
+            "text": "billable synthesis",
+            "provider": "elevenlabs",
+            "voice": "matilda",
+        }
+        if api_key is not None:
+            msg["api_key"] = api_key
+
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            ws.send_json(msg)
+            response: dict[str, object] = ws.receive_json()
+
+        return response
+
+    def test_first_call_key_reaches_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sending ``api_key=key-alpha`` exposes exactly that key to the provider."""
+        # Clear any ambient ELEVENLABS_API_KEY so the baseline is well-defined.
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        observed: list[str | None] = []
+
+        response = self._run_record("test-key-alpha-billing", observed, monkeypatch)
+
+        assert response.get("type") == "audio"
+        assert len(observed) == 1
+        assert observed[0] == "test-key-alpha-billing"
+
+    def test_second_call_key_does_not_leak_from_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two sequential calls with different keys: each provider sees its own.
+
+        This is the load-bearing invariant for single-user multi-key
+        billing isolation. If voxd leaked key-alpha into the second
+        call, the user would be billed under the wrong project.
+        """
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        observed: list[str | None] = []
+
+        # Call 1 — key alpha
+        self._run_record("test-key-alpha-billing", observed, monkeypatch)
+        # Call 2 — key bravo (fresh app instance, but shares os.environ)
+        self._run_record("test-key-bravo-billing", observed, monkeypatch)
+
+        assert observed == [
+            "test-key-alpha-billing",
+            "test-key-bravo-billing",
+        ]
+        # Neither key leaked back into the process environment after
+        # the calls returned.
+        assert os.environ.get("ELEVENLABS_API_KEY") is None
+
+    def test_no_api_key_falls_back_to_ambient_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``api_key=None`` leaves whatever is already in os.environ alone.
+
+        This is the keys.env-fallback path: when the caller does not
+        pass a per-call key, voxd does not touch ``os.environ``, so
+        the provider factory sees whatever the keys.env loader put
+        there at daemon startup (or whatever the current test ambient
+        env has). The key invariant is that no cross-call mutation
+        happens.
+        """
+        # Set a sentinel ambient key — the provider should see it.
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "ambient-fallback-key")
+        observed: list[str | None] = []
+
+        self._run_record(None, observed, monkeypatch)
+
+        assert len(observed) == 1
+        assert observed[0] == "ambient-fallback-key"
+        # Ambient key still present — no cross-call mutation.
+        assert os.environ.get("ELEVENLABS_API_KEY") == "ambient-fallback-key"
+
+    def test_previously_set_ambient_key_restored_after_per_call_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Per-call key is restored to the ambient value after the call.
+
+        voxd's ``_synthesize_to_file`` saves the old env value, sets
+        the per-call key, runs the provider, then restores the old
+        value in a ``finally`` block. This test verifies the restore.
+        """
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "ambient-persistent-key")
+        observed: list[str | None] = []
+
+        self._run_record("per-call-override", observed, monkeypatch)
+
+        assert observed == ["per-call-override"]
+        # After the call, the original ambient value is back.
+        assert os.environ.get("ELEVENLABS_API_KEY") == "ambient-persistent-key"
+
+
+class TestCacheApiKeyBypass:
+    """Cache bypass when ``api_key`` is set — vox-a3e billing isolation.
+
+    The round-3 design tried to *partition* the cache by ``api_key`` by
+    folding the key into the digest. CodeQL's
+    ``py/weak-sensitive-data-hashing`` rule correctly flagged that: a
+    regular cryptographic hash is inappropriate for hashing password-
+    class material even for a filename-only use case, and the only
+    lint-clean alternatives are password KDFs (Argon2, scrypt, bcrypt,
+    PBKDF2) whose per-call cost is unacceptable for cache filenames.
+
+    Round 4 switches to **cache bypass**: per-call api_key calls skip
+    ``cache_get`` and ``cache_put`` entirely at the voxd call site,
+    so no sensitive data ever reaches ``cache.py``. The correctness
+    story also improves — a billing-isolated call can never read bytes
+    synthesized under a different key, and can never leave bytes
+    behind that a different key could later reuse.
+
+    These tests drive the real voxd WebSocket code path. The bypass
+    tests use spies on ``cache_get``/``cache_put`` to prove the
+    bypass-not-call behavior directly. The no-poison test uses the
+    real on-disk cache (``cache.py``'s ``cache_get``/``cache_put``
+    untouched, ``CACHE_DIR`` pointed at a tmp dir) to prove that an
+    api_key synthesis does not disturb the anonymous cache entry for
+    the same text. The provider-distinct test is inherited from the
+    round-3 suite and locks in that per-call api_key values still
+    reach the provider correctly.
+    """
+
+    def _build_counting_provider(self, calls: list[str | None]) -> type:
+        """Stub provider that appends to ``calls`` on every construction."""
+        from punt_vox.types import (
+            AudioProviderId,
+            AudioRequest,
+            AudioResult,
+            HealthCheck,
+        )
+
+        valid_mp3 = _get_valid_mp3_bytes()
+
+        class _CountingProvider:
+            name = "elevenlabs"
+            default_voice = "matilda"
+            supports_expressive_tags = False
+
+            def __init__(self) -> None:
+                # Record the api_key visible at construction time. The
+                # key invariant is that the provider factory runs once
+                # per distinct api_key even when text/voice/provider
+                # are identical across calls.
+                calls.append(os.environ.get("ELEVENLABS_API_KEY"))
+
+            def synthesize(
+                self, request: AudioRequest, output_path: Path
+            ) -> AudioResult:
+                output_path.write_bytes(valid_mp3)
+                return AudioResult(
+                    path=output_path,
+                    text=request.text,
+                    provider=AudioProviderId.elevenlabs,
+                    voice="matilda",
+                )
+
+            def generate_audio(self, request: AudioRequest) -> AudioResult:
+                raise NotImplementedError
+
+            def generate_audios(self, requests: object) -> list[AudioResult]:
+                raise NotImplementedError
+
+            def resolve_voice(self, name: str, language: str | None = None) -> str:
+                return name or "matilda"
+
+            def get_default_voice(self, language: str) -> str:
+                return "matilda"
+
+            def list_voices(self, language: str | None = None) -> list[str]:
+                return ["matilda"]
+
+            def infer_language_from_voice(self, voice: str) -> str | None:
+                return None
+
+            def check_health(self) -> list[HealthCheck]:
+                return []
+
+        return _CountingProvider
+
+    def _run_record(
+        self,
+        *,
+        api_key: str | None,
+        text: str,
+        calls: list[str | None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict[str, object]:
+        """Send a ``record`` message over a real WebSocket and return the response.
+
+        Does NOT patch ``cache_get``/``cache_put`` — the caller is
+        responsible for patching them (with spies or with a tmp
+        ``CACHE_DIR``) before invoking this helper.
+        """
+        from starlette.testclient import TestClient
+
+        from punt_vox.voxd import build_app
+
+        provider_cls = self._build_counting_provider(calls)
+
+        def fake_get_provider(
+            name: str,
+            *,
+            config_path: object = None,
+            model: str | None = None,
+        ) -> object:
+            assert name == "elevenlabs"
+            return provider_cls()
+
+        monkeypatch.setattr("punt_vox.voxd.get_provider", fake_get_provider)
+
+        ctx = DaemonContext(auth_token=None, port=0)
+        app = build_app(ctx)
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "test-rec",
+            "text": text,
+            "provider": "elevenlabs",
+            "voice": "matilda",
+        }
+        if api_key is not None:
+            msg["api_key"] = api_key
+
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            ws.send_json(msg)
+            response: dict[str, object] = ws.receive_json()
+
+        return response
+
+    def test_api_key_call_bypasses_cache_get_and_put(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Per-call api_key synthesis must not call cache_get or cache_put.
+
+        Spy-based assertion (not mock-return-value): we replace the two
+        cache entry points with functions that record their call args
+        in a list, then drive the real voxd WebSocket handler twice —
+        once anonymously, once with an api_key. The anonymous call
+        MUST hit both spies; the api_key call MUST hit neither.
+
+        Spies record actual behavior directly. A mock-return-value
+        approach would only prove the code handled whatever fake
+        return value the test injected, which does not distinguish
+        "the bypass works" from "cache_get was called and returned
+        None".
+        """
+        # Real CACHE_DIR pointed at tmp so the backing cache.py code
+        # never touches user state if a spy somehow lets the real
+        # functions through.
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+
+        get_calls: list[tuple[object, ...]] = []
+        put_calls: list[tuple[object, ...]] = []
+
+        def spy_cache_get(*args: object) -> Path | None:
+            get_calls.append(args)
+            return None  # Never hit — force synthesis on the anon path.
+
+        def spy_cache_put(*args: object) -> Path | None:
+            put_calls.append(args)
+            # Return the source path unchanged so the handler keeps
+            # using it for the record response.
+            source = args[3]
+            assert isinstance(source, Path)
+            return source
+
+        monkeypatch.setattr("punt_vox.voxd.cache_get", spy_cache_get)
+        monkeypatch.setattr("punt_vox.voxd.cache_put", spy_cache_put)
+
+        calls: list[str | None] = []
+
+        # Call 1: anonymous — both spies MUST fire.
+        resp1 = self._run_record(
+            api_key=None,
+            text="bypass test phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp1.get("type") == "audio"
+        assert len(get_calls) == 1, (
+            f"anonymous call: expected cache_get spy to fire once, "
+            f"got {len(get_calls)}: {get_calls}"
+        )
+        assert len(put_calls) == 1, (
+            f"anonymous call: expected cache_put spy to fire once, "
+            f"got {len(put_calls)}: {put_calls}"
+        )
+
+        # Call 2: api_key set — NEITHER spy may fire. The cache_get /
+        # cache_put call counts stay locked at 1 (from call 1).
+        resp2 = self._run_record(
+            api_key="sk_bypass_test",
+            text="bypass test phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp2.get("type") == "audio"
+        assert len(get_calls) == 1, (
+            f"api_key call must bypass cache_get, got {len(get_calls)} "
+            f"total calls: {get_calls}"
+        )
+        assert len(put_calls) == 1, (
+            f"api_key call must bypass cache_put, got {len(put_calls)} "
+            f"total calls: {put_calls}"
+        )
+        # And the provider was invoked twice total (once per call),
+        # proving the api_key call actually synthesized rather than
+        # returning an early short-circuit.
+        assert len(calls) == 2, (
+            f"expected provider called twice (once anon, once api_key), "
+            f"got {len(calls)}: {calls}"
+        )
+
+    def test_api_key_call_does_not_poison_anonymous_cache(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An api_key synthesis must not disturb the anonymous cache entry.
+
+        Sequence:
+          1. Anonymous call — provider runs, writes cache entry for
+             the (text, voice, provider) tuple.
+          2. Anonymous call (same text) — cache hit, provider NOT
+             called again.
+          3. api_key call (same text) — cache BYPASSED, provider IS
+             called (proving bypass-not-read).
+          4. Anonymous call (same text) — cache hit from step 1 is
+             STILL REACHABLE (proving bypass-not-write: the api_key
+             call did not overwrite or evict the anon entry).
+
+        Uses the real on-disk cache module (not mocked) with
+        ``CACHE_DIR`` redirected to a tmp dir.
+        """
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+        calls: list[str | None] = []
+
+        # Step 1: anonymous, cold cache — provider runs.
+        resp1 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp1.get("type") == "audio"
+        assert len(calls) == 1, f"step 1 should synthesize, got calls={calls}"
+
+        # Step 2: anonymous again — cache hit, no provider call.
+        resp2 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp2.get("type") == "audio"
+        assert len(calls) == 1, (
+            f"step 2 should hit cache (no new provider call), got calls={calls}"
+        )
+
+        # Step 3: api_key set — cache BYPASSED, provider runs again.
+        resp3 = self._run_record(
+            api_key="sk_poison_test",
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp3.get("type") == "audio"
+        assert len(calls) == 2, (
+            f"step 3: api_key call must bypass cache and synthesize, "
+            f"expected 2 provider calls total, got calls={calls}"
+        )
+
+        # Step 4: anonymous again — the original cache entry from step
+        # 1 must STILL be reachable. If the api_key call had poisoned
+        # the anon cache (e.g. overwritten the file or removed it),
+        # we would see a 3rd provider call here.
+        resp4 = self._run_record(
+            api_key=None,
+            text="shared anon phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp4.get("type") == "audio"
+        assert len(calls) == 2, (
+            f"step 4: anonymous cache entry was POISONED by the api_key "
+            f"call; anon call should still hit cache, got calls={calls}"
+        )
+
+    def test_per_call_keys_reach_provider_distinct(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Two consecutive api_key calls reach the provider with the right key.
+
+        This locks in the core billing-isolation invariant: each
+        per-call api_key value is visible to the provider factory at
+        construction time, and the two values do not cross-contaminate.
+        Both calls use the same text so the assertion would fail if a
+        future refactor accidentally reintroduced a shared cache across
+        api_key scopes.
+        """
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+        calls: list[str | None] = []
+
+        resp1 = self._run_record(
+            api_key="sk_A",
+            text="billable phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp1.get("type") == "audio"
+
+        resp2 = self._run_record(
+            api_key="sk_B",
+            text="billable phrase",
+            calls=calls,
+            monkeypatch=monkeypatch,
+        )
+        assert resp2.get("type") == "audio"
+
+        # Two distinct provider constructions, each seeing its own key.
+        assert calls == ["sk_A", "sk_B"], (
+            f"expected provider constructions to see ['sk_A', 'sk_B'], got {calls}"
+        )
 
 
 class TestSynthesizeFailFast:

@@ -2,7 +2,27 @@
 
 Caches synthesized audio files by (text, voice, provider) tuple so that
 repeated hook invocations with the same quip phrase skip the TTS API
-entirely.  Content-addressed via MD5 hash.
+entirely.  Content-addressed by hash.
+
+This module serves the **anonymous** cache only — calls that use the
+ambient provider credential from ``keys.env``. Per-call provider
+credential overrides (vox-a3e single-user multi-key billing isolation)
+bypass this module entirely at the voxd call site: see the cache
+guards in ``_synthesize_to_file`` in ``src/punt_vox/voxd.py``. That
+design keeps all sensitive credential material out of any digest this
+module computes. CodeQL's ``py/weak-sensitive-data-hashing`` rule
+(correctly) flags any regular cryptographic hash — MD5, SHA-1,
+SHA-256, and friends — as inappropriate for hashing password-class
+input, and the only lint-clean alternatives are password KDFs
+(Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts) whose
+per-call cost is unacceptable for a cache filename computation.
+
+The bypass also closes a correctness hazard an earlier draft of PR
+#175 had: a per-call billing scope that accepts cached bytes from
+another scope is violating the whole point of the isolation. Scripts
+that want cache hits for repeated quips should use ``keys.env`` (the
+anonymous path); scripts that want billing attribution should accept
+that every call re-synthesizes.
 
 No dependencies on other vox modules — this is a standalone cache layer.
 """
@@ -26,14 +46,23 @@ MAX_ENTRIES = 500
 
 
 def cache_key(text: str, voice: str | None, provider: str | None) -> str:
-    """Compute a deterministic cache filename from synthesis parameters.
+    """Compute the cache filename stem for a synthesis request.
 
-    Returns an MD5-based filename like ``a1b2c3d4e5f6789012345678abcdef01.mp3``
-    (32 hex characters).  The null byte separator ensures ``("ab", "c")``
-    and ``("a", "bc")`` produce different keys.
+    Anonymous-call cache only. Per-call credential overrides bypass
+    the cache at the voxd call site (see the module docstring and
+    the cache guards in ``_synthesize_to_file`` in
+    ``src/punt_vox/voxd.py``) so no sensitive data ever reaches this
+    function. The MD5 digest is byte-identical to pre-v4.2.1 format
+    so existing on-disk cache entries remain reachable after
+    upgrade. Filename shape: ``<32 hex chars>.mp3``.
     """
-    payload = f"{text}\0{voice or ''}\0{provider or ''}"
-    digest = hashlib.md5(payload.encode()).hexdigest()
+    payload = f"{text}\0{voice or ''}\0{provider or ''}".encode()
+    # MD5 is deliberate here: the input contains no sensitive material
+    # (text/voice/provider are non-secret), and the digest must stay
+    # byte-identical to pre-v4.2.1 so existing on-disk cache entries
+    # remain reachable after upgrade. Per-call credential overrides
+    # never reach this function — see the module docstring.
+    digest = hashlib.md5(payload).hexdigest()
     return f"{digest}.mp3"
 
 
@@ -42,7 +71,9 @@ def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None
 
     Returns the path if the file exists and is non-empty.  Touches the
     file's mtime on hit so LRU eviction works correctly.  Returns None
-    on miss.
+    on miss. Anonymous cache only — per-call credential overrides
+    bypass this layer entirely at the voxd call site so no sensitive
+    data ever reaches ``cache_key``.
     """
     path = CACHE_DIR / cache_key(text, voice, provider)
     if not path.exists():
@@ -57,13 +88,18 @@ def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None
 
 
 def cache_put(
-    text: str, voice: str | None, provider: str | None, source: Path
+    text: str,
+    voice: str | None,
+    provider: str | None,
+    source: Path,
 ) -> Path | None:
     """Copy a synthesized MP3 into the cache.
 
     Returns the cached path on success, or None if the source file
     does not exist or is empty.  Evicts oldest entries when the cache
-    exceeds ``MAX_ENTRIES``.
+    exceeds ``MAX_ENTRIES``. Anonymous cache only — per-call
+    credential overrides bypass this layer entirely at the voxd call
+    site so no sensitive data ever reaches ``cache_key``.
     """
     if not source.exists() or source.stat().st_size == 0:
         return None
