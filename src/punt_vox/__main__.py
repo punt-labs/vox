@@ -1280,6 +1280,19 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         detect_platform,
     )
 
+    # Refuse Windows before touching ``os.geteuid``. ``geteuid`` is
+    # POSIX-only and raises ``AttributeError`` on Windows, which would
+    # surface as a confusing crash for anyone experimenting with vox on
+    # an unsupported platform (or a Windows-based test harness). vox
+    # daemon restart has the same OS matrix as ``vox daemon install``
+    # (macOS + Linux), so match the CLI's other platform-refusal
+    # messages: explain the scope and stop cleanly. Cursor Bugbot on
+    # PR #175.
+    if sys.platform == "win32":
+        raise typer.BadParameter(
+            "vox daemon restart is only supported on macOS and Linux; "
+            "Windows does not have a comparable system service manager."
+        )
     if os.geteuid() == 0:
         raise typer.BadParameter(
             "vox daemon restart must be run as your normal user, not root "

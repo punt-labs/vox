@@ -1371,6 +1371,29 @@ class TestDaemonRestartCommand:
         assert result.exit_code != 0
         assert "without sudo" in result.output or "not root" in result.output
 
+    def test_daemon_restart_refuses_windows(self) -> None:
+        """Windows gets a clear platform error, not an AttributeError crash.
+
+        ``os.geteuid`` is POSIX-only; on Windows it raises
+        ``AttributeError``. The platform guard must fire BEFORE
+        ``os.geteuid`` is called so the user sees a typed BadParameter
+        explaining that vox daemon restart only supports macOS and
+        Linux. Regression guard for Cursor Bugbot on PR #175.
+
+        Uses ``standalone_mode=False`` so the raised BadParameter is
+        exposed on ``result.exception`` (same pattern as the mutual
+        exclusion tests above).
+        """
+        runner = CliRunner()
+        with patch(f"{_CLI}.sys.platform", "win32"):
+            result = runner.invoke(app, ["daemon", "restart"], standalone_mode=False)
+        assert result.exit_code != 0
+        assert isinstance(result.exception, typer.BadParameter), (
+            f"expected BadParameter, got "
+            f"{type(result.exception).__name__}: {result.exception}"
+        )
+        assert "Windows" in str(result.exception)
+
     def test_unsupported_platform_fails(self) -> None:
         """Windows (or anything else) raises SystemExit from detect_platform."""
         runner = CliRunner()
