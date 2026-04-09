@@ -428,9 +428,16 @@ def _ensure_port_free() -> None:
     even though the real port is still occupied. ``vox daemon restart``
     is the first public code path to exercise this outside of
     ``install()``, so the latent bug only now becomes reachable.
+
+    The port file read MUST happen before ``_kill_stale_daemon`` runs,
+    because a successful kill calls ``_remove_port_file`` — which drops
+    the very value we need for the post-kill re-check. Reading after
+    the kill would see ``None`` on the happy path and fall back to
+    ``DEFAULT_PORT``, resurrecting the exact bug the port-file path is
+    supposed to close. Cursor Bugbot on PR #175.
     """
-    _kill_stale_daemon()
     target_port = read_port_file() or DEFAULT_PORT
+    _kill_stale_daemon()
     pids = _find_pid_on_port(target_port)
     if pids:
         msg = (
