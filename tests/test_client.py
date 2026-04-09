@@ -261,6 +261,52 @@ class TestVoxClientSynthesize:
         assert "speaker_boost" not in sent
         assert "api_key" not in sent
 
+    @pytest.mark.asyncio
+    async def test_synthesize_returns_on_playing_not_done(self) -> None:
+        """synthesize() returns as soon as 'playing' arrives; 'done' not required."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "playing", "id": "req1"}),
+                # If the client reads past this it would get StopAsyncIteration.
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.synthesize("Hello world")
+        assert isinstance(result.request_id, str)
+        assert result.deduped is False
+        assert mock_ws.recv.call_count == 1
+        mock_ws.close.assert_awaited_once()
+        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_synthesize_dedup_returns_on_done(self) -> None:
+        """synthesize() handles dedup path: 'done' with deduped=True, no 'playing'."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "done",
+                        "id": "req1",
+                        "deduped": True,
+                        "original_played_at": 1700000000.0,
+                        "ttl_seconds_remaining": 550.0,
+                    }
+                ),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.synthesize("Hello world", once=600)
+        assert result.deduped is True
+        assert result.original_played_at == 1700000000.0
+        assert result.ttl_seconds_remaining == 550.0
+        assert mock_ws.recv.call_count == 1
+
 
 class TestVoxClientChime:
     """Test chime method."""
@@ -280,6 +326,38 @@ class TestVoxClientChime:
         await client.chime("done")
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent == {"type": "chime", "signal": "done"}
+
+    @pytest.mark.asyncio
+    async def test_chime_returns_on_playing_not_done(self) -> None:
+        """chime() returns on 'playing'; 'done' is not required."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "playing", "id": "chime:done"}),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.chime("done")
+        assert mock_ws.recv.call_count == 1
+        mock_ws.close.assert_awaited_once()
+        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_chime_dedup_returns_on_done(self) -> None:
+        """chime() handles dedup path: 'done' with no preceding 'playing'."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "done", "id": ""}),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.chime("done")
+        assert mock_ws.recv.call_count == 1
 
     @pytest.mark.asyncio
     async def test_chime_error_raises(self) -> None:

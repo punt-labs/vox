@@ -1450,7 +1450,10 @@ async def _handle_synthesize(
     )
     await websocket.send_json({"type": "playing", "id": request_id})
     await done_event.wait()
-    await websocket.send_json({"type": "done", "id": request_id})
+    # Client may have already closed the connection after receiving 'playing'.
+    # Suppress any send failure — the audio has already played.
+    with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+        await websocket.send_json({"type": "done", "id": request_id})
 
 
 async def _handle_record(
@@ -1557,7 +1560,10 @@ async def _handle_chime(
     )
     await websocket.send_json({"type": "playing", "id": f"chime:{signal}"})
     await done_event.wait()
-    await websocket.send_json({"type": "done", "id": f"chime:{signal}"})
+    # Client may have already closed the connection after receiving 'playing'.
+    # Suppress any send failure — the audio has already played.
+    with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+        await websocket.send_json({"type": "done", "id": f"chime:{signal}"})
 
 
 async def _handle_voices(

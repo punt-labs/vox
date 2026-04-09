@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import json
 import logging
 import uuid
@@ -216,11 +217,17 @@ class VoxClient:
         *,
         timeout: float = _TIMEOUT_SYNTHESIS,
         terminal_type: str = "done",
+        early_terminal: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Send a message and collect responses until *terminal_type* arrives.
+        """Send a message and collect responses until a terminal response arrives.
 
-        Used for synthesize/chime where the server sends 'playing' then
-        'done' (or 'error').
+        Stops when the response type matches *terminal_type* or, when set,
+        *early_terminal*. Used for synthesize/chime: the server sends
+        'playing' once synthesis is enqueued, then 'done' when playback
+        finishes. Passing early_terminal='playing' lets the client return
+        as soon as the audio is queued without waiting for playback.
+        Dedup short-circuits still send 'done' directly (no 'playing'),
+        so terminal_type='done' handles that path correctly.
         """
         ws = await self._ensure_connected()
         await ws.send(json.dumps(msg))
@@ -230,21 +237,34 @@ class VoxClient:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 msg_type = str(msg.get("type", ""))
+                expected = early_terminal or terminal_type
                 raise VoxdProtocolError(
-                    f"Timeout waiting for '{terminal_type}' in '{msg_type}'"
+                    f"Timeout waiting for '{expected}' in '{msg_type}'"
                 )
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
             except TimeoutError as exc:
                 msg_type = str(msg.get("type", ""))
+                expected = early_terminal or terminal_type
                 raise VoxdProtocolError(
-                    f"Timeout waiting for '{terminal_type}' in '{msg_type}'"
+                    f"Timeout waiting for '{expected}' in '{msg_type}'"
                 ) from exc
             resp: dict[str, Any] = json.loads(str(raw))
             responses.append(resp)
             if resp.get("type") == "error":
                 raise VoxdProtocolError(str(resp.get("message", "unknown error")))
-            if resp.get("type") == terminal_type:
+            resp_type = resp.get("type")
+            if resp_type == terminal_type:
+                return responses
+            if early_terminal is not None and resp_type == early_terminal:
+                # Server will still send terminal_type (e.g., 'done' after
+                # 'playing'). Close the connection so that stale message
+                # cannot be consumed by the next request on a reused
+                # VoxClient connection. Suppress close errors — the
+                # connection may already be gone, but the audio is queued.
+                with contextlib.suppress(Exception):
+                    await ws.close()
+                self._ws = None
                 return responses
 
     # -- public API ----------------------------------------------------------
@@ -306,7 +326,10 @@ class VoxClient:
             msg["once"] = once
 
         responses = await self._send_and_drain(
-            msg, timeout=_TIMEOUT_SYNTHESIS, terminal_type="done"
+            msg,
+            timeout=_TIMEOUT_SYNTHESIS,
+            terminal_type="done",
+            early_terminal="playing",
         )
         terminal = responses[-1] if responses else {}
         if terminal.get("deduped"):
@@ -329,7 +352,9 @@ class VoxClient:
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
         msg: dict[str, object] = {"type": "chime", "signal": signal}
-        await self._send_and_drain(msg, timeout=_TIMEOUT_SHORT, terminal_type="done")
+        await self._send_and_drain(
+            msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
+        )
 
     async def record(
         self,
