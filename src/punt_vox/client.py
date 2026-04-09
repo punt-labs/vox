@@ -216,11 +216,17 @@ class VoxClient:
         *,
         timeout: float = _TIMEOUT_SYNTHESIS,
         terminal_type: str = "done",
+        early_terminal: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Send a message and collect responses until *terminal_type* arrives.
+        """Send a message and collect responses until a terminal response arrives.
 
-        Used for synthesize/chime where the server sends 'playing' then
-        'done' (or 'error').
+        Stops when the response type matches *terminal_type* or, when set,
+        *early_terminal*. Used for synthesize/chime: the server sends
+        'playing' once synthesis is enqueued, then 'done' when playback
+        finishes. Passing early_terminal='playing' lets the client return
+        as soon as the audio is queued without waiting for playback.
+        Dedup short-circuits still send 'done' directly (no 'playing'),
+        so terminal_type='done' handles that path correctly.
         """
         ws = await self._ensure_connected()
         await ws.send(json.dumps(msg))
@@ -244,7 +250,10 @@ class VoxClient:
             responses.append(resp)
             if resp.get("type") == "error":
                 raise VoxdProtocolError(str(resp.get("message", "unknown error")))
-            if resp.get("type") == terminal_type:
+            resp_type = resp.get("type")
+            if resp_type == terminal_type or (
+                early_terminal is not None and resp_type == early_terminal
+            ):
                 return responses
 
     # -- public API ----------------------------------------------------------
@@ -306,7 +315,10 @@ class VoxClient:
             msg["once"] = once
 
         responses = await self._send_and_drain(
-            msg, timeout=_TIMEOUT_SYNTHESIS, terminal_type="done"
+            msg,
+            timeout=_TIMEOUT_SYNTHESIS,
+            terminal_type="done",
+            early_terminal="playing",
         )
         terminal = responses[-1] if responses else {}
         if terminal.get("deduped"):
@@ -329,7 +341,9 @@ class VoxClient:
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
         msg: dict[str, object] = {"type": "chime", "signal": signal}
-        await self._send_and_drain(msg, timeout=_TIMEOUT_SHORT, terminal_type="done")
+        await self._send_and_drain(
+            msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
+        )
 
     async def record(
         self,
