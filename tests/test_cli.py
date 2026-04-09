@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
@@ -473,7 +474,18 @@ class TestApiKeyInputPaths:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """--api-key-file and --api-key-stdin together is a BadParameter."""
+        """--api-key-file and --api-key-stdin together is a BadParameter.
+
+        Asserts against ``result.exception`` (the raw BadParameter) rather
+        than ``result.output``/``result.stderr`` because Click's rich error
+        box wraps the rendered message at terminal width. On CI runners
+        with narrow ``COLUMNS`` (~80 or less) the flag names and even
+        "mutually exclusive" split across lines, breaking substring
+        matches. ``standalone_mode=False`` makes Click re-raise
+        BadParameter instead of rendering it and calling ``sys.exit`` —
+        so ``result.exception`` holds the unwrapped message. Fixes
+        intermittent CI failures on PR #175.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("VOX_API_KEY", raising=False)
         key_path = tmp_path / "key.txt"
@@ -491,20 +503,31 @@ class TestApiKeyInputPaths:
                 "--api-key-stdin",
             ],
             input="sk_stdin\n",
+            standalone_mode=False,
         )
 
         assert result.exit_code != 0
-        output = result.output + result.stderr
-        assert "mutually exclusive" in output
-        assert "--api-key-file" in output
-        assert "--api-key-stdin" in output
+        assert isinstance(result.exception, typer.BadParameter), (
+            f"expected BadParameter, got "
+            f"{type(result.exception).__name__}: {result.exception}"
+        )
+        exception_msg = str(result.exception)
+        assert "mutually exclusive" in exception_msg
+        assert "--api-key-file" in exception_msg
+        assert "--api-key-stdin" in exception_msg
 
     def test_api_key_mutual_exclusion_argv_and_file(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """--api-key and --api-key-file together is a BadParameter."""
+        """--api-key and --api-key-file together is a BadParameter.
+
+        Asserts against ``result.exception`` for the same reason as
+        ``test_api_key_mutual_exclusion_file_and_stdin`` — Click wraps
+        the rendered error at terminal width, so substring matches on
+        the rendered output are terminal-width sensitive.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("VOX_API_KEY", raising=False)
         key_path = tmp_path / "key.txt"
@@ -522,13 +545,18 @@ class TestApiKeyInputPaths:
                 "--api-key-file",
                 str(key_path),
             ],
+            standalone_mode=False,
         )
 
         assert result.exit_code != 0
-        output = result.output + result.stderr
-        assert "mutually exclusive" in output
-        assert "--api-key" in output
-        assert "--api-key-file" in output
+        assert isinstance(result.exception, typer.BadParameter), (
+            f"expected BadParameter, got "
+            f"{type(result.exception).__name__}: {result.exception}"
+        )
+        exception_msg = str(result.exception)
+        assert "mutually exclusive" in exception_msg
+        assert "--api-key" in exception_msg
+        assert "--api-key-file" in exception_msg
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_api_key_none_source_passes_none(
