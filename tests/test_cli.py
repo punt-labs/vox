@@ -970,11 +970,19 @@ class TestDaemonRestartCommand:
         assert result.exit_code != 0
 
     def test_linux_restart_sequence(self) -> None:
-        """Linux path: stop, ensure port free, start, verify via health."""
+        """Linux path: stop, ensure port free, start, verify via health.
+
+        The happy path requires ``daemon_version`` in the health response
+        to match the on-disk wheel — vox-nmb's version-mismatch check.
+        """
         runner = CliRunner()
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {"pid": 42, "port": 8421}
+        mock_client.health.return_value = {
+            "pid": 42,
+            "port": 8421,
+            "daemon_version": "9.9.9-test",
+        }
 
         calls: list[tuple[str, ...]] = []
 
@@ -993,6 +1001,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service._ensure_port_free") as mock_free,
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1003,13 +1012,18 @@ class TestDaemonRestartCommand:
         assert calls == [("sudo", "systemctl", "start", "voxd")]
         assert "pid=42" in result.output
         assert "port 8421" in result.output
+        assert "9.9.9-test" in result.output
 
     def test_macos_restart_sequence(self) -> None:
         """macOS path: unload, ensure port free, load + kickstart."""
         runner = CliRunner()
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {"pid": 99, "port": 8421}
+        mock_client.health.return_value = {
+            "pid": 99,
+            "port": 8421,
+            "daemon_version": "9.9.9-test",
+        }
 
         calls: list[tuple[str, ...]] = []
 
@@ -1028,6 +1042,7 @@ class TestDaemonRestartCommand:
             patch("punt_vox.service._ensure_port_free") as mock_free,
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1062,7 +1077,7 @@ class TestDaemonRestartCommand:
         mock_client.health.side_effect = [
             VoxdConnectionError("not yet"),
             VoxdConnectionError("not yet"),
-            {"pid": 7, "port": 8421},
+            {"pid": 7, "port": 8421, "daemon_version": "9.9.9-test"},
         ]
 
         with (
@@ -1073,6 +1088,7 @@ class TestDaemonRestartCommand:
             patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_CLI}.time.sleep") as mock_sleep,
+            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -1080,6 +1096,73 @@ class TestDaemonRestartCommand:
         assert mock_client.health.call_count == 3
         assert mock_sleep.call_count == 2
         assert "pid=7" in result.output
+
+    def test_restart_fails_on_version_mismatch(self) -> None:
+        """Running daemon version differs from wheel: restart must fail closed.
+
+        vox-nmb: a silent stop failure can leave the OLD daemon alive,
+        in which case ``systemctl start voxd`` exits 0 as a no-op on an
+        already-active unit. Without this check, the command would
+        print success while the stale daemon continues to answer — the
+        exact bug the feature exists to prevent.
+        """
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        # Running daemon is v4.1.1 but wheel is v4.2.0 — simulated
+        # stale process that the service manager failed to restart.
+        mock_client.health.return_value = {
+            "pid": 42,
+            "port": 8421,
+            "daemon_version": "4.1.1",
+        }
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service._ensure_port_free"),
+            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 1
+        # Error message must call out BOTH versions so the operator can
+        # tell what's stale without cracking open logs.
+        assert "4.1.1" in result.output
+        assert "4.2.0" in result.output
+        assert "voxd.log" in result.output
+
+    def test_restart_fails_on_absent_version(self) -> None:
+        """Health response missing ``daemon_version``: restart must fail closed.
+
+        A daemon built from pre-cef3e8a code cannot self-report its
+        version — the health route returns no ``daemon_version`` field.
+        We cannot prove the running process matches the wheel, and the
+        stale-daemon symptom we're trying to detect looks exactly like
+        this. Fail closed instead of printing success on ambiguous data.
+        """
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        mock_client.health.return_value = {"pid": 42, "port": 8421}
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service._ensure_port_free"),
+            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 1
+        assert "did not report a version" in result.output
+        assert "4.2.0" in result.output
 
     def test_start_subprocess_failure_exits_with_log_hint(self) -> None:
         """systemctl start failure exits 1 and points at the voxd log."""

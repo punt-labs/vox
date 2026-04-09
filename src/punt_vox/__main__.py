@@ -1165,6 +1165,8 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         )
         raise typer.Exit(code=1) from exc
 
+    from punt_vox.paths import log_dir
+
     logger.info("Waiting for voxd to come back up...")
     deadline = time.monotonic() + 5.0
     last_exc: Exception | None = None
@@ -1177,13 +1179,50 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
             continue
         pid = health.get("pid", "?")
         port = health.get("port", "?")
+
+        # Load-bearing verification for vox-nmb: a silent stop failure
+        # (systemctl lost the unit, dbus quirk, _is_vox_daemon_process
+        # returning False, etc.) can leave the OLD daemon alive, and
+        # ``systemctl start voxd`` exits 0 as a no-op when the unit is
+        # already active. Without this version check, the restart
+        # command would print success while the stale daemon continues
+        # to answer — which is exactly the bug vox-nmb exists to prevent.
+        running_version = str(health.get("daemon_version", ""))
+        wheel_version = _installed_wheel_version()
+        log_path = log_dir() / "voxd.log"
+        if not running_version:
+            # Pre-cef3e8a daemons do not self-report a version. Fail
+            # closed: we cannot prove the restart picked up new code,
+            # and the symptom we're trying to detect (stale daemon)
+            # would look exactly like this.
+            typer.echo(
+                "Error: restarted daemon did not report a version. Expected "
+                f"{wheel_version}. Check {log_path} — the daemon may be "
+                "running pre-feat/install-verify-hardening code that cannot "
+                "self-report its version.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if running_version != wheel_version:
+            typer.echo(
+                f"Error: daemon reports version {running_version} but wheel is "
+                f"{wheel_version}. The restart did not pick up the new code. "
+                f"Check {log_path}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
         _emit(
-            {"restarted": True, "pid": pid, "port": port},
-            f"voxd restarted (pid={pid}, listening on port {port})",
+            {
+                "restarted": True,
+                "pid": pid,
+                "port": port,
+                "daemon_version": running_version,
+            },
+            f"voxd restarted (pid={pid}, listening on port {port}, "
+            f"version {running_version})",
         )
         return
-
-    from punt_vox.paths import log_dir
 
     log_path = log_dir() / "voxd.log"
     reason = f": {last_exc}" if last_exc is not None else ""
