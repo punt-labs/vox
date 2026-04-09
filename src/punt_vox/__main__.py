@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 
 from punt_vox import __version__
@@ -99,6 +100,142 @@ def _validate_voice_settings(
         if value is not None and not 0.0 <= value <= 1.0:
             msg = f"{name} must be between 0.0 and 1.0, got {value}"
             raise typer.BadParameter(msg)
+
+
+# ---------------------------------------------------------------------------
+# API key resolution
+#
+# The per-call API key feature exists for single-user billing isolation:
+# one user holding multiple provider keys and wanting to attribute cost
+# to a specific project on a specific call. The secret is forwarded to
+# voxd over the local WebSocket and injected into the provider env for
+# one synthesize request.
+#
+# Passing ``--api-key <value>`` literally on the command line exposes
+# the value through ``ps``, ``/proc/<pid>/cmdline``, shell history, and
+# terminal recordings. That's a real credential disclosure path even
+# though voxd does not log or persist the key. Three safer input paths
+# are supported; ``--api-key`` is retained for back-compat and demo use
+# with a stderr warning when the value came from argv (not from the
+# ``VOX_API_KEY`` env var).
+#
+# The four sources are mutually exclusive: specifying more than one
+# raises ``typer.BadParameter``. Priority (only one may be set):
+#   1. ``--api-key-file <path>``
+#   2. ``--api-key-stdin``
+#   3. ``VOX_API_KEY`` env var (or ``--api-key <value>`` — typer treats
+#      both as populating the same ``api_key`` parameter; we distinguish
+#      them via ``ctx.get_parameter_source`` to decide whether to warn)
+# ---------------------------------------------------------------------------
+
+
+_API_KEY_ARGV_WARNING = (
+    "warning: --api-key on the command line is visible via 'ps' and "
+    "shell history. Prefer VOX_API_KEY env var, --api-key-file <path>, "
+    "or --api-key-stdin for real credentials."
+)
+
+
+def _read_api_key_file(path: Path) -> str:
+    """Read a per-call API key from a file.
+
+    Rejects missing paths, non-files, and empty files. Strips trailing
+    whitespace and newlines. Warns (but does not fail) when the file is
+    world-readable, matching the advisory style used by the install
+    path for ``keys.env`` permission handling.
+    """
+    if not path.is_file():
+        msg = f"--api-key-file: {path} is not a file"
+        raise typer.BadParameter(msg)
+    mode = path.stat().st_mode
+    if mode & 0o004:
+        typer.echo(
+            f"warning: --api-key-file: {path} is world-readable "
+            f"(mode {oct(mode & 0o777)}). Run 'chmod 600 {path}' to "
+            f"tighten permissions.",
+            err=True,
+        )
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        msg = f"--api-key-file: {path} is empty"
+        raise typer.BadParameter(msg)
+    return value
+
+
+def _read_api_key_stdin() -> str:
+    """Read a per-call API key from stdin (one line).
+
+    Refuses to read when stdin is a tty — the user almost certainly
+    meant to pipe the key in, and blocking on an interactive prompt
+    would be a surprising default. Strips trailing whitespace and
+    rejects empty input.
+    """
+    if sys.stdin.isatty():
+        msg = "--api-key-stdin requires piped input (stdin is a tty)"
+        raise typer.BadParameter(msg)
+    line = sys.stdin.readline().strip()
+    if not line:
+        msg = "--api-key-stdin: received empty input"
+        raise typer.BadParameter(msg)
+    return line
+
+
+def _resolve_api_key(
+    ctx: typer.Context,
+    api_key: str | None,
+    api_key_file: Path | None,
+    api_key_stdin: bool,
+) -> str | None:
+    """Resolve the per-call API key from the first configured source.
+
+    Enforces mutual exclusion between ``--api-key-file``,
+    ``--api-key-stdin``, and ``--api-key``/``VOX_API_KEY``. Fires a
+    stderr warning when ``--api-key`` was passed literally on the
+    command line (source == COMMANDLINE) because argv is visible to
+    local process introspection and shell history. The env-var path
+    (source == ENVIRONMENT) does not warn: ``/proc/<pid>/environ`` is
+    owner-only on Linux and macOS, so env vars are materially harder
+    to snoop than argv.
+
+    Returns None when no source is configured — the call is anonymous
+    and voxd falls back to the ambient ``keys.env`` value.
+    """
+    file_set = api_key_file is not None
+    stdin_set = api_key_stdin
+    argv_or_env_set = api_key is not None
+    sources_set = int(file_set) + int(stdin_set) + int(argv_or_env_set)
+    if sources_set > 1:
+        named: list[str] = []
+        if file_set:
+            named.append("--api-key-file")
+        if stdin_set:
+            named.append("--api-key-stdin")
+        if argv_or_env_set:
+            # Distinguish argv vs env var so the error points at the
+            # right input surface. Users piping a key via env var and
+            # then also writing --api-key-file by mistake should see
+            # "VOX_API_KEY", not "--api-key".
+            source = ctx.get_parameter_source("api_key")
+            if source is click.core.ParameterSource.ENVIRONMENT:
+                named.append("VOX_API_KEY")
+            else:
+                named.append("--api-key")
+        conflict = ", ".join(named)
+        msg = (
+            f"Specify at most one API key source; got {conflict}. "
+            "These are mutually exclusive."
+        )
+        raise typer.BadParameter(msg)
+    if api_key_file is not None:
+        return _read_api_key_file(api_key_file)
+    if api_key_stdin:
+        return _read_api_key_stdin()
+    if api_key is not None:
+        source = ctx.get_parameter_source("api_key")
+        if source is click.core.ParameterSource.COMMANDLINE:
+            typer.echo(_API_KEY_ARGV_WARNING, err=True)
+        return api_key
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +326,7 @@ ApiKeyOpt = Annotated[
     str | None,
     typer.Option(
         "--api-key",
+        envvar="VOX_API_KEY",
         help=(
             "Per-call provider API key. Forwarded to voxd over the local "
             "WebSocket and used for this single synthesis request only. "
@@ -196,7 +334,38 @@ ApiKeyOpt = Annotated[
             "for per-project billing attribution without juggling "
             "environment variables. Not persisted, not logged, never "
             "echoed to stdout. vox is single-user — this is cost-tracking, "
-            "not multi-tenant isolation."
+            "not multi-tenant isolation. Passing --api-key literally on "
+            "the command line exposes the value via 'ps' and shell history; "
+            "prefer VOX_API_KEY env var, --api-key-file, or --api-key-stdin "
+            "for real credentials."
+        ),
+    ),
+]
+ApiKeyFileOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--api-key-file",
+        help=(
+            "Read per-call provider API key from a file. Safer than "
+            "--api-key on the command line because the value never "
+            "appears in argv, shell history, or 'ps'. The file should "
+            "be mode 0600; vox warns if it is world-readable. Empty "
+            "files and non-files are rejected. Trailing whitespace and "
+            "newlines are stripped."
+        ),
+    ),
+]
+ApiKeyStdinFlag = Annotated[
+    bool,
+    typer.Option(
+        "--api-key-stdin",
+        help=(
+            "Read per-call provider API key from stdin (one line). "
+            "Safer than --api-key on the command line because the "
+            "value never appears in argv. Intended for piped input "
+            "from a password manager, e.g. 'pass show vox/project | "
+            "vox unmute ... --api-key-stdin'. Refuses to read from a "
+            "tty."
         ),
     ),
 ]
@@ -236,6 +405,7 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 
 @app.command()
 def unmute(  # pyright: ignore[reportUnusedFunction]
+    ctx: typer.Context,
     text: TextArg = None,
     from_file: FromOpt = None,
     voice: VoiceOpt = None,
@@ -249,6 +419,8 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     speaker_boost: SpeakerBoostFlag = False,
     once: OnceOpt = None,
     api_key: ApiKeyOpt = None,
+    api_key_file: ApiKeyFileOpt = None,
+    api_key_stdin: ApiKeyStdinFlag = False,
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
@@ -268,9 +440,15 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     # for an Optional[str] flag, but an empty API key can never be
     # correct and would silently fall back to the keys.env default.
     # Reject it so the user does not think they're scoping by key
-    # when they're not.
+    # when they're not. Applies to --api-key and VOX_API_KEY alike.
     if api_key is not None and not api_key:
         raise typer.BadParameter("--api-key cannot be empty.")
+
+    # Resolve the per-call API key from exactly one of the four
+    # supported sources (file, stdin, env var, argv) and fire a
+    # stderr warning when the argv path was used. See
+    # ``_resolve_api_key`` for the full rationale.
+    resolved_api_key = _resolve_api_key(ctx, api_key, api_key_file, api_key_stdin)
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -291,7 +469,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                 style=style,
                 speaker_boost=boost,
                 once=once,
-                api_key=api_key,
+                api_key=resolved_api_key,
             )
             payload: dict[str, object] = {"id": result.request_id}
             if result.deduped:

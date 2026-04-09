@@ -183,6 +183,351 @@ class TestUnmuteCommand:
 
 
 # ---------------------------------------------------------------------------
+# API key input path tests
+#
+# Regression guard for the Cursor Automation security review of PR #175.
+# The concern: ``--api-key <value>`` on the command line exposes the
+# secret via ``ps``, ``/proc/*/cmdline``, shell history, and terminal
+# recordings. Fix keeps ``--api-key`` for back-compat but adds three
+# safer input paths (file, stdin, VOX_API_KEY env var) and emits a
+# stderr warning when the caller used the argv path directly.
+# ---------------------------------------------------------------------------
+
+
+class TestApiKeyInputPaths:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_from_env_var_no_warning(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """VOX_API_KEY populates api_key without firing the argv warning.
+
+        ``/proc/<pid>/environ`` is owner-only by default, so env vars
+        are materially harder to snoop than argv. This path must not
+        warn.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("VOX_API_KEY", "sk_env_var_test")
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_env_var_test"
+        assert "warning: --api-key on the command line" not in result.stderr
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_from_argv_emits_warning(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Literal --api-key on the command line emits the stderr warning.
+
+        The key still flows through to the client (back-compat), but
+        the user is told loudly that argv is exposed via ps and
+        history.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello", "--api-key", "sk_argv_direct"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_argv_direct"
+        assert "warning: --api-key on the command line" in result.stderr
+        assert "VOX_API_KEY" in result.stderr
+        assert "--api-key-file" in result.stderr
+        assert "--api-key-stdin" in result.stderr
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_file_valid(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--api-key-file <path> (mode 0600) delivers the key with no warning.
+
+        Trailing newline is stripped. This is the recommended path
+        for stored keys.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_file_test\n", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["unmute", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_file_test"
+        assert "warning: --api-key on the command line" not in result.stderr
+        assert "world-readable" not in result.stderr
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_file_world_readable_warns(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Mode 0644 on the key file fires a permission warning.
+
+        The warning is advisory, not blocking: the call still succeeds
+        and the key reaches the client. Matches the keys.env
+        permission handling style.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_world_readable\n", encoding="utf-8")
+        key_path.chmod(0o644)
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["unmute", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_world_readable"
+        assert "world-readable" in result.stderr
+        assert "chmod 600" in result.stderr
+
+    def test_api_key_file_not_found(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A missing path is a BadParameter, not a crash."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        missing = tmp_path / "does_not_exist"
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello", "--api-key-file", str(missing)])
+
+        assert result.exit_code != 0
+        assert "is not a file" in result.output or "is not a file" in result.stderr
+
+    def test_api_key_file_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An empty file is a BadParameter: never silently fall through."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "empty.txt"
+        key_path.write_text("", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["unmute", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code != 0
+        assert "is empty" in result.output or "is empty" in result.stderr
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_stdin_pipe(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--api-key-stdin reads one line of piped stdin, strips, no warning.
+
+        Intended usage: ``pass show vox/proj | vox unmute ... --api-key-stdin``.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["unmute", "hello", "--api-key-stdin"],
+            input="sk_stdin_test\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_stdin_test"
+        assert "warning: --api-key on the command line" not in result.stderr
+
+    def test_api_key_stdin_rejects_tty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--api-key-stdin refuses to read when stdin is a tty.
+
+        Interactive prompts would surprise scripts that forgot to
+        pipe. The user almost certainly wanted piped input.
+
+        This exercises the helper directly rather than going through
+        CliRunner.invoke because click's runner swaps ``sys.stdin``
+        for a BytesIO during invocation, so a monkeypatched ``isatty``
+        on the real stdin would be masked. The helper is module-level
+        and the tty branch is the contract we care about.
+        """
+        import typer
+
+        from punt_vox.__main__ import (
+            _read_api_key_stdin,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        fake_stdin = MagicMock()
+        fake_stdin.isatty.return_value = True
+        monkeypatch.setattr("punt_vox.__main__.sys.stdin", fake_stdin)
+
+        try:
+            _read_api_key_stdin()
+        except typer.BadParameter as exc:
+            assert "requires piped input" in str(exc)
+        else:  # pragma: no cover — forces the failure path
+            raise AssertionError("expected typer.BadParameter for tty stdin")
+
+    def test_api_key_stdin_empty_input(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty stdin is a BadParameter, not a silent fall-through."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello", "--api-key-stdin"], input="")
+
+        assert result.exit_code != 0
+        assert "empty input" in result.output or "empty input" in result.stderr
+
+    def test_api_key_mutual_exclusion_file_and_stdin(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--api-key-file and --api-key-stdin together is a BadParameter."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_file\n", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "unmute",
+                "hello",
+                "--api-key-file",
+                str(key_path),
+                "--api-key-stdin",
+            ],
+            input="sk_stdin\n",
+        )
+
+        assert result.exit_code != 0
+        output = result.output + result.stderr
+        assert "mutually exclusive" in output
+        assert "--api-key-file" in output
+        assert "--api-key-stdin" in output
+
+    def test_api_key_mutual_exclusion_argv_and_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--api-key and --api-key-file together is a BadParameter."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_file\n", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "unmute",
+                "hello",
+                "--api-key",
+                "sk_argv",
+                "--api-key-file",
+                str(key_path),
+            ],
+        )
+
+        assert result.exit_code != 0
+        output = result.output + result.stderr
+        assert "mutually exclusive" in output
+        assert "--api-key" in output
+        assert "--api-key-file" in output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_none_source_passes_none(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With no api_key source, the client receives api_key=None.
+
+        voxd then falls back to the ambient keys.env value. Regression
+        guard that resolve returns None, not an empty string, when
+        nothing is configured.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] is None
+        assert "warning: --api-key on the command line" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
 # record tests
 # ---------------------------------------------------------------------------
 

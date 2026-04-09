@@ -229,14 +229,60 @@ Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > s
 
 ### Per-call API keys for billing isolation
 
-`vox unmute` accepts a `--api-key <value>` flag that scopes a single synthesis call to a specific provider key, overriding whatever is in `keys.env` for that one request only:
+If you maintain multiple provider API keys for cost attribution (for
+example, separate ElevenLabs keys for different projects), you can
+pass a per-call override for any `vox unmute` invocation. The override
+is per-call only: never persisted to `keys.env`, never logged by the
+daemon, never echoed to stdout, never visible to concurrent requests
+on the same daemon. Four input paths are supported, from most to
+least secure:
 
-```bash
-vox unmute "billable to project A" --api-key sk_A
-vox unmute "billable to project B" --api-key sk_B
-```
+1. **Environment variable** (recommended for scripting):
 
-This is **not** multi-tenant isolation — vox is a single-user tool. The use case is one user who holds multiple keys from the same provider (e.g. two ElevenLabs keys, one per project) and wants to attribute synthesis costs to the right project without juggling environment variables. The key is forwarded to `voxd` over the local WebSocket, injected into the provider's environment for the duration of one synthesis request, and then restored. It is never persisted to disk, never written to logs, never echoed to stdout, and never visible to other concurrent requests on the same daemon.
+   ```bash
+   export VOX_API_KEY=$(pass show vox/proj_a)
+   vox unmute "billable to project A"
+   ```
+
+   `VOX_API_KEY` lives in `/proc/<pid>/environ`, which is owner-only
+   on Linux and macOS, so it is materially harder for other local
+   users to snoop than values passed on the command line.
+
+2. **File** (recommended for stored keys):
+
+   ```bash
+   vox unmute "billable to project A" \
+     --api-key-file ~/.config/vox/key_project_a.txt
+   ```
+
+   The file should be mode 0600 (owner read/write only). `vox` warns
+   if the file is world-readable and suggests `chmod 600`.
+
+3. **Standard input** (recommended for password managers):
+
+   ```bash
+   pass show vox/proj_a | vox unmute "billable to project A" --api-key-stdin
+   ```
+
+   Reads one line from stdin. Refuses to read from a tty so a
+   forgotten pipe fails loudly instead of blocking on an interactive
+   prompt.
+
+4. **Command line** (demo only — **not** for real credentials):
+
+   ```bash
+   vox unmute "billable to project A" --api-key sk_demo_key
+   ```
+
+   **Warning**: `--api-key` on the command line exposes the value via
+   `ps`, `/proc/*/cmdline`, shell history, and terminal recordings.
+   `vox` prints a stderr warning whenever you use it. Use one of the
+   other three paths for real credentials.
+
+The four paths are mutually exclusive; specifying more than one is an
+error. This is **not** multi-tenant isolation — vox is a single-user
+tool. The feature is for attributing synthesis cost to the right
+project within one user's account, not for isolating tenants.
 
 ## Architecture
 
