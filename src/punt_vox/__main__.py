@@ -183,6 +183,21 @@ OnceOpt = Annotated[
         ),
     ),
 ]
+ApiKeyOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--api-key",
+        help=(
+            "Per-call provider API key. Forwarded to voxd over the local "
+            "WebSocket and used for this single synthesis request only. "
+            "Lets a single user maintain multiple ElevenLabs/OpenAI keys "
+            "for per-project billing attribution without juggling "
+            "environment variables. Not persisted, not logged, never "
+            "echoed to stdout. vox is single-user — this is cost-tracking, "
+            "not multi-tenant isolation."
+        ),
+    ),
+]
 FromOpt = Annotated[
     Path | None,
     typer.Option("--from", help="JSON file with segments array.", exists=True),
@@ -231,6 +246,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,
     once: OnceOpt = None,
+    api_key: ApiKeyOpt = None,
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
@@ -245,6 +261,14 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
         )
     if once == 0:
         once = None
+
+    # Empty string is a user error — typer will accept "" as a value
+    # for an Optional[str] flag, but an empty API key can never be
+    # correct and would silently fall back to the keys.env default.
+    # Reject it so the user does not think they're scoping by key
+    # when they're not.
+    if api_key is not None and not api_key:
+        raise typer.BadParameter("--api-key cannot be empty.")
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -265,6 +289,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                 style=style,
                 speaker_boost=boost,
                 once=once,
+                api_key=api_key,
             )
             payload: dict[str, object] = {"id": result.request_id}
             if result.deduped:

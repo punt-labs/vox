@@ -88,6 +88,98 @@ class TestUnmuteCommand:
         assert result.exit_code == 1
         assert "not running" in result.output
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_api_key_forwards_to_client(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        """--api-key value is forwarded to client.synthesize(api_key=...).
+
+        Per-call key isolation — the user provides a billing-attribution
+        key on this single call. Regression guard for vox-a3e: verifies
+        the CLI surface that was missing prior to this commit.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["unmute", "billable work", "--api-key", "sk_project_a"]
+        )
+
+        assert result.exit_code == 0
+        mock_instance.synthesize.assert_called_once()
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] == "sk_project_a"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_api_key_not_echoed_to_output(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        """The api key must never appear in stdout, stderr, or logs.
+
+        Security invariant: a secret passed on the command line should
+        survive only long enough to reach voxd over the local WebSocket.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        secret = "sk_SECRET_never_echo"
+        result = runner.invoke(app, ["unmute", "hello world", "--api-key", secret])
+
+        assert result.exit_code == 0
+        assert secret not in result.output
+        # JSON mode also must not echo it — the payload only includes id.
+        result_json = runner.invoke(
+            app,
+            ["--json", "unmute", "hello world", "--api-key", secret],
+        )
+        assert result_json.exit_code == 0
+        assert secret not in result_json.output
+
+    def test_unmute_api_key_empty_raises(self) -> None:
+        """An empty --api-key is a user error, not a silent fallback."""
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
+        assert result.exit_code != 0
+        assert "cannot be empty" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_no_api_key_omits_kwarg(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        """Without --api-key, the client is called with api_key=None.
+
+        A None value lets voxd fall back to the keys.env default.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["unmute", "hello"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_instance.synthesize.call_args[1]
+        assert call_kwargs["api_key"] is None
+
 
 # ---------------------------------------------------------------------------
 # record tests
