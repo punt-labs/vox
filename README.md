@@ -244,9 +244,13 @@ least secure:
    vox unmute "billable to project A"
    ```
 
-   `VOX_API_KEY` lives in `/proc/<pid>/environ`, which is owner-only
-   on Linux and macOS, so it is materially harder for other local
-   users to snoop than values passed on the command line.
+   On Linux, `VOX_API_KEY` is exposed via `/proc/<pid>/environ`,
+   which is typically only readable by the process owner. macOS has
+   no Linux-style `/proc` filesystem so env vars are not exposed
+   that way by default, but they are still generally less visible
+   than `argv` (which `ps` prints on any shared system). Either way,
+   env vars are materially safer than passing the key literally on
+   the command line.
 
 2. **File** (recommended for stored keys):
 
@@ -256,7 +260,8 @@ least secure:
    ```
 
    The file should be mode 0600 (owner read/write only). `vox` warns
-   if the file is world-readable and suggests `chmod 600`.
+   if any group or other permission bits are set and suggests
+   `chmod 600`.
 
 3. **Standard input** (recommended for password managers):
 
@@ -274,10 +279,10 @@ least secure:
    vox unmute "billable to project A" --api-key sk_demo_key
    ```
 
-   **Warning**: `--api-key` on the command line exposes the value via
-   `ps`, `/proc/*/cmdline`, shell history, and terminal recordings.
-   `vox` prints a stderr warning whenever you use it. Use one of the
-   other three paths for real credentials.
+   **Warning**: `--api-key` on the command line exposes the value
+   via `ps` (and, on Linux, `/proc/*/cmdline`), shell history, and
+   terminal recordings. `vox` prints a stderr warning whenever you
+   use it. Use one of the other three paths for real credentials.
 
 The four paths are mutually exclusive; specifying more than one is an
 error. This is **not** multi-tenant isolation — vox is a single-user

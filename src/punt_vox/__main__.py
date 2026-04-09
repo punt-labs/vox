@@ -111,12 +111,12 @@ def _validate_voice_settings(
 # one synthesize request.
 #
 # Passing ``--api-key <value>`` literally on the command line exposes
-# the value through ``ps``, ``/proc/<pid>/cmdline``, shell history, and
-# terminal recordings. That's a real credential disclosure path even
-# though voxd does not log or persist the key. Three safer input paths
-# are supported; ``--api-key`` is retained for back-compat and demo use
-# with a stderr warning when the value came from argv (not from the
-# ``VOX_API_KEY`` env var).
+# the value through ``ps`` (and, on Linux, ``/proc/<pid>/cmdline``),
+# shell history, and terminal recordings. That's a real credential
+# disclosure path even though voxd does not log or persist the key.
+# Three safer input paths are supported; ``--api-key`` is retained
+# for back-compat and demo use with a stderr warning when the value
+# came from argv (not from the ``VOX_API_KEY`` env var).
 #
 # The four sources are mutually exclusive: specifying more than one
 # raises ``typer.BadParameter``. Priority (only one may be set):
@@ -145,8 +145,8 @@ def _read_api_key_file(path: Path) -> str:
     handling.
 
     The check is ``mode & 0o077`` (any group or other bit), not
-    ``mode & 0o004`` (world-readable only). On shared Unix systems a
-    file at 0640 is readable by anyone in the owning group
+    ``mode & 0o004`` (the other-read bit only). On shared Unix systems
+    a file at 0640 is readable by anyone in the owning group
     (``nobody``, ``www-data``, a shared-dev group, etc.) — the
     narrower check let that exposure slide silently. The only safe
     mode for a credential file is 0600. Copilot on PR #175.
@@ -200,9 +200,9 @@ def _resolve_api_key(
     stderr warning when ``--api-key`` was passed literally on the
     command line (source == COMMANDLINE) because argv is visible to
     local process introspection and shell history. The env-var path
-    (source == ENVIRONMENT) does not warn: ``/proc/<pid>/environ`` is
-    owner-only on Linux and macOS, so env vars are materially harder
-    to snoop than argv.
+    (source == ENVIRONMENT) does not warn: while environment variables
+    are not secret, they are generally less exposed to casual local
+    observation than argv.
 
     Returns None when no source is configured — the call is anonymous
     and voxd falls back to the ambient ``keys.env`` value.
@@ -356,9 +356,9 @@ ApiKeyFileOpt = Annotated[
             "Read per-call provider API key from a file. Safer than "
             "--api-key on the command line because the value never "
             "appears in argv, shell history, or 'ps'. The file should "
-            "be mode 0600; vox warns if it is world-readable. Empty "
-            "files and non-files are rejected. Trailing whitespace and "
-            "newlines are stripped."
+            "be mode 0600; vox warns if any group or other permission "
+            "bits are set. Empty files and non-files are rejected. "
+            "Trailing whitespace and newlines are stripped."
         ),
     ),
 ]
