@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-04-08
+
 ### Added
 
 - **`vox unmute --once <seconds>`**: new CLI flag that forwards a per-call dedup TTL to voxd. When set, voxd will skip a synthesize+play of the same text if an identical text was already played within the window. The motivating use case is `biff wall` broadcasts: N Claude Code sessions in the same repo independently shell out to `vox unmute` on the same broadcast text, and the user should hear the announcement exactly once. Without the flag, identical requests play every time — there is no default dedup for speech. The flag takes a positive integer (seconds); the biff wall integration passes `--once 600` for a 10-minute window that comfortably covers cross-session delivery jitter. Closes vox-0e9 on the vox side. The biff side follows in a separate PR against `punt-labs/biff` coordinated on the biff message channel.
