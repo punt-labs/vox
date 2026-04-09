@@ -494,8 +494,17 @@ class TestDoctorCommand:
         system_platform: str = "Darwin",
         espeak_found: str | None = None,
         daemon_healthy: bool = True,
+        daemon_version: str | None = "4.2.0",
+        installed_version: str = "4.2.0",
     ) -> Result:
-        """Invoke doctor with controlled mocks."""
+        """Invoke doctor with controlled mocks.
+
+        ``daemon_version`` and ``installed_version`` default to the same
+        value so the mismatch warning does not fire unless the test
+        explicitly diverges them. Pass ``daemon_version=None`` to
+        simulate a pre-upgrade daemon that predates the health-version
+        field.
+        """
 
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg" and ffmpeg_found:
@@ -513,11 +522,14 @@ class TestDoctorCommand:
 
         mock_client = MagicMock()
         if daemon_healthy:
-            mock_client.health.return_value = {
+            health_payload: dict[str, object] = {
                 "provider": "elevenlabs",
                 "active_sessions": 2,
                 "port": 8421,
             }
+            if daemon_version is not None:
+                health_payload["daemon_version"] = daemon_version
+            mock_client.health.return_value = health_payload
         else:
             from punt_vox.client import VoxdConnectionError
 
@@ -527,6 +539,10 @@ class TestDoctorCommand:
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(
+                f"{_CLI}._installed_wheel_version",
+                return_value=installed_version,
+            ),
             patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
             patch(
                 f"{_CLI}.default_output_dir",
@@ -569,6 +585,101 @@ class TestDoctorCommand:
             )
         assert result.exit_code == 0
         assert "espeak-ng/espeak: not found" in result.output
+
+    def test_matching_versions_passes_without_warning(self, tmp_path: Path) -> None:
+        """Daemon version == installed wheel version: green checkmark, no warn."""
+        result = self._run_doctor(
+            tmp_path,
+            daemon_version="4.2.0",
+            installed_version="4.2.0",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Daemon: running" in result.output
+        assert "version 4.2.0" in result.output
+        assert "\u26a0" not in result.output
+
+    def test_mismatched_versions_warns_without_failing(self, tmp_path: Path) -> None:
+        """Running daemon older than installed wheel: warning, exit code 0.
+
+        This is the vox-nmb regression guard. A stale voxd survived
+        v4.2.0 release-day smoke tests because doctor only checked
+        reachability, not version alignment. Doctor now warns but does
+        not fail — the daemon is still functional, just out of date.
+        """
+        result = self._run_doctor(
+            tmp_path,
+            daemon_version="4.1.1",
+            installed_version="4.2.0",
+        )
+        assert result.exit_code == 0
+        assert "\u26a0 Daemon: running" in result.output
+        assert "version 4.1.1" in result.output
+        assert "wheel has 4.2.0" in result.output
+        assert "vox daemon restart" in result.output
+        # Summary line should flag the warning count.
+        assert "1 warning" in result.output
+
+    def test_mismatched_versions_json_mode(self, tmp_path: Path) -> None:
+        """--json output includes the warned count for machine consumption."""
+        result = self._run_doctor(
+            tmp_path,
+            daemon_version="4.1.1",
+            installed_version="4.2.0",
+        )
+        # The helper invokes without --json; re-run with explicit --json flag.
+        runner = CliRunner()
+
+        def which_side_effect(name: str) -> str | None:
+            if name == "ffmpeg":
+                return "/opt/homebrew/bin/ffmpeg"
+            if name == "uvx":
+                return "/usr/local/bin/uvx"
+            return None
+
+        mock_client = MagicMock()
+        mock_client.health.return_value = {
+            "provider": "elevenlabs",
+            "active_sessions": 2,
+            "port": 8421,
+            "daemon_version": "4.1.1",
+        }
+
+        with (
+            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="4.2.0"),
+            patch(
+                f"{_CLI}._claude_desktop_config_path",
+                return_value=tmp_path / "nope.json",
+            ),
+            patch(
+                f"{_CLI}.default_output_dir",
+                return_value=tmp_path / "audio",
+            ),
+            patch(f"{_CLI}.platform.system", return_value="Darwin"),
+        ):
+            result = runner.invoke(app, ["--json", "doctor"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["warned"] >= 1
+
+    def test_pre_version_daemon_falls_back_to_pass(self, tmp_path: Path) -> None:
+        """An older daemon that lacks daemon_version still reports PASS.
+
+        Daemons built before commit 2 do not include daemon_version in
+        their health payload. Doctor must not treat that as a mismatch
+        — it cannot tell the version, so it cannot warn intelligently.
+        Fall back to the existing "Daemon: running" pass.
+        """
+        result = self._run_doctor(
+            tmp_path,
+            daemon_version=None,
+            installed_version="4.2.0",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Daemon: running" in result.output
+        assert "\u26a0" not in result.output
 
 
 # ---------------------------------------------------------------------------

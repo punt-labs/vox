@@ -571,6 +571,27 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 _PASS = "\u2713"
 _FAIL = "\u2717"
 _OPTIONAL = "\u25cb"
+_WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
+
+
+def _installed_wheel_version() -> str:
+    """Return the ``punt-vox`` version installed as a wheel on disk.
+
+    Uses ``importlib.metadata.version`` so the value reflects the
+    actual wheel metadata, not a hard-coded source constant. When
+    running from an uninstalled source tree, falls back to
+    ``punt_vox.__version__``. This matches the same fallback
+    semantics used by the voxd daemon at startup (see
+    ``punt_vox.voxd._resolve_daemon_version``), so doctor's
+    comparison is apples-to-apples when both sides resolve via the
+    fallback.
+    """
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version("punt-vox")
+    except importlib.metadata.PackageNotFoundError:
+        return __version__
 
 
 def _claude_desktop_config_path() -> Path:
@@ -588,11 +609,12 @@ def doctor() -> None:
     """Check system health for vox."""
     passed = 0
     failed = 0
+    warned = 0
     lines: list[str] = []
     checks: list[dict[str, object]] = []
 
     def _check(symbol: str, message: str, *, required: bool = True) -> None:
-        nonlocal passed, failed
+        nonlocal passed, failed, warned
         lines.append(f"{symbol} {message}")
         checks.append(
             {
@@ -606,6 +628,8 @@ def doctor() -> None:
             passed += 1
         elif symbol == _FAIL and required:
             failed += 1
+        elif symbol == _WARN:
+            warned += 1
 
     # Python version
     v = sys.version_info
@@ -650,13 +674,27 @@ def doctor() -> None:
     try:
         health = VoxClientSync().health()
         provider_name = str(health.get("provider", "unknown"))
-        sessions = health.get("active_sessions", "?")
         port = health.get("port", "?")
-        _check(
-            _PASS,
-            f"Daemon: running on port {port} ({sessions} sessions,"
-            f" provider: {provider_name})",
-        )
+        running_version = str(health.get("daemon_version", ""))
+        installed_version = _installed_wheel_version()
+        if running_version and running_version != installed_version:
+            # vox-nmb: a stale voxd survives `uv tool upgrade punt-vox`
+            # because the wheel on disk was swapped but the long-running
+            # daemon process was not cycled. Warn loudly but do not
+            # fail — the daemon is still functional, just out of date.
+            _check(
+                _WARN,
+                f"Daemon: running on port {port} (version {running_version}"
+                f" \u2014 wheel has {installed_version},"
+                f" run 'sudo vox daemon restart' to refresh)",
+            )
+        else:
+            version_note = f", version {running_version}" if running_version else ""
+            _check(
+                _PASS,
+                f"Daemon: running on port {port}"
+                f" (provider: {provider_name}{version_note})",
+            )
     except VoxdConnectionError:
         _check(
             _FAIL,
@@ -728,9 +766,17 @@ def doctor() -> None:
             " \u2014 check permissions or use --output-dir",
         )
 
-    text_parts = ["=" * 40, *lines, "=" * 40, f"{passed} passed, {failed} failed"]
+    summary = f"{passed} passed, {failed} failed"
+    if warned > 0:
+        summary += f", {warned} warning" + ("s" if warned > 1 else "")
+    text_parts = ["=" * 40, *lines, "=" * 40, summary]
     _emit(
-        {"passed": passed, "failed": failed, "checks": checks},
+        {
+            "passed": passed,
+            "failed": failed,
+            "warned": warned,
+            "checks": checks,
+        },
         "\n".join(text_parts),
     )
 
