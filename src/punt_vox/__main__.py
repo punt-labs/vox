@@ -1130,7 +1130,23 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         _systemd_stop()
 
     logger.info("Waiting for port to free...")
-    _ensure_port_free()
+    # ``_ensure_port_free`` raises ``SystemExit(msg)`` on port contention
+    # that survives the stop + kill attempt. Typer's runner swallows
+    # ``SystemExit`` without printing the message argument, so the user
+    # would otherwise see a silent exit-1 with no indication of why the
+    # restart aborted. Translate the raised message into a typer error
+    # with the same code path and log hint as the other failure modes.
+    try:
+        _ensure_port_free()
+    except SystemExit as exc:
+        reason = str(exc) if exc.code not in (0, None) else ""
+        detail = f": {reason}" if reason else ""
+        typer.echo(
+            f"Error: port still occupied after service manager stop{detail}\n"
+            f"Check the logs at {log_dir() / 'voxd.log'}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
     logger.info("Starting voxd via service manager...")
     try:

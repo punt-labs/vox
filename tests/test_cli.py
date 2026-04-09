@@ -1135,6 +1135,37 @@ class TestDaemonRestartCommand:
         assert "4.2.0" in result.output
         assert "voxd.log" in result.output
 
+    def test_restart_reports_port_contention(self) -> None:
+        """``_ensure_port_free`` raising ``SystemExit`` must reach the user.
+
+        Typer's runner swallows raw SystemExit without printing the
+        message argument. Without the explicit try/except translation,
+        the user would see a silent exit-1 with no indication that
+        port contention was the cause — a poor experience for the
+        load-bearing new command.
+        """
+        runner = CliRunner()
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch(
+                "punt_vox.service._ensure_port_free",
+                side_effect=SystemExit("Port 8421 is still in use (PIDs: [5555])."),
+            ),
+            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 1
+        assert "Error" in result.output
+        assert "port still occupied" in result.output.lower() or (
+            "still in use" in result.output
+        )
+        assert "8421" in result.output
+        assert "voxd.log" in result.output
+
     def test_restart_fails_on_absent_version(self) -> None:
         """Health response missing ``daemon_version``: restart must fail closed.
 
