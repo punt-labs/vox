@@ -237,15 +237,17 @@ class VoxClient:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 msg_type = str(msg.get("type", ""))
+                expected = early_terminal or terminal_type
                 raise VoxdProtocolError(
-                    f"Timeout waiting for '{terminal_type}' in '{msg_type}'"
+                    f"Timeout waiting for '{expected}' in '{msg_type}'"
                 )
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
             except TimeoutError as exc:
                 msg_type = str(msg.get("type", ""))
+                expected = early_terminal or terminal_type
                 raise VoxdProtocolError(
-                    f"Timeout waiting for '{terminal_type}' in '{msg_type}'"
+                    f"Timeout waiting for '{expected}' in '{msg_type}'"
                 ) from exc
             resp: dict[str, Any] = json.loads(str(raw))
             responses.append(resp)

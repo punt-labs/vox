@@ -278,6 +278,8 @@ class TestVoxClientSynthesize:
         assert isinstance(result.request_id, str)
         assert result.deduped is False
         assert mock_ws.recv.call_count == 1
+        mock_ws.close.assert_awaited_once()
+        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
     async def test_synthesize_dedup_returns_on_done(self) -> None:
@@ -339,6 +341,8 @@ class TestVoxClientChime:
 
         await client.chime("done")
         assert mock_ws.recv.call_count == 1
+        mock_ws.close.assert_awaited_once()
+        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
     async def test_chime_dedup_returns_on_done(self) -> None:
