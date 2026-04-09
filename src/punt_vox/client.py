@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import json
 import logging
 import uuid
@@ -257,8 +258,10 @@ class VoxClient:
                 # Server will still send terminal_type (e.g., 'done' after
                 # 'playing'). Close the connection so that stale message
                 # cannot be consumed by the next request on a reused
-                # VoxClient connection.
-                await ws.close()
+                # VoxClient connection. Suppress close errors — the
+                # connection may already be gone, but the audio is queued.
+                with contextlib.suppress(Exception):
+                    await ws.close()
                 self._ws = None
                 return responses
 
