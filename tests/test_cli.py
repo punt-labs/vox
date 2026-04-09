@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 
 if TYPE_CHECKING:
-    import pytest
     from click.testing import Result
 
 
@@ -286,16 +286,36 @@ class TestApiKeyInputPaths:
         call_kwargs = mock_instance.synthesize.call_args[1]
         assert call_kwargs["api_key"] == "sk_file_test"
         assert "warning: --api-key on the command line" not in result.stderr
-        assert "world-readable" not in result.stderr
+        assert "accessible to group or other" not in result.stderr
 
+    @pytest.mark.parametrize(
+        ("mode", "should_warn", "label"),
+        [
+            (0o644, True, "world-readable"),
+            (0o640, True, "group-readable only"),
+            (0o660, True, "group-writable only"),
+            (0o600, False, "owner-only (safe)"),
+        ],
+    )
     @patch(f"{_CLI}.VoxClientSync")
-    def test_api_key_file_world_readable_warns(
+    def test_api_key_file_loose_permissions_warn(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        mode: int,
+        should_warn: bool,
+        label: str,
     ) -> None:
-        """Mode 0644 on the key file fires a permission warning.
+        """Any group or other permission bit fires the advisory warning.
+
+        ``mode & 0o077`` catches 0644 (world-readable), 0640
+        (group-readable only), 0660 (group-writable only), and so on.
+        Only 0600 is silent. A narrower ``mode & 0o004`` check would
+        miss the group-readable case, exposing credentials on shared
+        Unix systems where the file's group contains ``nobody``,
+        ``www-data``, or a shared-dev account. Regression guard for
+        Copilot on PR #175.
 
         The warning is advisory, not blocking: the call still succeeds
         and the key reaches the client. Matches the keys.env
@@ -306,8 +326,8 @@ class TestApiKeyInputPaths:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("VOX_API_KEY", raising=False)
         key_path = tmp_path / "key.txt"
-        key_path.write_text("sk_world_readable\n", encoding="utf-8")
-        key_path.chmod(0o644)
+        key_path.write_text("sk_mode_test\n", encoding="utf-8")
+        key_path.chmod(mode)
 
         mock_instance = mock_client_cls.return_value
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
@@ -317,11 +337,23 @@ class TestApiKeyInputPaths:
             app, ["unmute", "hello", "--api-key-file", str(key_path)]
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, f"{label}: cli exited {result.exit_code}"
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_world_readable"
-        assert "world-readable" in result.stderr
-        assert "chmod 600" in result.stderr
+        assert call_kwargs["api_key"] == "sk_mode_test"
+        if should_warn:
+            assert "accessible to group or other" in result.stderr, (
+                f"{label} (mode {oct(mode)}): expected permission warning, "
+                f"got stderr={result.stderr!r}"
+            )
+            assert "chmod 600" in result.stderr, (
+                f"{label} (mode {oct(mode)}): expected remediation hint, "
+                f"got stderr={result.stderr!r}"
+            )
+        else:
+            assert "accessible to group or other" not in result.stderr, (
+                f"{label} (mode {oct(mode)}): did not expect permission "
+                f"warning, got stderr={result.stderr!r}"
+            )
 
     def test_api_key_file_not_found(
         self,

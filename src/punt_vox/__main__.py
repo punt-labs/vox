@@ -140,19 +140,27 @@ def _read_api_key_file(path: Path) -> str:
     """Read a per-call API key from a file.
 
     Rejects missing paths, non-files, and empty files. Strips trailing
-    whitespace and newlines. Warns (but does not fail) when the file is
-    world-readable, matching the advisory style used by the install
-    path for ``keys.env`` permission handling.
+    whitespace and newlines. Warns (but does not fail) when the file
+    has any group or other permission bits set, matching the advisory
+    style used by the install path for ``keys.env`` permission
+    handling.
+
+    The check is ``mode & 0o077`` (any group or other bit), not
+    ``mode & 0o004`` (world-readable only). On shared Unix systems a
+    file at 0640 is readable by anyone in the owning group
+    (``nobody``, ``www-data``, a shared-dev group, etc.) — the
+    narrower check let that exposure slide silently. The only safe
+    mode for a credential file is 0600. Copilot on PR #175.
     """
     if not path.is_file():
         msg = f"--api-key-file: {path} is not a file"
         raise typer.BadParameter(msg)
     mode = path.stat().st_mode
-    if mode & 0o004:
+    if mode & 0o077:
         typer.echo(
-            f"warning: --api-key-file: {path} is world-readable "
-            f"(mode {oct(mode & 0o777)}). Run 'chmod 600 {path}' to "
-            f"tighten permissions.",
+            f"warning: --api-key-file: {path} is accessible to group "
+            f"or other users (mode {oct(mode & 0o777)}). Run "
+            f"'chmod 600 {path}' to tighten permissions.",
             err=True,
         )
     value = path.read_text(encoding="utf-8").strip()
