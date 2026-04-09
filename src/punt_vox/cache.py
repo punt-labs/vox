@@ -2,7 +2,16 @@
 
 Caches synthesized audio files by (text, voice, provider) tuple so that
 repeated hook invocations with the same quip phrase skip the TTS API
-entirely.  Content-addressed via MD5 hash.
+entirely.  Content-addressed by hash.
+
+The anonymous path (``api_key is None``) uses MD5 for backward
+compatibility with cache entries written before per-call api_key support
+existed. The api_key path uses SHA-256 because static analyzers (CodeQL
+``py/weak-sensitive-data-hashing``) flag MD5 as inappropriate for any
+digest that ingests secret material, even for non-password uses like
+filenames. The two digests have different hex lengths (32 vs 64) so the
+same cache directory holds both without any risk of collision between
+paths.
 
 No dependencies on other vox modules — this is a standalone cache layer.
 """
@@ -33,22 +42,48 @@ def cache_key(
 ) -> str:
     """Compute a deterministic cache filename from synthesis parameters.
 
-    Returns an MD5-based filename like ``a1b2c3d4e5f6789012345678abcdef01.mp3``
-    (32 hex characters).  The null byte separator ensures ``("ab", "c")``
-    and ``("a", "bc")`` produce different keys.
+    When ``api_key`` is ``None`` (the default anonymous path, including
+    the hook quip cache), the digest is
+    ``md5("text\\0voice\\0provider")`` — **exactly** the three-segment
+    payload used before per-call api_key support existed. Cache entries
+    written by older vox versions therefore remain reachable after
+    upgrade. Filename shape: ``<32 hex chars>.mp3``.
 
-    The ``api_key`` partitions the cache by provider credential so that
-    billing isolation (vox-a3e) is preserved: two calls with identical
-    text/voice/provider but different API keys resolve to different cache
-    entries, so each key's provider gets invoked at least once. MD5 is a
-    one-way digest, so the raw key never lands on disk in recoverable
-    form. When ``api_key`` is ``None`` (the common hook path), the
-    trailing empty segment preserves backward compatibility — existing
-    cache entries written before this parameter existed continue to hit
-    for anonymous calls.
+    When ``api_key`` is set (per-call billing isolation, vox-a3e), the
+    digest is ``sha256("text\\0voice\\0provider\\0api_key")``. SHA-256
+    is used instead of MD5 because CodeQL's
+    ``py/weak-sensitive-data-hashing`` rule — correctly — flags MD5 as
+    inappropriate for any hashing that ingests secret material, even
+    for non-password use cases like filenames. SHA-256's collision
+    resistance also eliminates any theoretical risk of a
+    key-substitution attack producing a cache-key collision. Filename
+    shape: ``<64 hex chars>.mp3``.
+
+    The two digest lengths differ (32 hex vs 64 hex), so the anonymous
+    and per-key filename spaces cannot collide and the same cache
+    directory holds both without a subdirectory split.
+
+    An empty string is normalized to ``None`` as defense-in-depth: the
+    CLI already rejects ``--api-key ""`` via ``typer.BadParameter``
+    before any call reaches this function, but normalizing here ensures
+    a future caller that bypasses the CLI still falls into the
+    backward-compat MD5 path for effectively-anonymous calls instead of
+    silently landing in a separate SHA-256 partition keyed on the empty
+    string.
     """
-    payload = f"{text}\0{voice or ''}\0{provider or ''}\0{api_key or ''}"
-    digest = hashlib.md5(payload.encode()).hexdigest()
+    if not api_key:
+        api_key = None
+    if api_key is None:
+        payload = f"{text}\0{voice or ''}\0{provider or ''}".encode()
+        # MD5 is deliberate on this branch: the input contains no
+        # sensitive material (text/voice/provider are non-secret), and
+        # the digest must stay byte-identical to pre-v4.2.1 so existing
+        # on-disk cache entries remain reachable after upgrade. The
+        # api_key branch below uses SHA-256.
+        digest = hashlib.md5(payload).hexdigest()
+        return f"{digest}.mp3"
+    payload = f"{text}\0{voice or ''}\0{provider or ''}\0{api_key}".encode()
+    digest = hashlib.sha256(payload).hexdigest()
     return f"{digest}.mp3"
 
 

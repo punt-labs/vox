@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -66,16 +67,54 @@ class TestCacheKey:
         # billing isolation (vox-a3e) is not broken by cache hits.
         assert cache_key("t", "v", "p", "sk_A") != cache_key("t", "v", "p", "sk_B")
 
-    def test_none_api_key_backward_compat(self) -> None:
+    def test_none_api_key_default_equals_explicit_none(self) -> None:
         # Entries written before the api_key parameter existed used
         # ``api_key=None``. Explicit None and default None must resolve
         # to the same filename so historical entries remain reachable.
         assert cache_key("t", "v", "p") == cache_key("t", "v", "p", None)
 
-    def test_api_key_none_differs_from_empty_string(self) -> None:
-        # The default empty-string segment only kicks in for None;
-        # an explicit empty string is identical to None by design.
+    def test_api_key_none_equals_empty_string(self) -> None:
+        # Defense-in-depth: the CLI rejects ``--api-key ""`` via
+        # ``typer.BadParameter`` before it can reach ``cache_key``, but
+        # if a future caller bypasses the CLI and passes an empty
+        # string, cache_key normalizes ``""`` to ``None`` so the call
+        # lands on the anonymous / backward-compat MD5 path rather than
+        # silently forking into a SHA-256 partition keyed on the empty
+        # string. This test locks that normalization in.
         assert cache_key("t", "v", "p", None) == cache_key("t", "v", "p", "")
+
+    def test_backward_compat_with_pre_api_key_cache(self) -> None:
+        # Bugbot-blocking regression: any change to ``cache_key`` that
+        # breaks the on-disk filename for anonymous calls orphans every
+        # cache entry written by an earlier vox version. The anonymous
+        # digest must be **byte-identical** to the pre-v4.2.1 format,
+        # which was ``md5(f"{text}\\0{voice}\\0{provider}".encode())``
+        # with no trailing api_key segment and no null-byte padding.
+        text, voice, provider = "hello", "matilda", "elevenlabs"
+        legacy_digest = hashlib.md5(f"{text}\0{voice}\0{provider}".encode()).hexdigest()
+        assert cache_key(text, voice, provider) == f"{legacy_digest}.mp3"
+        # And for the None-voice / None-provider case the historical
+        # format substituted empty strings — same invariant applies.
+        text2 = "greetings"
+        legacy_digest_2 = hashlib.md5(f"{text2}\0\0".encode()).hexdigest()
+        assert cache_key(text2, None, None) == f"{legacy_digest_2}.mp3"
+
+    def test_api_key_path_uses_sha256(self) -> None:
+        # Shape lock: the api_key path must use SHA-256 (64 hex chars),
+        # not MD5 (32 hex chars). CodeQL's
+        # ``py/weak-sensitive-data-hashing`` rule correctly flags MD5
+        # for any digest that ingests secret material, even for
+        # non-password use cases like filenames. This test catches any
+        # future refactor that accidentally reverts the api_key branch
+        # back to MD5 or picks a shorter hash.
+        key = cache_key("t", "v", "p", "sk_test")
+        stem = key.removesuffix(".mp3")
+        assert len(stem) == 64, f"expected SHA-256 (64 hex chars), got {len(stem)}"
+        # All hex chars.
+        int(stem, 16)
+        # And it must match the sha256 of the explicit four-segment payload.
+        expected = hashlib.sha256(b"t\0v\0p\0sk_test").hexdigest()
+        assert stem == expected
 
 
 # ---------------------------------------------------------------------------
