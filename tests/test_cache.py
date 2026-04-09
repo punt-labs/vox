@@ -60,6 +60,23 @@ class TestCacheKey:
         # "ab" + "c" vs "a" + "bc" must differ
         assert cache_key("ab", "c", "p") != cache_key("a", "bc", "p")
 
+    def test_different_api_key_different_key(self) -> None:
+        # Two calls with the same text/voice/provider but different
+        # per-call api_keys must resolve to different cache entries so
+        # billing isolation (vox-a3e) is not broken by cache hits.
+        assert cache_key("t", "v", "p", "sk_A") != cache_key("t", "v", "p", "sk_B")
+
+    def test_none_api_key_backward_compat(self) -> None:
+        # Entries written before the api_key parameter existed used
+        # ``api_key=None``. Explicit None and default None must resolve
+        # to the same filename so historical entries remain reachable.
+        assert cache_key("t", "v", "p") == cache_key("t", "v", "p", None)
+
+    def test_api_key_none_differs_from_empty_string(self) -> None:
+        # The default empty-string segment only kicks in for None;
+        # an explicit empty string is identical to None by design.
+        assert cache_key("t", "v", "p", None) == cache_key("t", "v", "p", "")
+
 
 # ---------------------------------------------------------------------------
 # cache_get tests

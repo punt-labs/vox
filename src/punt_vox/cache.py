@@ -25,26 +25,47 @@ CACHE_DIR = VOX_DATA_DIR / "cache"
 MAX_ENTRIES = 500
 
 
-def cache_key(text: str, voice: str | None, provider: str | None) -> str:
+def cache_key(
+    text: str,
+    voice: str | None,
+    provider: str | None,
+    api_key: str | None = None,
+) -> str:
     """Compute a deterministic cache filename from synthesis parameters.
 
     Returns an MD5-based filename like ``a1b2c3d4e5f6789012345678abcdef01.mp3``
     (32 hex characters).  The null byte separator ensures ``("ab", "c")``
     and ``("a", "bc")`` produce different keys.
+
+    The ``api_key`` partitions the cache by provider credential so that
+    billing isolation (vox-a3e) is preserved: two calls with identical
+    text/voice/provider but different API keys resolve to different cache
+    entries, so each key's provider gets invoked at least once. MD5 is a
+    one-way digest, so the raw key never lands on disk in recoverable
+    form. When ``api_key`` is ``None`` (the common hook path), the
+    trailing empty segment preserves backward compatibility — existing
+    cache entries written before this parameter existed continue to hit
+    for anonymous calls.
     """
-    payload = f"{text}\0{voice or ''}\0{provider or ''}"
+    payload = f"{text}\0{voice or ''}\0{provider or ''}\0{api_key or ''}"
     digest = hashlib.md5(payload.encode()).hexdigest()
     return f"{digest}.mp3"
 
 
-def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None:
+def cache_get(
+    text: str,
+    voice: str | None,
+    provider: str | None,
+    api_key: str | None = None,
+) -> Path | None:
     """Look up a cached MP3 file.
 
     Returns the path if the file exists and is non-empty.  Touches the
     file's mtime on hit so LRU eviction works correctly.  Returns None
-    on miss.
+    on miss. ``api_key`` partitions the cache per provider credential
+    — see ``cache_key`` for the full rationale.
     """
-    path = CACHE_DIR / cache_key(text, voice, provider)
+    path = CACHE_DIR / cache_key(text, voice, provider, api_key)
     if not path.exists():
         return None
     if path.stat().st_size == 0:
@@ -57,19 +78,24 @@ def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None
 
 
 def cache_put(
-    text: str, voice: str | None, provider: str | None, source: Path
+    text: str,
+    voice: str | None,
+    provider: str | None,
+    source: Path,
+    api_key: str | None = None,
 ) -> Path | None:
     """Copy a synthesized MP3 into the cache.
 
     Returns the cached path on success, or None if the source file
     does not exist or is empty.  Evicts oldest entries when the cache
-    exceeds ``MAX_ENTRIES``.
+    exceeds ``MAX_ENTRIES``. ``api_key`` partitions the cache per
+    provider credential — see ``cache_key`` for the full rationale.
     """
     if not source.exists() or source.stat().st_size == 0:
         return None
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    dest = CACHE_DIR / cache_key(text, voice, provider)
+    dest = CACHE_DIR / cache_key(text, voice, provider, api_key)
 
     # Reject symlinks to prevent local symlink attacks
     if dest.is_symlink():

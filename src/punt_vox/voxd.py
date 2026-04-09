@@ -1061,8 +1061,11 @@ async def _synthesize_to_file(
     # would otherwise be eaten by normalization).
     normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
 
-    # Check cache first
-    cached = cache_get(normalized, resolved_voice, provider_name)
+    # Check cache first. Include api_key in the digest so per-call key
+    # overrides do not collide with anonymous or other-key cache entries
+    # — vox-a3e requires each provider key to see its own synthesis
+    # invocation for billing attribution to work.
+    cached = cache_get(normalized, resolved_voice, provider_name, api_key)
     if cached is not None:
         return cached
 
@@ -1134,8 +1137,10 @@ async def _synthesize_to_file(
                 len(text),
             )
 
-            # Only cache verified-good output.
-            cache_put(normalized, resolved_voice, provider_name, output_path)
+            # Only cache verified-good output. The api_key partitions
+            # the cache per credential so billing isolation (vox-a3e)
+            # survives subsequent identical-text requests on other keys.
+            cache_put(normalized, resolved_voice, provider_name, output_path, api_key)
             return output_path
         finally:
             # Restore API key
