@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from punt_vox.__main__ import app
 
 if TYPE_CHECKING:
+    import pytest
     from click.testing import Result
 
 
@@ -969,12 +970,22 @@ class TestDaemonRestartCommand:
             result = runner.invoke(app, ["daemon", "restart"])
         assert result.exit_code != 0
 
-    def test_linux_restart_sequence(self) -> None:
-        """Linux path: stop, ensure port free, start, verify via health.
+    def test_linux_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Linux path invokes ``sudo systemctl start voxd`` exactly once.
 
-        The happy path requires ``daemon_version`` in the health response
-        to match the on-disk wheel — vox-nmb's version-mismatch check.
+        This test intentionally stubs out ``_systemd_stop`` and
+        ``_ensure_port_free`` via ``monkeypatch.setattr`` on the real
+        module object — not ``patch(...)`` with a string path — so a
+        rename of either private helper fails at import time instead of
+        silently neutering the test. The assertion target is the
+        subprocess argv shape for the service-manager start step, which
+        is the only CLI-boundary behavior this test isolates. The full
+        happy-path sequence (including the real ``_systemd_stop`` and
+        ``_ensure_port_free``) is exercised by
+        ``test_happy_path_drives_full_sequence_through_health_probe``.
         """
+        from punt_vox import service
+
         runner = CliRunner()
 
         mock_client = MagicMock()
@@ -994,11 +1005,13 @@ class TestDaemonRestartCommand:
             calls.append(tuple(argv))
             return MagicMock(returncode=0)
 
+        # Rename-safe stubs: AttributeError at import/setup, not at call.
+        monkeypatch.setattr(service, "_systemd_stop", lambda: None)
+        monkeypatch.setattr(service, "_ensure_port_free", lambda: None)
+
         with (
             patch(f"{_CLI}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop") as mock_stop,
-            patch("punt_vox.service._ensure_port_free") as mock_free,
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
@@ -1006,16 +1019,24 @@ class TestDaemonRestartCommand:
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 0, result.output
-        mock_stop.assert_called_once()
-        mock_free.assert_called_once()
-        # The command must have started voxd via systemctl.
+        # The only subprocess invocation should be the systemctl start
+        # step — that is the CLI-boundary contract this test pins down.
         assert calls == [("sudo", "systemctl", "start", "voxd")]
+        # User-visible confirmation also includes the version, so a
+        # regression that drops the version from the success line is
+        # caught here too.
         assert "pid=42" in result.output
         assert "port 8421" in result.output
         assert "9.9.9-test" in result.output
 
-    def test_macos_restart_sequence(self) -> None:
-        """macOS path: unload, ensure port free, load + kickstart."""
+    def test_macos_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """macOS path invokes launchctl load + kickstart in order.
+
+        Same rename-safe stubbing strategy as the linux variant — see
+        ``test_linux_subprocess_argv_shape`` for the rationale.
+        """
+        from punt_vox import service
+
         runner = CliRunner()
 
         mock_client = MagicMock()
@@ -1035,11 +1056,12 @@ class TestDaemonRestartCommand:
             calls.append(tuple(argv))
             return MagicMock(returncode=0)
 
+        monkeypatch.setattr(service, "_launchd_stop", lambda: None)
+        monkeypatch.setattr(service, "_ensure_port_free", lambda: None)
+
         with (
             patch(f"{_CLI}.os.geteuid", return_value=501),
             patch("punt_vox.service.detect_platform", return_value="macos"),
-            patch("punt_vox.service._launchd_stop") as mock_stop,
-            patch("punt_vox.service._ensure_port_free") as mock_free,
             patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
@@ -1047,15 +1069,15 @@ class TestDaemonRestartCommand:
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 0, result.output
-        mock_stop.assert_called_once()
-        mock_free.assert_called_once()
         assert len(calls) == 2
         # First call: launchctl load -w
-        assert calls[0][0] == "sudo"
-        assert calls[0][1] == "launchctl"
-        assert calls[0][2] == "load"
-        assert calls[0][3] == "-w"
-        assert calls[0][4] == "/Library/LaunchDaemons/com.punt-labs.voxd.plist"
+        assert calls[0] == (
+            "sudo",
+            "launchctl",
+            "load",
+            "-w",
+            "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+        )
         # Second call: launchctl kickstart -k
         assert calls[1] == (
             "sudo",
@@ -1065,6 +1087,103 @@ class TestDaemonRestartCommand:
             "system/com.punt-labs.voxd",
         )
         assert "pid=99" in result.output
+        assert "9.9.9-test" in result.output
+
+    def test_happy_path_drives_full_sequence_through_health_probe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: run the real stop + ensure-port-free helpers.
+
+        The other restart tests stub ``_systemd_stop`` and
+        ``_ensure_port_free`` to isolate the CLI-boundary behavior.
+        This test does NOT — it patches only the low-level primitives
+        each helper calls (``subprocess.run`` for systemctl, unit-file
+        existence, and ``_find_pid_on_port`` for the port re-check).
+        That way a regression inside either helper, or a control-flow
+        error that skips calling one of them, is caught here instead
+        of having to read the assertion annotations to decide whether
+        ``assert_called_once`` covers the thing the PR changed.
+
+        The linux path is the exhaustive sequence because macOS
+        ``launchctl`` has its own argv-shape coverage above.
+        """
+        from punt_vox import service
+
+        runner = CliRunner()
+
+        # Happy health response: matches the (patched) wheel version.
+        mock_client = MagicMock()
+        mock_client.health.return_value = {
+            "pid": 1234,
+            "port": 8421,
+            "daemon_version": "9.9.9-test",
+        }
+
+        subprocess_calls: list[tuple[str, ...]] = []
+
+        def fake_run(
+            argv: list[str],
+            *,
+            check: bool = False,
+        ) -> MagicMock:
+            subprocess_calls.append(tuple(argv))
+            return MagicMock(returncode=0)
+
+        # Pretend the systemd unit file exists so ``_systemd_stop``
+        # actually drives ``subprocess.run`` for the stop step instead
+        # of short-circuiting on a missing unit file.
+        fake_unit = MagicMock()
+        fake_unit.exists.return_value = True
+        monkeypatch.setattr("punt_vox.service._SYSTEMD_UNIT", fake_unit)
+
+        def no_port_file() -> None:
+            return None
+
+        def no_stale() -> bool:
+            return False
+
+        def no_pids(_port: int) -> list[int]:
+            return []
+
+        # No daemon on the host port, nothing to kill — exercises the
+        # "empty kill path" branch of ``_ensure_port_free`` without
+        # the test depending on whatever happens to bind 8421 on CI.
+        monkeypatch.setattr("punt_vox.service.read_port_file", no_port_file)
+        monkeypatch.setattr("punt_vox.service._kill_stale_daemon", no_stale)
+        monkeypatch.setattr("punt_vox.service._find_pid_on_port", no_pids)
+        # subprocess.run is called from BOTH the service module (for
+        # ``_systemd_stop``) and __main__ (for the start step). Both
+        # funnel through ``subprocess.run`` — patch both to capture
+        # the complete argv history.
+        monkeypatch.setattr("punt_vox.service.subprocess.run", fake_run)
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}._installed_wheel_version", return_value="9.9.9-test"),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 0, result.output
+        # Rename-safety check: referencing the real module attribute.
+        # If ``_ensure_port_free`` or ``_systemd_stop`` is renamed in
+        # service.py, the ``from punt_vox import service`` attribute
+        # access below raises AttributeError at test setup — well
+        # before the subprocess expectations even get checked.
+        assert callable(service._systemd_stop)  # pyright: ignore[reportPrivateUsage]
+        assert callable(service._ensure_port_free)  # pyright: ignore[reportPrivateUsage]
+        # Full subprocess sequence: stop voxd (from _systemd_stop),
+        # then start voxd (from daemon_restart_cmd). Anything else
+        # means the sequence changed and the user-visible contract
+        # with it.
+        assert subprocess_calls == [
+            ("sudo", "systemctl", "stop", "voxd"),
+            ("sudo", "systemctl", "start", "voxd"),
+        ], f"unexpected subprocess sequence: {subprocess_calls}"
+        assert "pid=1234" in result.output
+        assert "9.9.9-test" in result.output
 
     def test_health_retry_before_success(self) -> None:
         """Daemon takes two poll cycles to come back — restart still succeeds."""
