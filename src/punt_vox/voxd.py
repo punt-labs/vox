@@ -22,6 +22,7 @@ import platform
 import secrets
 import shutil
 import sys
+import tempfile
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -1096,8 +1097,6 @@ async def _synthesize_to_file(
                 provider_name,
             )
             client = TTSClient(provider)
-
-            import tempfile
 
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 output_path = Path(tmp.name)

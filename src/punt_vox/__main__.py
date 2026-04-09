@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
 import os
@@ -29,6 +30,7 @@ from punt_vox.config import (
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
+from punt_vox.paths import log_dir
 from punt_vox.providers import auto_detect_provider
 
 logger = logging.getLogger(__name__)
@@ -611,8 +613,6 @@ def _installed_wheel_version() -> str:
     comparison is apples-to-apples when both sides resolve via the
     fallback.
     """
-    import importlib.metadata
-
     try:
         return importlib.metadata.version("punt-vox")
     except importlib.metadata.PackageNotFoundError:
@@ -1155,8 +1155,6 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
                 check=True,
             )
     except subprocess.CalledProcessError as exc:
-        from punt_vox.paths import log_dir
-
         log_path = log_dir() / "voxd.log"
         typer.echo(
             f"Error: service manager failed to start voxd: {exc}\n"
@@ -1164,8 +1162,6 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
             err=True,
         )
         raise typer.Exit(code=1) from exc
-
-    from punt_vox.paths import log_dir
 
     logger.info("Waiting for voxd to come back up...")
     deadline = time.monotonic() + 5.0
