@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -1016,6 +1017,111 @@ def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
     result = svc_uninstall()
     typer.echo(result)
+
+
+@daemon_app.command("restart")
+def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Restart the voxd system service and verify it is back up.
+
+    Use this after ``uv tool upgrade punt-vox`` so the running daemon
+    picks up the new wheel. A plain ``uv tool upgrade`` replaces the
+    on-disk binary but does not cycle the long-running voxd process —
+    so changes to the WebSocket protocol or playback behavior do not
+    take effect until the service is restarted. ``vox daemon restart``
+    is the supported way to do that.
+
+    Runs as your normal user, NOT under ``sudo``. vox will prompt once
+    for your sudo password when it drives ``systemctl``/``launchctl``
+    itself. Running under sudo yourself would corrupt the sudo state
+    the service manager uses.
+    """
+    from punt_vox.service import (
+        _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
+        _launchd_stop,  # pyright: ignore[reportPrivateUsage]
+        _systemd_stop,  # pyright: ignore[reportPrivateUsage]
+        detect_platform,
+    )
+
+    if os.geteuid() == 0:
+        raise typer.BadParameter(
+            "vox daemon restart must be run as your normal user, not root "
+            "or sudo. vox will prompt for your sudo password when it drives "
+            "systemctl/launchctl. Re-run without sudo:\n\n"
+            "    vox daemon restart\n"
+        )
+
+    plat = detect_platform()
+
+    logger.info("Stopping voxd via service manager...")
+    if plat == "macos":
+        _launchd_stop()
+    else:
+        _systemd_stop()
+
+    logger.info("Waiting for port to free...")
+    _ensure_port_free()
+
+    logger.info("Starting voxd via service manager...")
+    try:
+        if plat == "macos":
+            subprocess.run(
+                [
+                    "sudo",
+                    "launchctl",
+                    "load",
+                    "-w",
+                    "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+                ],
+                check=True,
+            )
+            subprocess.run(
+                ["sudo", "launchctl", "kickstart", "-k", "system/com.punt-labs.voxd"],
+                check=True,
+            )
+        else:
+            subprocess.run(
+                ["sudo", "systemctl", "start", "voxd"],
+                check=True,
+            )
+    except subprocess.CalledProcessError as exc:
+        from punt_vox.paths import log_dir
+
+        log_path = log_dir() / "voxd.log"
+        typer.echo(
+            f"Error: service manager failed to start voxd: {exc}\n"
+            f"Check the logs at {log_path}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    logger.info("Waiting for voxd to come back up...")
+    deadline = time.monotonic() + 5.0
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            health = VoxClientSync().health()
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            last_exc = exc
+            time.sleep(0.2)
+            continue
+        pid = health.get("pid", "?")
+        port = health.get("port", "?")
+        _emit(
+            {"restarted": True, "pid": pid, "port": port},
+            f"voxd restarted (pid={pid}, listening on port {port})",
+        )
+        return
+
+    from punt_vox.paths import log_dir
+
+    log_path = log_dir() / "voxd.log"
+    reason = f": {last_exc}" if last_exc is not None else ""
+    typer.echo(
+        f"Error: voxd did not come back up within 5s{reason}\n"
+        f"Check the logs at {log_path}",
+        err=True,
+    )
+    raise typer.Exit(code=1)
 
 
 @daemon_app.command("status")

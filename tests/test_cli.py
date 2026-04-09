@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -727,3 +728,203 @@ class TestGlobalFlags:
         result = runner.invoke(app, ["-v", "-q", "version"])
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output
+
+
+# ---------------------------------------------------------------------------
+# daemon restart tests
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonRestartCommand:
+    """``vox daemon restart`` cycles voxd via the service manager.
+
+    Regression guard for vox-nmb: a stale voxd survived v4.2.0's
+    release-day verification because doctor reported "Daemon: running"
+    without checking whether the running process matched the on-disk
+    wheel. The restart command is the second half of the fix (the first
+    half is the version-mismatch warning in commit 3).
+    """
+
+    def test_refuses_to_run_as_root(self) -> None:
+        """Refuse ``sudo vox daemon restart`` — sudo is invoked internally."""
+        runner = CliRunner()
+        with patch(f"{_CLI}.os.geteuid", return_value=0):
+            result = runner.invoke(app, ["daemon", "restart"])
+        assert result.exit_code != 0
+        assert "without sudo" in result.output or "not root" in result.output
+
+    def test_unsupported_platform_fails(self) -> None:
+        """Windows (or anything else) raises SystemExit from detect_platform."""
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(
+                "punt_vox.service.detect_platform",
+                side_effect=SystemExit("Unsupported platform: Windows."),
+            ),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+        assert result.exit_code != 0
+
+    def test_linux_restart_sequence(self) -> None:
+        """Linux path: stop, ensure port free, start, verify via health."""
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        mock_client.health.return_value = {"pid": 42, "port": 8421}
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(
+            argv: list[str],
+            *,
+            check: bool = False,
+        ) -> MagicMock:
+            calls.append(tuple(argv))
+            return MagicMock(returncode=0)
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop") as mock_stop,
+            patch("punt_vox.service._ensure_port_free") as mock_free,
+            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 0, result.output
+        mock_stop.assert_called_once()
+        mock_free.assert_called_once()
+        # The command must have started voxd via systemctl.
+        assert calls == [("sudo", "systemctl", "start", "voxd")]
+        assert "pid=42" in result.output
+        assert "port 8421" in result.output
+
+    def test_macos_restart_sequence(self) -> None:
+        """macOS path: unload, ensure port free, load + kickstart."""
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        mock_client.health.return_value = {"pid": 99, "port": 8421}
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(
+            argv: list[str],
+            *,
+            check: bool = False,
+        ) -> MagicMock:
+            calls.append(tuple(argv))
+            return MagicMock(returncode=0)
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=501),
+            patch("punt_vox.service.detect_platform", return_value="macos"),
+            patch("punt_vox.service._launchd_stop") as mock_stop,
+            patch("punt_vox.service._ensure_port_free") as mock_free,
+            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 0, result.output
+        mock_stop.assert_called_once()
+        mock_free.assert_called_once()
+        assert len(calls) == 2
+        # First call: launchctl load -w
+        assert calls[0][0] == "sudo"
+        assert calls[0][1] == "launchctl"
+        assert calls[0][2] == "load"
+        assert calls[0][3] == "-w"
+        assert calls[0][4] == "/Library/LaunchDaemons/com.punt-labs.voxd.plist"
+        # Second call: launchctl kickstart -k
+        assert calls[1] == (
+            "sudo",
+            "launchctl",
+            "kickstart",
+            "-k",
+            "system/com.punt-labs.voxd",
+        )
+        assert "pid=99" in result.output
+
+    def test_health_retry_before_success(self) -> None:
+        """Daemon takes two poll cycles to come back — restart still succeeds."""
+        from punt_vox.client import VoxdConnectionError
+
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        # First two polls fail, third succeeds.
+        mock_client.health.side_effect = [
+            VoxdConnectionError("not yet"),
+            VoxdConnectionError("not yet"),
+            {"pid": 7, "port": 8421},
+        ]
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service._ensure_port_free"),
+            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}.time.sleep") as mock_sleep,
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 0, result.output
+        assert mock_client.health.call_count == 3
+        assert mock_sleep.call_count == 2
+        assert "pid=7" in result.output
+
+    def test_start_subprocess_failure_exits_with_log_hint(self) -> None:
+        """systemctl start failure exits 1 and points at the voxd log."""
+        runner = CliRunner()
+
+        def fake_run(
+            argv: list[str],
+            *,
+            check: bool = False,
+        ) -> MagicMock:
+            raise subprocess.CalledProcessError(1, argv)
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service._ensure_port_free"),
+            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 1
+        assert "voxd.log" in result.output
+
+    def test_daemon_never_comes_back_exits_with_log_hint(self) -> None:
+        """Health never succeeds within the 5s window — exit 1 with log hint."""
+        from punt_vox.client import VoxdConnectionError
+
+        runner = CliRunner()
+
+        mock_client = MagicMock()
+        mock_client.health.side_effect = VoxdConnectionError("refused")
+
+        # Fake time.monotonic to immediately expire the deadline.
+        ticks = iter([0.0, 0.0, 100.0])
+
+        with (
+            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch("punt_vox.service.detect_platform", return_value="linux"),
+            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service._ensure_port_free"),
+            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}.time.monotonic", side_effect=lambda: next(ticks)),
+            patch(f"{_CLI}.time.sleep"),
+        ):
+            result = runner.invoke(app, ["daemon", "restart"])
+
+        assert result.exit_code == 1
+        assert "voxd.log" in result.output
+        assert "refused" in result.output

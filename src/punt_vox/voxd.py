@@ -1571,14 +1571,21 @@ def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:
 def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
     """Return the full diagnostic health payload for authenticated callers.
 
-    Adds the audio environment snapshot, the resolved player binary, and
-    the last playback result. Used only by the WebSocket health handler,
-    which is gated by the auth token.
+    Adds the audio environment snapshot, the resolved player binary, the
+    last playback result, and the running process id. Used only by the
+    WebSocket health handler, which is gated by the auth token.
+
+    The ``pid`` field is used by ``vox daemon restart`` to confirm the
+    daemon has come back up as a fresh process, and lets the caller log
+    a concrete pid in the success message. It is not exposed on the
+    unauthenticated HTTP ``/health`` route — the minimal payload stays
+    minimal.
     """
     payload = _health_payload_minimal(ctx)
     payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
     payload["player_binary"] = _player_binary_path()
     payload["last_playback"] = ctx.last_playback
+    payload["pid"] = os.getpid()
     return payload
 
 
