@@ -251,9 +251,15 @@ class VoxClient:
             if resp.get("type") == "error":
                 raise VoxdProtocolError(str(resp.get("message", "unknown error")))
             resp_type = resp.get("type")
-            if resp_type == terminal_type or (
-                early_terminal is not None and resp_type == early_terminal
-            ):
+            if resp_type == terminal_type:
+                return responses
+            if early_terminal is not None and resp_type == early_terminal:
+                # Server will still send terminal_type (e.g., 'done' after
+                # 'playing'). Close the connection so that stale message
+                # cannot be consumed by the next request on a reused
+                # VoxClient connection.
+                await ws.close()
+                self._ws = None
                 return responses
 
     # -- public API ----------------------------------------------------------
