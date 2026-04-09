@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-04-09
+
 ### Added
 
 - **`vox daemon restart` subcommand**: cycle the running `voxd` daemon via the service manager without hand-running `systemctl` or `launchctl`. Refuses to run as root (sudo is invoked internally for the two service-manager calls only), detects macOS vs Linux, drives `_launchd_stop`/`_systemd_stop` + `_ensure_port_free` for a clean shutdown, starts the daemon via `sudo systemctl start voxd` or `sudo launchctl load -w ... && sudo launchctl kickstart -k system/com.punt-labs.voxd`, and polls the authenticated health endpoint (5s window, 200ms interval) until the new process is confirmed up. On success, prints the new pid and port. On failure, exits 1 and points at `~/.punt-labs/vox/logs/voxd.log`. This is the intended command after `uv tool upgrade punt-vox` — a plain upgrade replaces the wheel but leaves the long-running daemon untouched, so changes to daemon behavior do not take effect until the service is cycled.
