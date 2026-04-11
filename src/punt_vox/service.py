@@ -708,7 +708,7 @@ def _legacy_user_unit_path() -> Path:
 def _cleanup_stale_user_unit() -> bool:
     """Remove a stale user-level ``vox.service`` unit if present.
 
-    Backgound: an earlier install layout registered ``vox.service`` as
+    Background: an earlier install layout registered ``vox.service`` as
     a user-level systemd unit with ``ExecStart=.../vox serve --port 8421``.
     The ``serve`` subcommand no longer exists in the current CLI, so
     the unit crashes on every restart, systemd respawns it every 5s,

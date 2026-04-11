@@ -33,6 +33,9 @@ from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
+from punt_vox.service import (
+    _legacy_user_unit_path,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -804,15 +807,6 @@ def _claude_desktop_config_path() -> Path:
     )
 
 
-def _legacy_user_unit_path() -> Path:
-    """Resolve the legacy ``~/.config/systemd/user/vox.service`` path.
-
-    Computed at call time via ``Path.home()`` so tests can redirect it
-    with ``monkeypatch.setenv('HOME', ...)`` without module reloads.
-    """
-    return Path.home() / ".config" / "systemd" / "user" / "vox.service"
-
-
 def _valid_vox_subcommands() -> set[str]:
     """Return the set of subcommand tokens the current CLI accepts.
 
@@ -835,11 +829,15 @@ def _valid_vox_subcommands() -> set[str]:
 def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
     """Extract the first CLI subcommand token from a systemd unit file.
 
-    Reads the unit file and finds the first ``ExecStart=`` line (systemd
-    unit grammar allows multiple; the service manager executes the
-    first). Shell-splits the remainder and looks for the first token
-    that is not the binary path itself — that token is the ``vox``
-    subcommand (e.g. ``serve`` in ``/home/j/.local/bin/vox serve --port 8421``).
+    Reads the unit file and uses the **first** ``ExecStart=`` line it
+    finds. systemd unit grammar permits multiple ``ExecStart=`` entries
+    for ``Type=oneshot`` services (the service manager runs all of
+    them in order); the legacy ``vox.service`` this parser targets is
+    ``Type=simple`` with exactly one ``ExecStart=``, so the first
+    entry is sufficient to detect a stale subcommand reference.
+    Shell-splits the remainder and looks for the first token that is
+    not the binary path itself — that token is the ``vox`` subcommand
+    (e.g. ``serve`` in ``/home/j/.local/bin/vox serve --port 8421``).
 
     Systemd unit grammar allows multi-line directive values via a
     trailing backslash on the continued line. Lines are pre-joined
@@ -1037,6 +1035,13 @@ def doctor() -> None:
     if platform.system() == "Linux" and legacy_unit.exists():
         referenced = _parse_user_unit_execstart_subcommand(legacy_unit)
         valid = _valid_vox_subcommands()
+        # Shell-quote the path in the remediation hint so users can
+        # copy-paste the command even if $HOME contains spaces or
+        # other shell metacharacters. The ``systemctl --user disable
+        # --now vox.service`` and ``systemctl --user daemon-reload``
+        # portions reference a fixed unit name with no interpolation,
+        # so only the ``rm`` argument needs quoting.
+        quoted_legacy_unit = shlex.quote(str(legacy_unit))
         if referenced is None:
             _check(
                 _FAIL,
@@ -1044,7 +1049,7 @@ def doctor() -> None:
                 " unparseable \u2014 run 'vox daemon install' to clean it up,"
                 " or remove it manually:"
                 " 'systemctl --user disable --now vox.service &&"
-                f" rm {legacy_unit} && systemctl --user daemon-reload'",
+                f" rm {quoted_legacy_unit} && systemctl --user daemon-reload'",
             )
         elif referenced not in valid:
             _check(
@@ -1054,7 +1059,7 @@ def doctor() -> None:
                 " (this unit will crash-loop on the systemd restart schedule)."
                 " Run 'vox daemon install' to clean it up, or remove it"
                 " manually: 'systemctl --user disable --now vox.service &&"
-                f" rm {legacy_unit} && systemctl --user daemon-reload'",
+                f" rm {quoted_legacy_unit} && systemctl --user daemon-reload'",
             )
         else:
             _check(
