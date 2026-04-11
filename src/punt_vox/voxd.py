@@ -1805,74 +1805,93 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 )
                 ctx.music_proc = proc
 
-                # Build the set of futures to race.
-                wait_task = asyncio.create_task(proc.wait())
-                changed_task = asyncio.create_task(ctx.music_changed.wait())
-                waitables: set[asyncio.Task[object]] = {wait_task, changed_task}
-                if gen_task is not None:
-                    waitables.add(gen_task)
+                # Wait on this subprocess, re-entering the wait when
+                # only a vibe change fired (the proc is still alive).
+                proc_done = False
+                while not proc_done:
+                    wait_task = asyncio.create_task(proc.wait())
+                    changed_task = asyncio.create_task(
+                        ctx.music_changed.wait(),
+                    )
+                    waitables: set[asyncio.Task[object]] = {
+                        wait_task,
+                        changed_task,
+                    }
+                    if gen_task is not None:
+                        waitables.add(gen_task)
 
-                _done, pending = await asyncio.wait(
-                    waitables,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for t in pending:
-                    # Don't cancel the generation task — it may still be
-                    # running and we want it to finish across iterations.
-                    if t is gen_task:
-                        continue
-                    t.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await t
-
-                # --- /music off: kill everything immediately --------------
-                if ctx.music_mode != "on":
-                    if gen_task is not None and not gen_task.done():
-                        gen_task.cancel()
+                    _done, pending = await asyncio.wait(
+                        waitables,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for t in pending:
+                        # Don't cancel the generation task — it may
+                        # still be running and we want it to finish.
+                        if t is gen_task:
+                            continue
+                        t.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
-                            await gen_task
+                            await t
+
+                    # --- /music off: kill everything immediately ----------
+                    if ctx.music_mode != "on":
+                        if gen_task is not None and not gen_task.done():
+                            gen_task.cancel()
+                            with contextlib.suppress(
+                                asyncio.CancelledError,
+                            ):
+                                await gen_task
+                            gen_task = None
+                        await _kill_music_proc(ctx)
+                        current_track = None
+                        proc_done = True
+                        break
+
+                    # --- Generation task completed: handoff ---------------
+                    if gen_task is not None and gen_task.done():
+                        exc = gen_task.exception()
+                        if exc is not None:
+                            gen_task = None
+                            raise exc
+                        new_track = gen_task.result()
                         gen_task = None
-                    await _kill_music_proc(ctx)
-                    current_track = None
+                        ctx.music_track = new_track
+                        retry_count = 0
+                        await _kill_music_proc(ctx)
+                        current_track = new_track
+                        ctx.music_changed.clear()
+                        proc_done = True
+                        break
+
+                    # --- Vibe changed: start/restart generation -----------
+                    if ctx.music_changed.is_set():
+                        ctx.music_changed.clear()
+                        if gen_task is not None and not gen_task.done():
+                            gen_task.cancel()
+                            with contextlib.suppress(
+                                asyncio.CancelledError,
+                            ):
+                                await gen_task
+                        ctx.music_state = "generating"
+                        gen_task = asyncio.create_task(
+                            _generate_music_track(ctx),
+                        )
+                        # Don't kill the proc — let it keep looping.
+                        # Re-enter this inner wait loop so we race
+                        # the same proc against the new gen_task.
+                        continue
+
+                    # --- Subprocess ended naturally -----------------------
+                    proc_done = True
+
+                # If music was turned off, the outer while condition
+                # handles exiting.  Otherwise fall through to respawn
+                # the subprocess (same or new track).
+                if current_track is None:
                     break
 
-                # --- Generation task completed: handoff -------------------
-                if gen_task is not None and gen_task.done():
-                    exc = gen_task.exception()
-                    if exc is not None:
-                        gen_task = None
-                        raise exc
-                    new_track = gen_task.result()
-                    gen_task = None
-                    ctx.music_track = new_track
-                    retry_count = 0
-                    await _kill_music_proc(ctx)
-                    current_track = new_track
-                    # Clear the event that triggered this generation, then
-                    # check whether ANOTHER change arrived in the meantime.
-                    ctx.music_changed.clear()
-                    if ctx.music_changed.is_set():
-                        # Rare: yet another vibe change during handoff.
-                        logger.info("Vibe changed during handoff, regenerating")
-                    # Re-enter playback loop with new track (or regenerate
-                    # if music_changed was set again).
-                    continue
-
-                # --- Vibe changed: start/restart generation ---------------
-                if ctx.music_changed.is_set():
-                    ctx.music_changed.clear()
-                    if gen_task is not None and not gen_task.done():
-                        gen_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await gen_task
-                    ctx.music_state = "generating"
-                    gen_task = asyncio.create_task(_generate_music_track(ctx))
-                    # Don't break — keep looping the old track.
-                    continue
-
-                # --- Subprocess ended naturally: loop same track ----------
                 rc = proc.returncode
-                if rc != 0:
+                if rc is not None and rc != 0:
                     logger.warning(
                         "Music playback ended with rc=%s for %s",
                         rc,

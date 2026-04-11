@@ -2814,6 +2814,10 @@ class TestMusicLoopGaplessHandoff:
 
             async def _wait() -> int:
                 # Simulate a long track so it doesn't end naturally.
+                # Return immediately if the process was already killed,
+                # mirroring real OS behavior after SIGKILL.
+                if proc.returncode is not None:
+                    return int(proc.returncode)
                 await asyncio.sleep(5.0)
                 proc.returncode = 0
                 return 0
@@ -2902,6 +2906,8 @@ class TestMusicLoopGaplessHandoff:
             proc.returncode = None
 
             async def _wait() -> int:
+                if proc.returncode is not None:
+                    return int(proc.returncode)
                 await asyncio.sleep(5.0)
                 proc.returncode = 0
                 return 0
