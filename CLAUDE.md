@@ -138,6 +138,79 @@ Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_pl
 - Use `side_effect=lambda` instead of `return_value` for fresh mocks per call.
 - Integration tests requiring AWS credentials are marked `@pytest.mark.integration`.
 
+## Delegation with Missions
+
+All code delegation uses ethos missions (`/mission` skill). Missions are typed contracts between a leader (claude) and a worker (bwk, rmh, mdm, adb, djb) that enforce write-set admission, frozen evaluators, bounded rounds, and append-only event logs.
+
+### When to use missions
+
+- Any bounded task with clear success criteria and a known set of files to touch.
+- Sized for 1-3 rounds of one worker plus one evaluator.
+- The Phase 3 runtime enforces the contract — write-set admission, frozen evaluator, result artifacts — instead of trusting prompt discipline.
+
+Do NOT use missions for: exploratory research, work you do yourself, or epics that need decomposition first (decompose into multiple missions).
+
+### Workflow
+
+1. **Scaffold**: `/mission` skill scaffolds the contract YAML from conversation context.
+2. **Confirm**: present the contract to the user (or decide as leader). Edit any field before creation.
+3. **Create**: `ethos mission create --file .tmp/missions/<name>.yaml` — returns a mission ID.
+4. **Spawn**: `Agent(subagent_type=<worker>, run_in_background=true)` with a prompt that points at the mission ID. The worker reads the contract via `ethos mission show <id>` as its first action.
+5. **Track**: `ethos mission show <id>`, `ethos mission log <id>`, `ethos mission results <id>`.
+6. **Review**: read the result artifact. Pass → `ethos mission close <id>`. Continue → `ethos mission reflect <id> --file <path>` then `ethos mission advance <id>`. Fail → `ethos mission close <id> --status failed`.
+
+### Contract schema (required fields)
+
+```yaml
+leader: claude
+worker: rmh                    # bwk|rmh|mdm|adb|djb|kpz
+evaluator:
+  handle: djb                  # must differ from worker, no shared role
+inputs:
+  bead: vox-0qi                # optional bead link
+write_set:                     # repo-relative paths, at least one
+  - src/punt_vox/music.py
+  - tests/test_music.py
+success_criteria:              # at least one verifiable criterion
+  - vibe_to_prompt returns correct prompt for all test cases
+  - make check passes
+budget:
+  rounds: 2                    # 1-10
+  reflection_after_each: true  # leader reflects after each round
+```
+
+Optional: `context` (design notes), `tools` (worker allowlist), `session`, `repo`.
+Do NOT set: `mission_id`, `status`, `created_at`, `evaluator.pinned_at`, `evaluator.hash`, `current_round` — the store manages these.
+
+### Worker prompt template
+
+```
+Mission <id> is yours. Read it first: `ethos mission show <id>`.
+The contract names the write set, success criteria, and budget.
+Your first write must land inside the write set — the store
+refuses anything else. After your work for this round, submit a
+result artifact: `ethos mission result <id> --file <path>`. See
+`ethos mission result --help` for the YAML shape. The mission
+will refuse to close until a valid result for the current round
+exists. Do not commit, push, or merge — return results to me.
+```
+
+### Evaluator defaults
+
+| Task type | Evaluator |
+|-----------|-----------|
+| Security-sensitive code | `djb` |
+| Go internals / library design | `mdm` or `bwk` |
+| Python library design | `rmh` |
+| CLI / developer experience | `mdm` |
+| Infrastructure / CI | `adb` |
+
+Worker and evaluator must be distinct handles with no shared role.
+
+### Scratch files
+
+Mission contract YAMLs go in `.tmp/missions/`. Result artifact YAMLs go in `.tmp/missions/results/`.
+
 ## Issue Tracking with Beads
 
 This project uses **beads** (`bd`) for issue tracking.
