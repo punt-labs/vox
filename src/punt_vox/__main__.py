@@ -796,6 +796,16 @@ _FAIL = "\u2717"
 _OPTIONAL = "\u25cb"
 _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
 
+# Machine-readable tri-state (+skip) for --json consumers that need to
+# distinguish warnings from hard failures.  The existing ``passed`` bool
+# is kept for back-compat; ``status_kind`` is the richer replacement.
+_STATUS_KIND: dict[str, str] = {
+    _PASS: "pass",
+    _FAIL: "fail",
+    _OPTIONAL: "skip",
+    _WARN: "warn",
+}
+
 
 def _claude_desktop_config_path() -> Path:
     return (
@@ -939,6 +949,7 @@ def doctor() -> None:
         checks.append(
             {
                 "status": symbol,
+                "status_kind": _STATUS_KIND.get(symbol, "fail"),
                 "message": message,
                 "required": required,
                 "passed": symbol == _PASS,
