@@ -1728,6 +1728,10 @@ async def _music_loop(ctx: DaemonContext) -> None:
         # Wait until music is turned on.
         while ctx.music_mode != "on":
             ctx.music_changed.clear()
+            # Re-check after clear to avoid lost wakeup: a handler may
+            # have set music_mode between our check and the clear().
+            if ctx.music_mode == "on":
+                break
             await ctx.music_changed.wait()
 
         try:
@@ -1849,6 +1853,12 @@ async def _handle_music_on(
     vibe = str(msg.get("vibe", ""))
     vibe_tags = str(msg.get("vibe_tags", ""))
 
+    if not owner_id:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "owner_id is required"}
+        )
+        return
+
     # Atomic ownership transfer: kill existing, update all fields, signal.
     await _kill_music_proc(ctx)
 
@@ -1900,6 +1910,12 @@ async def _handle_music_vibe(
     owner_id = str(msg.get("owner_id", ""))
     vibe = str(msg.get("vibe", ""))
     vibe_tags = str(msg.get("vibe_tags", ""))
+
+    if not owner_id:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "owner_id is required"}
+        )
+        return
 
     if owner_id != ctx.music_owner:
         await websocket.send_json(

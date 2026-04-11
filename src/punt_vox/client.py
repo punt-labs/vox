@@ -121,6 +121,7 @@ class VoxClient:
         self._port = port
         self._token = token
         self._ws: websockets.asyncio.client.ClientConnection | None = None
+        self._default_owner_id: str = uuid.uuid4().hex
 
     # -- connection lifecycle ------------------------------------------------
 
@@ -444,21 +445,26 @@ class VoxClient:
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
             raise ValueError(err)
+        effective_owner = owner_id if owner_id is not None else self._default_owner_id
         request_id = uuid.uuid4().hex[:12]
         if mode == "on":
-            msg: dict[str, object] = {"type": "music_on", "id": request_id}
+            msg: dict[str, object] = {
+                "type": "music_on",
+                "id": request_id,
+                "owner_id": effective_owner,
+            }
             if style is not None:
                 msg["style"] = style
             if vibe is not None:
                 msg["vibe"] = vibe
             if vibe_tags is not None:
                 msg["vibe_tags"] = vibe_tags
-            if owner_id is not None:
-                msg["owner_id"] = owner_id
         else:
-            msg = {"type": "music_off", "id": request_id}
-            if owner_id is not None:
-                msg["owner_id"] = owner_id
+            msg = {
+                "type": "music_off",
+                "id": request_id,
+                "owner_id": effective_owner,
+            }
         return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
     async def music_vibe(
@@ -469,14 +475,17 @@ class VoxClient:
         owner_id: str | None = None,
     ) -> dict[str, Any]:
         """Send a vibe update for the currently playing music."""
+        effective_owner = owner_id if owner_id is not None else self._default_owner_id
         request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {"type": "music_vibe", "id": request_id}
+        msg: dict[str, object] = {
+            "type": "music_vibe",
+            "id": request_id,
+            "owner_id": effective_owner,
+        }
         if vibe is not None:
             msg["vibe"] = vibe
         if vibe_tags is not None:
             msg["vibe_tags"] = vibe_tags
-        if owner_id is not None:
-            msg["owner_id"] = owner_id
         return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
 

@@ -2822,3 +2822,127 @@ class TestMusicSeparateFromPlaybackQueue:
         asyncio.run(_handle_music_on(msg, ws, ctx))
 
         assert ctx.playback_queue.empty()
+
+
+class TestEmptyOwnerIdRejection:
+    """Handlers must reject empty owner_id to prevent ownership spoofing."""
+
+    def test_music_on_rejects_empty_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "empty-1", "owner_id": "", "vibe": "focused"}
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "error", "id": "empty-1", "message": "owner_id is required"}
+        )
+        # State must not mutate.
+        assert ctx.music_mode == "off"
+
+    def test_music_on_rejects_missing_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "empty-2", "vibe": "focused"}
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "error", "id": "empty-2", "message": "owner_id is required"}
+        )
+        assert ctx.music_mode == "off"
+
+    def test_music_vibe_rejects_empty_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "real-session"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "empty-3",
+            "owner_id": "",
+            "vibe": "happy",
+        }
+
+        asyncio.run(_handle_music_vibe(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "error", "id": "empty-3", "message": "owner_id is required"}
+        )
+        # Vibe must not change.
+        assert ctx.music_vibe == ("", "")
+
+    def test_music_vibe_rejects_missing_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "real-session"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "empty-4", "vibe": "happy"}
+
+        asyncio.run(_handle_music_vibe(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "error", "id": "empty-4", "message": "owner_id is required"}
+        )
+        assert ctx.music_vibe == ("", "")
+
+
+class TestMusicLoopLostWakeup:
+    """_music_loop must not block when music_mode is set before clear()."""
+
+    def test_mode_on_before_wait_skips_blocking(self) -> None:
+        """If music_mode becomes 'on' between clear() and wait(), proceed."""
+        ctx = _make_ctx()
+        # Pre-set music_mode to "on" so the re-check after clear() catches it.
+        ctx.music_mode = "on"
+        ctx.music_owner = "test-session"
+        ctx.music_vibe = ("focused", "[calm]")
+        # Do NOT set music_changed — the loop must detect mode via re-check.
+
+        generation_happened = False
+
+        async def fake_generate(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            nonlocal generation_happened
+            generation_happened = True
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake")
+            # Turn off to let the loop exit cleanly.
+            ctx.music_mode = "off"
+            ctx.music_changed.set()
+            return output_path
+
+        async def _drive() -> None:
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    fake_generate,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-lost-wakeup"),
+                ),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                # Give the loop enough time to either proceed or block.
+                await asyncio.sleep(0.1)
+                if not generation_happened:
+                    # Loop is stuck — cancel and fail.
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                else:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+        asyncio.run(_drive())
+
+        assert generation_happened, (
+            "music_loop blocked on wait despite music_mode=='on'"
+        )
