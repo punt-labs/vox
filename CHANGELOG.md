@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`vox doctor --json` rows now include `status_kind` field (vox-kl7)**: each check row carries `status_kind` with values `"pass"`, `"warn"`, `"fail"`, or `"skip"` so machine consumers can distinguish warnings from hard failures. The existing `passed` boolean is unchanged.
+
+### Fixed
+
+- **Qualified "world-readable" and "/proc" references in comments (vox-t2f)**: replaced bare "world-readable" with "others-readable (mode & 0o004)" in `service.py` keys.env race comments, and added "(Linux-specific; macOS has no /proc)" to the `/proc` reference in `voxd.py`, for cross-location consistency with PR #175's broader phrasing.
+
 ## [4.3.2] - 2026-04-11
 
 ### Fixed

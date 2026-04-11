@@ -147,7 +147,7 @@ def _log_voxd_environment() -> None:
     """Log voxd's process identity and audio env vars at startup.
 
     Single greppable INFO line so operators can verify systemd env
-    injection without poking at ``/proc``.
+    injection without poking at ``/proc`` (Linux-specific; macOS has no ``/proc``).
     """
     env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
     # os.getuid/getgid are POSIX-only; fall back gracefully on Windows.

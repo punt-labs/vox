@@ -124,8 +124,8 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     so there is no instant at which the file exists with umask-widened
     permissions. ``Path.write_text`` would have called ``open(..., "w")``
     which creates the file with ``0o666 & ~umask`` first and only
-    chmods afterward — a world-readable exposure window on any system
-    with the typical ``umask 0022``. Copilot 3048402515 on PR #162.
+    chmods afterward — an others-readable (mode & 0o004) exposure window
+    on any system with the typical ``umask 0022``. Copilot 3048402515 on PR #162.
 
     The parent directory is also created-or-tightened to mode 0700 as a
     belt-and-suspenders step so ``_write_keys_env`` remains self-
@@ -225,7 +225,7 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
 
     # Atomic create-and-truncate with explicit mode 0600. This replaces
     # the older ``Path.write_text`` + ``Path.chmod`` sequence, which
-    # left the file world-readable for the few instructions between
+    # left the file others-readable (mode & 0o004) for the few instructions between
     # the ``open(..., "w")`` inside ``write_text`` (which creates with
     # ``0o666 & ~umask``) and the subsequent ``chmod(0o600)``.
     fd = os.open(
@@ -241,7 +241,7 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     # combined with the process umask at creation time, so on an
     # unusual umask (for example 0077 or an inherited 0000) the
     # effective creation mode might not be exactly 0o600. Call chmod
-    # afterward to pin it. The file was never world-readable — at
+    # afterward to pin it. The file was never others-readable (mode & 0o004) — at
     # worst it was user-only (0o600 & ~0o077 == 0o600 on a typical
     # umask, 0o600 & ~0o000 == 0o600 on umask 0000). This chmod only
     # narrows an already-safe mode to the exact target.

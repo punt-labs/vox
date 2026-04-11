@@ -1617,6 +1617,111 @@ class TestDoctorCommand:
         # And the command itself must still be present, unquoted.
         assert "systemctl --user disable --now vox.service" in result.output
 
+    # ------------------------------------------------------------------
+    # status_kind field (vox-kl7)
+    # ------------------------------------------------------------------
+
+    def test_json_status_kind_pass_warn_fail(self, tmp_path: Path) -> None:
+        """--json rows carry status_kind: pass, warn, or fail.
+
+        A version-mismatched daemon triggers a warning row. All other
+        passing checks produce pass rows. The test verifies the tri-state
+        mapping and confirms the existing ``passed`` boolean is unchanged.
+        """
+        runner = CliRunner()
+
+        def which_side_effect(name: str) -> str | None:
+            if name == "ffmpeg":
+                return "/opt/homebrew/bin/ffmpeg"
+            if name == "uvx":
+                return "/usr/local/bin/uvx"
+            return None
+
+        mock_client = MagicMock()
+        mock_client.health.return_value = {
+            "provider": "elevenlabs",
+            "active_sessions": 2,
+            "port": 8421,
+            "daemon_version": "4.1.1",
+        }
+
+        with (
+            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch(
+                f"{_CLI}._claude_desktop_config_path",
+                return_value=tmp_path / "nope.json",
+            ),
+            patch(
+                f"{_CLI}.default_output_dir",
+                return_value=tmp_path / "audio",
+            ),
+            patch(f"{_CLI}.platform.system", return_value="Darwin"),
+        ):
+            result = runner.invoke(app, ["--json", "doctor"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        checks = data["checks"]
+
+        # Every row must carry status_kind.
+        for row in checks:
+            assert "status_kind" in row, f"missing status_kind: {row}"
+            assert row["status_kind"] in ("pass", "warn", "fail", "skip")
+
+        # The daemon mismatch row is a warning.
+        warn_rows = [r for r in checks if r["status_kind"] == "warn"]
+        assert len(warn_rows) >= 1
+        for wr in warn_rows:
+            assert wr["passed"] is False
+
+        # Passing rows have passed=True.
+        pass_rows = [r for r in checks if r["status_kind"] == "pass"]
+        assert len(pass_rows) >= 1
+        for pr in pass_rows:
+            assert pr["passed"] is True
+
+    def test_json_status_kind_fail_row(self, tmp_path: Path) -> None:
+        """A hard-failure row (daemon not running) has status_kind == fail."""
+        runner = CliRunner()
+
+        def which_side_effect(name: str) -> str | None:
+            if name == "ffmpeg":
+                return "/opt/homebrew/bin/ffmpeg"
+            if name == "uvx":
+                return "/usr/local/bin/uvx"
+            return None
+
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.health.side_effect = VoxdConnectionError("not running")
+
+        with (
+            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
+            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch(
+                f"{_CLI}._claude_desktop_config_path",
+                return_value=tmp_path / "nope.json",
+            ),
+            patch(
+                f"{_CLI}.default_output_dir",
+                return_value=tmp_path / "audio",
+            ),
+            patch(f"{_CLI}.platform.system", return_value="Darwin"),
+        ):
+            result = runner.invoke(app, ["--json", "doctor"])
+
+        # exit_code 1 because daemon is a required check
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        fail_rows = [r for r in data["checks"] if r["status_kind"] == "fail"]
+        assert len(fail_rows) >= 1
+        for fr in fail_rows:
+            assert fr["passed"] is False
+
 
 class TestValidVoxSubcommands:
     """Direct contract tests for ``_valid_vox_subcommands()``.
