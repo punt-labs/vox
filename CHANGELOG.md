@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-04-11
+
 ### Added
 
 - **Background music generation (`/music on|off`, `vox music on|off`)**: vibe-driven instrumental music that loops during coding sessions. When music mode is on, vox generates ~2-minute tracks via the ElevenLabs Music API using the current session vibe, style modifier, and time-of-day context, then loops them at reduced volume through voxd while speech and chimes play at full volume on top. When the vibe changes (via `/vibe` or auto-vibe), a new track generates to match. `/music on style techno` sets a persistent style preference; `/music off` stops playback. Session ownership ensures only the controlling session's vibe drives the music. State is daemon-wide and ephemeral (daemon restart = music off). Typical credit usage: 1-3 tracks per session (~2k credits each). Requires ElevenLabs paid plan. Includes CLI commands (`vox music on [--style ...]`, `vox music off`), MCP tool (`music`), slash command (`/music`), vibe-to-prompt mapping, `MusicProvider` protocol, `ElevenLabsMusicProvider`, `MusicLoop` async task in voxd, and dedicated playback subprocess separate from the speech/chime queue. Closes vox-0qi.
