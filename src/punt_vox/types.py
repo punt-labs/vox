@@ -21,6 +21,9 @@ __all__ = [
     "DirectPlayProvider",
     "HealthCheck",
     "MergeStrategy",
+    "MusicProvider",
+    "MusicRequest",
+    "MusicResult",
     "SynthesisRequest",
     "SynthesisResult",
     "TTSProvider",
@@ -296,6 +299,46 @@ class DirectPlayProvider(Protocol):
 
     def play_directly(self, request: AudioRequest) -> int:
         """Synthesize and play, returning the subprocess exit code."""
+        ...
+
+
+@dataclass(frozen=True)
+class MusicRequest:
+    """Request to generate a music track."""
+
+    prompt: str
+    duration_ms: int
+    style: str | None = None
+    vibe: str | None = None
+    vibe_tags: str | None = None
+
+
+@dataclass(frozen=True)
+class MusicResult:
+    """Result of a music generation request."""
+
+    path: Path
+    duration_ms: int
+    prompt: str
+
+
+@runtime_checkable
+class MusicProvider(Protocol):
+    """Provider-agnostic interface for music generation engines."""
+
+    async def generate_track(
+        self, prompt: str, duration_ms: int, output_path: Path
+    ) -> Path:
+        """Generate a music track and write it to output_path.
+
+        Args:
+            prompt: Descriptive prompt for the track.
+            duration_ms: Desired track length in milliseconds.
+            output_path: Where to write the audio file.
+
+        Returns:
+            The path to the generated file.
+        """
         ...
 
 

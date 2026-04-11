@@ -11,6 +11,9 @@ from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     MergeStrategy,
+    MusicProvider,
+    MusicRequest,
+    MusicResult,
     SynthesisRequest,
     SynthesisResult,
     generate_filename,
@@ -169,3 +172,74 @@ class TestGenerateFilename:
     def test_no_prefix(self) -> None:
         name = generate_filename("test")
         assert not name.startswith("pair_")
+
+
+class TestMusicRequest:
+    def test_required_fields(self) -> None:
+        req = MusicRequest(prompt="ambient techno", duration_ms=120000)
+        assert req.prompt == "ambient techno"
+        assert req.duration_ms == 120000
+
+    def test_optional_fields_default_none(self) -> None:
+        req = MusicRequest(prompt="jazz", duration_ms=60000)
+        assert req.style is None
+        assert req.vibe is None
+        assert req.vibe_tags is None
+
+    def test_all_fields(self) -> None:
+        req = MusicRequest(
+            prompt="techno music, happy mood",
+            duration_ms=120000,
+            style="techno",
+            vibe="happy",
+            vibe_tags="[cheerful]",
+        )
+        assert req.style == "techno"
+        assert req.vibe == "happy"
+        assert req.vibe_tags == "[cheerful]"
+
+    def test_frozen(self) -> None:
+        req = MusicRequest(prompt="test", duration_ms=60000)
+        with pytest.raises(AttributeError):
+            req.prompt = "changed"  # type: ignore[misc]
+
+
+class TestMusicResult:
+    def test_required_fields(self) -> None:
+        result = MusicResult(
+            path=Path("/home/user/vox-output/music/track.mp3"),
+            duration_ms=120000,
+            prompt="ambient techno",
+        )
+        assert result.path == Path("/home/user/vox-output/music/track.mp3")
+        assert result.duration_ms == 120000
+        assert result.prompt == "ambient techno"
+
+    def test_frozen(self) -> None:
+        result = MusicResult(
+            path=Path("/tmp/track.mp3"),
+            duration_ms=60000,
+            prompt="test",
+        )
+        with pytest.raises(AttributeError):
+            result.path = Path("/other.mp3")  # type: ignore[misc]
+
+
+class TestMusicProvider:
+    def test_protocol_is_runtime_checkable(self) -> None:
+        assert isinstance(MusicProvider, type)
+
+    def test_conforming_class_is_recognized(self) -> None:
+        class FakeMusic:
+            async def generate_track(
+                self, prompt: str, duration_ms: int, output_path: Path
+            ) -> Path:
+                return output_path
+
+        assert isinstance(FakeMusic(), MusicProvider)
+
+    def test_non_conforming_class_is_rejected(self) -> None:
+        class NotMusic:
+            def unrelated(self) -> None: ...
+
+        assert not isinstance(NotMusic(), MusicProvider)
