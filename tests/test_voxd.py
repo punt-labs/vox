@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -22,13 +23,19 @@ from punt_vox.voxd import (
     PlaybackItem,
     _apply_vibe_for_synthesis,
     _config_dir,
+    _handle_music_off,
+    _handle_music_on,
+    _handle_music_vibe,
     _handle_synthesize,
     _health_payload_full,
     _health_payload_minimal,
     _health_route,
+    _kill_music_proc,
     _load_keys,
     _log_dir,
     _model_supports_expressive_tags,
+    _music_loop,
+    _music_player_command,
     _play_audio,
     _run_dir,
     _try_direct_play,
@@ -2285,3 +2292,533 @@ class TestWsRoutePeerClose:
         assert len(ws_error_records) == 1
         # The ``finally`` branch must still decrement client_count.
         assert ctx.client_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Music integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonContextMusicFields:
+    """DaemonContext must have all 8 music fields with correct defaults."""
+
+    def test_music_mode_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_mode == "off"
+
+    def test_music_style_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_style == ""
+
+    def test_music_owner_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_owner == ""
+
+    def test_music_vibe_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_vibe == ("", "")
+
+    def test_music_track_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_track is None
+
+    def test_music_proc_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_proc is None
+
+    def test_music_state_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_state == "idle"
+
+    def test_music_changed_default(self) -> None:
+        ctx = _make_ctx()
+        assert isinstance(ctx.music_changed, asyncio.Event)
+        assert not ctx.music_changed.is_set()
+
+
+class TestMusicHandlerRegistration:
+    """Music handlers must be registered in _HANDLERS."""
+
+    def test_music_on_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_on" in _HANDLERS
+        assert _HANDLERS["music_on"] is _handle_music_on
+
+    def test_music_off_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_off" in _HANDLERS
+        assert _HANDLERS["music_off"] is _handle_music_off
+
+    def test_music_vibe_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_vibe" in _HANDLERS
+        assert _HANDLERS["music_vibe"] is _handle_music_vibe
+
+
+class TestHandleMusicOn:
+    """_handle_music_on: ownership transfer and state mutation."""
+
+    def test_sets_music_mode_and_owner(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-1",
+            "owner_id": "session-abc",
+            "style": "techno",
+            "vibe": "focused",
+            "vibe_tags": "[calm]",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.music_mode == "on"
+        assert ctx.music_owner == "session-abc"
+        assert ctx.music_style == "techno"
+        assert ctx.music_vibe == ("focused", "[calm]")
+        assert ctx.music_state == "generating"
+        assert ctx.music_changed.is_set()
+
+    def test_responds_with_generating_status(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-2",
+            "owner_id": "session-xyz",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "music_on", "id": "req-2", "status": "generating"}
+        )
+
+    def test_ownership_transfer_kills_existing_proc(self) -> None:
+        """Transferring ownership kills the previous subprocess."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "old-session"
+
+        # Simulate a running music subprocess.
+        fake_proc = MagicMock()
+        fake_proc.returncode = None
+        fake_proc.kill = MagicMock()
+        fake_proc.wait = AsyncMock(return_value=0)
+        ctx.music_proc = fake_proc
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-3",
+            "owner_id": "new-session",
+            "vibe": "happy",
+            "vibe_tags": "[warm]",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        fake_proc.kill.assert_called_once()
+        assert ctx.music_owner == "new-session"
+        assert ctx.music_proc is None
+
+    def test_preserves_existing_style_when_not_provided(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_style = "jazz"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-4",
+            "owner_id": "session-1",
+            "style": "",
+            "vibe": "focused",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.music_style == "jazz"
+
+
+class TestHandleMusicOff:
+    """_handle_music_off: stops music and resets state."""
+
+    def test_sets_mode_off_and_state_idle(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_state = "playing"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "req-off"}
+
+        asyncio.run(_handle_music_off(msg, ws, ctx))
+
+        assert ctx.music_mode == "off"
+        assert ctx.music_state == "idle"
+        assert ctx.music_changed.is_set()
+
+    def test_responds_with_stopped_status(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "req-off-2"}
+
+        asyncio.run(_handle_music_off(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "music_off", "id": "req-off-2", "status": "stopped"}
+        )
+
+    def test_kills_running_subprocess(self) -> None:
+        ctx = _make_ctx()
+        fake_proc = MagicMock()
+        fake_proc.returncode = None
+        fake_proc.kill = MagicMock()
+        fake_proc.wait = AsyncMock(return_value=0)
+        ctx.music_proc = fake_proc
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "req-off-3"}
+
+        asyncio.run(_handle_music_off(msg, ws, ctx))
+
+        fake_proc.kill.assert_called_once()
+        assert ctx.music_proc is None
+
+
+class TestHandleMusicVibe:
+    """_handle_music_vibe: ownership check and vibe update."""
+
+    def test_matching_owner_updates_vibe(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "session-abc"
+        ctx.music_vibe = ("old", "[old-tags]")
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "vibe-1",
+            "owner_id": "session-abc",
+            "vibe": "happy",
+            "vibe_tags": "[warm]",
+        }
+
+        asyncio.run(_handle_music_vibe(msg, ws, ctx))
+
+        assert ctx.music_vibe == ("happy", "[warm]")
+        assert ctx.music_changed.is_set()
+        ws.send_json.assert_called_once_with(
+            {"type": "music_vibe", "id": "vibe-1", "status": "generating"}
+        )
+
+    def test_non_owner_rejected(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "session-abc"
+        ctx.music_vibe = ("old", "[old-tags]")
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "vibe-2",
+            "owner_id": "session-other",
+            "vibe": "happy",
+            "vibe_tags": "[warm]",
+        }
+
+        asyncio.run(_handle_music_vibe(msg, ws, ctx))
+
+        # Vibe unchanged.
+        assert ctx.music_vibe == ("old", "[old-tags]")
+        ws.send_json.assert_called_once_with(
+            {"type": "music_vibe", "id": "vibe-2", "status": "ignored"}
+        )
+
+    def test_same_vibe_ignored(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_owner = "session-abc"
+        ctx.music_vibe = ("happy", "[warm]")
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "vibe-3",
+            "owner_id": "session-abc",
+            "vibe": "happy",
+            "vibe_tags": "[warm]",
+        }
+
+        asyncio.run(_handle_music_vibe(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "music_vibe", "id": "vibe-3", "status": "ignored"}
+        )
+        assert not ctx.music_changed.is_set()
+
+
+class TestMusicPlayerCommand:
+    """_music_player_command produces the right argv at reduced volume."""
+
+    def test_linux_ffplay_with_volume(self) -> None:
+        with patch("punt_vox.voxd._is_darwin", return_value=False):
+            cmd = _music_player_command(Path("/tmp/track.mp3"))
+        assert cmd == [
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-volume",
+            "30",
+            "/tmp/track.mp3",
+        ]
+
+    def test_darwin_afplay_with_volume(self) -> None:
+        with patch("punt_vox.voxd._is_darwin", return_value=True):
+            cmd = _music_player_command(Path("/tmp/track.mp3"))
+        assert cmd == ["afplay", "--volume", "0.3", "/tmp/track.mp3"]
+
+
+class TestMusicLoopStateTransitions:
+    """_music_loop: generation, playback, vibe changes, crash recovery."""
+
+    def test_generates_and_plays_then_stops_on_off(self) -> None:
+        """Full cycle: mode on -> generate -> play -> mode off."""
+        ctx = _make_ctx()
+
+        call_log: list[str] = []
+
+        async def fake_generate_track(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            call_log.append("generate")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake-music-data")
+            return output_path
+
+        async def fake_subprocess_exec(*args: object, **kwargs: object) -> MagicMock:
+            call_log.append("play")
+            proc = MagicMock()
+            proc.returncode = 0
+
+            async def _wait() -> int:
+                await asyncio.sleep(0.01)
+                return 0
+
+            proc.wait = _wait
+            proc.kill = MagicMock()
+            return proc
+
+        async def _drive() -> None:
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    fake_generate_track,
+                ),
+                patch(
+                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    fake_subprocess_exec,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-music"),
+                ),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                await asyncio.sleep(0)
+
+                # Turn music on.
+                ctx.music_mode = "on"
+                ctx.music_owner = "test-session"
+                ctx.music_vibe = ("focused", "[calm]")
+                ctx.music_changed.set()
+                await asyncio.sleep(0.05)
+
+                # Turn music off.
+                ctx.music_mode = "off"
+                ctx.music_changed.set()
+                await asyncio.sleep(0.05)
+
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert "generate" in call_log
+        assert "play" in call_log
+
+    def test_crash_recovery_retries_with_backoff(self) -> None:
+        """Three failures in a row disable music mode."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "test-session"
+        ctx.music_vibe = ("focused", "")
+        ctx.music_changed.set()
+
+        attempt_count = 0
+
+        async def failing_generate(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            nonlocal attempt_count
+            attempt_count += 1
+            msg = f"generation failed (attempt {attempt_count})"
+            raise RuntimeError(msg)
+
+        async def _drive() -> None:
+            nonlocal attempt_count
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    failing_generate,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-music"),
+                ),
+                patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                # Yield control so the loop can run its 3 retries.
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert attempt_count == 3
+        assert ctx.music_mode == "off"
+        assert ctx.music_state == "idle"
+
+    def test_vibe_change_during_generation_triggers_regeneration(self) -> None:
+        """Setting music_changed during generation causes a new track."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "test-session"
+        ctx.music_vibe = ("focused", "")
+        ctx.music_changed.set()
+
+        generation_count = 0
+
+        async def counting_generate(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            nonlocal generation_count
+            generation_count += 1
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake-music-data")
+
+            # On first generation, simulate a vibe change mid-flight.
+            if generation_count == 1:
+                ctx.music_vibe = ("happy", "[warm]")
+                ctx.music_changed.set()
+
+            return output_path
+
+        async def fake_subprocess_exec(*args: object, **kwargs: object) -> MagicMock:
+            proc = MagicMock()
+            proc.returncode = 0
+
+            async def _wait() -> int:
+                await asyncio.sleep(0.01)
+                return 0
+
+            proc.wait = _wait
+            proc.kill = MagicMock()
+            return proc
+
+        async def _drive() -> None:
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    counting_generate,
+                ),
+                patch(
+                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    fake_subprocess_exec,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-music"),
+                ),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                await asyncio.sleep(0.15)
+
+                ctx.music_mode = "off"
+                ctx.music_changed.set()
+                await asyncio.sleep(0.05)
+
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert generation_count >= 2
+
+
+class TestKillMusicProc:
+    """_kill_music_proc safely terminates the music subprocess."""
+
+    def test_kills_running_proc(self) -> None:
+        ctx = _make_ctx()
+        proc = MagicMock()
+        proc.returncode = None
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock(return_value=0)
+        ctx.music_proc = proc
+
+        asyncio.run(_kill_music_proc(ctx))
+
+        proc.kill.assert_called_once()
+        assert ctx.music_proc is None
+
+    def test_noop_when_no_proc(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_proc = None
+
+        asyncio.run(_kill_music_proc(ctx))
+
+        assert ctx.music_proc is None
+
+    def test_noop_when_proc_already_exited(self) -> None:
+        ctx = _make_ctx()
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.kill = MagicMock()
+        ctx.music_proc = proc
+
+        asyncio.run(_kill_music_proc(ctx))
+
+        proc.kill.assert_not_called()
+        assert ctx.music_proc is None
+
+
+class TestMusicSeparateFromPlaybackQueue:
+    """Music subprocess must NOT use the existing _playback_consumer queue.
+
+    The spec explicitly requires music to run its own subprocess at
+    reduced volume, independent of the chime/TTS playback queue. This
+    test verifies the separation by checking that _handle_music_on does
+    not enqueue anything on ctx.playback_queue.
+    """
+
+    def test_music_on_does_not_enqueue(self) -> None:
+        ctx = _make_ctx()
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "sep-1",
+            "owner_id": "session-1",
+            "vibe": "focused",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.playback_queue.empty()

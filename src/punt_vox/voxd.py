@@ -440,6 +440,27 @@ def _player_command(path: Path) -> list[str]:
     return ["ffplay", "-nodisp", "-autoexit", str(path)]
 
 
+_MUSIC_VOLUME = 30
+
+
+def _music_player_command(path: Path) -> list[str]:
+    """Return the argv for playing a music track at reduced volume.
+
+    Music plays at ``-volume 30`` so speech and chimes overlay on top
+    at full volume without runtime volume manipulation.
+    """
+    if _is_darwin():
+        return ["afplay", "--volume", "0.3", str(path)]
+    return ["ffplay", "-nodisp", "-autoexit", "-volume", str(_MUSIC_VOLUME), str(path)]
+
+
+def _music_output_dir() -> Path:
+    """Return the directory for generated music tracks."""
+    from punt_vox.output import default_output_dir
+
+    return default_output_dir() / "music"
+
+
 def _record_playback_result(
     ctx: DaemonContext,
     *,
@@ -838,6 +859,15 @@ class DaemonContext:
         # on every request. See ``punt_vox.paths.installed_version`` for
         # fallback semantics when running from an uninstalled source tree.
         self.daemon_version: str = installed_version()
+        # Music state — daemon-wide, one set of speakers, one loop.
+        self.music_mode: str = "off"
+        self.music_style: str = ""
+        self.music_owner: str = ""
+        self.music_vibe: tuple[str, str] = ("", "")  # (vibe, vibe_tags)
+        self.music_track: Path | None = None
+        self.music_proc: asyncio.subprocess.Process | None = None
+        self.music_state: str = "idle"  # "idle" | "generating" | "playing"
+        self.music_changed: asyncio.Event = asyncio.Event()
 
 
 # ---------------------------------------------------------------------------
@@ -1650,6 +1680,249 @@ async def _handle_health(
 
 
 # ---------------------------------------------------------------------------
+# Music loop and handlers
+# ---------------------------------------------------------------------------
+
+_MUSIC_DURATION_MS = 120_000
+_MUSIC_MAX_RETRIES = 3
+
+
+async def _music_backoff_sleep(seconds: float) -> None:
+    """Sleep for backoff in the music loop. Patchable by tests."""
+    await asyncio.sleep(seconds)
+
+
+def _slugify(text: str, max_len: int = 40) -> str:
+    """Slugify a string for use in filenames."""
+    import re
+
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
+    return slug[:max_len]
+
+
+async def _kill_music_proc(ctx: DaemonContext) -> None:
+    """Kill the current music subprocess if running."""
+    proc = ctx.music_proc
+    if proc is not None and proc.returncode is None:
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+    ctx.music_proc = None
+
+
+async def _music_loop(ctx: DaemonContext) -> None:
+    """Background task: generate and loop music tracks.
+
+    Runs for the lifetime of the daemon. When ``music_mode`` is "on",
+    derives a prompt from the current vibe, generates a track via
+    :class:`~punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider`,
+    and loops it via ffplay at reduced volume. When ``music_changed``
+    is set, kills the current subprocess and regenerates.
+
+    Crash recovery: on failure, logs the error, resets state, and
+    retries with backoff (3 attempts). After 3 failures, sets
+    ``music_mode`` to "off".
+    """
+    retry_count = 0
+    while True:
+        # Wait until music is turned on.
+        while ctx.music_mode != "on":
+            ctx.music_changed.clear()
+            await ctx.music_changed.wait()
+
+        try:
+            # Generate a track.
+            ctx.music_state = "generating"
+            ctx.music_changed.clear()
+
+            vibe, vibe_tags = ctx.music_vibe
+            style = ctx.music_style
+
+            from punt_vox.music import vibe_to_prompt
+
+            hour = time.localtime().tm_hour
+            prompt = vibe_to_prompt(
+                vibe or None, vibe_tags or None, style or None, hour, []
+            )
+
+            output_dir = _music_output_dir()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            vibe_slug = _slugify(vibe) if vibe else "none"
+            style_slug = _slugify(style) if style else "none"
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_{vibe_slug}_{style_slug}.mp3"
+            output_path = output_dir / filename
+
+            from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
+
+            provider = ElevenLabsMusicProvider()
+            track = await provider.generate_track(
+                prompt, _MUSIC_DURATION_MS, output_path
+            )
+
+            ctx.music_track = track
+            retry_count = 0  # Reset on successful generation.
+
+            # If vibe changed during generation, consume the event and
+            # regenerate on next iteration instead of playing a stale track.
+            if ctx.music_changed.is_set():
+                logger.info("Vibe changed during generation, regenerating")
+                continue
+
+            # Loop the track until music_changed is signaled or mode turns off.
+            while ctx.music_mode == "on" and not ctx.music_changed.is_set():
+                ctx.music_state = "playing"
+                cmd = _music_player_command(track)
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
+                )
+                ctx.music_proc = proc
+
+                # Wait for subprocess to finish or music_changed to fire.
+                wait_task = asyncio.create_task(proc.wait())
+                changed_task = asyncio.create_task(ctx.music_changed.wait())
+                _done, pending = await asyncio.wait(
+                    {wait_task, changed_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+                if ctx.music_changed.is_set() or ctx.music_mode != "on":
+                    await _kill_music_proc(ctx)
+                    break
+
+                # Playback ended naturally — loop the same track.
+                rc = proc.returncode
+                if rc != 0:
+                    logger.warning(
+                        "Music playback ended with rc=%s for %s",
+                        rc,
+                        track.name,
+                    )
+
+        except asyncio.CancelledError:
+            await _kill_music_proc(ctx)
+            ctx.music_state = "idle"
+            raise
+        except Exception:
+            logger.exception(
+                "Music loop error (attempt %d/%d)",
+                retry_count + 1,
+                _MUSIC_MAX_RETRIES,
+            )
+            await _kill_music_proc(ctx)
+            ctx.music_state = "idle"
+            retry_count += 1
+            if retry_count >= _MUSIC_MAX_RETRIES:
+                logger.error(
+                    "Music loop failed %d times, disabling music", _MUSIC_MAX_RETRIES
+                )
+                ctx.music_mode = "off"
+                retry_count = 0
+            else:
+                # Exponential backoff: 1s, 2s, 4s...
+                await _music_backoff_sleep(2 ** (retry_count - 1))
+
+
+async def _handle_music_on(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_on' message: start or transfer music ownership.
+
+    Ownership transfer is atomic: kill existing subprocess, update all
+    state fields, then signal MusicLoop. No interleaving.
+    """
+    request_id = str(msg.get("id", ""))
+    owner_id = str(msg.get("owner_id", ""))
+    style = str(msg.get("style", ""))
+    vibe = str(msg.get("vibe", ""))
+    vibe_tags = str(msg.get("vibe_tags", ""))
+
+    # Atomic ownership transfer: kill existing, update all fields, signal.
+    await _kill_music_proc(ctx)
+
+    ctx.music_mode = "on"
+    if style:
+        ctx.music_style = style
+    ctx.music_owner = owner_id
+    ctx.music_vibe = (vibe, vibe_tags)
+    ctx.music_state = "generating"
+    ctx.music_changed.set()
+
+    logger.info(
+        "Music on: owner=%s style=%s vibe=%s",
+        owner_id,
+        ctx.music_style,
+        vibe,
+    )
+    await websocket.send_json(
+        {"type": "music_on", "id": request_id, "status": "generating"}
+    )
+
+
+async def _handle_music_off(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_off' message: stop music playback."""
+    request_id = str(msg.get("id", ""))
+
+    await _kill_music_proc(ctx)
+    ctx.music_mode = "off"
+    ctx.music_state = "idle"
+    ctx.music_changed.set()
+
+    logger.info("Music off")
+    await websocket.send_json(
+        {"type": "music_off", "id": request_id, "status": "stopped"}
+    )
+
+
+async def _handle_music_vibe(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_vibe' message: update vibe if sender is owner."""
+    request_id = str(msg.get("id", ""))
+    owner_id = str(msg.get("owner_id", ""))
+    vibe = str(msg.get("vibe", ""))
+    vibe_tags = str(msg.get("vibe_tags", ""))
+
+    if owner_id != ctx.music_owner:
+        await websocket.send_json(
+            {"type": "music_vibe", "id": request_id, "status": "ignored"}
+        )
+        return
+
+    new_vibe = (vibe, vibe_tags)
+    if new_vibe == ctx.music_vibe:
+        await websocket.send_json(
+            {"type": "music_vibe", "id": request_id, "status": "ignored"}
+        )
+        return
+
+    ctx.music_vibe = new_vibe
+    ctx.music_changed.set()
+
+    logger.info("Music vibe changed: vibe=%s tags=%s", vibe, vibe_tags)
+    await websocket.send_json(
+        {"type": "music_vibe", "id": request_id, "status": "generating"}
+    )
+
+
+# ---------------------------------------------------------------------------
 # WebSocket route
 # ---------------------------------------------------------------------------
 
@@ -1666,6 +1939,9 @@ _HANDLERS: dict[
     "record": _handle_record,
     "voices": _handle_voices,
     "health": _handle_health,
+    "music_on": _handle_music_on,
+    "music_off": _handle_music_off,
+    "music_vibe": _handle_music_vibe,
 }
 
 
@@ -1829,9 +2105,17 @@ def main(
         # Start playback consumer
         consumer_task = asyncio.create_task(_playback_consumer(ctx))
         logger.info("Playback consumer started")
+        # Start music loop
+        music_task = asyncio.create_task(_music_loop(ctx))
+        logger.info("Music loop started")
         try:
             yield
         finally:
+            music_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await music_task
+            # Kill any lingering music subprocess.
+            await _kill_music_proc(ctx)
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer_task
