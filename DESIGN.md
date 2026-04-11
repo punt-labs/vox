@@ -1359,6 +1359,7 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 `vox daemon install` runs as the invoking user from start to finish. The command refuses to run under `sudo` (`os.geteuid() == 0` check at the top of `install()`). All per-user filesystem writes under `~/.punt-labs/vox/` happen with normal user permissions — no chown, no `fchown`, no `O_NOFOLLOW`, no symlink walks, no `SUDO_USER` lookup. The privileged surface shrinks to five `subprocess.run(["sudo", ...])` calls on Linux and four on macOS, each touching only a system directory the user could not write to anyway:
 
 **Linux (5 calls):**
+
 1. `sudo systemctl stop voxd` (pre-flight, skipped on fresh install)
 2. `sudo install -m 644 -o root -g root <tmp> /etc/systemd/system/voxd.service`
 3. `sudo systemctl daemon-reload`
@@ -1366,6 +1367,7 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 5. `sudo systemctl restart voxd`
 
 **macOS (4 calls):**
+
 1. `sudo launchctl unload -w <plist>` (pre-flight, skipped on fresh install)
 2. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
 3. `sudo launchctl load -w <plist>`
