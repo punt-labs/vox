@@ -35,7 +35,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
@@ -1683,6 +1683,23 @@ async def _ws_route(websocket: WebSocket) -> None:
 
     try:
         while True:
+            # Preempt Starlette's RuntimeError on a peer-closed socket.
+            # After the vox-ehf fix in 4.3.0, chime/unmute clients return
+            # on the ``"playing"`` ack and close the WebSocket while this
+            # loop is still awaiting the next ``receive_text()``. The
+            # handler's trailing ``contextlib.suppress(WebSocketDisconnect,
+            # RuntimeError)`` send of the stale ``"done"`` message lands
+            # on the peer-closed socket and Starlette transitions the
+            # ``application_state`` to ``DISCONNECTED`` synchronously. If
+            # we did not check the state here, the next ``receive_text()``
+            # would raise ``RuntimeError('WebSocket is not connected. Need
+            # to call "accept" first.')`` — not ``WebSocketDisconnect`` —
+            # and fall through to ``except Exception`` below, logging a
+            # full traceback on every chime/unmute/recap. Checking the
+            # state ourselves lets us break out cleanly without widening
+            # the outer exception surface (vox-ewh).
+            if websocket.application_state != WebSocketState.CONNECTED:
+                break
             raw = await websocket.receive_text()
             try:
                 msg = json.loads(raw)
@@ -1715,14 +1732,7 @@ async def _ws_route(websocket: WebSocket) -> None:
             # Multiple clients are concurrent (each has its own receive loop),
             # but messages from a single client are processed sequentially.
             await handler(msg, websocket, ctx)  # type: ignore[misc]
-    except (WebSocketDisconnect, RuntimeError):
-        # RuntimeError fires when ``receive_text`` is called on a socket
-        # whose ``application_state`` has already transitioned to
-        # DISCONNECTED — typically after a handler's trailing
-        # ``contextlib.suppress`` send landed on a peer-closed socket
-        # (see ``_handle_synthesize`` and ``_handle_chime``). Treat it
-        # as a normal disconnect rather than logging a spurious error
-        # traceback on every chime/unmute/recap (vox-ewh).
+    except WebSocketDisconnect:
         pass
     except Exception:
         logger.exception("WebSocket error")
