@@ -1792,6 +1792,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                     continue
 
             # --- Playback loop: loop current_track, generate in parallel --
+            assert current_track is not None  # guaranteed by initial generation above
             gen_task = None
             while ctx.music_mode == "on":
                 ctx.music_state = "playing" if gen_task is None else "generating"
@@ -1808,17 +1809,18 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 # Wait on this subprocess, re-entering the wait when
                 # only a vibe change fired (the proc is still alive).
                 proc_done = False
+                handoff_occurred = False
                 while not proc_done:
                     wait_task = asyncio.create_task(proc.wait())
                     changed_task = asyncio.create_task(
                         ctx.music_changed.wait(),
                     )
-                    waitables: set[asyncio.Task[object]] = {
-                        wait_task,
-                        changed_task,
+                    waitables: set[asyncio.Future[object]] = {
+                        cast("asyncio.Future[object]", wait_task),
+                        cast("asyncio.Future[object]", changed_task),
                     }
                     if gen_task is not None:
-                        waitables.add(gen_task)
+                        waitables.add(cast("asyncio.Future[object]", gen_task))
 
                     _done, pending = await asyncio.wait(
                         waitables,
@@ -1859,7 +1861,10 @@ async def _music_loop(ctx: DaemonContext) -> None:
                         retry_count = 0
                         await _kill_music_proc(ctx)
                         current_track = new_track
-                        ctx.music_changed.clear()
+                        # Don't clear music_changed here — a vibe change
+                        # may have arrived during generation.  The next
+                        # iteration's is_set() check will catch it.
+                        handoff_occurred = True
                         proc_done = True
                         break
 
@@ -1890,13 +1895,16 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 if current_track is None:
                     break
 
-                rc = proc.returncode
-                if rc is not None and rc != 0:
-                    logger.warning(
-                        "Music playback ended with rc=%s for %s",
-                        rc,
-                        current_track.name,
-                    )
+                # After handoff, the old proc was killed intentionally —
+                # non-zero rc is expected, not worth warning about.
+                if not handoff_occurred:
+                    rc = proc.returncode
+                    if rc is not None and rc != 0:
+                        logger.warning(
+                            "Music playback ended with rc=%s for %s",
+                            rc,
+                            current_track.name,
+                        )
 
         except asyncio.CancelledError:
             if gen_task is not None and not gen_task.done():
