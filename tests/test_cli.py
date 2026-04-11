@@ -1502,6 +1502,99 @@ class TestDoctorCommand:
         assert "\u2717 Legacy user unit" in result.output
         assert "unparseable" in result.output
 
+    def test_legacy_user_unit_line_continuation_parses(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ExecStart= that uses systemd backslash continuation still parses.
+
+        systemd.unit(5) grammar allows directive values to span lines
+        via a trailing backslash. A hand-edited unit file written as::
+
+            ExecStart=/home/tester/.local/bin/vox \\
+                daemon
+
+        must produce the same ``daemon`` subcommand as the single-line
+        form. The parser folds continuations before searching for
+        ``ExecStart=``, so this fixture should hit the current-subcommand
+        branch (doctor passes, not fails).
+
+        Regression guard: before vox-45r follow-up the parser called
+        ``content.splitlines()`` directly, which handed ``shlex`` a
+        literal backslash token and either dropped ``daemon`` or raised
+        ``ValueError`` (returning None → ``unparseable``).
+        """
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\n"
+            "Description=Legacy vox unit with line continuation\n"
+            "\n"
+            "[Service]\n"
+            "ExecStart=/home/tester/.local/bin/vox \\\n"
+            "    daemon\n"
+            "Restart=on-failure\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=default.target\n",
+            encoding="utf-8",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Legacy user unit" in result.output
+        assert "vox daemon" in result.output
+
+
+class TestValidVoxSubcommands:
+    """Direct contract tests for ``_valid_vox_subcommands()``.
+
+    The doctor legacy-unit check compares the subcommand token parsed
+    from a stale ``vox.service`` against the set returned by this
+    helper. The doctor tests exercise it end-to-end (exit code +
+    output), but those do not pin down the helper's contract on their
+    own — a refactor that calls it before typer finishes registering
+    commands, or that renames a subcommand group, would silently
+    collapse the valid set and let stale units pass through.
+
+    These tests lock the promise from the helper's docstring: the
+    return value is the union of leaf command names and subcommand
+    group names that the live typer app accepts.
+    """
+
+    def test_subcommand_groups_present(self) -> None:
+        """``daemon``, ``cache``, ``hook`` are the three typer groups.
+
+        They are registered via ``app.add_typer(..., name=...)`` and
+        must appear in the valid set so unit files that reference
+        ``vox daemon`` or ``vox cache <op>`` are recognised.
+        """
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        valid = _valid_vox_subcommands()
+        assert {"daemon", "cache", "hook"}.issubset(valid)
+
+    def test_leaf_commands_present(self) -> None:
+        """Representative leaf commands registered via ``@app.command()``.
+
+        ``doctor`` and ``unmute`` are two leaves the plugin and CLI
+        users rely on. Their presence in the valid set is the signal
+        that ``app.registered_commands`` was fully populated at the
+        time of the call.
+        """
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        valid = _valid_vox_subcommands()
+        assert "doctor" in valid
+        assert "unmute" in valid
+
 
 # ---------------------------------------------------------------------------
 # install tests (marketplace)

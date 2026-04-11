@@ -841,6 +841,18 @@ def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
     that is not the binary path itself — that token is the ``vox``
     subcommand (e.g. ``serve`` in ``/home/j/.local/bin/vox serve --port 8421``).
 
+    Systemd unit grammar allows multi-line directive values via a
+    trailing backslash on the continued line. Lines are pre-joined
+    before the ``ExecStart=`` search so a unit written as::
+
+        ExecStart=/home/j/.local/bin/vox \\
+            serve --port 8421
+
+    parses to the same token as the single-line form. Field probability
+    is low for the stale-user-unit case, but the parser contract has to
+    cover the full directive syntax or it silently returns "unparseable"
+    for legitimate units.
+
     Returns None when:
     - the file cannot be read (permission, missing, non-UTF-8),
     - no ``ExecStart=`` line exists,
@@ -856,8 +868,24 @@ def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
 
-    exec_line: str | None = None
+    # Fold systemd line continuations: any line whose trimmed form ends
+    # in a single backslash is joined with the next line, separated by
+    # a space. The backslash itself is stripped. Matches systemd.unit(5)
+    # "New lines may be escaped by a backslash at the end of the line".
+    joined_lines: list[str] = []
+    buffer = ""
     for raw in content.splitlines():
+        stripped = raw.rstrip()
+        if stripped.endswith("\\"):
+            buffer += stripped[:-1] + " "
+            continue
+        joined_lines.append(buffer + raw)
+        buffer = ""
+    if buffer:
+        joined_lines.append(buffer)
+
+    exec_line: str | None = None
+    for raw in joined_lines:
         line = raw.strip()
         if line.startswith("ExecStart="):
             exec_line = line[len("ExecStart=") :].strip()
