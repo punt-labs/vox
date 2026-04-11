@@ -1769,8 +1769,13 @@ async def _music_loop(ctx: DaemonContext) -> None:
             ctx.music_track = track
             retry_count = 0  # Reset on successful generation.
 
+            # Kill the old track now that the new one is ready. This is
+            # the handoff point — old music played throughout generation
+            # so there was no silence gap.
+            await _kill_music_proc(ctx)
+
             # If vibe changed during generation, consume the event and
-            # regenerate on next iteration instead of playing a stale track.
+            # regenerate on next iteration instead of playing the stale track.
             if ctx.music_changed.is_set():
                 logger.info("Vibe changed during generation, regenerating")
                 continue
@@ -1800,8 +1805,14 @@ async def _music_loop(ctx: DaemonContext) -> None:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
 
-                if ctx.music_changed.is_set() or ctx.music_mode != "on":
+                if ctx.music_mode != "on":
                     await _kill_music_proc(ctx)
+                    break
+                if ctx.music_changed.is_set():
+                    # Vibe changed — break out of the playback loop but
+                    # keep the old track playing. The outer loop will
+                    # generate the new track while the old one continues,
+                    # then kill it right before starting the new playback.
                     break
 
                 # Playback ended naturally — loop the same track.
