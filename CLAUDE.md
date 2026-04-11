@@ -207,6 +207,15 @@ exists. Do not commit, push, or merge — return results to me.
 
 Worker and evaluator must be distinct handles with no shared role.
 
+### Task tracking and parallelism
+
+For multi-phase features (T1/T2), create a TaskCreate list with all missions up front and wire dependencies via `addBlockedBy`. This gives the user visibility into progress and lets you parallelize independent phases.
+
+- **Create all tasks first**, then set dependencies. Mark phase 1 complete immediately if already done.
+- **Launch independent missions in parallel** — if phases 2 and 3 don't depend on each other, create both missions and spawn both workers in the same message. Two `Agent()` calls, both `run_in_background: true`.
+- **As each mission completes**: review the result, close the mission, commit, mark the task completed, check what's unblocked, and launch the next mission(s).
+- **The task list is the source of truth** for what's done, what's in flight, and what's blocked. Update it as missions close.
+
 ### Scratch files
 
 Mission contract YAMLs go in `.tmp/missions/`. Result artifact YAMLs go in `.tmp/missions/results/`.
