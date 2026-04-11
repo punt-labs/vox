@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1412,6 +1413,14 @@ class TestDoctorCommand:
         assert "vox daemon install" in result.output
         assert "systemctl --user disable --now vox.service" in result.output
         assert "daemon-reload" in result.output
+        # Regression guard for vox-45r round-2 Copilot finding: the
+        # remediation command must NOT be wrapped in outer single
+        # quotes. Outer framing (a) poisons copy-paste because bash
+        # treats the whole token as a single quoted word, and (b)
+        # collides with the inner single quotes produced by
+        # ``shlex.quote()`` on paths containing spaces. The command
+        # is emitted on its own line, unquoted, after the prose.
+        assert "'systemctl --user disable" not in result.output
 
     def test_legacy_user_unit_current_subcommand_passes(
         self,
@@ -1501,6 +1510,11 @@ class TestDoctorCommand:
         assert result.exit_code == 1
         assert "\u2717 Legacy user unit" in result.output
         assert "unparseable" in result.output
+        # Same regression guard as the stale-subcommand branch: the
+        # remediation command is emitted unquoted on its own line,
+        # never wrapped in outer single quotes.
+        assert "'systemctl --user disable" not in result.output
+        assert "systemctl --user disable --now vox.service" in result.output
 
     def test_legacy_user_unit_line_continuation_parses(
         self,
@@ -1547,6 +1561,61 @@ class TestDoctorCommand:
         assert result.exit_code == 0
         assert "\u2713 Legacy user unit" in result.output
         assert "vox daemon" in result.output
+
+    def test_legacy_user_unit_space_in_home_produces_valid_remediation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """HOME paths with spaces must not break the remediation shell command.
+
+        Regression guard for the vox-45r round-2 Copilot finding: an
+        earlier revision wrapped the remediation command in outer
+        single quotes for visual framing. When ``shlex.quote()``
+        wrapped a path like ``/home/j j/.config/systemd/user/vox.service``
+        in inner single quotes, the outer+inner nesting collapsed
+        into adjacent quoted fragments and bash saw the space in
+        ``j j`` as a word boundary, splitting the ``rm`` target into
+        two arguments. The fix drops the outer framing so ``shlex.quote()``
+        output appears as the only quoting layer in the command.
+
+        This test builds a fixture unit file under a directory whose
+        name contains a literal space, then verifies that:
+
+        1. ``shlex.quote(str(legacy_unit))`` (the properly-escaped
+           path) appears verbatim in the doctor output, proving the
+           path still round-trips through the remediation hint
+           correctly.
+        2. The broken outer-quote framing
+           (``'systemctl --user disable``) is absent, proving the
+           fix is in place.
+        """
+        parent = tmp_path / "home with space" / ".config" / "systemd" / "user"
+        parent.mkdir(parents=True)
+        unit = self._write_user_unit(
+            parent,
+            exec_start="/home/j j/.local/bin/vox serve --port 8421",
+        )
+        assert " " in str(unit)  # sanity: fixture has a space in the path
+
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "Legacy user unit" in result.output
+        # The path must appear shell-quoted by shlex. For a path
+        # containing spaces, shlex.quote wraps in single quotes.
+        quoted = shlex.quote(str(unit))
+        assert quoted in result.output, (
+            f"expected shlex-quoted path {quoted!r} in doctor output,"
+            f" got:\n{result.output}"
+        )
+        # The broken outer-quote framing must be gone.
+        assert "'systemctl --user disable" not in result.output
+        # And the command itself must still be present, unquoted.
+        assert "systemctl --user disable --now vox.service" in result.output
 
 
 class TestValidVoxSubcommands:

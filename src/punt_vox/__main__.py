@@ -1049,15 +1049,30 @@ def doctor() -> None:
         # --now vox.service`` and ``systemctl --user daemon-reload``
         # portions reference a fixed unit name with no interpolation,
         # so only the ``rm`` argument needs quoting.
+        #
+        # The remediation command is emitted on its own line, unquoted,
+        # with a 2-space indent. Earlier revisions wrapped the command
+        # in outer single quotes for visual framing, which broke two
+        # ways: (1) a literal paste including the outer quotes produced
+        # a single quoted word bash refused to execute, and (2) when
+        # ``shlex.quote()`` wrapped a path containing spaces in single
+        # quotes, the outer-plus-inner nesting collapsed into adjacent
+        # quoted fragments and the path's space became a word boundary,
+        # splitting the ``rm`` target in two. Emitting the command on
+        # its own line avoids both failure modes.
         quoted_legacy_unit = shlex.quote(str(legacy_unit))
+        remediation_command = (
+            "systemctl --user disable --now vox.service"
+            f" && rm {quoted_legacy_unit}"
+            " && systemctl --user daemon-reload"
+        )
         if referenced is None:
             _check(
                 _FAIL,
                 f"Legacy user unit: {legacy_unit} exists but ExecStart= is"
                 " unparseable \u2014 run 'vox daemon install' to clean it up,"
-                " or remove it manually:"
-                " 'systemctl --user disable --now vox.service &&"
-                f" rm {quoted_legacy_unit} && systemctl --user daemon-reload'",
+                " or remove it manually:\n"
+                f"  {remediation_command}",
             )
         elif referenced not in valid:
             _check(
@@ -1066,8 +1081,8 @@ def doctor() -> None:
                 f" 'vox {referenced}', which is not a current subcommand"
                 " (this unit will crash-loop on the systemd restart schedule)."
                 " Run 'vox daemon install' to clean it up, or remove it"
-                " manually: 'systemctl --user disable --now vox.service &&"
-                f" rm {quoted_legacy_unit} && systemctl --user daemon-reload'",
+                " manually:\n"
+                f"  {remediation_command}",
             )
         else:
             _check(
