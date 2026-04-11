@@ -2763,6 +2763,200 @@ class TestMusicLoopStateTransitions:
         assert generation_count >= 2
 
 
+class TestMusicLoopGaplessHandoff:
+    """Old track must keep looping while generation runs concurrently."""
+
+    def test_old_track_loops_during_generation(self) -> None:
+        """Playback subprocess stays alive the entire time generation runs.
+
+        Simulates a slow generation (~0.15s) and verifies the playback
+        subprocess is NOT killed until the new track is ready.
+        """
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "test-session"
+        ctx.music_vibe = ("focused", "[calm]")
+        ctx.music_changed.set()
+
+        generation_count = 0
+        play_count = 0
+        # Track which procs were alive during generation.
+        procs_alive_during_gen: list[bool] = []
+
+        async def slow_generate(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            nonlocal generation_count
+            generation_count += 1
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake-music-data")
+
+            if generation_count == 2:
+                # Second generation (triggered by vibe change). The old
+                # playback proc should still be alive during this window.
+                proc = ctx.music_proc
+                is_alive = proc is not None and proc.returncode is None
+                procs_alive_during_gen.append(is_alive)
+                # Simulate slow generation.
+                await asyncio.sleep(0.1)
+                # Check again after the sleep.
+                proc = ctx.music_proc
+                is_alive = proc is not None and proc.returncode is None
+                procs_alive_during_gen.append(is_alive)
+
+            return output_path
+
+        async def fake_subprocess_exec(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal play_count
+            play_count += 1
+            proc = MagicMock()
+            proc.returncode = None  # Still running.
+
+            async def _wait() -> int:
+                # Simulate a long track so it doesn't end naturally.
+                await asyncio.sleep(5.0)
+                proc.returncode = 0
+                return 0
+
+            proc.wait = _wait
+            proc.kill = MagicMock(side_effect=lambda: setattr(proc, "returncode", -9))
+            return proc
+
+        async def _drive() -> None:
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    slow_generate,
+                ),
+                patch(
+                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    fake_subprocess_exec,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-handoff"),
+                ),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                # Let initial generation + first playback start.
+                await asyncio.sleep(0.05)
+
+                # Trigger a vibe change while the first track is playing.
+                ctx.music_vibe = ("happy", "[warm]")
+                ctx.music_changed.set()
+
+                # Wait for second generation to complete + handoff.
+                await asyncio.sleep(0.3)
+
+                # Shut down.
+                ctx.music_mode = "off"
+                ctx.music_changed.set()
+                await asyncio.sleep(0.05)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert generation_count >= 2, (
+            f"expected >=2 generations, got {generation_count}"
+        )
+        assert play_count >= 2, f"expected >=2 playback spawns, got {play_count}"
+        # The old playback proc was alive during the entire generation window.
+        assert all(procs_alive_during_gen), (
+            f"old track was killed during generation: {procs_alive_during_gen}"
+        )
+
+    def test_second_vibe_change_cancels_inflight_generation(self) -> None:
+        """A second vibe change during generation cancels the first and starts fresh."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "test-session"
+        ctx.music_vibe = ("focused", "[calm]")
+        ctx.music_changed.set()
+
+        generation_vibes: list[str] = []
+        gen_event = asyncio.Event()
+
+        async def tracking_generate(
+            self: object, prompt: str, duration_ms: int, output_path: Path
+        ) -> Path:
+            vibe, _ = ctx.music_vibe
+            generation_vibes.append(vibe)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake-music-data")
+
+            if len(generation_vibes) == 2:
+                # Signal that second generation started, then simulate slow work.
+                gen_event.set()
+                await asyncio.sleep(0.5)
+            elif len(generation_vibes) == 3:
+                # Third generation — the replacement after cancel.
+                pass
+
+            return output_path
+
+        async def fake_subprocess_exec(*args: object, **kwargs: object) -> MagicMock:
+            proc = MagicMock()
+            proc.returncode = None
+
+            async def _wait() -> int:
+                await asyncio.sleep(5.0)
+                proc.returncode = 0
+                return 0
+
+            proc.wait = _wait
+            proc.kill = MagicMock(side_effect=lambda: setattr(proc, "returncode", -9))
+            return proc
+
+        async def _drive() -> None:
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider"
+                    ".generate_track",
+                    tracking_generate,
+                ),
+                patch(
+                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    fake_subprocess_exec,
+                ),
+                patch(
+                    "punt_vox.voxd._music_output_dir",
+                    return_value=Path("/tmp/vox-test-cancel"),
+                ),
+            ):
+                task = asyncio.create_task(_music_loop(ctx))
+                await asyncio.sleep(0.05)
+
+                # First vibe change triggers generation #2.
+                ctx.music_vibe = ("happy", "[warm]")
+                ctx.music_changed.set()
+                # Wait for second generation to start.
+                await asyncio.wait_for(gen_event.wait(), timeout=1.0)
+
+                # Second vibe change while #2 is in-flight — should cancel it.
+                ctx.music_vibe = ("energetic", "[upbeat]")
+                ctx.music_changed.set()
+                await asyncio.sleep(0.3)
+
+                ctx.music_mode = "off"
+                ctx.music_changed.set()
+                await asyncio.sleep(0.05)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert len(generation_vibes) >= 3, (
+            f"expected >=3 generation attempts, got "
+            f"{len(generation_vibes)}: {generation_vibes}"
+        )
+        # The third generation should have the latest vibe.
+        assert generation_vibes[-1] == "energetic"
+
+
 class TestKillMusicProc:
     """_kill_music_proc safely terminates the music subprocess."""
 

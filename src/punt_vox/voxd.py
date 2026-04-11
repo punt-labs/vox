@@ -1710,20 +1710,61 @@ async def _kill_music_proc(ctx: DaemonContext) -> None:
     ctx.music_proc = None
 
 
+async def _generate_music_track(ctx: DaemonContext) -> Path:
+    """Generate a music track from the current vibe and style.
+
+    Extracted so the generation phase can run as an ``asyncio.Task``
+    concurrently with the playback loop.
+    """
+    vibe, vibe_tags = ctx.music_vibe
+    style = ctx.music_style
+
+    from punt_vox.music import vibe_to_prompt
+
+    hour = time.localtime().tm_hour
+    # TODO(vox-0qi): pass session signals for work-intensity layer
+    prompt = vibe_to_prompt(
+        vibe or None, vibe_tags or None, style or None, hour, signals=[]
+    )
+
+    output_dir = _music_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    vibe_slug = _slugify(vibe) if vibe else "none"
+    style_slug = _slugify(style) if style else "none"
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{vibe_slug}_{style_slug}.mp3"
+    output_path = output_dir / filename
+
+    from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
+
+    provider = ElevenLabsMusicProvider()
+    return await provider.generate_track(prompt, _MUSIC_DURATION_MS, output_path)
+
+
 async def _music_loop(ctx: DaemonContext) -> None:
     """Background task: generate and loop music tracks.
 
-    Runs for the lifetime of the daemon. When ``music_mode`` is "on",
+    Runs for the lifetime of the daemon.  When ``music_mode`` is "on",
     derives a prompt from the current vibe, generates a track via
     :class:`~punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider`,
-    and loops it via ffplay at reduced volume. When ``music_changed``
-    is set, kills the current subprocess and regenerates.
+    and loops it via ffplay at reduced volume.
+
+    The key invariant is **gapless handoff**: the old track keeps
+    looping in its own playback subprocess while generation runs as a
+    concurrent ``asyncio.Task``.  The old subprocess is killed only
+    once the new track is ready.  If the vibe changes again during
+    generation, the in-flight generation task is cancelled and a fresh
+    one starts — the old track keeps looping throughout.
 
     Crash recovery: on failure, logs the error, resets state, and
-    retries with backoff (3 attempts). After 3 failures, sets
+    retries with backoff (3 attempts).  After 3 failures, sets
     ``music_mode`` to "off".
     """
     retry_count = 0
+    current_track: Path | None = None
+    gen_task: asyncio.Task[Path] | None = None
+
     while True:
         # Wait until music is turned on.
         while ctx.music_mode != "on":
@@ -1735,55 +1776,26 @@ async def _music_loop(ctx: DaemonContext) -> None:
             await ctx.music_changed.wait()
 
         try:
-            # Generate a track.
-            ctx.music_state = "generating"
-            ctx.music_changed.clear()
+            # --- Initial generation (no old track to loop) ----------------
+            if current_track is None:
+                ctx.music_state = "generating"
+                ctx.music_changed.clear()
+                current_track = await _generate_music_track(ctx)
+                ctx.music_track = current_track
+                retry_count = 0
 
-            vibe, vibe_tags = ctx.music_vibe
-            style = ctx.music_style
+                # Vibe changed during initial generation — regenerate
+                # immediately (no old track to keep looping).
+                if ctx.music_changed.is_set():
+                    logger.info("Vibe changed during initial generation, regenerating")
+                    current_track = None
+                    continue
 
-            from punt_vox.music import vibe_to_prompt
-
-            hour = time.localtime().tm_hour
-            # TODO(vox-0qi): pass session signals for work-intensity layer
-            prompt = vibe_to_prompt(
-                vibe or None, vibe_tags or None, style or None, hour, signals=[]
-            )
-
-            output_dir = _music_output_dir()
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            vibe_slug = _slugify(vibe) if vibe else "none"
-            style_slug = _slugify(style) if style else "none"
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"{timestamp}_{vibe_slug}_{style_slug}.mp3"
-            output_path = output_dir / filename
-
-            from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
-
-            provider = ElevenLabsMusicProvider()
-            track = await provider.generate_track(
-                prompt, _MUSIC_DURATION_MS, output_path
-            )
-
-            ctx.music_track = track
-            retry_count = 0  # Reset on successful generation.
-
-            # Kill the old track now that the new one is ready. This is
-            # the handoff point — old music played throughout generation
-            # so there was no silence gap.
-            await _kill_music_proc(ctx)
-
-            # If vibe changed during generation, consume the event and
-            # regenerate on next iteration instead of playing the stale track.
-            if ctx.music_changed.is_set():
-                logger.info("Vibe changed during generation, regenerating")
-                continue
-
-            # Loop the track until music_changed is signaled or mode turns off.
-            while ctx.music_mode == "on" and not ctx.music_changed.is_set():
-                ctx.music_state = "playing"
-                cmd = _music_player_command(track)
+            # --- Playback loop: loop current_track, generate in parallel --
+            gen_task = None
+            while ctx.music_mode == "on":
+                ctx.music_state = "playing" if gen_task is None else "generating"
+                cmd = _music_player_command(current_track)
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.DEVNULL,
@@ -1793,40 +1805,89 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 )
                 ctx.music_proc = proc
 
-                # Wait for subprocess to finish or music_changed to fire.
+                # Build the set of futures to race.
                 wait_task = asyncio.create_task(proc.wait())
                 changed_task = asyncio.create_task(ctx.music_changed.wait())
+                waitables: set[asyncio.Task[object]] = {wait_task, changed_task}
+                if gen_task is not None:
+                    waitables.add(gen_task)
+
                 _done, pending = await asyncio.wait(
-                    {wait_task, changed_task},
+                    waitables,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-                for task in pending:
-                    task.cancel()
+                for t in pending:
+                    # Don't cancel the generation task — it may still be
+                    # running and we want it to finish across iterations.
+                    if t is gen_task:
+                        continue
+                    t.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
-                        await task
+                        await t
 
+                # --- /music off: kill everything immediately --------------
                 if ctx.music_mode != "on":
+                    if gen_task is not None and not gen_task.done():
+                        gen_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await gen_task
+                        gen_task = None
                     await _kill_music_proc(ctx)
-                    break
-                if ctx.music_changed.is_set():
-                    # Vibe changed — break out of the playback loop but
-                    # keep the old track playing. The outer loop will
-                    # generate the new track while the old one continues,
-                    # then kill it right before starting the new playback.
+                    current_track = None
                     break
 
-                # Playback ended naturally — loop the same track.
+                # --- Generation task completed: handoff -------------------
+                if gen_task is not None and gen_task.done():
+                    exc = gen_task.exception()
+                    if exc is not None:
+                        gen_task = None
+                        raise exc
+                    new_track = gen_task.result()
+                    gen_task = None
+                    ctx.music_track = new_track
+                    retry_count = 0
+                    await _kill_music_proc(ctx)
+                    current_track = new_track
+                    # Clear the event that triggered this generation, then
+                    # check whether ANOTHER change arrived in the meantime.
+                    ctx.music_changed.clear()
+                    if ctx.music_changed.is_set():
+                        # Rare: yet another vibe change during handoff.
+                        logger.info("Vibe changed during handoff, regenerating")
+                    # Re-enter playback loop with new track (or regenerate
+                    # if music_changed was set again).
+                    continue
+
+                # --- Vibe changed: start/restart generation ---------------
+                if ctx.music_changed.is_set():
+                    ctx.music_changed.clear()
+                    if gen_task is not None and not gen_task.done():
+                        gen_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await gen_task
+                    ctx.music_state = "generating"
+                    gen_task = asyncio.create_task(_generate_music_track(ctx))
+                    # Don't break — keep looping the old track.
+                    continue
+
+                # --- Subprocess ended naturally: loop same track ----------
                 rc = proc.returncode
                 if rc != 0:
                     logger.warning(
                         "Music playback ended with rc=%s for %s",
                         rc,
-                        track.name,
+                        current_track.name,
                     )
 
         except asyncio.CancelledError:
+            if gen_task is not None and not gen_task.done():
+                gen_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await gen_task
+                gen_task = None
             await _kill_music_proc(ctx)
             ctx.music_state = "idle"
+            current_track = None
             raise
         except Exception:
             logger.exception(
@@ -1834,8 +1895,14 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 retry_count + 1,
                 _MUSIC_MAX_RETRIES,
             )
+            if gen_task is not None and not gen_task.done():
+                gen_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await gen_task
+                gen_task = None
             await _kill_music_proc(ctx)
             ctx.music_state = "idle"
+            current_track = None
             retry_count += 1
             if retry_count >= _MUSIC_MAX_RETRIES:
                 logger.error(
