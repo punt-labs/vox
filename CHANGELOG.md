@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **voxd `_ws_route` logged a full ERROR traceback on every chime (vox-ewh)**: after the vox-ehf fix in 4.3.0, chime/unmute clients return on the `"playing"` ack and close the WebSocket while voxd's receive loop is still awaiting the next `receive_text()`. The trailing `contextlib.suppress(WebSocketDisconnect, RuntimeError)` sends of the stale `"done"` message inside `_handle_synthesize` and `_handle_chime` land on the peer-closed socket, transition Starlette's `application_state` to `DISCONNECTED`, and swallow the resulting `WebSocketDisconnect(1006)`. The next `receive_text()` in the outer loop then observes `application_state != CONNECTED` and raises `RuntimeError('WebSocket is not connected. Need to call "accept" first.')` — not `WebSocketDisconnect` — so the narrow `except WebSocketDisconnect:` branch missed it and the loop fell through to `except Exception: logger.exception("WebSocket error")`, emitting a multi-line traceback on every `/recap`, every stop-hook chime, and every prompt chime. On the reporter's box this was filling the journal with hundreds of spurious error entries and burying real failures in the same unit slot. Fix is a one-line widen of the disconnect-catching clause to `except (WebSocketDisconnect, RuntimeError):`, matching the idiom already established at voxd.py:1455 and :1565 for the same peer-closed socket class of error. A regression test in `tests/test_voxd.py::TestWsRoutePeerClose` drives `_ws_route` directly with a fake WebSocket whose `receive_text` raises the exact RuntimeError Starlette emits, asserts zero `"WebSocket error"` records hit the `punt_vox.voxd` logger, and locks in that the `finally` branch still decrements `client_count`. Audio playback, client acks, and dedup were all unaffected — this is purely log-spam cleanup. Closes vox-ewh.
+
 ## [4.3.1] - 2026-04-11
 
 ### Fixed

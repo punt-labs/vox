@@ -1715,7 +1715,14 @@ async def _ws_route(websocket: WebSocket) -> None:
             # Multiple clients are concurrent (each has its own receive loop),
             # but messages from a single client are processed sequentially.
             await handler(msg, websocket, ctx)  # type: ignore[misc]
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
+        # RuntimeError fires when ``receive_text`` is called on a socket
+        # whose ``application_state`` has already transitioned to
+        # DISCONNECTED — typically after a handler's trailing
+        # ``contextlib.suppress`` send landed on a peer-closed socket
+        # (see ``_handle_synthesize`` and ``_handle_chime``). Treat it
+        # as a normal disconnect rather than logging a spurious error
+        # traceback on every chime/unmute/recap (vox-ewh).
         pass
     except Exception:
         logger.exception("WebSocket error")

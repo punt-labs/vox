@@ -2136,3 +2136,84 @@ class TestHandleSynthesizeOnceFlag:
 
         # Both calls reached synthesis (once=0 treated as no dedup).
         assert len(synthesis_calls) == 2
+
+
+class TestWsRoutePeerClose:
+    """_ws_route must exit quietly when the peer closes mid-receive (vox-ewh).
+
+    After the vox-ehf fix in 4.3.0, chime/unmute clients return on the
+    ``"playing"`` ack and close the WebSocket while voxd's ``_ws_route`` is
+    still sitting in its ``while True: receive_text()`` loop. The handler's
+    trailing ``contextlib.suppress(WebSocketDisconnect, RuntimeError)``
+    send of the stale ``"done"`` message lands on the peer-closed socket,
+    Starlette catches the OSError and transitions ``application_state`` to
+    ``DISCONNECTED`` (raising ``WebSocketDisconnect(1006)``, which the
+    suppress swallows). The next ``receive_text()`` in the outer loop then
+    observes ``application_state != CONNECTED`` and raises
+    ``RuntimeError('WebSocket is not connected. Need to call "accept"
+    first.')`` — not ``WebSocketDisconnect``. The narrow
+    ``except WebSocketDisconnect`` branch used to miss that and the receive
+    loop logged a full ERROR traceback under ``"WebSocket error"`` on every
+    chime, unmute, and recap. The fix widens the disconnect-catching clause
+    to ``except (WebSocketDisconnect, RuntimeError)``, matching the idiom
+    already established at the two ``contextlib.suppress`` call sites inside
+    ``_handle_synthesize`` and ``_handle_chime`` for the same peer-closed
+    socket class of error.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ws_route_no_error_log_when_receive_raises_runtimeerror(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """RuntimeError from receive_text on a peer-closed socket exits cleanly.
+
+        Drives ``_ws_route`` directly with a fake WebSocket whose
+        ``receive_text`` raises the exact RuntimeError Starlette emits when
+        ``application_state == DISCONNECTED``. The loop must not log a
+        ``"WebSocket error"`` record and must still decrement
+        ``client_count`` in its ``finally`` branch.
+        """
+        from punt_vox.voxd import _ws_route
+
+        ctx = DaemonContext(auth_token=None, port=0)
+        ctx.client_count = 0
+
+        class _FakeApp:
+            def __init__(self, daemon_ctx: DaemonContext) -> None:
+                self.state = type("S", (), {"ctx": daemon_ctx})()
+
+        fake_app = _FakeApp(ctx)
+
+        async def _receive_text() -> str:
+            raise RuntimeError(
+                'WebSocket is not connected. Need to call "accept" first.'
+            )
+
+        async def _accept() -> None:
+            return None
+
+        async def _close(code: int = 1000) -> None:
+            return None
+
+        fake_ws = MagicMock()
+        fake_ws.app = fake_app
+        fake_ws.headers = {}
+        fake_ws.query_params = {}
+        fake_ws.accept = _accept
+        fake_ws.close = _close
+        fake_ws.receive_text = _receive_text
+
+        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd"):
+            await _ws_route(cast("object", fake_ws))  # type: ignore[arg-type]
+
+        ws_error_records = [
+            rec
+            for rec in caplog.records
+            if rec.levelno == logging.ERROR
+            and rec.name == "punt_vox.voxd"
+            and "WebSocket error" in rec.getMessage()
+        ]
+        assert ws_error_records == []
+        # The ``finally`` branch must still decrement client_count.
+        # Entry increments from 0 to 1, exit decrements back to 0.
+        assert ctx.client_count == 0
