@@ -1426,6 +1426,64 @@ def mcp() -> None:
 
 
 # ---------------------------------------------------------------------------
+# music subcommand group
+# ---------------------------------------------------------------------------
+
+music_app = typer.Typer(
+    help="Control background music generation.",
+    no_args_is_help=True,
+)
+app.add_typer(music_app, name="music")
+
+
+@music_app.command("on")
+def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
+    style: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--style",
+            help="Style modifier for music generation (e.g. techno, jazz).",
+        ),
+    ] = None,
+) -> None:
+    """Start background music generation via voxd."""
+    style_str = " ".join(style) if style else None
+    client = VoxClientSync()
+    try:
+        result = client.music("on", style=style_str)
+        status = result.get("status", "unknown")
+        payload: dict[str, object] = {"music": "on", "status": status}
+        if style_str:
+            payload["style"] = style_str
+        text = f"Music on ({status})"
+        if style_str:
+            text += f" — style: {style_str}"
+        _emit(payload, text)
+    except VoxdConnectionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except VoxdProtocolError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@music_app.command("off")
+def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Stop background music generation."""
+    client = VoxClientSync()
+    try:
+        result = client.music("off")
+        status = result.get("status", "stopped")
+        _emit({"music": "off", "status": status}, f"Music off ({status})")
+    except VoxdConnectionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except VoxdProtocolError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+# ---------------------------------------------------------------------------
 # daemon subcommand group
 # ---------------------------------------------------------------------------
 
