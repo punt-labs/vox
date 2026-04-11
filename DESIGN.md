@@ -728,6 +728,7 @@ fi
 ### Scope
 
 Fixed in all Punt Labs plugins:
+
 - `vox/hooks/session-start.sh`
 - `biff/hooks/session-start.sh`
 - `dungeon/hooks/session-start.sh`
@@ -1241,6 +1242,7 @@ A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and L
 **Write path:** `vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the per-user config file at `~/.punt-labs/vox/keys.env`. Runs as the installing user — no sudo for the file write.
 
 **Read path:** `voxd` calls `_load_keys()` at startup, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
+
 - launchd/systemd daemon: loads all keys from file (nothing in env)
 - Manual `voxd` from shell with direnv: env vars already set, file keys ignored
 
@@ -1296,6 +1298,7 @@ The v2 daemon tried to know which project a client belonged to. It resolved CWDs
 One machine, one set of speakers, one audio daemon (`voxd`). Clients send text + parameters. The daemon synthesizes and plays. It knows nothing about projects, sessions, CWDs, or Claude Code.
 
 **Two entry points, one package:**
+
 - `voxd` — per-user audio daemon. Owns speakers, providers, playback queue, dedup, cache. All daemon state lives under `~/.punt-labs/vox/` on both macOS and Linux.
 - `vox` — everything else. CLI, MCP server (`vox mcp`), hook handlers. All are clients of `voxd`.
 
@@ -1356,6 +1359,7 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 `vox daemon install` runs as the invoking user from start to finish. The command refuses to run under `sudo` (`os.geteuid() == 0` check at the top of `install()`). All per-user filesystem writes under `~/.punt-labs/vox/` happen with normal user permissions — no chown, no `fchown`, no `O_NOFOLLOW`, no symlink walks, no `SUDO_USER` lookup. The privileged surface shrinks to five `subprocess.run(["sudo", ...])` calls on Linux and four on macOS, each touching only a system directory the user could not write to anyway:
 
 **Linux (5 calls):**
+
 1. `sudo systemctl stop voxd` (pre-flight, skipped on fresh install)
 2. `sudo install -m 644 -o root -g root <tmp> /etc/systemd/system/voxd.service`
 3. `sudo systemctl daemon-reload`
@@ -1363,6 +1367,7 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 5. `sudo systemctl restart voxd`
 
 **macOS (4 calls):**
+
 1. `sudo launchctl unload -w <plist>` (pre-flight, skipped on fresh install)
 2. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
 3. `sudo launchctl load -w <plist>`

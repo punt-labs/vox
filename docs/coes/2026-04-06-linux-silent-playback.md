@@ -93,13 +93,14 @@ Run on okinos in this order. Paste every output verbatim back into the issue.
 
 ### A. Daemon state
 
-```
+```bash
 sudo systemctl status voxd | head -20
 sudo systemctl show voxd --no-pager --property=Environment,RuntimeDirectory,FragmentPath,ActiveState,SubState,ExecMainStartTimestamp
 sudo cat /etc/systemd/system/voxd.service
 ```
 
 We need to know:
+
 - Is voxd actually running (not "loaded but failed")?
 - What's the unit's `Environment=` line — does it include XDG_RUNTIME_DIR?
 - When was it last started? If it's older than the last `daemon install`, the install didn't restart it.
@@ -109,7 +110,7 @@ We need to know:
 
 This is the smoking gun that should have been the first thing checked:
 
-```
+```bash
 ps -ef | grep '[v]oxd'
 sudo ls -la /proc/$(pgrep -f 'bin/voxd')/exe
 sudo cat /proc/$(pgrep -f 'bin/voxd')/environ | tr '\0' '\n' | sort
@@ -119,11 +120,12 @@ The third command shows the **actual environment of the running voxd process**, 
 
 ### C. voxd's own log
 
-```
+```bash
 sudo tail -200 /var/log/vox/voxd.log
 ```
 
 After the observability fixes above are deployed, this log alone should answer:
+
 - Is voxd starting up cleanly?
 - What env vars did it see at startup?
 - What command did it spawn for playback?
@@ -132,7 +134,7 @@ After the observability fixes above are deployed, this log alone should answer:
 
 ### D. Reproduce a single playback with full visibility
 
-```
+```bash
 sudo truncate -s 0 /var/log/vox/voxd.log
 vox unmute "test playback one"
 sudo cat /var/log/vox/voxd.log
@@ -142,20 +144,20 @@ sudo cat /var/log/vox/voxd.log
 
 Does ffplay work AT ALL from the user's shell, with the exact MP3 voxd produces?
 
-```
+```bash
 ls -la ~/vox-output/
 ffplay -nodisp -autoexit ~/vox-output/<some-recent-file>.mp3
 ```
 
 Does it work as the same user voxd runs as, in the same way voxd would call it?
 
-```
+```bash
 sudo -u jfreeman env -i HOME=/home/jfreeman PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1000 ffplay -nodisp -autoexit /tmp/test.mp3
 ```
 
 Does it work with NO XDG_RUNTIME_DIR? (proves whether that's actually the issue)
 
-```
+```bash
 sudo -u jfreeman env -i HOME=/home/jfreeman PATH=/usr/bin:/bin ffplay -nodisp -autoexit /tmp/test.mp3
 ```
 
@@ -194,7 +196,7 @@ Then XDG_RUNTIME_DIR was a wrong hypothesis. The next places to look:
 
 Whatever the next test is, run this first. Don't trust that `daemon install` restarted it:
 
-```
+```bash
 sudo systemctl daemon-reload
 sudo systemctl restart voxd
 sudo systemctl status voxd | head -10

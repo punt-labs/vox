@@ -295,7 +295,7 @@ cache hits.
 
 ## Architecture
 
-```
+```text
 Claude Code ◄── stdio ──► vox mcp ── WebSocket ──► voxd :8421
                                                       │
 Hook scripts ──► vox hook <event> ── WebSocket ──►    │

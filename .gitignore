@@ -23,8 +23,6 @@ lancedb/
 .mcp.json
 .claude/
 !.claude/settings.json
-.vox/
-.lux/
 Lux.ini
 research/
 .biff.local

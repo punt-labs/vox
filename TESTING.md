@@ -10,7 +10,7 @@ Vox has five TTS providers (ElevenLabs, OpenAI, Polly, macOS Say, espeak-ng), a 
 
 ## Architecture
 
-```
+```text
 tests/
   conftest.py                # Shared fixtures: mock clients, voice caches, valid MP3 bytes
   test_types.py              # Domain types: SynthesisRequest, SynthesisResult, MergeStrategy
@@ -88,6 +88,7 @@ Hook tests (`test_hooks.py`) verify the Claude Code plugin integration — stop 
 The `_make_config()` helper constructs `VoxConfig` objects directly, bypassing file parsing. This isolates hook logic from config parsing logic (which has its own tests in `test_config.py`).
 
 Key patterns tested:
+
 - Stop hook returns only a `♪` phrase with no internal data
 - Auto-vibe mode writes resolved tags to config and clears consumed signals
 - Manual/off vibe modes skip config writes
@@ -107,6 +108,7 @@ CLI tests (`test_cli.py`) use Typer's `CliRunner` to invoke commands as subproce
 ## Config Testing
 
 Config tests (`test_config.py`) use `tmp_path` fixtures to create real `.vox/config.md` files with YAML frontmatter. Tests verify:
+
 - Field reading with and without quotes
 - Field writing (insert, update, multi-field atomic writes)
 - Key validation (unknown keys raise `ValueError`)
@@ -140,6 +142,8 @@ Tests requiring real API credentials are marked `@pytest.mark.integration` and e
 
 Tests are one of the gates in `make check`, which must pass before every commit:
 
-    make check
+```bash
+make check
+```
 
 All gates must show zero errors. No exceptions for "pre-existing failures."
