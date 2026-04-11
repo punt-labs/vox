@@ -184,7 +184,7 @@ Do NOT set: `mission_id`, `status`, `created_at`, `evaluator.pinned_at`, `evalua
 
 ### Worker prompt template
 
-```
+```text
 Mission <id> is yours. Read it first: `ethos mission show <id>`.
 The contract names the write set, success criteria, and budget.
 Your first write must land inside the write set — the store
