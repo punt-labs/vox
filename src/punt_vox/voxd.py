@@ -1741,8 +1741,9 @@ async def _music_loop(ctx: DaemonContext) -> None:
             from punt_vox.music import vibe_to_prompt
 
             hour = time.localtime().tm_hour
+            # TODO(vox-0qi): pass session signals for work-intensity layer
             prompt = vibe_to_prompt(
-                vibe or None, vibe_tags or None, style or None, hour, []
+                vibe or None, vibe_tags or None, style or None, hour, signals=[]
             )
 
             output_dir = _music_output_dir()
@@ -1778,7 +1779,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                     *cmd,
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
                     start_new_session=True,
                 )
                 ctx.music_proc = proc

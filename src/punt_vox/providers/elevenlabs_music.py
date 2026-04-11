@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -44,26 +45,11 @@ class ElevenLabsMusicProvider:
             key = api_key or os.environ.get("ELEVENLABS_API_KEY")
             self._client = ElevenLabs(api_key=key)  # pyright: ignore[reportUnknownMemberType]
 
-    async def generate_track(
-        self, prompt: str, duration_ms: int, output_path: Path
-    ) -> Path:
-        """Generate a music track and write it to output_path.
+    def _generate_sync(self, prompt: str, duration_ms: int, output_path: Path) -> Path:
+        """Run the synchronous SDK call and file write.
 
-        Streams the response to a temporary file in the same directory as
-        output_path, then renames to the final path on completion. This
-        ensures partially-written files never appear at the target path.
-
-        Args:
-            prompt: Descriptive prompt for the track.
-            duration_ms: Desired track length in milliseconds.
-            output_path: Where to write the audio file.
-
-        Returns:
-            The path to the generated file.
-
-        Raises:
-            ApiError: On ElevenLabs API failure.
-            RuntimeError: When the API returns no audio data.
+        Extracted so ``generate_track`` can delegate to a thread via
+        ``asyncio.to_thread``, keeping the event loop unblocked.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -114,3 +100,27 @@ class ElevenLabsMusicProvider:
             bytes_written,
         )
         return output_path
+
+    async def generate_track(
+        self, prompt: str, duration_ms: int, output_path: Path
+    ) -> Path:
+        """Generate a music track and write it to output_path.
+
+        Delegates to a worker thread so the synchronous ElevenLabs SDK
+        call and file I/O do not block the event loop.
+
+        Args:
+            prompt: Descriptive prompt for the track.
+            duration_ms: Desired track length in milliseconds.
+            output_path: Where to write the audio file.
+
+        Returns:
+            The path to the generated file.
+
+        Raises:
+            ApiError: On ElevenLabs API failure.
+            RuntimeError: When the API returns no audio data.
+        """
+        return await asyncio.to_thread(
+            self._generate_sync, prompt, duration_ms, output_path
+        )

@@ -441,6 +441,9 @@ class VoxClient:
         *vibe*, *vibe_tags*, and *owner_id* are forwarded to voxd.  When
         ``"off"``, only *owner_id* is sent.
         """
+        if mode not in ("on", "off"):
+            err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
+            raise ValueError(err)
         request_id = uuid.uuid4().hex[:12]
         if mode == "on":
             msg: dict[str, object] = {"type": "music_on", "id": request_id}

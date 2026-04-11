@@ -1050,6 +1050,23 @@ class TestMusicTool:
         assert "error" in result
         assert srv._state.music_mode == "off"
 
+    def test_music_protocol_error_resets_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdProtocolError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music.side_effect = VoxdProtocolError("bad response")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on"))
+
+        assert "error" in result
+        assert srv._state.music_mode == "off"
+
 
 # ---------------------------------------------------------------------------
 # vibe tool — music propagation tests
@@ -1108,6 +1125,25 @@ class TestVibeToolMusicPropagation:
 
         mock_client = MagicMock()
         mock_client.music_vibe.side_effect = VoxdConnectionError("gone")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(vibe(mood="sad"))
+
+        # Vibe update itself should succeed.
+        assert result["vibe"]["vibe"] == "sad"
+        # But music_mode should be reset.
+        assert srv._state.music_mode == "off"
+
+    def test_vibe_protocol_error_resets_music(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdProtocolError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_vibe.side_effect = VoxdProtocolError("bad response")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(vibe(mood="sad"))

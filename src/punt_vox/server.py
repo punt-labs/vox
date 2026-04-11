@@ -479,8 +479,11 @@ def vibe(
                 vibe_tags=_state.vibe_tags or "",
                 owner_id=_state.session_id,
             )
-        except VoxdConnectionError:
-            logger.warning("voxd unreachable during vibe propagation; music off")
+        except Exception:
+            logger.warning(
+                "voxd error during vibe propagation; music off",
+                exc_info=True,
+            )
             _state.music_mode = "off"
 
     return json.dumps({"vibe": updates})
@@ -518,7 +521,8 @@ def music(
             vibe_tags=_state.vibe_tags or "",
             owner_id=_state.session_id,
         )
-    except VoxdConnectionError as exc:
+    except Exception as exc:
+        logger.warning("voxd error in music tool; music off", exc_info=True)
         _state.music_mode = "off"
         return _error(str(exc))
 

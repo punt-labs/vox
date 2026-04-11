@@ -591,6 +591,12 @@ class TestVoxClientMusic:
         with pytest.raises(VoxdProtocolError, match="music generation failed"):
             await client.music("on", owner_id="sess-abc")
 
+    @pytest.mark.asyncio
+    async def test_music_invalid_mode_raises(self) -> None:
+        client = VoxClient(port=8421, token="tok")
+        with pytest.raises(ValueError, match="invalid music mode"):
+            await client.music("pause")
+
 
 class TestVoxClientMusicVibe:
     """Test music_vibe method."""
