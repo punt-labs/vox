@@ -2414,3 +2414,112 @@ class TestDaemonRestartCommand:
         assert result.exit_code == 1
         assert "voxd.log" in result.output
         assert "refused" in result.output
+
+
+# ---------------------------------------------------------------------------
+# music tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicCommand:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_basic(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "generating"}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "on"])
+
+        assert result.exit_code == 0
+        mock_instance.music.assert_called_once_with("on", style=None)
+        assert "Music on" in result.output
+        assert "generating" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_with_style(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "generating"}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "on", "--style", "techno"])
+
+        assert result.exit_code == 0
+        mock_instance.music.assert_called_once_with("on", style="techno")
+        assert "Music on" in result.output
+        assert "techno" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_with_multi_word_style(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "generating"}
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["music", "on", "--style", "lo-fi", "--style", "chill"]
+        )
+
+        assert result.exit_code == 0
+        mock_instance.music.assert_called_once_with("on", style="lo-fi chill")
+        assert "lo-fi chill" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_off(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "stopped"}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "off"])
+
+        assert result.exit_code == 0
+        mock_instance.music.assert_called_once_with("off")
+        assert "Music off" in result.output
+        assert "stopped" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_connection_error(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "on"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_off_connection_error(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "off"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_json_output(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "generating"}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--json", "music", "on", "--style", "jazz"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["music"] == "on"
+        assert data["style"] == "jazz"
+        assert data["status"] == "generating"
+
+    def test_music_no_subcommand_shows_help(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["music"])
+        # no_args_is_help=True causes typer to exit with code 0 and
+        # display help text listing the available subcommands.
+        assert result.exit_code == 0 or result.exit_code == 2
+        assert "on" in result.output
+        assert "off" in result.output

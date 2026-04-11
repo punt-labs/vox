@@ -157,6 +157,7 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 - **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
 - **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
+- **Background music** --- `/music on` generates vibe-driven instrumental tracks via the ElevenLabs Music API and loops them at low volume while you work. When the vibe changes, a new track generates to match. Style modifiers (`/music on style techno`) persist across invocations. Requires an ElevenLabs paid plan; each track costs ~2,000 credits
 
 ## What It Looks Like
 
@@ -214,6 +215,9 @@ Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (brigh
 | `/vibe <mood>` | Set session mood --- voice adapts to match |
 | `/vibe auto` | Auto-detect mood from session signals (default) |
 | `/vibe off` | Disable vibe --- neutral voice |
+| `/music on` | Start vibe-driven background music |
+| `/music on style techno` | Start music with a style modifier |
+| `/music off` | Stop background music |
 
 ## Providers
 
@@ -360,6 +364,9 @@ vox notify y                                   # Enable notifications
 vox notify c                                   # Continuous spoken mode
 vox speak n                                    # Chimes only
 vox voice matilda                              # Set session voice
+vox music on                                   # Start background music
+vox music on --style techno                    # Start music with style modifier
+vox music off                                  # Stop background music
 vox status                                     # Current state
 vox version                                    # Print version
 vox doctor                                     # Check setup

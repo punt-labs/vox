@@ -20,6 +20,7 @@ from punt_vox.resolve import (
 )
 from punt_vox.server import (
     SessionState,
+    music,
     notify,
     record,
     speak,
@@ -909,3 +910,245 @@ class TestStatusTool:
         assert result["provider"] is None
         assert result["notify"] == "n"
         assert result["speak"] == "n"
+        assert result["music_mode"] == "off"
+
+    def test_music_mode_reflected(self) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "on"
+        result = json.loads(status())
+        assert result["music_mode"] == "on"
+
+
+# ---------------------------------------------------------------------------
+# SessionState identity tests
+# ---------------------------------------------------------------------------
+
+
+class TestSessionState:
+    """Tests for SessionState defaults and session_id generation."""
+
+    def test_session_id_is_uuid_hex(self) -> None:
+        state = SessionState()
+        assert len(state.session_id) == 32
+        int(state.session_id, 16)  # valid hex
+
+    def test_each_instance_gets_unique_id(self) -> None:
+        a = SessionState()
+        b = SessionState()
+        assert a.session_id != b.session_id
+
+    def test_music_mode_defaults_off(self) -> None:
+        state = SessionState()
+        assert state.music_mode == "off"
+
+
+# ---------------------------------------------------------------------------
+# music tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicTool:
+    """Tests for the music MCP tool."""
+
+    def test_music_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.vibe = "focused"
+        srv._state.vibe_tags = "[calm]"
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "abc",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on", style="techno"))
+
+        assert result["status"] == "generating"
+        assert srv._state.music_mode == "on"
+        mock_client.music.assert_called_once_with(
+            mode="on",
+            style="techno",
+            vibe="focused",
+            vibe_tags="[calm]",
+            owner_id=srv._state.session_id,
+        )
+
+    def test_music_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_off",
+            "id": "abc",
+            "status": "stopped",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="off"))
+
+        assert result["status"] == "stopped"
+        assert srv._state.music_mode == "off"
+
+    def test_music_invalid_mode(self) -> None:
+        result = json.loads(music(mode="pause"))
+        assert "error" in result
+
+    def test_music_on_no_vibe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When vibe is None, empty strings are sent to voxd."""
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        music(mode="on")
+
+        call_kwargs = mock_client.music.call_args[1]
+        assert call_kwargs["vibe"] == ""
+        assert call_kwargs["vibe_tags"] == ""
+        assert srv._state.music_mode == "on"
+
+    def test_music_on_no_style(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When style is None, empty string is sent."""
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        music(mode="on")
+
+        call_kwargs = mock_client.music.call_args[1]
+        assert call_kwargs["style"] == ""
+
+    def test_music_connection_error_resets_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdConnectionError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on"))
+
+        assert "error" in result
+        assert srv._state.music_mode == "off"
+
+    def test_music_protocol_error_resets_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdProtocolError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music.side_effect = VoxdProtocolError("bad response")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on"))
+
+        assert "error" in result
+        assert srv._state.music_mode == "off"
+
+
+# ---------------------------------------------------------------------------
+# vibe tool — music propagation tests
+# ---------------------------------------------------------------------------
+
+
+class TestVibeToolMusicPropagation:
+    """Tests for vibe changes propagating to music loop."""
+
+    def test_vibe_propagates_when_music_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "on"
+        srv._state.vibe = "old"
+        srv._state.vibe_tags = "[old]"
+
+        mock_client = MagicMock()
+        mock_client.music_vibe.return_value = {
+            "type": "music_vibe",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        vibe(mood="happy", tags="[warm]")
+
+        mock_client.music_vibe.assert_called_once_with(
+            vibe="happy",
+            vibe_tags="[warm]",
+            owner_id=srv._state.session_id,
+        )
+
+    def test_vibe_no_propagation_when_music_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "off"
+
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        vibe(mood="happy")
+
+        mock_client.music_vibe.assert_not_called()
+
+    def test_vibe_connection_error_resets_music(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdConnectionError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_vibe.side_effect = VoxdConnectionError("gone")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(vibe(mood="sad"))
+
+        # Vibe update itself should succeed.
+        assert result["vibe"]["vibe"] == "sad"
+        # But music_mode should be reset.
+        assert srv._state.music_mode == "off"
+
+    def test_vibe_protocol_error_resets_music(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdProtocolError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_vibe.side_effect = VoxdProtocolError("bad response")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(vibe(mood="sad"))
+
+        # Vibe update itself should succeed.
+        assert result["vibe"]["vibe"] == "sad"
+        # But music_mode should be reset.
+        assert srv._state.music_mode == "off"
