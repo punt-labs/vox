@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,9 @@ from punt_vox.normalize import normalize_for_speech
 from punt_vox.output import default_output_dir
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
+from punt_vox.service import (
+    _legacy_user_unit_path,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -803,6 +807,123 @@ def _claude_desktop_config_path() -> Path:
     )
 
 
+def _valid_vox_subcommands() -> set[str]:
+    """Return the set of subcommand tokens the current CLI accepts.
+
+    Includes both leaf commands (``doctor``, ``unmute``, ...) and
+    subcommand groups (``daemon``, ``cache``, ``hook``) so a unit
+    that references ``vox daemon`` or ``vox cache`` parses as valid.
+    The typer app is the single source of truth — hard-coding a
+    constant would drift the instant a command is renamed, which is
+    exactly the failure mode vox-45r exposed.
+    """
+    leaf_names: set[str] = set()
+    for command in app.registered_commands:
+        # Typer derives the CLI token from the callback's __name__ when no
+        # explicit name is set, converting underscores to hyphens (e.g.
+        # ``def foo_bar`` becomes ``vox foo-bar``). Replicate that conversion
+        # so the valid set matches the surface users actually type — without
+        # it, a future anonymous command with an underscore would cause the
+        # doctor regression check to reject a unit that references the real
+        # hyphenated subcommand.
+        raw_name = command.callback.__name__ if command.callback else None
+        name = command.name or (raw_name.replace("_", "-") if raw_name else None)
+        if name:
+            leaf_names.add(name)
+    group_names = {g.name for g in app.registered_groups if g.name}
+    return leaf_names | group_names
+
+
+def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
+    """Extract the first CLI subcommand token from a systemd unit file.
+
+    Reads the unit file and uses the **first** ``ExecStart=`` line it
+    finds. systemd unit grammar permits multiple ``ExecStart=`` entries
+    for ``Type=oneshot`` services (the service manager runs all of
+    them in order); the legacy ``vox.service`` this parser targets is
+    ``Type=simple`` with exactly one ``ExecStart=``, so the first
+    entry is sufficient to detect a stale subcommand reference.
+    Shell-splits the remainder and looks for the first token that is
+    not the binary path itself — that token is the ``vox`` subcommand
+    (e.g. ``serve`` in ``/home/j/.local/bin/vox serve --port 8421``).
+
+    Systemd unit grammar allows multi-line directive values via a
+    trailing backslash on the continued line. Lines are pre-joined
+    before the ``ExecStart=`` search so a unit written as::
+
+        ExecStart=/home/j/.local/bin/vox \\
+            serve --port 8421
+
+    parses to the same token as the single-line form. Field probability
+    is low for the stale-user-unit case, but the parser contract has to
+    cover the full directive syntax or it silently returns "unparseable"
+    for legitimate units.
+
+    Returns None when:
+    - the file cannot be read (permission, missing, non-UTF-8),
+    - no ``ExecStart=`` line exists,
+    - ``ExecStart=`` is present but empty or shell-unparseable,
+    - the command line has only the binary with no subcommand.
+
+    A None return is the signal to the caller that the unit is
+    unparseable; doctor surfaces that separately from "references an
+    unknown subcommand".
+    """
+    try:
+        content = unit_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    # Fold systemd line continuations: any line whose trimmed form ends
+    # in a single backslash is joined with the next line, separated by
+    # a space. The backslash itself is stripped. Matches systemd.unit(5)
+    # "New lines may be escaped by a backslash at the end of the line".
+    joined_lines: list[str] = []
+    buffer = ""
+    for raw in content.splitlines():
+        stripped = raw.rstrip()
+        if stripped.endswith("\\"):
+            buffer += stripped[:-1] + " "
+            continue
+        joined_lines.append(buffer + raw)
+        buffer = ""
+    if buffer:
+        joined_lines.append(buffer)
+
+    exec_line: str | None = None
+    for raw in joined_lines:
+        line = raw.strip()
+        if line.startswith("ExecStart="):
+            exec_line = line[len("ExecStart=") :].strip()
+            break
+
+    if not exec_line:
+        return None
+
+    # Systemd ExecStart lines may be prefixed with ``-``, ``@``, ``+``,
+    # ``!``, or ``!!`` to adjust execution semantics. Strip them so the
+    # remainder is the bare command.
+    while exec_line[:1] in {"-", "@", "+", "!"}:
+        exec_line = exec_line[1:].lstrip()
+
+    if not exec_line:
+        return None
+
+    try:
+        tokens = shlex.split(exec_line)
+    except ValueError:
+        return None
+
+    # tokens[0] is the binary path; tokens[1] (if present) is the first
+    # subcommand. Skip tokens that look like flags (start with ``-``)
+    # to tolerate unit files that pass a global flag before the
+    # subcommand, though the current vox CLI never emits one.
+    for token in tokens[1:]:
+        if not token.startswith("-"):
+            return token
+    return None
+
+
 @app.command()
 def doctor() -> None:
     """Check system health for vox."""
@@ -904,6 +1025,71 @@ def doctor() -> None:
             _FAIL,
             f"Daemon: reachable but unhealthy \u2014 {exc}",
         )
+
+    # Legacy user-level vox.service regression guard (Linux only).
+    #
+    # vox-45r: an earlier install layout registered a user-level
+    # ``~/.config/systemd/user/vox.service`` unit whose ExecStart=
+    # pointed at ``vox serve``. The ``serve`` subcommand has since been
+    # removed, so any surviving unit crash-loops on systemd's 5-second
+    # restart schedule and fills the journal with hundreds of thousands
+    # of spurious lines per day. The current daemon is the system-level
+    # ``/etc/systemd/system/voxd.service``; the user-level file is pure
+    # legacy. This check inspects the file if present and flags it as
+    # a hard failure when the referenced subcommand is no longer in
+    # the current CLI — the same class of defect ``vox install`` now
+    # cleans up automatically.
+    legacy_unit = _legacy_user_unit_path()
+    if platform.system() == "Linux" and legacy_unit.exists():
+        referenced = _parse_user_unit_execstart_subcommand(legacy_unit)
+        valid = _valid_vox_subcommands()
+        # Shell-quote the path in the remediation hint so users can
+        # copy-paste the command even if $HOME contains spaces or
+        # other shell metacharacters. The ``systemctl --user disable
+        # --now vox.service`` and ``systemctl --user daemon-reload``
+        # portions reference a fixed unit name with no interpolation,
+        # so only the ``rm`` argument needs quoting.
+        #
+        # The remediation command is emitted on its own line, unquoted,
+        # with a 2-space indent. Earlier revisions wrapped the command
+        # in outer single quotes for visual framing, which broke two
+        # ways: (1) a literal paste including the outer quotes produced
+        # a single quoted word bash refused to execute, and (2) when
+        # ``shlex.quote()`` wrapped a path containing spaces in single
+        # quotes, the outer-plus-inner nesting collapsed into adjacent
+        # quoted fragments and the path's space became a word boundary,
+        # splitting the ``rm`` target in two. Emitting the command on
+        # its own line avoids both failure modes.
+        quoted_legacy_unit = shlex.quote(str(legacy_unit))
+        remediation_command = (
+            "systemctl --user disable --now vox.service"
+            f" && rm {quoted_legacy_unit}"
+            " && systemctl --user daemon-reload"
+        )
+        if referenced is None:
+            _check(
+                _FAIL,
+                f"Legacy user unit: {legacy_unit} exists but ExecStart= is"
+                " unparseable \u2014 run 'vox daemon install' to clean it up,"
+                " or remove it manually:\n"
+                f"  {remediation_command}",
+            )
+        elif referenced not in valid:
+            _check(
+                _FAIL,
+                f"Legacy user unit: {legacy_unit} references"
+                f" 'vox {referenced}', which is not a current subcommand"
+                " (this unit will crash-loop on the systemd restart schedule)."
+                " Run 'vox daemon install' to clean it up, or remove it"
+                " manually:\n"
+                f"  {remediation_command}",
+            )
+        else:
+            _check(
+                _PASS,
+                f"Legacy user unit: {legacy_unit} references current"
+                f" 'vox {referenced}' subcommand",
+            )
 
     # uvx (optional)
     uvx = shutil.which("uvx")

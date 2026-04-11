@@ -685,6 +685,109 @@ def _launchd_status() -> bool:
 _SYSTEMD_DIR = Path("/etc/systemd/system")
 _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 
+# Legacy user-level unit left behind by an earlier install layout that
+# used a ``vox serve`` entrypoint. That subcommand no longer exists, so
+# any surviving ``~/.config/systemd/user/vox.service`` unit crash-loops
+# on systemd's restart schedule (~12 restarts/minute). The path is
+# computed from ``Path.home()`` at call time rather than pinned at
+# module import so test fixtures can redirect it via ``$HOME`` without
+# module reloads. vox-45r.
+_LEGACY_USER_UNIT_RELATIVE = Path(".config/systemd/user/vox.service")
+
+
+def _legacy_user_unit_path() -> Path:
+    """Resolve the stale user-level ``vox.service`` path under the current HOME.
+
+    Resolved at call time via ``Path.home()`` so fixtures that override
+    ``$HOME`` (test isolation) see the tmp location instead of the real
+    user's config dir.
+    """
+    return Path.home() / _LEGACY_USER_UNIT_RELATIVE
+
+
+def _cleanup_stale_user_unit() -> bool:
+    """Remove a stale user-level ``vox.service`` unit if present.
+
+    Background: an earlier install layout registered ``vox.service`` as
+    a user-level systemd unit with ``ExecStart=.../vox serve --port 8421``.
+    The ``serve`` subcommand no longer exists in the current CLI, so
+    the unit crashes on every restart, systemd respawns it every 5s,
+    and the journal fills up (hundreds of thousands of lines over
+    days). The current daemon is a **system-level** ``voxd.service``
+    at ``/etc/systemd/system/voxd.service``; the user-level file is
+    pure legacy and must be removed. vox-45r.
+
+    Sequence when the stale unit is present:
+
+    1. ``systemctl --user disable --now vox.service`` (``check=False``
+       — tolerate the common case where the unit is already stopped or
+       masked, or where ``systemctl --user`` exits non-zero because no
+       user session bus is available at install time).
+    2. ``rm`` the unit file.
+    3. ``systemctl --user daemon-reload`` (``check=False`` for the same
+       reason — the removal on disk is the authoritative state).
+
+    Idempotent and safe on machines that never had the stale unit:
+    returns False and does no work.
+
+    Linux-only. macOS has no ``systemctl --user``; launchd's per-user
+    equivalent (``~/Library/LaunchAgents/``) is a different problem
+    and is explicitly out of scope.
+
+    The cleanup is scoped strictly to ``~/.config/systemd/user/vox.service``.
+    The system-level ``/etc/systemd/system/voxd.service`` (the real
+    daemon) is never touched by this function. Over-generalizing to
+    "any stale user unit" is also out of scope.
+
+    Returns True if a stale unit was found and removed, False
+    otherwise (non-Linux, missing file, or unreadable path).
+    """
+    if platform.system() != "Linux":
+        return False
+
+    unit_path = _legacy_user_unit_path()
+    if not unit_path.exists():
+        return False
+
+    logger.info(
+        "Removing stale legacy user unit %s: the 'vox serve' subcommand "
+        "referenced by ExecStart= no longer exists in the CLI, so this "
+        "unit crash-loops on the systemd restart schedule. vox-45r.",
+        unit_path,
+    )
+
+    # Step 1: disable --now. Best-effort: ``check=False`` because the
+    # unit may already be stopped/disabled, or ``systemctl --user`` may
+    # exit non-zero when no user session bus is reachable (e.g. install
+    # run from a non-login shell). Either way, the file removal below
+    # is the authoritative cleanup.
+    subprocess.run(
+        ["systemctl", "--user", "disable", "--now", "vox.service"],
+        check=False,
+    )
+
+    # Step 2: remove the unit file. This is user-writable (no sudo).
+    try:
+        unit_path.unlink()
+    except OSError as exc:
+        logger.warning(
+            "Could not remove stale user unit %s: %s",
+            unit_path,
+            exc,
+        )
+        return False
+
+    # Step 3: daemon-reload so the user-scope systemd forgets the unit
+    # it just lost on disk. ``check=False`` for the same reason as
+    # step 1 — the file removal is the authoritative state.
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"],
+        check=False,
+    )
+
+    logger.info("Removed stale legacy user unit %s", unit_path)
+    return True
+
 
 def _safe_systemd_value(value: str) -> bool:
     """Return True if *value* is safe to embed in a systemd Environment= line.
@@ -968,6 +1071,14 @@ def install() -> str:
     if plat == "macos":
         _launchd_stop()
     else:
+        # Clean up the stale user-level ``vox.service`` unit from the
+        # old install layout before touching the system-level service.
+        # This runs unprivileged — user-owned directory, user-scope
+        # systemctl — and is a no-op on machines that never had the
+        # stale unit. It must happen before ``_systemd_stop`` so an
+        # install that is recovering a crash-looping user unit gets
+        # that unit out of the way first. vox-45r.
+        _cleanup_stale_user_unit()
         _systemd_stop()
 
     # Pre-flight: kill any stale voxd holding the port. Runs after

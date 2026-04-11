@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1147,6 +1148,7 @@ class TestDoctorCommand:
         daemon_healthy: bool = True,
         daemon_version: str | None = "4.2.0",
         installed_version: str = "4.2.0",
+        legacy_unit_path: Path | None = None,
     ) -> Result:
         """Invoke doctor with controlled mocks.
 
@@ -1186,6 +1188,13 @@ class TestDoctorCommand:
 
             mock_client.health.side_effect = VoxdConnectionError("not running")
 
+        # By default, point the legacy-unit check at a non-existent
+        # path under tmp_path so the real user's ``~/.config/systemd/
+        # user/vox.service`` (if any) cannot leak into the test result.
+        # Tests that want to exercise the legacy-unit path pass an
+        # explicit ``legacy_unit_path`` fixture.
+        resolved_legacy = legacy_unit_path or (tmp_path / "no-such-legacy-unit")
+
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1200,6 +1209,10 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value=system_platform),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=resolved_legacy,
+            ),
         ):
             result = runner.invoke(app, ["doctor"])
 
@@ -1340,6 +1353,348 @@ class TestDoctorCommand:
         assert result.exit_code == 0
         assert "\u2713 Daemon: running" in result.output
         assert "\u26a0" not in result.output
+
+    # ------------------------------------------------------------------
+    # Legacy user unit regression guard (vox-45r)
+    #
+    # The 'vox serve' subcommand was removed before the voxd/voxd.service
+    # split; any surviving ``~/.config/systemd/user/vox.service`` from
+    # that era crash-loops on the systemd restart schedule. Doctor must
+    # detect it and fail loudly. These tests cover the three cases:
+    # file present + stale subcommand (fail), file present + current
+    # subcommand (pass), file absent (pass).
+    # ------------------------------------------------------------------
+
+    def _write_user_unit(
+        self,
+        tmp_path: Path,
+        exec_start: str,
+    ) -> Path:
+        """Write a minimal user-level vox.service unit for fixture use."""
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\n"
+            "Description=Legacy vox unit (fixture)\n"
+            "\n"
+            "[Service]\n"
+            f"ExecStart={exec_start}\n"
+            "Restart=on-failure\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=default.target\n",
+            encoding="utf-8",
+        )
+        return unit
+
+    def test_legacy_user_unit_stale_subcommand_fails(self, tmp_path: Path) -> None:
+        """File present + ExecStart references removed 'serve' subcommand.
+
+        This is the vox-45r field condition: a user-level unit left
+        behind by an earlier install layout references ``vox serve``,
+        which no longer exists. Doctor must fail so smoke tests and
+        CI catch the crash-loop before it pollutes the journal.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/home/tester/.local/bin/vox serve --port 8421",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "\u2717 Legacy user unit" in result.output
+        assert "vox serve" in result.output
+        assert "crash-loop" in result.output
+        # Remediation hint must point at the installer (which now cleans
+        # this up automatically) AND provide manual commands.
+        assert "vox daemon install" in result.output
+        assert "systemctl --user disable --now vox.service" in result.output
+        assert "daemon-reload" in result.output
+        # Regression guard for vox-45r round-2 Copilot finding: the
+        # remediation command must NOT be wrapped in outer single
+        # quotes. Outer framing (a) poisons copy-paste because bash
+        # treats the whole token as a single quoted word, and (b)
+        # collides with the inner single quotes produced by
+        # ``shlex.quote()`` on paths containing spaces. The command
+        # is emitted on its own line, unquoted, after the prose.
+        assert "'systemctl --user disable" not in result.output
+
+    def test_legacy_user_unit_current_subcommand_passes(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """File present + ExecStart references a current subcommand.
+
+        This is the "intentional, still-valid" case. If a user runs
+        ``vox daemon`` under a legacy user unit and that subcommand
+        exists, doctor should not flag it — drift is about missing
+        commands, not about the file existing at all.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/home/tester/.local/bin/vox daemon",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Legacy user unit" in result.output
+        assert "vox daemon" in result.output
+
+    def test_legacy_user_unit_absent_passes(self, tmp_path: Path) -> None:
+        """File absent: doctor does not emit a legacy-unit line at all.
+
+        The default ``_run_doctor`` fixture points the legacy-unit path
+        at a non-existent tmp file. Doctor must not synthesize a PASS
+        line for absence — only emit the line when the file exists.
+        """
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "Legacy user unit" not in result.output
+
+    def test_legacy_user_unit_skipped_on_non_linux(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """macOS: user-level systemd does not exist. Skip the check entirely.
+
+        Even if a file happens to sit at the resolved path (test fixture
+        leak, etc.), ``systemctl --user`` is not a macOS concept and
+        the whole check must be gated behind ``platform.system() == 'Linux'``.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/usr/local/bin/vox serve --port 8421",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Darwin",
+            legacy_unit_path=unit,
+        )
+        assert result.exit_code == 0
+        assert "Legacy user unit" not in result.output
+
+    def test_legacy_user_unit_unparseable_execstart_fails(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """File present but ExecStart= has no subcommand token.
+
+        A unit file that lost its ExecStart arguments to manual editing
+        cannot be validated against the CLI. Treat this as a hard
+        failure so it does not silently pass: an ExecStart= with no
+        subcommand will also crash-loop (systemd will invoke ``vox``
+        with no args, typer will print help, exit non-zero).
+        """
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\nDescription=Broken\n\n[Service]\nExecStart=\n",
+            encoding="utf-8",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "\u2717 Legacy user unit" in result.output
+        assert "unparseable" in result.output
+        # Same regression guard as the stale-subcommand branch: the
+        # remediation command is emitted unquoted on its own line,
+        # never wrapped in outer single quotes.
+        assert "'systemctl --user disable" not in result.output
+        assert "systemctl --user disable --now vox.service" in result.output
+
+    def test_legacy_user_unit_line_continuation_parses(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ExecStart= that uses systemd backslash continuation still parses.
+
+        systemd.unit(5) grammar allows directive values to span lines
+        via a trailing backslash. A hand-edited unit file written as::
+
+            ExecStart=/home/tester/.local/bin/vox \\
+                daemon
+
+        must produce the same ``daemon`` subcommand as the single-line
+        form. The parser folds continuations before searching for
+        ``ExecStart=``, so this fixture should hit the current-subcommand
+        branch (doctor passes, not fails).
+
+        Regression guard: before vox-45r follow-up the parser called
+        ``content.splitlines()`` directly, which handed ``shlex`` a
+        literal backslash token and either dropped ``daemon`` or raised
+        ``ValueError`` (returning None → ``unparseable``).
+        """
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\n"
+            "Description=Legacy vox unit with line continuation\n"
+            "\n"
+            "[Service]\n"
+            "ExecStart=/home/tester/.local/bin/vox \\\n"
+            "    daemon\n"
+            "Restart=on-failure\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=default.target\n",
+            encoding="utf-8",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Legacy user unit" in result.output
+        assert "vox daemon" in result.output
+
+    def test_legacy_user_unit_space_in_home_produces_valid_remediation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """HOME paths with spaces must not break the remediation shell command.
+
+        Regression guard for the vox-45r round-2 Copilot finding: an
+        earlier revision wrapped the remediation command in outer
+        single quotes for visual framing. When ``shlex.quote()``
+        wrapped a path like ``/home/j j/.config/systemd/user/vox.service``
+        in inner single quotes, the outer+inner nesting collapsed
+        into adjacent quoted fragments and bash saw the space in
+        ``j j`` as a word boundary, splitting the ``rm`` target into
+        two arguments. The fix drops the outer framing so ``shlex.quote()``
+        output appears as the only quoting layer in the command.
+
+        This test builds a fixture unit file under a directory whose
+        name contains a literal space, then verifies that:
+
+        1. ``shlex.quote(str(legacy_unit))`` (the properly-escaped
+           path) appears verbatim in the doctor output, proving the
+           path still round-trips through the remediation hint
+           correctly.
+        2. The broken outer-quote framing
+           (``'systemctl --user disable``) is absent, proving the
+           fix is in place.
+        """
+        parent = tmp_path / "home with space" / ".config" / "systemd" / "user"
+        parent.mkdir(parents=True)
+        unit = self._write_user_unit(
+            parent,
+            exec_start="/home/j j/.local/bin/vox serve --port 8421",
+        )
+        assert " " in str(unit)  # sanity: fixture has a space in the path
+
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "Legacy user unit" in result.output
+        # The path must appear shell-quoted by shlex. For a path
+        # containing spaces, shlex.quote wraps in single quotes.
+        quoted = shlex.quote(str(unit))
+        assert quoted in result.output, (
+            f"expected shlex-quoted path {quoted!r} in doctor output,"
+            f" got:\n{result.output}"
+        )
+        # The broken outer-quote framing must be gone.
+        assert "'systemctl --user disable" not in result.output
+        # And the command itself must still be present, unquoted.
+        assert "systemctl --user disable --now vox.service" in result.output
+
+
+class TestValidVoxSubcommands:
+    """Direct contract tests for ``_valid_vox_subcommands()``.
+
+    The doctor legacy-unit check compares the subcommand token parsed
+    from a stale ``vox.service`` against the set returned by this
+    helper. The doctor tests exercise it end-to-end (exit code +
+    output), but those do not pin down the helper's contract on their
+    own — a refactor that calls it before typer finishes registering
+    commands, or that renames a subcommand group, would silently
+    collapse the valid set and let stale units pass through.
+
+    These tests lock the promise from the helper's docstring: the
+    return value is the union of leaf command names and subcommand
+    group names that the live typer app accepts.
+    """
+
+    def test_subcommand_groups_present(self) -> None:
+        """``daemon``, ``cache``, ``hook`` are the three typer groups.
+
+        They are registered via ``app.add_typer(..., name=...)`` and
+        must appear in the valid set so unit files that reference
+        ``vox daemon`` or ``vox cache <op>`` are recognised.
+        """
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        valid = _valid_vox_subcommands()
+        assert {"daemon", "cache", "hook"}.issubset(valid)
+
+    def test_leaf_commands_present(self) -> None:
+        """Representative leaf commands registered via ``@app.command()``.
+
+        ``doctor`` and ``unmute`` are two leaves the plugin and CLI
+        users rely on. Their presence in the valid set is the signal
+        that ``app.registered_commands`` was fully populated at the
+        time of the call.
+        """
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        valid = _valid_vox_subcommands()
+        assert "doctor" in valid
+        assert "unmute" in valid
+
+    def test_underscore_function_names_converted_to_hyphens(self) -> None:
+        """Typer converts ``def foo_bar`` to ``vox foo-bar``; the valid set must too.
+
+        Guards against the future-rename contract promised in the docstring
+        when a new anonymous command uses an underscore in its function name.
+        Today every anonymous leaf command is a single word, so this path is
+        dormant — but the helper's promise is that renames propagate
+        automatically, and that promise has to hold for hyphenated surfaces
+        too. Fabricates a ``CommandInfo`` with ``name=None`` and an
+        underscored callback, appends it to ``app.registered_commands`` for
+        the duration of one call, and asserts the hyphenated form appears
+        in the returned set.
+        """
+        from typer.models import CommandInfo
+
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        def foo_bar_baz() -> None:
+            """Fixture callback — never invoked, only its ``__name__`` is read."""
+
+        fabricated = CommandInfo(name=None, callback=foo_bar_baz)
+        app.registered_commands.append(fabricated)
+        try:
+            valid = _valid_vox_subcommands()
+        finally:
+            app.registered_commands.remove(fabricated)
+
+        assert "foo-bar-baz" in valid
+        assert "foo_bar_baz" not in valid
 
 
 # ---------------------------------------------------------------------------
