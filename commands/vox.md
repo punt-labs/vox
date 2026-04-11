@@ -37,6 +37,7 @@ Call the `notify` MCP tool with `mode="n"`. No text output — the panel confirm
 ### `model <name>`
 
 Resolve the model shorthand to full model ID:
+
 - `v3` → `eleven_v3`
 - `flash` → `eleven_flash_v2_5`
 - `turbo` → `eleven_turbo_v2_5`
