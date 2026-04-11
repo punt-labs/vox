@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 class SessionState:
     """In-memory session state. Seeded from .vox/config.md on startup."""
 
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     notify: str = "n"
     speak: str = "n"
     voice: str | None = None
@@ -57,6 +59,7 @@ class SessionState:
     vibe: str | None = None
     vibe_tags: str | None = None
     vibe_signals: str = ""
+    music_mode: str = "off"
 
 
 # Module-level singleton; initialized in run_server().
@@ -467,7 +470,60 @@ def vibe(
 
     write_fields(updates, _find_config())
 
+    # Propagate vibe change to music loop if this session owns music.
+    if _state.music_mode == "on":
+        client = _voxd_client()
+        try:
+            client.music_vibe(
+                vibe=_state.vibe or "",
+                vibe_tags=_state.vibe_tags or "",
+                owner_id=_state.session_id,
+            )
+        except VoxdConnectionError:
+            logger.warning("voxd unreachable during vibe propagation; music off")
+            _state.music_mode = "off"
+
     return json.dumps({"vibe": updates})
+
+
+@mcp.tool()
+def music(
+    mode: str,
+    style: str | None = None,
+) -> str:
+    """Control background music generation.
+
+    When on, voxd generates instrumental tracks derived from the current
+    session vibe and loops them. Vibe changes automatically trigger new
+    track generation for the owning session.
+
+    Args:
+        mode: "on" to start music, "off" to stop.
+        style: Optional style modifier (e.g. "techno", "jazz").
+            Persists across calls -- subsequent ``on`` reuses the
+            last-set style.
+
+    Returns:
+        JSON string with the voxd response.
+    """
+    if mode not in ("on", "off"):
+        return _error(f"Invalid mode '{mode}'. Use on/off.")
+
+    client = _voxd_client()
+    try:
+        resp = client.music(
+            mode=mode,
+            style=style or "",
+            vibe=_state.vibe or "",
+            vibe_tags=_state.vibe_tags or "",
+            owner_id=_state.session_id,
+        )
+    except VoxdConnectionError as exc:
+        _state.music_mode = "off"
+        return _error(str(exc))
+
+    _state.music_mode = mode
+    return json.dumps(resp)
 
 
 @mcp.tool()
@@ -626,6 +682,7 @@ def status() -> str:
             "vibe": _state.vibe,
             "vibe_tags": _state.vibe_tags,
             "vibe_signals": _state.vibe_signals,
+            "music_mode": _state.music_mode,
         }
     )
 
