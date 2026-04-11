@@ -819,7 +819,15 @@ def _valid_vox_subcommands() -> set[str]:
     """
     leaf_names: set[str] = set()
     for command in app.registered_commands:
-        name = command.name or (command.callback.__name__ if command.callback else None)
+        # Typer derives the CLI token from the callback's __name__ when no
+        # explicit name is set, converting underscores to hyphens (e.g.
+        # ``def foo_bar`` becomes ``vox foo-bar``). Replicate that conversion
+        # so the valid set matches the surface users actually type — without
+        # it, a future anonymous command with an underscore would cause the
+        # doctor regression check to reject a unit that references the real
+        # hyphenated subcommand.
+        raw_name = command.callback.__name__ if command.callback else None
+        name = command.name or (raw_name.replace("_", "-") if raw_name else None)
         if name:
             leaf_names.add(name)
     group_names = {g.name for g in app.registered_groups if g.name}

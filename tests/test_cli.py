@@ -1595,6 +1595,38 @@ class TestValidVoxSubcommands:
         assert "doctor" in valid
         assert "unmute" in valid
 
+    def test_underscore_function_names_converted_to_hyphens(self) -> None:
+        """Typer converts ``def foo_bar`` to ``vox foo-bar``; the valid set must too.
+
+        Guards against the future-rename contract promised in the docstring
+        when a new anonymous command uses an underscore in its function name.
+        Today every anonymous leaf command is a single word, so this path is
+        dormant — but the helper's promise is that renames propagate
+        automatically, and that promise has to hold for hyphenated surfaces
+        too. Fabricates a ``CommandInfo`` with ``name=None`` and an
+        underscored callback, appends it to ``app.registered_commands`` for
+        the duration of one call, and asserts the hyphenated form appears
+        in the returned set.
+        """
+        from typer.models import CommandInfo
+
+        from punt_vox.__main__ import (
+            _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        def foo_bar_baz() -> None:
+            """Fixture callback — never invoked, only its ``__name__`` is read."""
+
+        fabricated = CommandInfo(name=None, callback=foo_bar_baz)
+        app.registered_commands.append(fabricated)
+        try:
+            valid = _valid_vox_subcommands()
+        finally:
+            app.registered_commands.remove(fabricated)
+
+        assert "foo-bar-baz" in valid
+        assert "foo_bar_baz" not in valid
+
 
 # ---------------------------------------------------------------------------
 # install tests (marketplace)
