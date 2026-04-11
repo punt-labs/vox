@@ -145,6 +145,8 @@ vox doctor
 
 `vox doctor` now reports the running daemon version alongside the reachability check. When the running daemon does not match the wheel installed on disk, doctor emits a yellow `⚠ Daemon: running ... (version X — wheel has Y, run 'vox daemon restart' to refresh)` warning. Exit code stays 0 — the daemon is still functional — but the warning catches stale daemons at smoke-test time instead of in production.
 
+Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists. An earlier install layout left a user-level unit behind with `ExecStart=.../vox serve`, a subcommand that no longer exists in the CLI; any surviving file crash-loops on the systemd restart schedule. Doctor fails loudly with a remediation hint when the referenced subcommand is not in the current CLI, and `vox daemon install` now removes the stale unit automatically on upgrade. macOS has no user-level systemd, so the check is gated off there.
+
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input

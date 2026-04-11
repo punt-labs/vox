@@ -13,6 +13,7 @@ import pytest
 
 from punt_vox.service import (
     DEFAULT_PORT,
+    _cleanup_stale_user_unit,  # pyright: ignore[reportPrivateUsage]
     _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
     _ensure_user_dirs,  # pyright: ignore[reportPrivateUsage]
     _find_pid_on_port,  # pyright: ignore[reportPrivateUsage]
@@ -22,6 +23,7 @@ from punt_vox.service import (
     _launchd_install,  # pyright: ignore[reportPrivateUsage]
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _launchd_stop,  # pyright: ignore[reportPrivateUsage]
+    _legacy_user_unit_path,  # pyright: ignore[reportPrivateUsage]
     _remove_port_file,  # pyright: ignore[reportPrivateUsage]
     _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
     _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
@@ -1814,3 +1816,270 @@ def test_install_refuses_to_run_as_root(
     assert not (fake_home / ".punt-labs").exists(), (
         "install() created filesystem state before the root-refusal check"
     )
+
+
+# ---------------------------------------------------------------------------
+# Legacy user-level vox.service cleanup (vox-45r)
+#
+# An earlier install layout registered a user-level
+# ``~/.config/systemd/user/vox.service`` with
+# ``ExecStart=.../vox serve --port 8421``. The ``serve`` subcommand has
+# since been removed, and that unit crash-loops on the systemd restart
+# schedule (~12 restarts/minute). The installer must detect the file,
+# stop + disable the unit via ``systemctl --user``, remove the file,
+# and reload the user systemd config. These tests lock in the exact
+# sequence and its platform + idempotency constraints.
+# ---------------------------------------------------------------------------
+
+
+def _stage_legacy_user_unit(fake_home: Path) -> Path:
+    """Create a fake ``~/.config/systemd/user/vox.service`` under *fake_home*."""
+    unit_dir = fake_home / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit = unit_dir / "vox.service"
+    unit.write_text(
+        "[Unit]\nDescription=stale vox.service from legacy install layout\n"
+        "\n[Service]\nExecStart=/home/tester/.local/bin/vox serve --port 8421\n"
+        "Restart=on-failure\nRestartSec=5\n"
+        "\n[Install]\nWantedBy=default.target\n",
+        encoding="utf-8",
+    )
+    return unit
+
+
+def test_legacy_user_unit_path_resolves_under_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_legacy_user_unit_path`` is computed from ``Path.home()`` at call time.
+
+    Resolving at call time (rather than pinning a module-level
+    constant) lets test fixtures redirect the path via ``$HOME`` with
+    no module reload. Regression guard so a future refactor does not
+    accidentally pin the path at import time.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    resolved = _legacy_user_unit_path()
+    assert resolved == fake_home / ".config" / "systemd" / "user" / "vox.service"
+
+
+def test_cleanup_stale_user_unit_noop_on_non_linux(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """macOS: ``systemctl --user`` is not a concept. Skip entirely.
+
+    Even if the file somehow exists, the cleanup must not shell out to
+    a nonexistent binary on macOS. The whole function must be gated
+    behind ``platform.system() == 'Linux'``.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _stage_legacy_user_unit(fake_home)
+
+    monkeypatch.setattr("punt_vox.service.platform.system", lambda: "Darwin")
+    with patch("punt_vox.service.subprocess.run") as mock_run:
+        result = _cleanup_stale_user_unit()
+
+    assert result is False
+    mock_run.assert_not_called()
+
+
+def test_cleanup_stale_user_unit_noop_when_file_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linux machine with no legacy unit: cleanup is a no-op.
+
+    The common case on fresh installs. Must not shell out, must not
+    log noise, must return False.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    monkeypatch.setattr("punt_vox.service.platform.system", lambda: "Linux")
+    with patch("punt_vox.service.subprocess.run") as mock_run:
+        result = _cleanup_stale_user_unit()
+
+    assert result is False
+    mock_run.assert_not_called()
+
+
+def test_cleanup_stale_user_unit_removes_file_and_reloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linux + file present: disable --now, unlink, daemon-reload.
+
+    This is the vox-45r field condition. Locks in:
+    - the exact two subprocess invocations (user-scope systemctl, no sudo),
+    - ``check=False`` on both (tolerate stopped/disabled + missing user bus),
+    - the file is removed from disk,
+    - the return value is True.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    unit = _stage_legacy_user_unit(fake_home)
+    assert unit.exists()
+
+    monkeypatch.setattr("punt_vox.service.platform.system", lambda: "Linux")
+    with patch(
+        "punt_vox.service.subprocess.run",
+        return_value=MagicMock(returncode=0),
+    ) as mock_run:
+        result = _cleanup_stale_user_unit()
+
+    assert result is True
+    assert not unit.exists(), "cleanup did not remove the legacy unit file"
+
+    # Exactly two subprocess calls: disable --now, then daemon-reload.
+    # Both user-scope, neither uses sudo, both check=False.
+    assert mock_run.call_count == 2
+    disable_call, reload_call = mock_run.call_args_list
+
+    assert disable_call[0][0] == [
+        "systemctl",
+        "--user",
+        "disable",
+        "--now",
+        "vox.service",
+    ]
+    assert disable_call[1]["check"] is False
+
+    assert reload_call[0][0] == ["systemctl", "--user", "daemon-reload"]
+    assert reload_call[1]["check"] is False
+
+
+def test_cleanup_stale_user_unit_tolerates_failing_disable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``systemctl --user`` exiting non-zero on disable must not abort cleanup.
+
+    The install-time context may lack a user session bus (e.g.
+    ``systemctl --user`` under an SSH session with no lingering user
+    scope). The file removal on disk is the authoritative cleanup; a
+    non-zero ``disable`` return must not prevent the ``rm`` or the
+    ``daemon-reload`` from running.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    unit = _stage_legacy_user_unit(fake_home)
+
+    monkeypatch.setattr("punt_vox.service.platform.system", lambda: "Linux")
+    with patch(
+        "punt_vox.service.subprocess.run",
+        return_value=MagicMock(returncode=1),
+    ) as mock_run:
+        result = _cleanup_stale_user_unit()
+
+    assert result is True
+    assert not unit.exists()
+    # Two calls: disable attempted (failed), daemon-reload still ran.
+    assert mock_run.call_count == 2
+
+
+def test_cleanup_stale_user_unit_never_touches_system_unit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scope guard: the cleanup must never touch the system voxd.service.
+
+    Only ``~/.config/systemd/user/vox.service`` is in scope. The
+    system-level ``/etc/systemd/system/voxd.service`` (the real daemon)
+    must never appear in any command. Regression guard against a
+    future refactor that over-generalizes the cleanup.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _stage_legacy_user_unit(fake_home)
+
+    monkeypatch.setattr("punt_vox.service.platform.system", lambda: "Linux")
+    with patch(
+        "punt_vox.service.subprocess.run",
+        return_value=MagicMock(returncode=0),
+    ) as mock_run:
+        _cleanup_stale_user_unit()
+
+    for call_obj in mock_run.call_args_list:
+        argv = call_obj[0][0]
+        joined = " ".join(argv)
+        assert "voxd" not in joined, (
+            f"cleanup shelled out to a command referencing voxd: {argv}"
+        )
+        assert "sudo" not in argv, (
+            f"cleanup must not use sudo (user-level unit only): {argv}"
+        )
+        assert "/etc/systemd" not in joined, (
+            f"cleanup must not touch /etc/systemd/: {argv}"
+        )
+
+
+@patch("punt_vox.service._systemd_status", return_value=True)
+@patch("punt_vox.service._systemd_install")
+@patch("punt_vox.service.detect_platform", return_value="linux")
+def test_install_cleans_stale_user_unit_before_systemd_stop(
+    _mock_platform: MagicMock,
+    _mock_systemd_install: MagicMock,
+    _mock_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``install()`` must run the legacy cleanup before ``_systemd_stop``.
+
+    Ordering matters: a crash-looping user unit holding the legacy
+    ``vox serve`` ExecStart is noise that must be cleared before the
+    system-level stop + port check run. Putting cleanup after the
+    port check would leave the user unit crash-looping past install
+    completion. vox-45r.
+    """
+    fake_home = tmp_path / "home" / "user"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "voxd").write_text("#!/bin/sh\n")
+    (bin_dir / "voxd").chmod(0o755)
+    (bin_dir / "python").write_text("#!/bin/sh\n")
+    (bin_dir / "python").chmod(0o755)
+    monkeypatch.setattr("punt_vox.service.sys.executable", str(bin_dir / "python"))
+
+    def _euid_nonroot() -> int:
+        return 1000
+
+    monkeypatch.setattr("punt_vox.service.os.geteuid", _euid_nonroot)
+
+    call_order: list[str] = []
+
+    def _record_cleanup() -> bool:
+        call_order.append("cleanup_stale_user_unit")
+        return False
+
+    def _record_stop() -> None:
+        call_order.append("systemd_stop")
+
+    def _record_port_free() -> None:
+        call_order.append("ensure_port_free")
+
+    monkeypatch.setattr(
+        "punt_vox.service._cleanup_stale_user_unit",
+        _record_cleanup,
+    )
+    monkeypatch.setattr("punt_vox.service._systemd_stop", _record_stop)
+    monkeypatch.setattr("punt_vox.service._ensure_port_free", _record_port_free)
+
+    install()
+
+    assert call_order == [
+        "cleanup_stale_user_unit",
+        "systemd_stop",
+        "ensure_port_free",
+    ], f"unexpected install() ordering: {call_order}"

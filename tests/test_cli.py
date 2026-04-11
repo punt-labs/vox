@@ -1147,6 +1147,7 @@ class TestDoctorCommand:
         daemon_healthy: bool = True,
         daemon_version: str | None = "4.2.0",
         installed_version: str = "4.2.0",
+        legacy_unit_path: Path | None = None,
     ) -> Result:
         """Invoke doctor with controlled mocks.
 
@@ -1186,6 +1187,13 @@ class TestDoctorCommand:
 
             mock_client.health.side_effect = VoxdConnectionError("not running")
 
+        # By default, point the legacy-unit check at a non-existent
+        # path under tmp_path so the real user's ``~/.config/systemd/
+        # user/vox.service`` (if any) cannot leak into the test result.
+        # Tests that want to exercise the legacy-unit path pass an
+        # explicit ``legacy_unit_path`` fixture.
+        resolved_legacy = legacy_unit_path or (tmp_path / "no-such-legacy-unit")
+
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1200,6 +1208,10 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value=system_platform),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=resolved_legacy,
+            ),
         ):
             result = runner.invoke(app, ["doctor"])
 
@@ -1340,6 +1352,155 @@ class TestDoctorCommand:
         assert result.exit_code == 0
         assert "\u2713 Daemon: running" in result.output
         assert "\u26a0" not in result.output
+
+    # ------------------------------------------------------------------
+    # Legacy user unit regression guard (vox-45r)
+    #
+    # The 'vox serve' subcommand was removed before the voxd/voxd.service
+    # split; any surviving ``~/.config/systemd/user/vox.service`` from
+    # that era crash-loops on the systemd restart schedule. Doctor must
+    # detect it and fail loudly. These tests cover the three cases:
+    # file present + stale subcommand (fail), file present + current
+    # subcommand (pass), file absent (pass).
+    # ------------------------------------------------------------------
+
+    def _write_user_unit(
+        self,
+        tmp_path: Path,
+        exec_start: str,
+    ) -> Path:
+        """Write a minimal user-level vox.service unit for fixture use."""
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\n"
+            "Description=Legacy vox unit (fixture)\n"
+            "\n"
+            "[Service]\n"
+            f"ExecStart={exec_start}\n"
+            "Restart=on-failure\n"
+            "\n"
+            "[Install]\n"
+            "WantedBy=default.target\n",
+            encoding="utf-8",
+        )
+        return unit
+
+    def test_legacy_user_unit_stale_subcommand_fails(self, tmp_path: Path) -> None:
+        """File present + ExecStart references removed 'serve' subcommand.
+
+        This is the vox-45r field condition: a user-level unit left
+        behind by an earlier install layout references ``vox serve``,
+        which no longer exists. Doctor must fail so smoke tests and
+        CI catch the crash-loop before it pollutes the journal.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/home/tester/.local/bin/vox serve --port 8421",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "\u2717 Legacy user unit" in result.output
+        assert "vox serve" in result.output
+        assert "crash-loop" in result.output
+        # Remediation hint must point at the installer (which now cleans
+        # this up automatically) AND provide manual commands.
+        assert "vox daemon install" in result.output
+        assert "systemctl --user disable --now vox.service" in result.output
+        assert "daemon-reload" in result.output
+
+    def test_legacy_user_unit_current_subcommand_passes(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """File present + ExecStart references a current subcommand.
+
+        This is the "intentional, still-valid" case. If a user runs
+        ``vox daemon`` under a legacy user unit and that subcommand
+        exists, doctor should not flag it — drift is about missing
+        commands, not about the file existing at all.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/home/tester/.local/bin/vox daemon",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "\u2713 Legacy user unit" in result.output
+        assert "vox daemon" in result.output
+
+    def test_legacy_user_unit_absent_passes(self, tmp_path: Path) -> None:
+        """File absent: doctor does not emit a legacy-unit line at all.
+
+        The default ``_run_doctor`` fixture points the legacy-unit path
+        at a non-existent tmp file. Doctor must not synthesize a PASS
+        line for absence — only emit the line when the file exists.
+        """
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 0
+        assert "Legacy user unit" not in result.output
+
+    def test_legacy_user_unit_skipped_on_non_linux(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """macOS: user-level systemd does not exist. Skip the check entirely.
+
+        Even if a file happens to sit at the resolved path (test fixture
+        leak, etc.), ``systemctl --user`` is not a macOS concept and
+        the whole check must be gated behind ``platform.system() == 'Linux'``.
+        """
+        unit = self._write_user_unit(
+            tmp_path,
+            exec_start="/usr/local/bin/vox serve --port 8421",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Darwin",
+            legacy_unit_path=unit,
+        )
+        assert result.exit_code == 0
+        assert "Legacy user unit" not in result.output
+
+    def test_legacy_user_unit_unparseable_execstart_fails(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """File present but ExecStart= has no subcommand token.
+
+        A unit file that lost its ExecStart arguments to manual editing
+        cannot be validated against the CLI. Treat this as a hard
+        failure so it does not silently pass: an ExecStart= with no
+        subcommand will also crash-loop (systemd will invoke ``vox``
+        with no args, typer will print help, exit non-zero).
+        """
+        unit = tmp_path / "vox.service"
+        unit.write_text(
+            "[Unit]\nDescription=Broken\n\n[Service]\nExecStart=\n",
+            encoding="utf-8",
+        )
+        result = self._run_doctor(
+            tmp_path,
+            system_platform="Linux",
+            legacy_unit_path=unit,
+            espeak_found="espeak-ng",
+        )
+        assert result.exit_code == 1
+        assert "\u2717 Legacy user unit" in result.output
+        assert "unparseable" in result.output
 
 
 # ---------------------------------------------------------------------------
