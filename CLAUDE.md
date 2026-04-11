@@ -216,6 +216,17 @@ For multi-phase features (T1/T2), create a TaskCreate list with all missions up 
 - **As each mission completes**: review the result, close the mission, commit, mark the task completed, check what's unblocked, and launch the next mission(s).
 - **The task list is the source of truth** for what's done, what's in flight, and what's blocked. Update it as missions close.
 
+### Review-cycle fix rounds: bare Agent(), not missions
+
+When Copilot or Bugbot flags findings on a PR, use a bare `Agent()` call — not a mission. These are mechanical 1-round fixes where the write-set is obvious (the files the findings are in). Missions are for work with design ambiguity or multi-round potential. The overhead of scaffold/create/close isn't justified for "fix these 3 lint findings."
+
+### Lessons from vox-0qi (2026-04-11)
+
+- Write-set admission is the highest-value feature. It guaranteed parallel phases 2+3 had zero file conflicts.
+- Workers don't always read the contract via `ethos mission show` or submit results via `ethos mission result` — enforcement is partial. Verify the result artifact exists before closing (`ethos mission results <id>`).
+- **Context/prompt split**: the contract `context` field carries the *what* (goal, constraints, acceptance criteria). The Agent `prompt` carries the *how* (specific invocation instructions). Move durable design guidance into `context`; keep the prompt to "execute the contract at `<id>`" plus any session-specific notes. Don't duplicate between the two.
+- All 7 vox-0qi missions closed round 1. The reflect→advance→re-spec cycle is untested under pressure. When a mission does go to round 2, use `ethos mission reflect` to record why before advancing.
+
 ### Scratch files
 
 Mission contract YAMLs go in `.tmp/missions/`. Result artifact YAMLs go in `.tmp/missions/results/`.
