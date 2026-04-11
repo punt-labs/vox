@@ -505,6 +505,169 @@ class TestVoxClientReconnect:
 # ---------------------------------------------------------------------------
 
 
+class TestVoxClientMusic:
+    """Test music method."""
+
+    @pytest.mark.asyncio
+    async def test_music_on_sends_correct_message(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "m1", "status": "generating"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.music(
+            "on",
+            style="techno",
+            vibe="focused",
+            vibe_tags="[calm]",
+            owner_id="sess-abc",
+        )
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_on"
+        assert sent["style"] == "techno"
+        assert sent["vibe"] == "focused"
+        assert sent["vibe_tags"] == "[calm]"
+        assert sent["owner_id"] == "sess-abc"
+        assert "id" in sent
+        assert result["status"] == "generating"
+
+    @pytest.mark.asyncio
+    async def test_music_off_sends_correct_message(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_off", "id": "m2", "status": "stopped"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.music("off", owner_id="sess-abc")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_off"
+        assert sent["owner_id"] == "sess-abc"
+        assert "style" not in sent
+        assert "vibe" not in sent
+        assert "vibe_tags" not in sent
+        assert result["status"] == "stopped"
+
+    @pytest.mark.asyncio
+    async def test_music_on_omits_none_params(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "m3", "status": "generating"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.music("on")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_on"
+        assert "style" not in sent
+        assert "vibe" not in sent
+        assert "vibe_tags" not in sent
+        assert "owner_id" not in sent
+
+    @pytest.mark.asyncio
+    async def test_music_error_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "m4", "message": "music generation failed"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="music generation failed"):
+            await client.music("on", owner_id="sess-abc")
+
+
+class TestVoxClientMusicVibe:
+    """Test music_vibe method."""
+
+    @pytest.mark.asyncio
+    async def test_music_vibe_sends_correct_message(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_vibe", "id": "v1", "status": "generating"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.music_vibe(
+            vibe="happy", vibe_tags="[warm]", owner_id="sess-abc"
+        )
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_vibe"
+        assert sent["vibe"] == "happy"
+        assert sent["vibe_tags"] == "[warm]"
+        assert sent["owner_id"] == "sess-abc"
+        assert "id" in sent
+        assert result["status"] == "generating"
+
+    @pytest.mark.asyncio
+    async def test_music_vibe_ignored_when_not_owner(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_vibe", "id": "v2", "status": "ignored"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.music_vibe(
+            vibe="sad", vibe_tags="[melancholy]", owner_id="other-sess"
+        )
+        assert result["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_music_vibe_omits_none_params(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_vibe", "id": "v3", "status": "generating"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.music_vibe()
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_vibe"
+        assert "vibe" not in sent
+        assert "vibe_tags" not in sent
+        assert "owner_id" not in sent
+
+    @pytest.mark.asyncio
+    async def test_music_vibe_error_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "v4", "message": "daemon shutting down"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="daemon shutting down"):
+            await client.music_vibe(vibe="happy", owner_id="sess-abc")
+
+
 class TestVoxClientSync:
     """Test synchronous wrapper."""
 
@@ -625,3 +788,70 @@ class TestVoxClientSync:
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.voices()
             assert result == ["fred"]
+
+    def test_music_on(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "m1", "status": "generating"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music("on", style="techno", owner_id="sess-1")
+            assert result["status"] == "generating"
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_on"
+        assert sent["style"] == "techno"
+        assert sent["owner_id"] == "sess-1"
+
+    def test_music_off(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_off", "id": "m2", "status": "stopped"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music("off", owner_id="sess-1")
+            assert result["status"] == "stopped"
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_off"
+
+    def test_music_vibe(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_vibe", "id": "v1", "status": "generating"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music_vibe(
+                vibe="happy", vibe_tags="[warm]", owner_id="sess-1"
+            )
+            assert result["status"] == "generating"
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_vibe"
+        assert sent["vibe"] == "happy"
+        assert sent["vibe_tags"] == "[warm]"
+        assert sent["owner_id"] == "sess-1"

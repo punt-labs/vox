@@ -426,6 +426,56 @@ class VoxClient:
         resp = await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
         return resp
 
+    async def music(
+        self,
+        mode: str,
+        *,
+        style: str | None = None,
+        vibe: str | None = None,
+        vibe_tags: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Start or stop music playback.
+
+        *mode* is ``"on"`` or ``"off"``. When ``"on"``, optional *style*,
+        *vibe*, *vibe_tags*, and *owner_id* are forwarded to voxd.  When
+        ``"off"``, only *owner_id* is sent.
+        """
+        request_id = uuid.uuid4().hex[:12]
+        if mode == "on":
+            msg: dict[str, object] = {"type": "music_on", "id": request_id}
+            if style is not None:
+                msg["style"] = style
+            if vibe is not None:
+                msg["vibe"] = vibe
+            if vibe_tags is not None:
+                msg["vibe_tags"] = vibe_tags
+            if owner_id is not None:
+                msg["owner_id"] = owner_id
+        else:
+            msg = {"type": "music_off", "id": request_id}
+            if owner_id is not None:
+                msg["owner_id"] = owner_id
+        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
+    async def music_vibe(
+        self,
+        *,
+        vibe: str | None = None,
+        vibe_tags: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a vibe update for the currently playing music."""
+        request_id = uuid.uuid4().hex[:12]
+        msg: dict[str, object] = {"type": "music_vibe", "id": request_id}
+        if vibe is not None:
+            msg["vibe"] = vibe
+        if vibe_tags is not None:
+            msg["vibe_tags"] = vibe_tags
+        if owner_id is not None:
+            msg["owner_id"] = owner_id
+        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
 
 # ---------------------------------------------------------------------------
 # Sync wrapper
@@ -505,3 +555,41 @@ class VoxClientSync:
     def health(self) -> dict[str, object]:
         """Check daemon health."""
         return self._run(self._call("health"))  # type: ignore[no-any-return]
+
+    def music(
+        self,
+        mode: str,
+        *,
+        style: str | None = None,
+        vibe: str | None = None,
+        vibe_tags: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Start or stop music playback."""
+        return self._run(  # type: ignore[no-any-return]
+            self._call(
+                "music",
+                mode,
+                style=style,
+                vibe=vibe,
+                vibe_tags=vibe_tags,
+                owner_id=owner_id,
+            )
+        )
+
+    def music_vibe(
+        self,
+        *,
+        vibe: str | None = None,
+        vibe_tags: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a vibe update for the currently playing music."""
+        return self._run(  # type: ignore[no-any-return]
+            self._call(
+                "music_vibe",
+                vibe=vibe,
+                vibe_tags=vibe_tags,
+                owner_id=owner_id,
+            )
+        )
