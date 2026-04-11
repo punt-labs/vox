@@ -126,6 +126,12 @@ class TestStyleMoodFeel:
         assert "calm feel" in result
         assert "[" not in result.split(". ")[0]
 
+    def test_multi_tag_vibe_tags_cleaned(self) -> None:
+        result = vibe_to_prompt(None, "[warm] [satisfied]", None, 14, [])
+        assert "warm, satisfied feel" in result
+        assert "[" not in result
+        assert "]" not in result
+
     def test_empty_vibe_tags_omitted(self) -> None:
         result = vibe_to_prompt(None, "[]", None, 14, [])
         assert "feel" not in result

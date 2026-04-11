@@ -77,8 +77,10 @@ def _layer_style_mood_feel(
         parts.append(f"{vibe} mood")
 
     if vibe_tags:
-        # Strip brackets: "[cheerful]" -> "cheerful"
-        clean = vibe_tags.strip().strip("[]")
+        # Strip brackets: "[warm] [satisfied]" -> "warm, satisfied"
+        clean = vibe_tags.replace("[", "").replace("]", "").strip()
+        # Collapse whitespace runs from removed brackets into ", "
+        clean = ", ".join(word for word in clean.split() if word)
         if clean:
             parts.append(f"{clean} feel")
 
