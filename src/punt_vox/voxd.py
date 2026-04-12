@@ -506,7 +506,12 @@ async def _probe_duration(path: Path) -> float | None:
         stdout_bytes, _ = await asyncio.wait_for(
             proc.communicate(), timeout=_PROBE_TIMEOUT_S
         )
-    except (FileNotFoundError, OSError, TimeoutError):
+    except TimeoutError:
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        return None
+    except (FileNotFoundError, OSError):
         return None
     try:
         duration = float((stdout_bytes or b"").strip())
