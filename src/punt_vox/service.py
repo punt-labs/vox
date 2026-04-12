@@ -534,7 +534,8 @@ def _migrate_legacy_repo_config(repo_root: Path) -> bool:
             legacy_config.unlink()
         # Clean up ephemeral MP3s and remove .vox/ if empty
         for f in legacy_dir.glob("*.mp3"):
-            f.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                f.unlink()
         with contextlib.suppress(OSError):
             legacy_dir.rmdir()
         return False
