@@ -16,6 +16,7 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
+    _PLAYBACK_TIMEOUT_DEFAULT_S,
     ChimeDedup,
     DaemonContext,
     DedupHit,
@@ -40,6 +41,7 @@ from punt_vox.voxd import (
     _music_loop,
     _music_player_command,
     _play_audio,
+    _probe_duration,
     _run_dir,
     _try_direct_play,
 )
@@ -168,6 +170,151 @@ class TestPlayAudioObservability:
         assert ctx.last_playback["rc"] == 0
         assert ctx.last_playback["elapsed_s"] == 0.5
         assert ctx.last_playback["file"] == str(audio)
+
+
+class TestProbeDuration:
+    """``_probe_duration`` extracts audio duration via ffprobe."""
+
+    def test_returns_duration_for_valid_audio(self, tmp_path: Path) -> None:
+        audio = tmp_path / "silence.mp3"
+        audio.write_bytes(_get_valid_mp3_bytes())
+        duration = asyncio.run(_probe_duration(audio))
+        assert duration is not None
+        assert duration > 0.0
+
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nonexistent.mp3"
+        duration = asyncio.run(_probe_duration(missing))
+        assert duration is None
+
+    def test_returns_none_for_bad_format(self, tmp_path: Path) -> None:
+        bad = tmp_path / "garbage.mp3"
+        bad.write_bytes(b"not audio data at all")
+        duration = asyncio.run(_probe_duration(bad))
+        # ffprobe may return None or an error; either way, no crash
+        assert duration is None or isinstance(duration, float)
+
+    def test_returns_none_when_ffprobe_missing(self, tmp_path: Path) -> None:
+        audio = tmp_path / "silence.mp3"
+        audio.write_bytes(_get_valid_mp3_bytes())
+        with patch(
+            "punt_vox.voxd.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=FileNotFoundError("ffprobe")),
+        ):
+            duration = asyncio.run(_probe_duration(audio))
+        assert duration is None
+
+    def test_returns_none_on_timeout(self, tmp_path: Path) -> None:
+        audio = tmp_path / "silence.mp3"
+        audio.write_bytes(_get_valid_mp3_bytes())
+        proc = MagicMock()
+        proc.communicate = AsyncMock(side_effect=TimeoutError)
+        with patch(
+            "punt_vox.voxd.asyncio.create_subprocess_exec",
+            AsyncMock(return_value=proc),
+        ):
+            duration = asyncio.run(_probe_duration(audio))
+        assert duration is None
+
+    def test_logs_duration_at_debug(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        audio = tmp_path / "silence.mp3"
+        audio.write_bytes(_get_valid_mp3_bytes())
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd"):
+            duration = asyncio.run(_probe_duration(audio))
+        if duration is not None:
+            assert "Probed duration" in caplog.text
+
+
+class TestPlayAudioProportionalTimeout:
+    """``_play_audio`` uses probed duration for its timeout."""
+
+    def test_uses_probed_duration_for_timeout(self, tmp_path: Path) -> None:
+        """A 34s file gets timeout = max(34+10, 30) = 44s, not 30s."""
+        audio = tmp_path / "out.mp3"
+        audio.write_bytes(b"\xff\xfbfake mp3 body")
+        ctx = _make_ctx()
+        proc = _fake_proc(rc=0, stderr=b"")
+        ticks = iter([100.0, 100.5])
+
+        captured_timeout: list[float] = []
+        original_wait_for = asyncio.wait_for
+
+        async def spy_wait_for(coro: object, *, timeout: float) -> object:
+            captured_timeout.append(timeout)
+            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
+
+        with (
+            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=34.3)),
+            patch(
+                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=proc),
+            ),
+            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
+            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+        ):
+            asyncio.run(_play_audio(audio, ctx))
+
+        assert len(captured_timeout) == 1
+        assert captured_timeout[0] == pytest.approx(44.3, abs=0.1)  # pyright: ignore[reportUnknownMemberType]
+
+    def test_falls_back_to_default_when_probe_fails(self, tmp_path: Path) -> None:
+        audio = tmp_path / "out.mp3"
+        audio.write_bytes(b"\xff\xfbfake mp3 body")
+        ctx = _make_ctx()
+        proc = _fake_proc(rc=0, stderr=b"")
+        ticks = iter([100.0, 100.5])
+
+        captured_timeout: list[float] = []
+        original_wait_for = asyncio.wait_for
+
+        async def spy_wait_for(coro: object, *, timeout: float) -> object:
+            captured_timeout.append(timeout)
+            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
+
+        with (
+            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=None)),
+            patch(
+                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=proc),
+            ),
+            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
+            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+        ):
+            asyncio.run(_play_audio(audio, ctx))
+
+        assert len(captured_timeout) == 1
+        assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
+
+    def test_short_duration_uses_default_minimum(self, tmp_path: Path) -> None:
+        """A 5s file gets timeout = max(5+10, 30) = 30s (default wins)."""
+        audio = tmp_path / "out.mp3"
+        audio.write_bytes(b"\xff\xfbfake mp3 body")
+        ctx = _make_ctx()
+        proc = _fake_proc(rc=0, stderr=b"")
+        ticks = iter([100.0, 100.5])
+
+        captured_timeout: list[float] = []
+        original_wait_for = asyncio.wait_for
+
+        async def spy_wait_for(coro: object, *, timeout: float) -> object:
+            captured_timeout.append(timeout)
+            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
+
+        with (
+            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=5.0)),
+            patch(
+                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=proc),
+            ),
+            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
+            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+        ):
+            asyncio.run(_play_audio(audio, ctx))
+
+        assert len(captured_timeout) == 1
+        assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
 
 
 class TestHealthPayloadFull:

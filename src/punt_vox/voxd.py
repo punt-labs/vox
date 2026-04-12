@@ -16,6 +16,7 @@ import importlib.resources
 import json
 import logging
 import logging.config
+import math
 import os
 import platform
 import secrets
@@ -380,7 +381,9 @@ _AUDIO_ENV_KEYS: tuple[str, ...] = (
 # Playback under 50ms is a "success" that almost certainly played nothing.
 _SUSPICIOUS_ELAPSED_S = 0.05
 
-_PLAYBACK_TIMEOUT_S = 30.0
+_PLAYBACK_TIMEOUT_DEFAULT_S = 30.0
+_PLAYBACK_TIMEOUT_PADDING_S = 10.0
+_PROBE_TIMEOUT_S = 5.0
 
 # Cap on the stderr blob we keep per playback. ffplay without -loglevel
 # quiet can emit kilobytes of progress lines; we want enough for triage
@@ -479,6 +482,50 @@ def _record_playback_result(
     }
 
 
+async def _probe_duration(path: Path) -> float | None:
+    """Return the duration in seconds of an audio file, or None on failure.
+
+    Uses ffprobe with a 5-second timeout. Returns None if ffprobe is not
+    installed, the file is unreadable, or the output is not a valid float.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout_bytes, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=_PROBE_TIMEOUT_S
+        )
+    except TimeoutError:
+        if proc is not None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+        return None
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        duration = float((stdout_bytes or b"").strip())
+    except ValueError:
+        return None
+    logger.debug("Probed duration for %s: %.3fs", path.name, duration)
+    return duration
+
+
 async def _play_audio(path: Path, ctx: DaemonContext) -> None:
     """Play an audio file and record a rich result in ``ctx.last_playback``.
 
@@ -509,11 +556,21 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
         )
         return
 
+    duration = await _probe_duration(path)
+    if duration is not None and math.isfinite(duration) and duration > 0:
+        timeout = max(
+            duration + _PLAYBACK_TIMEOUT_PADDING_S,
+            _PLAYBACK_TIMEOUT_DEFAULT_S,
+        )
+    else:
+        timeout = _PLAYBACK_TIMEOUT_DEFAULT_S
+
     logger.info(
-        "Playback spawn: cmd=%s size=%d audio_env=%s",
+        "Playback spawn: cmd=%s size=%d audio_env=%s timeout=%.1fs",
         cmd,
         size,
         env_snapshot,
+        timeout,
     )
 
     start = _monotonic()
@@ -556,14 +613,12 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
         return
 
     try:
-        _, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=_PLAYBACK_TIMEOUT_S
-        )
+        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         elapsed = _monotonic() - start
         logger.error(
             "Playback FAILED: timed out after %.1fs for %s audio_env=%s",
-            _PLAYBACK_TIMEOUT_S,
+            timeout,
             path.name,
             env_snapshot,
         )
@@ -575,7 +630,7 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
             path=path,
             rc=-1,
             elapsed=elapsed,
-            stderr=f"timeout after {_PLAYBACK_TIMEOUT_S}s",
+            stderr=f"timeout after {timeout:.1f}s",
         )
         return
 

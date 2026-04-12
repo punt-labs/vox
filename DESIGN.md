@@ -1392,3 +1392,106 @@ If a user runs `sudo vox daemon install` out of habit, the three wrong things ha
 ### Why This Deletes More Code Than It Adds
 
 The initial refactor commit shipped -443 net lines across 10 files. The deletions were all the defensive code that no longer has anything to defend: `_reject_symlinks`, `_chown_to_user`, `_user_keys_env_file_for`, `_user_state_dir_for`, `_installing_user`, the `target_uid`/`target_gid` parameters of `_write_keys_env`, the `_open_new`/`_open_existing`/`O_NOFOLLOW`/`O_EXCL`/`fstat`/`fchown` dance, the `SUDO_USER` environment lookup, the parent-symlink check, the `os.lchown` calls in `_ensure_user_dirs`, and every test that exercised those code paths. The only defensive code that survived is the control-character validation in `_write_keys_env` (rejecting `\n`/`\r`/`\x00` in env values) — that is input sanitization, not a privilege defense, and applies equally when the process runs as the user.
+
+## DES-030: Music Playback — Separate Subprocess at Reduced Volume
+
+**Status:** SETTLED
+
+### Problem
+
+Music tracks loop for minutes. The existing `_playback_consumer` queue and `_playback_mutex` handle short audio (chimes, TTS) with a 30-second timeout. If music used the same queue, it would hold the mutex for the entire track duration, blocking all chimes and speech.
+
+### Rejected Alternatives
+
+1. **SIGSTOP/SIGCONT** — pause the music subprocess when speech needs to play, resume after. POSIX-portable, but creates an unnatural silence gap. Users don't stop their music when someone talks to them; they turn it down.
+2. **PulseAudio/PipeWire dynamic ducking** — lower the music stream's volume via `pactl set-sink-input-volume` when speech fires. Correct UX, but requires runtime PulseAudio/PipeWire detection, stream identification, and volume state management. Complexity disproportionate to v1.
+3. **Shared playback queue with long timeout** — raise the timeout to 5 minutes. Simple, but blocks all TTS for the entire track duration since `_playback_mutex` is held.
+
+### Decision
+
+Music plays via its own ffplay subprocess at `-volume 30` (Linux) / `--volume 0.3` (macOS), completely outside the existing playback queue. Speech and chimes play at full volume through the normal queue and overlay on top. No pausing, no ducking, no mutex contention. The volume differential makes speech intelligible over the background music without any runtime coordination. Dynamic ducking via PulseAudio is a future enhancement.
+
+## DES-031: Music Session Ownership Model
+
+**Status:** SETTLED
+
+### Problem
+
+voxd is shared across all Claude Code sessions and CLI users. Music is daemon-wide (one set of speakers, one music loop). When multiple sessions are active, which session's vibe drives the music?
+
+### Rejected Alternatives
+
+1. **Last-active session wins** — whichever session most recently changed its vibe sends that to voxd. Simple, but jarring: switching terminals flips the music based on which one you last typed in.
+2. **Music has its own vibe, independent of per-repo vibe** — `/music on style techno` sets a music-specific mood on voxd. Per-repo `/vibe` stays separate. Simplest to implement but loses the reactive-to-vibe behavior.
+
+### Decision
+
+The session that runs `/music on` **owns** the music. That session's vibe drives the music prompt. Other sessions' vibe changes do not affect the music. Ownership transfers when another session explicitly runs `/music on` (which claims it) or `/music off` (which stops it). Each MCP server generates a `session_id` (UUID) at startup, sent as `owner_id` with every music message. voxd rejects `music_vibe` messages from non-owning sessions.
+
+## DES-032: Duration-Proportional Playback Timeout
+
+**Status:** SETTLED
+
+### Problem
+
+`_PLAYBACK_TIMEOUT_S = 30.0` was a fixed constant that killed ffplay after 30 seconds. Set when vox only played short chimes and quips. A 480-character recap generates 34.3 seconds of speech at ElevenLabs default rate — the timeout fires at 87%, cutting mid-word. Any TTS over ~450 characters is silently truncated.
+
+### Rejected Alternatives
+
+1. **Raise the fixed timeout to 120s** — simple, but leaves a hard ceiling that longer content will eventually hit again. Also means a stuck ffplay process takes 2 minutes to detect instead of 30 seconds.
+2. **No timeout** — removes the safety net for hung processes entirely. A single stuck ffplay would block the playback queue permanently.
+
+### Decision
+
+Probe the file duration via `ffprobe -v quiet -show_entries format=duration` before spawning the player. Set timeout to `max(duration + 10s, 30s)`. A 34s file gets 44s. A 2-minute file gets 130s. Short files keep the 30s floor. Probe failure degrades gracefully to the 30s default. The probe runs in <10ms for local files and adds negligible latency.
+
+## DES-033: Gapless Music Handoff on Vibe Change
+
+**Status:** SETTLED
+
+### Problem
+
+When the session vibe changes while music is playing, a new track must be generated (~10-30s). The naive approach — kill the old track, generate, play the new one — creates an audible silence gap during generation.
+
+### Rejected Alternatives
+
+1. **Kill immediately, accept the silence** — the first implementation (PR #194 commit ae79d9f). Simple but produces 10-30s of dead air every time the vibe changes. Users expect continuous background music.
+2. **Break out of the playback loop, generate, then restart** — old track finishes its current iteration but doesn't re-loop during generation. If generation takes longer than the remaining track duration, silence returns. Also orphans the ffplay subprocess (Bugbot caught this).
+3. **Pre-generate the next track speculatively** — generate a track for every possible vibe in advance. Wastes credits on tracks that may never play.
+
+### Decision
+
+Run generation as a concurrent `asyncio.Task` while the playback loop continues looping the old track. On each playback iteration, the loop races `proc.wait()`, `music_changed.wait()`, and the generation task. Handoff (kill old proc, switch to new track) happens only when the generation task completes. A second vibe change during generation cancels the in-flight task and starts a fresh one — old track keeps looping throughout. The old track plays continuously from the moment `/music on` fires until `/music off` or a new track is ready.
+
+## DES-034: Peer-Closed WebSocket — State Check vs Widened Exception
+
+**Status:** SETTLED
+
+### Problem
+
+After the vox-ehf fix in v4.3.0, chime/unmute clients return on the `"playing"` ack and close the WebSocket. The next `receive_text()` call raises `RuntimeError` (not `WebSocketDisconnect`), logging a full traceback on every chime.
+
+### Rejected Alternatives
+
+1. **Widen the except clause to `(WebSocketDisconnect, RuntimeError)`** — the initial fix (PR #185 commit a191a3c). Correct for the specific case, but catches *any* RuntimeError in the handler chain. Copilot flagged it: a future handler raising RuntimeError for a real bug would be silently swallowed. The widened surface was unnecessarily broad for a fix that only needed to handle the disconnect state.
+
+### Decision
+
+Check `websocket.application_state != WebSocketState.CONNECTED` at the top of the receive loop, before `receive_text()` is called. If disconnected, `break` cleanly. The outer `except` clause stays narrow (`WebSocketDisconnect` only). A genuine `RuntimeError` from a handler still surfaces as an ERROR log. Two complementary tests document the narrowing guarantee: one verifies the state check preempts a disconnected-socket error, the other verifies an unexpected RuntimeError still logs as an error.
+
+## DES-035: Track Naming and Zero-Credit Replay
+
+**Status:** SETTLED
+
+### Problem
+
+Generated music tracks are saved to `~/vox-output/music/` but only identifiable by timestamped filenames. Users can't find a track they liked, can't replay it without regenerating (burning credits), and can't build a personal library.
+
+### Rejected Alternatives
+
+1. **Hash-based naming** — name tracks by content hash (MD5/SHA256 of the audio). Unique and collision-free, but human-unreadable. A user can't find "that techno track from Tuesday" by scanning filenames.
+2. **No replay — always regenerate** — simplest implementation, but ElevenLabs generation is non-deterministic (same prompt produces different tracks). A track the user liked is gone forever once the loop moves on. Also wastes ~2000 credits per replay.
+
+### Decision
+
+Auto-name tracks as `{vibe}-{style}-{YYYYMMDD-HHMM}` (e.g. `happy-techno-20260412-1118`). Users can provide custom names via `/music on --name late-night-flow`. When a name matches an existing file in `~/vox-output/music/`, skip generation entirely and loop the saved track — zero credits, instant playback. `/music play <name>` replays any saved track. `/music list` shows the library with name, size, and date. The `music_replay` flag in `DaemonContext` tells `MusicLoop` to skip generation and go straight to the playback loop.
