@@ -71,8 +71,7 @@ def _load_voices_from_api(client: Any, *, force: bool = False) -> None:  # pyrig
     global _voices_loaded_at
     now = time.monotonic()
     cache_fresh = (
-        _voices_loaded_at > 0.0
-        and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S
+        _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S
     )
     if not force and cache_fresh:
         return
