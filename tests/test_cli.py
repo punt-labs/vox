@@ -2615,6 +2615,10 @@ class TestMusicCommand:
         assert "2 saved track(s)" in result.output
         assert "alpha" in result.output
         assert "beta" in result.output
+        # Dates are included in YYYY-MM-DD HH:MM format.
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", result.output)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_music_list_empty(self, mock_client_cls: MagicMock) -> None:

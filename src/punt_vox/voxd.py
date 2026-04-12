@@ -869,6 +869,7 @@ class DaemonContext:
         self.music_proc: asyncio.subprocess.Process | None = None
         self.music_state: str = "idle"  # "idle" | "generating" | "playing"
         self.music_changed: asyncio.Event = asyncio.Event()
+        self.music_replay: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1712,13 +1713,13 @@ async def _kill_music_proc(ctx: DaemonContext) -> None:
 
 
 def _auto_track_name(ctx: DaemonContext) -> str:
-    """Derive a short auto-name from vibe + style + HHMM."""
+    """Derive a short auto-name from vibe + style + YYYYMMDD-HHMM."""
     vibe, _ = ctx.music_vibe
     style = ctx.music_style
-    hhmm = time.strftime("%H%M")
+    stamp = time.strftime("%Y%m%d-%H%M")
     vibe_part = _slugify(vibe, max_len=20) if vibe else "ambient"
     style_part = _slugify(style, max_len=20) if style else "mix"
-    return f"{vibe_part}-{style_part}-{hhmm}"
+    return f"{vibe_part}-{style_part}-{stamp}"
 
 
 async def _generate_music_track(ctx: DaemonContext) -> Path:
@@ -1797,18 +1798,28 @@ async def _music_loop(ctx: DaemonContext) -> None:
         try:
             # --- Initial generation (no old track to loop) ----------------
             if current_track is None:
-                ctx.music_state = "generating"
-                ctx.music_changed.clear()
-                current_track = await _generate_music_track(ctx)
-                ctx.music_track = current_track
-                retry_count = 0
+                # Replay: a handler already placed a track in ctx.music_track.
+                if ctx.music_replay:
+                    ctx.music_replay = False
+                    ctx.music_changed.clear()
+                    assert ctx.music_track is not None
+                    current_track = ctx.music_track
+                    retry_count = 0
+                else:
+                    ctx.music_state = "generating"
+                    ctx.music_changed.clear()
+                    current_track = await _generate_music_track(ctx)
+                    ctx.music_track = current_track
+                    retry_count = 0
 
-                # Vibe changed during initial generation — regenerate
-                # immediately (no old track to keep looping).
-                if ctx.music_changed.is_set():
-                    logger.info("Vibe changed during initial generation, regenerating")
-                    current_track = None
-                    continue
+                    # Vibe changed during initial generation — regenerate
+                    # immediately (no old track to keep looping).
+                    if ctx.music_changed.is_set():
+                        logger.info(
+                            "Vibe changed during initial generation, regenerating",
+                        )
+                        current_track = None
+                        continue
 
             # --- Playback loop: loop current_track, generate in parallel --
             assert current_track is not None  # guaranteed by initial generation above
@@ -1896,6 +1907,19 @@ async def _music_loop(ctx: DaemonContext) -> None:
                                 asyncio.CancelledError,
                             ):
                                 await gen_task
+                            gen_task = None
+
+                        # Replay: handler pre-set ctx.music_track.
+                        if ctx.music_replay:
+                            ctx.music_replay = False
+                            assert ctx.music_track is not None
+                            new_track = ctx.music_track
+                            await _kill_music_proc(ctx)
+                            current_track = new_track
+                            retry_count = 0
+                            proc_done = True
+                            break
+
                         ctx.music_state = "generating"
                         gen_task = asyncio.create_task(
                             _generate_music_track(ctx),
@@ -1991,6 +2015,11 @@ async def _handle_music_on(
     # Check for existing track by name -- skip generation if found.
     if name:
         safe_name = _slugify(name, max_len=60)
+        if not safe_name:
+            await websocket.send_json(
+                {"type": "error", "id": request_id, "message": "invalid track name"}
+            )
+            return
         existing_path = _music_output_dir() / f"{safe_name}.mp3"
         if existing_path.exists():
             await _kill_music_proc(ctx)
@@ -2002,6 +2031,7 @@ async def _handle_music_on(
             ctx.music_track = existing_path
             ctx.music_track_name = safe_name
             ctx.music_state = "playing"
+            ctx.music_replay = True
             ctx.music_changed.set()
 
             logger.info(
@@ -2087,6 +2117,11 @@ async def _handle_music_play(
         return
 
     safe_name = _slugify(name, max_len=60)
+    if not safe_name:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "invalid track name"}
+        )
+        return
     track_path = _music_output_dir() / f"{safe_name}.mp3"
 
     if not track_path.exists():
@@ -2106,6 +2141,7 @@ async def _handle_music_play(
     ctx.music_track = track_path
     ctx.music_track_name = safe_name
     ctx.music_state = "playing"
+    ctx.music_replay = True
     ctx.music_changed.set()
 
     logger.info(

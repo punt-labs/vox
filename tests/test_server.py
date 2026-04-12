@@ -1362,6 +1362,10 @@ class TestMusicListTool:
         assert "\u266a 2 saved track(s):" in result["message"]
         assert "\u266a alpha" in result["message"]
         assert "\u266a beta" in result["message"]
+        # Dates are included in YYYY-MM-DD HH:MM format.
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", result["message"])
         assert len(result["tracks"]) == 2
 
     def test_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:

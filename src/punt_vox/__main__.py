@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -1532,7 +1533,11 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         for t in tracks:
             raw_size = t.get("size_bytes", 0)
             size_kb = int(str(raw_size)) // 1024
-            lines.append(f"  {t['name']} ({size_kb} KB)")
+            raw_mtime = t.get("modified", 0)
+            date_str = datetime.fromtimestamp(
+                float(str(raw_mtime)),
+            ).strftime("%Y-%m-%d %H:%M")
+            lines.append(f"  {t['name']} ({size_kb} KB, {date_str})")
         _emit(
             {"tracks": tracks},
             f"{len(tracks)} saved track(s):\n" + "\n".join(lines),

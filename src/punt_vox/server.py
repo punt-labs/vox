@@ -12,6 +12,7 @@ import logging
 import random
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -647,7 +648,11 @@ def music_list() -> str:
         for t in tracks:
             raw_size = t.get("size_bytes", 0)
             size_kb = int(str(raw_size)) // 1024
-            lines.append(f"  \u266a {t['name']} ({size_kb} KB)")
+            raw_mtime = t.get("modified", 0)
+            date_str = datetime.fromtimestamp(
+                float(str(raw_mtime)),
+            ).strftime("%Y-%m-%d %H:%M")
+            lines.append(f"  \u266a {t['name']} ({size_kb} KB, {date_str})")
         message = "\n".join(lines)
     return json.dumps({"message": message, **resp})
 
