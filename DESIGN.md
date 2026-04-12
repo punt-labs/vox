@@ -1392,3 +1392,55 @@ If a user runs `sudo vox daemon install` out of habit, the three wrong things ha
 ### Why This Deletes More Code Than It Adds
 
 The initial refactor commit shipped -443 net lines across 10 files. The deletions were all the defensive code that no longer has anything to defend: `_reject_symlinks`, `_chown_to_user`, `_user_keys_env_file_for`, `_user_state_dir_for`, `_installing_user`, the `target_uid`/`target_gid` parameters of `_write_keys_env`, the `_open_new`/`_open_existing`/`O_NOFOLLOW`/`O_EXCL`/`fstat`/`fchown` dance, the `SUDO_USER` environment lookup, the parent-symlink check, the `os.lchown` calls in `_ensure_user_dirs`, and every test that exercised those code paths. The only defensive code that survived is the control-character validation in `_write_keys_env` (rejecting `\n`/`\r`/`\x00` in env values) — that is input sanitization, not a privilege defense, and applies equally when the process runs as the user.
+
+## DES-030: Music Playback — Separate Subprocess at Reduced Volume
+
+**Status:** SETTLED
+
+### Problem
+
+Music tracks loop for minutes. The existing `_playback_consumer` queue and `_playback_mutex` handle short audio (chimes, TTS) with a 30-second timeout. If music used the same queue, it would hold the mutex for the entire track duration, blocking all chimes and speech.
+
+### Rejected Alternatives
+
+1. **SIGSTOP/SIGCONT** — pause the music subprocess when speech needs to play, resume after. POSIX-portable, but creates an unnatural silence gap. Users don't stop their music when someone talks to them; they turn it down.
+2. **PulseAudio/PipeWire dynamic ducking** — lower the music stream's volume via `pactl set-sink-input-volume` when speech fires. Correct UX, but requires runtime PulseAudio/PipeWire detection, stream identification, and volume state management. Complexity disproportionate to v1.
+3. **Shared playback queue with long timeout** — raise the timeout to 5 minutes. Simple, but blocks all TTS for the entire track duration since `_playback_mutex` is held.
+
+### Decision
+
+Music plays via its own ffplay subprocess at `-volume 30` (Linux) / `--volume 0.3` (macOS), completely outside the existing playback queue. Speech and chimes play at full volume through the normal queue and overlay on top. No pausing, no ducking, no mutex contention. The volume differential makes speech intelligible over the background music without any runtime coordination. Dynamic ducking via PulseAudio is a future enhancement.
+
+## DES-031: Music Session Ownership Model
+
+**Status:** SETTLED
+
+### Problem
+
+voxd is shared across all Claude Code sessions and CLI users. Music is daemon-wide (one set of speakers, one music loop). When multiple sessions are active, which session's vibe drives the music?
+
+### Rejected Alternatives
+
+1. **Last-active session wins** — whichever session most recently changed its vibe sends that to voxd. Simple, but jarring: switching terminals flips the music based on which one you last typed in.
+2. **Music has its own vibe, independent of per-repo vibe** — `/music on style techno` sets a music-specific mood on voxd. Per-repo `/vibe` stays separate. Simplest to implement but loses the reactive-to-vibe behavior.
+
+### Decision
+
+The session that runs `/music on` **owns** the music. That session's vibe drives the music prompt. Other sessions' vibe changes do not affect the music. Ownership transfers when another session explicitly runs `/music on` (which claims it) or `/music off` (which stops it). Each MCP server generates a `session_id` (UUID) at startup, sent as `owner_id` with every music message. voxd rejects `music_vibe` messages from non-owning sessions.
+
+## DES-032: Duration-Proportional Playback Timeout
+
+**Status:** SETTLED
+
+### Problem
+
+`_PLAYBACK_TIMEOUT_S = 30.0` was a fixed constant that killed ffplay after 30 seconds. Set when vox only played short chimes and quips. A 480-character recap generates 34.3 seconds of speech at ElevenLabs default rate — the timeout fires at 87%, cutting mid-word. Any TTS over ~450 characters is silently truncated.
+
+### Rejected Alternatives
+
+1. **Raise the fixed timeout to 120s** — simple, but leaves a hard ceiling that longer content will eventually hit again. Also means a stuck ffplay process takes 2 minutes to detect instead of 30 seconds.
+2. **No timeout** — removes the safety net for hung processes entirely. A single stuck ffplay would block the playback queue permanently.
+
+### Decision
+
+Probe the file duration via `ffprobe -v quiet -show_entries format=duration` before spawning the player. Set timeout to `max(duration + 10s, 30s)`. A 34s file gets 44s. A 2-minute file gets 130s. Short files keep the 30s floor. Probe failure degrades gracefully to the 30s default. The probe runs in <10ms for local files and adds negligible latency.
