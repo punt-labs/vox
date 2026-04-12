@@ -23,8 +23,8 @@ generates to match.
 
 ## Track naming
 
-Tracks are auto-named on generation using a vibe-style-HHMM pattern
-(e.g. "happy-techno-1118"). Use `--name` to provide a custom name.
+Tracks are auto-named on generation using a vibe-style-YYYYMMDD-HHMM pattern
+(e.g. "happy-techno-20260412-1118"). Use `--name` to provide a custom name.
 When a saved track with the given name exists, it is replayed without
 generation (zero credits).
 

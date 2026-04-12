@@ -1717,8 +1717,8 @@ def _auto_track_name(ctx: DaemonContext) -> str:
     vibe, _ = ctx.music_vibe
     style = ctx.music_style
     stamp = time.strftime("%Y%m%d-%H%M")
-    vibe_part = _slugify(vibe, max_len=20) if vibe else "ambient"
-    style_part = _slugify(style, max_len=20) if style else "mix"
+    vibe_part = _slugify(vibe, max_len=20) or "ambient"
+    style_part = _slugify(style, max_len=20) or "mix"
     return f"{vibe_part}-{style_part}-{stamp}"
 
 
@@ -1730,7 +1730,7 @@ async def _generate_music_track(ctx: DaemonContext) -> Path:
 
     When ``ctx.music_track_name`` is set, the track is saved under
     that name in ``~/vox-output/music/``. Otherwise an auto-derived
-    name from vibe + style + HHMM is used. The name is stored back
+    name from vibe + style + YYYYMMDD-HHMM is used. The name is stored back
     into ``ctx.music_track_name`` for status reporting.
     """
     vibe, vibe_tags = ctx.music_vibe
