@@ -1444,3 +1444,54 @@ The session that runs `/music on` **owns** the music. That session's vibe drives
 ### Decision
 
 Probe the file duration via `ffprobe -v quiet -show_entries format=duration` before spawning the player. Set timeout to `max(duration + 10s, 30s)`. A 34s file gets 44s. A 2-minute file gets 130s. Short files keep the 30s floor. Probe failure degrades gracefully to the 30s default. The probe runs in <10ms for local files and adds negligible latency.
+
+## DES-033: Gapless Music Handoff on Vibe Change
+
+**Status:** SETTLED
+
+### Problem
+
+When the session vibe changes while music is playing, a new track must be generated (~10-30s). The naive approach — kill the old track, generate, play the new one — creates an audible silence gap during generation.
+
+### Rejected Alternatives
+
+1. **Kill immediately, accept the silence** — the first implementation (PR #194 commit ae79d9f). Simple but produces 10-30s of dead air every time the vibe changes. Users expect continuous background music.
+2. **Break out of the playback loop, generate, then restart** — old track finishes its current iteration but doesn't re-loop during generation. If generation takes longer than the remaining track duration, silence returns. Also orphans the ffplay subprocess (Bugbot caught this).
+3. **Pre-generate the next track speculatively** — generate a track for every possible vibe in advance. Wastes credits on tracks that may never play.
+
+### Decision
+
+Run generation as a concurrent `asyncio.Task` while the playback loop continues looping the old track. On each playback iteration, the loop races `proc.wait()`, `music_changed.wait()`, and the generation task. Handoff (kill old proc, switch to new track) happens only when the generation task completes. A second vibe change during generation cancels the in-flight task and starts a fresh one — old track keeps looping throughout. The old track plays continuously from the moment `/music on` fires until `/music off` or a new track is ready.
+
+## DES-034: Peer-Closed WebSocket — State Check vs Widened Exception
+
+**Status:** SETTLED
+
+### Problem
+
+After the vox-ehf fix in v4.3.0, chime/unmute clients return on the `"playing"` ack and close the WebSocket. The next `receive_text()` call raises `RuntimeError` (not `WebSocketDisconnect`), logging a full traceback on every chime.
+
+### Rejected Alternatives
+
+1. **Widen the except clause to `(WebSocketDisconnect, RuntimeError)`** — the initial fix (PR #185 commit a191a3c). Correct for the specific case, but catches *any* RuntimeError in the handler chain. Copilot flagged it: a future handler raising RuntimeError for a real bug would be silently swallowed. The widened surface was unnecessarily broad for a fix that only needed to handle the disconnect state.
+
+### Decision
+
+Check `websocket.application_state != WebSocketState.CONNECTED` at the top of the receive loop, before `receive_text()` is called. If disconnected, `break` cleanly. The outer `except` clause stays narrow (`WebSocketDisconnect` only). A genuine `RuntimeError` from a handler still surfaces as an ERROR log. Two complementary tests document the narrowing guarantee: one verifies the state check preempts a disconnected-socket error, the other verifies an unexpected RuntimeError still logs as an error.
+
+## DES-035: Track Naming and Zero-Credit Replay
+
+**Status:** SETTLED
+
+### Problem
+
+Generated music tracks are saved to `~/vox-output/music/` but only identifiable by timestamped filenames. Users can't find a track they liked, can't replay it without regenerating (burning credits), and can't build a personal library.
+
+### Rejected Alternatives
+
+1. **Hash-based naming** — name tracks by content hash (MD5/SHA256 of the audio). Unique and collision-free, but human-unreadable. A user can't find "that techno track from Tuesday" by scanning filenames.
+2. **No replay — always regenerate** — simplest implementation, but ElevenLabs generation is non-deterministic (same prompt produces different tracks). A track the user liked is gone forever once the loop moves on. Also wastes ~2000 credits per replay.
+
+### Decision
+
+Auto-name tracks as `{vibe}-{style}-{YYYYMMDD-HHMM}` (e.g. `happy-techno-20260412-1118`). Users can provide custom names via `/music on --name late-night-flow`. When a name matches an existing file in `~/vox-output/music/`, skip generation entirely and loop the saved track — zero credits, instant playback. `/music play <name>` replays any saved track. `/music list` shows the library with name, size, and date. The `music_replay` flag in `DaemonContext` tells `MusicLoop` to skip generation and go straight to the playback loop.
