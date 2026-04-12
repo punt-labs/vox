@@ -67,8 +67,10 @@ def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplici
     if _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S:
         return
 
-    # Clear before re-fetching so deleted voices don't persist.
-    VOICES.clear()
+    # Fetch into a new dict, then swap atomically on success. If the
+    # API call raises, the old cache stays intact — no empty-cache
+    # window. The dict reference swap is atomic in CPython (GIL).
+    fresh: dict[str, str] = {}
 
     response: Any = client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -76,14 +78,18 @@ def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplici
         vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         # Store full name (e.g. "adam - dominant, firm").
-        if full_name not in VOICES:
-            VOICES[full_name] = vid
+        if full_name not in fresh:
+            fresh[full_name] = vid
 
         # Also store short name (before " - ") for convenient lookup.
         short_name = full_name.split(" - ", 1)[0]
-        if short_name != full_name and short_name not in VOICES:
-            VOICES[short_name] = vid
+        if short_name != full_name and short_name not in fresh:
+            fresh[short_name] = vid
 
+    # Atomic swap: replace the cache contents in-place so existing
+    # references to the VOICES dict see the new data.
+    VOICES.clear()
+    VOICES.update(fresh)
     _voices_loaded_at = now
     logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
 
