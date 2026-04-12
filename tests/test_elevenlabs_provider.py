@@ -550,7 +550,7 @@ class TestElevenLabsVoiceCacheTTL:
             elevenlabs.VOICES.clear()
             elevenlabs.VOICES.update(saved_voices)
             elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
-            elevenlabs._voices_force_fetched_at = 0.0  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_force_fetched_at = saved_force_at  # pyright: ignore[reportPrivateUsage]
 
     def test_deleted_voice_removed_after_ttl_expiry(
         self, mock_elevenlabs_client: MagicMock
