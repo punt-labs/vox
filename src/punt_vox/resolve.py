@@ -75,8 +75,9 @@ def resolve_voice_and_language(
     If only voice is provided, infers language from the voice (best-effort).
     If both, validates compatibility.
 
-    When *config_path* is provided (or defaults to ``.vox/config.md``),
-    reads the ``voice`` field as session default.
+    When *config_path* is provided (or defaults to
+    ``.punt-labs/vox/config.md``), reads the ``voice`` field as session
+    default.
     """
     if language is not None:
         language = validate_language(language)

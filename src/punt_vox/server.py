@@ -34,8 +34,9 @@ mcp = FastMCP(
         "summarizing what you completed and call the unmute tool with "
         "ephemeral=true. Mood tags are pre-resolved in config \u2014 do not "
         "pass vibe_tags. No other output.\n\n"
-        "Do NOT use Read, Write, or Bash tools to access .vox/config.md. "
-        "All config state is available through MCP tools or hook context."
+        "Do NOT use Read, Write, or Bash tools to access "
+        ".punt-labs/vox/config.md. All config state is available through "
+        "MCP tools or hook context."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
@@ -48,7 +49,7 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 @dataclass
 class SessionState:
-    """In-memory session state. Seeded from .vox/config.md on startup."""
+    """In-memory session state. Seeded from .punt-labs/vox/config.md on startup."""
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     notify: str = "n"
@@ -73,14 +74,14 @@ _state: SessionState = SessionState()
 
 
 def _find_config() -> Path | None:
-    """Walk up from cwd to find .vox/config.md."""
-    from punt_vox.config import find_config
+    """Walk up from cwd to find per-repo config.md."""
+    from punt_vox.dirs import find_config
 
     return find_config()
 
 
 def _seed_state_from_config(config_path: Path | None) -> SessionState:
-    """Read .vox/config.md once and return a SessionState."""
+    """Read per-repo config.md once and return a SessionState."""
     if config_path is None or not config_path.exists():
         return SessionState()
 
@@ -123,12 +124,9 @@ def _validate_voice_settings(
 
 def _default_output_dir() -> Path:
     """Resolve the default output directory for record tool."""
-    import os
+    from punt_vox.dirs import default_output_dir
 
-    env_dir = os.environ.get("VOX_OUTPUT_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return Path.home() / "vox-output"
+    return default_output_dir()
 
 
 def _voxd_client() -> VoxClientSync:
@@ -183,7 +181,7 @@ def unmute(
              {"text": "Hi."}]
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
-        ephemeral: Write to .vox/ in cwd and clean up previous files.
+        ephemeral: Write to .punt-labs/vox/ephemeral/ and clean up previous files.
             Defaults to true (unmute is for playback, not saving).
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
@@ -202,6 +200,10 @@ def unmute(
         JSON string with synthesis results.
     """
     _validate_voice_settings(stability, similarity, style)
+
+    # ephemeral is accepted for callers (architecture spec) but voxd
+    # handles ephemeral cleanup internally today.  Silence linters.
+    _ = ephemeral
 
     # Update in-memory state for persistent fields.
     if provider is not None:
@@ -327,7 +329,7 @@ def record(
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
         output_path: Full path for the output file. Auto-generated if omitted.
         output_dir: Directory for output. Defaults to VOX_OUTPUT_DIR
-            env var or ~/vox-output/.
+            env var or ~/Music/vox/.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
@@ -867,7 +869,7 @@ def run_server() -> None:
     configure_logging(stderr_level="INFO")
     logger.info("Starting vox MCP server (mic)")
 
-    # Seed session state from .vox/config.md if it exists.
+    # Seed session state from per-repo config.md if it exists.
     config_path = _find_config()
     _state = _seed_state_from_config(config_path)
 

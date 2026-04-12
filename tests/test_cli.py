@@ -1195,6 +1195,11 @@ class TestDoctorCommand:
         # explicit ``legacy_unit_path`` fixture.
         resolved_legacy = legacy_unit_path or (tmp_path / "no-such-legacy-unit")
 
+        # Create Music dir so the Music-directory doctor check passes.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+        # Create output dir so the output-directory doctor check passes.
+        (tmp_path / "audio").mkdir(exist_ok=True)
+
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1212,6 +1217,13 @@ class TestDoctorCommand:
             patch(
                 f"{_CLI}._legacy_user_unit_path",
                 return_value=resolved_legacy,
+            ),
+            # Isolate legacy-path doctor checks from the real filesystem.
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
             ),
         ):
             result = runner.invoke(app, ["doctor"])
@@ -1317,6 +1329,10 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
+        # Create Music and output dirs so doctor checks pass.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1330,6 +1346,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1645,6 +1671,10 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
+        # Create Music and output dirs so doctor checks pass.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1658,6 +1688,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1698,6 +1738,10 @@ class TestDoctorCommand:
         mock_client = MagicMock()
         mock_client.health.side_effect = VoxdConnectionError("not running")
 
+        # Create Music and output dirs so doctor checks pass.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1711,6 +1755,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 

@@ -6,7 +6,7 @@ if _git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) && [[ -n "$_git
 else
   _repo_root="."
 fi
-[[ -f "${_repo_root}/.vox/config.md" ]] || exit 0
+[[ -f "${_repo_root}/.punt-labs/vox/config.md" ]] || [[ -f "${_repo_root}/.vox/config.md" ]] || exit 0
 
 # Buffer stdin so fallback still has data if daemon relay fails.
 _stdin=$(cat)

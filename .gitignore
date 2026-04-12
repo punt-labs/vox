@@ -29,6 +29,9 @@ research/
 .entire/
 .vscode/
 
+# Per-repo vox session state (config, ephemeral audio)
+.punt-labs/vox/
+
 # LaTeX auxiliary files (prfaq.pdf is tracked, build artifacts are not)
 *.aux
 *.bbl

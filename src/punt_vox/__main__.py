@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -23,15 +24,13 @@ import typer
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
-    DEFAULT_CONFIG_PATH,
-    find_config,
     read_config,
     write_field,
     write_fields,
 )
+from punt_vox.dirs import DEFAULT_CONFIG_PATH, default_output_dir, find_config
 from punt_vox.hooks import hook_app
 from punt_vox.normalize import normalize_for_speech
-from punt_vox.output import default_output_dir
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
 from punt_vox.service import (
@@ -303,7 +302,7 @@ OutputOpt = Annotated[
 ]
 OutputDirOpt = Annotated[
     Path | None,
-    typer.Option("--output-dir", "-d", help="Output directory. Default: ~/vox-output."),
+    typer.Option("--output-dir", "-d", help="Output directory. Default: ~/Music/vox."),
 ]
 StabilityOpt = Annotated[
     float | None,
@@ -1038,6 +1037,59 @@ def doctor() -> None:
             f"Daemon: reachable but unhealthy \u2014 {exc}",
         )
 
+    # Legacy .vox/ directory (vox-4jk migration)
+    legacy_vox = Path.cwd() / ".vox"
+    if legacy_vox.is_dir() and not legacy_vox.is_symlink():
+        if (legacy_vox / "config.md").exists():
+            _check(
+                _FAIL,
+                f"Legacy .vox/ directory: {legacy_vox} contains config.md"
+                " \u2014 run 'vox install' to migrate to .punt-labs/vox/",
+            )
+        else:
+            _check(
+                _WARN,
+                f"Legacy .vox/ directory: {legacy_vox} exists but has no"
+                " config.md \u2014 safe to remove manually",
+            )
+
+    # Legacy ~/vox-output/ directory (vox-4jk migration)
+    legacy_output = Path.home() / "vox-output"
+    if legacy_output.is_dir():
+        try:
+            count = sum(1 for _ in legacy_output.rglob("*") if _.is_file())
+        except OSError:
+            count = -1
+        if count > 0:
+            _check(
+                _WARN,
+                f"Legacy audio: ~/vox-output contains {count} file(s)"
+                " \u2014 run 'vox migrate-audio' to move to ~/Music/vox/",
+            )
+        elif count == 0:
+            _check(
+                _WARN,
+                "Legacy audio: ~/vox-output exists but is empty"
+                " \u2014 safe to remove: rm -rf ~/vox-output",
+            )
+        else:
+            _check(
+                _WARN,
+                "Legacy audio: ~/vox-output exists but is unreadable"
+                " \u2014 check permissions",
+            )
+
+    # Music directory existence
+    from punt_vox.dirs import _resolve_music_dir  # pyright: ignore[reportPrivateUsage]
+
+    music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
+    if not music_dir.is_dir():
+        _check(
+            _WARN,
+            f"Music directory: {music_dir} does not exist"
+            " \u2014 will be created on first 'vox record'",
+        )
+
     # Legacy user-level vox.service regression guard (Linux only).
     #
     # vox-45r: an earlier install layout registered a user-level
@@ -1148,19 +1200,26 @@ def doctor() -> None:
             required=False,
         )
 
-    # Output directory
+    # Output directory — verify writability without creating it.
+    # The directory is created lazily on first 'vox record'.
     out_dir = default_output_dir()
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        test_file = out_dir / ".doctor_test"
-        test_file.write_text("ok")
-        test_file.unlink()
-        _check(_PASS, f"Output directory: {out_dir}")
-    except OSError as e:
+    if out_dir.is_dir():
+        try:
+            test_file = out_dir / ".doctor_test"
+            test_file.write_text("ok")
+            test_file.unlink()
+            _check(_PASS, f"Output directory: {out_dir}")
+        except OSError as e:
+            _check(
+                _FAIL,
+                f"Output directory: {out_dir} ({e})"
+                " \u2014 check permissions or use --output-dir",
+            )
+    else:
         _check(
-            _FAIL,
-            f"Output directory: {out_dir} ({e})"
-            " \u2014 check permissions or use --output-dir",
+            _WARN,
+            f"Output directory: {out_dir} does not exist"
+            " \u2014 will be created on first 'vox record'",
         )
 
     summary = f"{passed} passed, {failed} failed"
@@ -1179,6 +1238,131 @@ def doctor() -> None:
 
     if failed > 0:
         raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# migrate-audio — move saved audio from ~/vox-output to ~/Music/vox
+# ---------------------------------------------------------------------------
+
+
+@app.command("migrate-audio")
+def migrate_audio_cmd(
+    execute: Annotated[
+        bool, typer.Option("--execute", help="Actually move files.")
+    ] = False,
+    source: Annotated[
+        Path | None, typer.Option("--source", help="Source directory.")
+    ] = None,
+    dest: Annotated[
+        Path | None, typer.Option("--dest", help="Destination directory.")
+    ] = None,
+) -> None:
+    """Migrate saved audio from ~/vox-output to ~/Music/vox."""
+    import shutil as _shutil
+
+    src_dir = source or (Path.home() / "vox-output")
+    dst_dir = dest or default_output_dir()
+
+    if not src_dir.exists():
+        typer.echo("Nothing to migrate: source directory does not exist.")
+        return
+
+    if not src_dir.is_dir():
+        typer.echo(f"Source is not a directory: {src_dir}")
+        raise typer.Exit(code=1)
+
+    # Build list of (src_path, dst_path) pairs.
+    pairs: list[tuple[Path, Path]] = []
+    conflicts: list[tuple[Path, Path]] = []
+    skipped: list[tuple[Path, str]] = []
+    total_size = 0
+
+    for src_file in sorted(src_dir.rglob("*")):
+        if not src_file.is_file():
+            continue
+        rel = src_file.relative_to(src_dir)
+        # Special case: music/ -> tracks/
+        parts = rel.parts
+        if parts and parts[0] == "music":
+            rel = Path("tracks", *parts[1:])
+        dst_file = dst_dir / rel
+        try:
+            total_size += src_file.stat().st_size
+        except OSError as e:
+            skipped.append((src_file, f"unreadable ({e})"))
+            continue
+
+        if dst_file.exists():
+            try:
+                src_stat = src_file.stat()
+                dst_stat = dst_file.stat()
+            except OSError as e:
+                skipped.append((src_file, f"unreadable ({e})"))
+                continue
+            same_size = src_stat.st_size == dst_stat.st_size
+            same_mtime = abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
+            if same_size and same_mtime:
+                skipped.append((src_file, "already migrated"))
+            else:
+                conflicts.append((src_file, dst_file))
+        else:
+            pairs.append((src_file, dst_file))
+
+    if not pairs and not conflicts and not skipped:
+        typer.echo("Nothing to migrate: source directory is empty.")
+        return
+
+    size_mb = total_size / (1024 * 1024)
+    file_count = len(pairs) + len(conflicts) + len(skipped)
+
+    if not execute:
+        typer.echo("vox migrate-audio: dry run (pass --execute to move files)\n")
+        typer.echo(f"Source:      {src_dir} ({file_count} files, {size_mb:.1f} MB)")
+        typer.echo(f"Destination: {dst_dir}\n")
+        for src_file, dst_file in pairs:
+            typer.echo(f"  {src_file} -> {dst_file}")
+        for src_file, dst_file in conflicts:
+            typer.echo(f"  {src_file} -> {dst_file} [CONFLICT]")
+        for src_file, reason in skipped:
+            typer.echo(f"  {src_file} [SKIP: {reason}]")
+        count = len(pairs)
+        typer.echo(f"\n{count} files would be moved. Run with --execute.")
+        if conflicts:
+            typer.echo(f"{len(conflicts)} conflict(s) would be skipped.")
+        return
+
+    # Execute mode: move files.
+    moved = 0
+    moved_bytes = 0
+    for src_file, dst_file in pairs:
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _shutil.move(str(src_file), str(dst_file))
+            moved += 1
+            moved_bytes += dst_file.stat().st_size
+        except PermissionError:
+            typer.echo(f"  warning: permission denied: {src_file}", err=True)
+        except OSError as exc:
+            typer.echo(f"  warning: {exc}", err=True)
+
+    # Clean up empty source dirs.
+    removed_source = False
+    for dirpath in sorted(src_dir.rglob("*"), reverse=True):
+        if dirpath.is_dir():
+            with contextlib.suppress(OSError):
+                dirpath.rmdir()
+    try:
+        src_dir.rmdir()
+        removed_source = True
+    except OSError:
+        pass
+
+    moved_mb = moved_bytes / (1024 * 1024)
+    typer.echo(f"Moved {moved} files from {src_dir} to {dst_dir} ({moved_mb:.1f} MB)")
+    if conflicts:
+        typer.echo(f"Skipped {len(conflicts)} conflict(s).")
+    if removed_source:
+        typer.echo(f"Removed empty {src_dir} directory.")
 
 
 # ---------------------------------------------------------------------------

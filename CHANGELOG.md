@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Directory migration from `.vox/` to `.punt-labs/vox/` (vox-4jk)**: per-repo config now lives at `.punt-labs/vox/config.md` (was `.vox/config.md`). Saved audio output defaults to `~/Music/vox/` (was `~/vox-output/`). Music tracks live at `~/Music/vox/tracks/` (was `~/vox-output/music/`). New `dirs.py` module centralizes all cross-platform path resolution. Auto-migration runs on `vox install` and `vox daemon install`; shell hooks check both paths during transition. `vox migrate-audio` command moves saved audio from `~/vox-output/` to `~/Music/vox/` with dry-run by default (`--execute` to move). `vox doctor` checks for legacy `.vox/` directory and `~/vox-output/` with remediation hints.
+
+### Changed
+
+- **Default output directory**: `default_output_dir()` now returns `~/Music/vox/` instead of `~/vox-output/`. `VOX_OUTPUT_DIR` env var override still works.
+
 ## [4.5.1] - 2026-04-11
 
 ## [4.5.0] - 2026-04-11

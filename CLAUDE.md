@@ -152,9 +152,10 @@ Do NOT use missions for: exploratory research, work you do yourself, or epics th
 
 ### Workflow
 
+0. **Claim**: `bd update <id> --status=in_progress` and `biff plan "<bead-id>: <summary>"`. Both must be set before any work starts — other agents check `/who` to see what's active.
 1. **Scaffold**: `/mission` skill scaffolds the contract YAML from conversation context.
 2. **Confirm**: present the contract to the user (or decide as leader). Edit any field before creation.
-3. **Create**: `ethos mission create --file .tmp/missions/<name>.yaml` — returns a mission ID.
+3. **Create**: `ethos mission create --file .tmp/missions/<name>.yaml` — returns a mission ID. Update biff plan to include the mission ID.
 4. **Spawn**: `Agent(subagent_type=<worker>, run_in_background=true)` with a prompt that points at the mission ID. The worker reads the contract via `ethos mission show <id>` as its first action.
 5. **Track**: `ethos mission show <id>`, `ethos mission log <id>`, `ethos mission results <id>`.
 6. **Review**: read the result artifact. Pass → `ethos mission close <id>`. Continue → `ethos mission reflect <id> --file <path>` then `ethos mission advance <id>`. Fail → `ethos mission close <id> --status failed`.

@@ -151,12 +151,12 @@ def get_provider(
 
     Resolution priority for provider name:
       1. Explicit ``name`` argument
-      2. Session config (``.vox/config.md`` provider field)
+      2. Session config (``.punt-labs/vox/config.md`` provider field)
       3. ``TTS_PROVIDER`` env var / API key auto-detection
 
     Resolution priority for model (passed via kwargs):
       1. Explicit ``model`` kwarg
-      2. Session config (``.vox/config.md`` model field)
+      2. Session config (``.punt-labs/vox/config.md`` model field)
       3. ``TTS_MODEL`` env var / provider default
 
     Args:
@@ -164,7 +164,7 @@ def get_provider(
             session config then auto-detects.
         config_path: Path to session config file. Use
             ``find_config()`` to locate the nearest config.
-            Defaults to ``.vox/config.md`` in the current directory.
+            Defaults to ``.punt-labs/vox/config.md`` in the current directory.
         **kwargs: Provider-specific options (e.g. model='tts-1-hd').
 
     Returns:
