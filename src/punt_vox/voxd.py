@@ -2060,6 +2060,7 @@ async def _handle_music_on(
     ctx.music_owner = owner_id
     ctx.music_vibe = (vibe, vibe_tags)
     ctx.music_track_name = _slugify(name, max_len=60) if name else ""
+    ctx.music_replay = False
     ctx.music_state = "generating"
     ctx.music_changed.set()
 
@@ -2086,6 +2087,7 @@ async def _handle_music_off(
     await _kill_music_proc(ctx)
     ctx.music_mode = "off"
     ctx.music_state = "idle"
+    ctx.music_replay = False
     ctx.music_changed.set()
 
     logger.info("Music off")
