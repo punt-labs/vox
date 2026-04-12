@@ -513,9 +513,11 @@ class TestElevenLabsVoiceCacheTTL:
 
         saved_voices = dict(elevenlabs.VOICES)
         saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+        saved_force_at = elevenlabs._voices_force_fetched_at  # pyright: ignore[reportPrivateUsage]
 
         elevenlabs.VOICES.clear()
         elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        elevenlabs._voices_force_fetched_at = 0.0  # pyright: ignore[reportPrivateUsage]
 
         try:
             provider = ElevenLabsProvider(client=mock_elevenlabs_client)
@@ -536,16 +538,19 @@ class TestElevenLabsVoiceCacheTTL:
             updated_response.voices = [*list(old_voices), voice_aria]
             mock_elevenlabs_client.voices.get_all.return_value = updated_response
 
-            # Expire the cache.
+            # Expire the cache and reset force cooldown so the next
+            # miss triggers a fresh fetch.
             elevenlabs._voices_loaded_at = time.monotonic() - _VOICE_CACHE_TTL_S - 1  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_force_fetched_at = 0.0  # pyright: ignore[reportPrivateUsage]
 
-            # Now "aria" resolves after TTL-triggered re-fetch.
+            # Now "aria" resolves after re-fetch.
             result = provider.resolve_voice("aria")
             assert result == "aria"
         finally:
             elevenlabs.VOICES.clear()
             elevenlabs.VOICES.update(saved_voices)
             elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_force_fetched_at = saved_force_at  # pyright: ignore[reportPrivateUsage]
 
     def test_deleted_voice_removed_after_ttl_expiry(
         self, mock_elevenlabs_client: MagicMock
@@ -583,3 +588,43 @@ class TestElevenLabsVoiceCacheTTL:
             elevenlabs.VOICES.clear()
             elevenlabs.VOICES.update(saved_voices)
             elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+    def test_cache_miss_forces_single_refetch_then_cooldown(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        """Cache miss forces one re-fetch; repeated misses within cooldown don't."""
+        import punt_vox.providers.elevenlabs as elevenlabs
+
+        saved_voices = dict(elevenlabs.VOICES)
+        saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+        saved_force_at = elevenlabs._voices_force_fetched_at  # pyright: ignore[reportPrivateUsage]
+
+        elevenlabs.VOICES.clear()
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        elevenlabs._voices_force_fetched_at = 0.0  # pyright: ignore[reportPrivateUsage]
+
+        try:
+            provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+            # Initial fetch populates the cache.
+            provider.list_voices()
+            assert mock_elevenlabs_client.voices.get_all.call_count == 1
+
+            # "zzz_unknown" is not in the cache — triggers a forced re-fetch.
+            with pytest.raises(VoiceNotFoundError):
+                provider.resolve_voice("zzz_unknown")
+            assert mock_elevenlabs_client.voices.get_all.call_count == 2
+
+            # Same unknown voice again within cooldown — no additional fetch.
+            with pytest.raises(VoiceNotFoundError):
+                provider.resolve_voice("zzz_unknown")
+            assert mock_elevenlabs_client.voices.get_all.call_count == 2
+
+            # A different unknown voice within cooldown — still no fetch.
+            with pytest.raises(VoiceNotFoundError):
+                provider.resolve_voice("yyy_also_unknown")
+            assert mock_elevenlabs_client.voices.get_all.call_count == 2
+        finally:
+            elevenlabs.VOICES.clear()
+            elevenlabs.VOICES.update(saved_voices)
+            elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_force_fetched_at = saved_force_at  # pyright: ignore[reportPrivateUsage]

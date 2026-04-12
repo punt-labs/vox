@@ -182,6 +182,7 @@ def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[rep
 
     saved_voices = dict(elevenlabs.VOICES)
     saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+    saved_force_at = elevenlabs._voices_force_fetched_at  # pyright: ignore[reportPrivateUsage]
 
     elevenlabs.VOICES.update(
         {
@@ -197,6 +198,7 @@ def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[rep
     elevenlabs.VOICES.clear()
     elevenlabs.VOICES.update(saved_voices)
     elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+    elevenlabs._voices_force_fetched_at = saved_force_at  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture

@@ -55,16 +55,45 @@ VOICES: dict[str, str] = {}
 # Monotonic timestamp of the last successful voice fetch (0.0 = never).
 _voices_loaded_at: float = 0.0
 
+# Monotonic timestamp of the last *forced* refresh (0.0 = never).
+# Separate from _voices_loaded_at so a TTL-triggered load doesn't
+# block the first forced refresh on a cache miss.
+_voices_force_fetched_at: float = 0.0
+
+# Minimum interval between forced refreshes (cache-miss path).
+# Prevents typos or unknown voice names from hammering the API.
+_VOICE_FORCE_COOLDOWN_S: int = 60
+
 # Voices are re-fetched after this many seconds so newly added voices
 # appear without a daemon restart.
 _VOICE_CACHE_TTL_S: int = 1800
 
 
-def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplicitAny]
-    """Fetch all voices from the ElevenLabs API and populate the cache."""
-    global _voices_loaded_at
+def _load_voices_from_api(client: Any, *, force: bool = False) -> None:  # pyright: ignore[reportExplicitAny]
+    """Fetch all voices from the ElevenLabs API and populate the cache.
+
+    Args:
+        force: Bypass the TTL check on cache miss so newly added voices
+            are found without waiting 30 minutes. Rate-limited by
+            ``_VOICE_FORCE_COOLDOWN_S`` (60s) to prevent typos from
+            hammering the API.
+    """
+    global _voices_loaded_at, _voices_force_fetched_at
     now = time.monotonic()
-    if _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S:
+    cache_fresh = (
+        _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S
+    )
+    if force:
+        # Rate-limit forced refreshes — don't re-fetch if we just
+        # did a forced fetch recently. Uses a separate timestamp so
+        # a normal TTL-triggered load doesn't block the first force.
+        recently_loaded = (
+            _voices_force_fetched_at > 0.0
+            and (now - _voices_force_fetched_at) < _VOICE_FORCE_COOLDOWN_S
+        )
+        if recently_loaded:
+            return
+    elif cache_fresh:
         return
 
     # Fetch into a new dict, then swap atomically on success. If the
@@ -91,6 +120,8 @@ def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplici
     VOICES.clear()
     VOICES.update(fresh)
     _voices_loaded_at = now
+    if force:
+        _voices_force_fetched_at = now
     logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
 
 
@@ -300,7 +331,9 @@ class ElevenLabsProvider:
         if key in VOICES:
             return VOICES[key]
 
-        _load_voices_from_api(self._client)
+        # Cache miss — force a re-fetch regardless of TTL. If the user
+        # just added a voice, waiting 30 minutes is unacceptable.
+        _load_voices_from_api(self._client, force=True)
 
         if key in VOICES:
             return VOICES[key]
