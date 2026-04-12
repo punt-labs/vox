@@ -526,7 +526,20 @@ def _migrate_legacy_repo_config(repo_root: Path) -> bool:
     new_config = new_dir / "config.md"
 
     if new_config.exists():
-        logger.info("Config already at .punt-labs/vox/config.md, skipping migration")
+        # New config already exists — still clean up the legacy file
+        # so doctor stops flagging it.
+        logger.info("Config already at .punt-labs/vox/config.md")
+        try:
+            legacy_config.unlink()
+        except OSError:
+            pass
+        # Clean up ephemeral MP3s and remove .vox/ if empty
+        for f in legacy_dir.glob("*.mp3"):
+            f.unlink(missing_ok=True)
+        try:
+            legacy_dir.rmdir()
+        except OSError:
+            pass
         return False
 
     try:
