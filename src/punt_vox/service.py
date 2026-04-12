@@ -25,6 +25,7 @@ entire install ran as root inside ``$HOME``. See DES-029 in
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import html
 import logging
@@ -526,7 +527,17 @@ def _migrate_legacy_repo_config(repo_root: Path) -> bool:
     new_config = new_dir / "config.md"
 
     if new_config.exists():
-        logger.info("Config already at .punt-labs/vox/config.md, skipping migration")
+        # New config already exists — still clean up the legacy file
+        # so doctor stops flagging it.
+        logger.info("Config already at .punt-labs/vox/config.md")
+        with contextlib.suppress(OSError):
+            legacy_config.unlink()
+        # Clean up ephemeral MP3s and remove .vox/ if empty
+        for f in legacy_dir.glob("*.mp3"):
+            with contextlib.suppress(OSError):
+                f.unlink()
+        with contextlib.suppress(OSError):
+            legacy_dir.rmdir()
         return False
 
     try:
