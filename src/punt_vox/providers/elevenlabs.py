@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -51,15 +52,23 @@ _VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 # Cache of resolved voices, keyed by lowercase name → voice_id.
 VOICES: dict[str, str] = {}
 
-# Whether the voice list has been fetched from the API.
-_voices_loaded: bool = False
+# Monotonic timestamp of the last successful voice fetch (0.0 = never).
+_voices_loaded_at: float = 0.0
+
+# Voices are re-fetched after this many seconds so newly added voices
+# appear without a daemon restart.
+_VOICE_CACHE_TTL_S: int = 1800
 
 
 def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplicitAny]
     """Fetch all voices from the ElevenLabs API and populate the cache."""
-    global _voices_loaded
-    if _voices_loaded:
+    global _voices_loaded_at
+    now = time.monotonic()
+    if _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S:
         return
+
+    # Clear before re-fetching so deleted voices don't persist.
+    VOICES.clear()
 
     response: Any = client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -75,7 +84,7 @@ def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplici
         if short_name != full_name and short_name not in VOICES:
             VOICES[short_name] = vid
 
-    _voices_loaded = True
+    _voices_loaded_at = now
     logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
 
 

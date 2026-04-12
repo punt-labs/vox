@@ -176,10 +176,12 @@ def mock_elevenlabs_client() -> MagicMock:
 @pytest.fixture(autouse=True)
 def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
     """Pre-populate the ElevenLabs voice cache so resolve_voice() never hits the API."""
+    import time
+
     import punt_vox.providers.elevenlabs as elevenlabs
 
     saved_voices = dict(elevenlabs.VOICES)
-    saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]
+    saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
 
     elevenlabs.VOICES.update(
         {
@@ -187,13 +189,14 @@ def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[rep
             "drew": "29vD33N1CtxCmqQRPOHJ",
         }
     )
-    elevenlabs._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+    # Set a recent timestamp so the cache appears fresh.
+    elevenlabs._voices_loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
 
     yield
 
     elevenlabs.VOICES.clear()
     elevenlabs.VOICES.update(saved_voices)
-    elevenlabs._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
+    elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
