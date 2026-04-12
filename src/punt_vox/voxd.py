@@ -12,6 +12,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import math
 import importlib.resources
 import json
 import logging
@@ -381,6 +382,7 @@ _AUDIO_ENV_KEYS: tuple[str, ...] = (
 _SUSPICIOUS_ELAPSED_S = 0.05
 
 _PLAYBACK_TIMEOUT_DEFAULT_S = 30.0
+_PLAYBACK_TIMEOUT_PADDING_S = 10.0
 _PROBE_TIMEOUT_S = 5.0
 
 # Cap on the stderr blob we keep per playback. ffplay without -loglevel
@@ -554,11 +556,10 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
         return
 
     duration = await _probe_duration(path)
-    timeout = (
-        max(duration + 10.0, _PLAYBACK_TIMEOUT_DEFAULT_S)
-        if duration is not None
-        else _PLAYBACK_TIMEOUT_DEFAULT_S
-    )
+    if duration is not None and math.isfinite(duration) and duration > 0:
+        timeout = max(duration + _PLAYBACK_TIMEOUT_PADDING_S, _PLAYBACK_TIMEOUT_DEFAULT_S)
+    else:
+        timeout = _PLAYBACK_TIMEOUT_DEFAULT_S
 
     logger.info(
         "Playback spawn: cmd=%s size=%d audio_env=%s timeout=%.1fs",
@@ -625,7 +626,7 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
             path=path,
             rc=-1,
             elapsed=elapsed,
-            stderr=f"timeout after {timeout}s",
+            stderr=f"timeout after {timeout:.1f}s",
         )
         return
 
