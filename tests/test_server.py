@@ -951,7 +951,9 @@ class TestSessionState:
 class TestMusicTool:
     """Tests for the music MCP tool."""
 
-    def test_music_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_music_on_with_style_and_vibe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import punt_vox.server as srv
 
         srv._state.vibe = "focused"
@@ -967,6 +969,10 @@ class TestMusicTool:
 
         result = json.loads(music(mode="on", style="techno"))
 
+        expected = (
+            "\u266a Music on \u2014 generating a techno track for your focused mood..."
+        )
+        assert result["message"] == expected
         assert result["status"] == "generating"
         assert srv._state.music_mode == "on"
         mock_client.music.assert_called_once_with(
@@ -976,6 +982,56 @@ class TestMusicTool:
             vibe_tags="[calm]",
             owner_id=srv._state.session_id,
         )
+
+    def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Style present, no vibe."""
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on", style="jazz"))
+
+        expected = "\u266a Music on \u2014 generating a jazz track..."
+        assert result["message"] == expected
+
+    def test_music_on_vibe_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Vibe present, no style."""
+        import punt_vox.server as srv
+
+        srv._state.vibe = "chill"
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on"))
+
+        expected = "\u266a Music on \u2014 generating a track for your chill mood..."
+        assert result["message"] == expected
+
+    def test_music_on_neither_style_nor_vibe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No style, no vibe -- ambient fallback."""
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on"))
+
+        assert result["message"] == "\u266a Music on \u2014 generating ambient music..."
 
     def test_music_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
@@ -992,6 +1048,7 @@ class TestMusicTool:
 
         result = json.loads(music(mode="off"))
 
+        assert result["message"] == "\u266a Music off."
         assert result["status"] == "stopped"
         assert srv._state.music_mode == "off"
 
@@ -999,7 +1056,9 @@ class TestMusicTool:
         result = json.loads(music(mode="pause"))
         assert "error" in result
 
-    def test_music_on_no_vibe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_music_on_no_vibe_sends_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When vibe is None, empty strings are sent to voxd."""
         import punt_vox.server as srv
 
@@ -1018,7 +1077,9 @@ class TestMusicTool:
         assert call_kwargs["vibe_tags"] == ""
         assert srv._state.music_mode == "on"
 
-    def test_music_on_no_style(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_music_on_no_style_sends_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When style is None, empty string is sent."""
         mock_client = MagicMock()
         mock_client.music.return_value = {
@@ -1033,7 +1094,7 @@ class TestMusicTool:
         call_kwargs = mock_client.music.call_args[1]
         assert call_kwargs["style"] == ""
 
-    def test_music_connection_error_resets_mode(
+    def test_music_connection_error_daemon_unreachable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import punt_vox.server as srv
@@ -1047,10 +1108,11 @@ class TestMusicTool:
 
         result = json.loads(music(mode="on"))
 
-        assert "error" in result
+        assert result["message"] == "\u266a Daemon unreachable \u2014 music off."
+        assert result["error"] == "daemon unreachable"
         assert srv._state.music_mode == "off"
 
-    def test_music_protocol_error_resets_mode(
+    def test_music_protocol_error_with_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import punt_vox.server as srv
@@ -1064,7 +1126,8 @@ class TestMusicTool:
 
         result = json.loads(music(mode="on"))
 
-        assert "error" in result
+        assert result["message"] == "\u266a Music error: bad response"
+        assert result["error"] == "bad response"
         assert srv._state.music_mode == "off"
 
 

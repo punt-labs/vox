@@ -489,6 +489,18 @@ def vibe(
     return json.dumps({"vibe": updates})
 
 
+def _music_on_message(style: str | None, vibe: str | None) -> str:
+    """Build the human-readable message for music-on."""
+    prefix = "\u266a Music on \u2014 generating"
+    if style and vibe:
+        return f"{prefix} a {style} track for your {vibe} mood..."
+    if style:
+        return f"{prefix} a {style} track..."
+    if vibe:
+        return f"{prefix} a track for your {vibe} mood..."
+    return f"{prefix} ambient music..."
+
+
 @mcp.tool()
 def music(
     mode: str,
@@ -507,7 +519,8 @@ def music(
             last-set style.
 
     Returns:
-        JSON string with the voxd response.
+        JSON string with a human-readable ``message`` field and
+        the raw voxd response fields.
     """
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
@@ -521,13 +534,31 @@ def music(
             vibe_tags=_state.vibe_tags or "",
             owner_id=_state.session_id,
         )
+    except VoxdConnectionError:
+        logger.warning("voxd unreachable in music tool; music off", exc_info=True)
+        _state.music_mode = "off"
+        return json.dumps(
+            {
+                "message": "\u266a Daemon unreachable \u2014 music off.",
+                "error": "daemon unreachable",
+            }
+        )
     except Exception as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
         _state.music_mode = "off"
-        return _error(str(exc))
+        return json.dumps(
+            {
+                "message": f"\u266a Music error: {exc}",
+                "error": str(exc),
+            }
+        )
 
     _state.music_mode = mode
-    return json.dumps(resp)
+
+    message = (
+        _music_on_message(style, _state.vibe) if mode == "on" else "\u266a Music off."
+    )
+    return json.dumps({"message": message, **resp})
 
 
 @mcp.tool()
