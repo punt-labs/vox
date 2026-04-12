@@ -557,7 +557,10 @@ async def _play_audio(path: Path, ctx: DaemonContext) -> None:
 
     duration = await _probe_duration(path)
     if duration is not None and math.isfinite(duration) and duration > 0:
-        timeout = max(duration + _PLAYBACK_TIMEOUT_PADDING_S, _PLAYBACK_TIMEOUT_DEFAULT_S)
+        timeout = max(
+            duration + _PLAYBACK_TIMEOUT_PADDING_S,
+            _PLAYBACK_TIMEOUT_DEFAULT_S,
+        )
     else:
         timeout = _PLAYBACK_TIMEOUT_DEFAULT_S
 
