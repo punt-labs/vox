@@ -13,6 +13,7 @@ from typing import Any
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
+from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
@@ -204,6 +205,12 @@ class ElevenLabsProvider:
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
         """Synthesize text to an MP3 file using ElevenLabs."""
+        # Strip expressive tags for models that don't interpret them,
+        # so the TTS engine doesn't speak "[serious]" as a literal word.
+        text = request.text
+        if not self.supports_expressive_tags:
+            text = strip_vibe_tags(text)
+
         resolved_voice = request.voice or self.default_voice
         voice_id = self._resolve_voice_id(resolved_voice)
         rate = request.rate if request.rate is not None else 100
@@ -217,10 +224,13 @@ class ElevenLabsProvider:
 
         char_limit = _MODEL_CHAR_LIMITS.get(self._model, _DEFAULT_CHAR_LIMIT)
 
-        if len(request.text) > char_limit:
-            self._chunked_synthesize(request, output_path, voice_id, char_limit)
+        if len(text) > char_limit:
+            from dataclasses import replace as _replace
+
+            req = _replace(request, text=text)
+            self._chunked_synthesize(req, output_path, voice_id, char_limit)
         else:
-            self._single_synthesize(request.text, output_path, voice_id, request)
+            self._single_synthesize(text, output_path, voice_id, request)
 
         logger.info("Wrote %s", output_path)
         display_voice = (
@@ -230,7 +240,7 @@ class ElevenLabsProvider:
         )
         return SynthesisResult(
             path=output_path,
-            text=request.text,
+            text=text,
             provider=AudioProviderId.elevenlabs,
             voice=display_voice,
             language=request.language,

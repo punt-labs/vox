@@ -11,6 +11,7 @@ import pytest
 from pydub import AudioSegment
 
 from punt_vox.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
@@ -365,3 +366,101 @@ class TestTrailingSilence:
         buf = io.BytesIO()
         silence.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
         return buf.getvalue()
+
+
+class TestVibeTagStripping:
+    """Verify that providers strip vibe tags before synthesis."""
+
+    def test_polly_strips_vibe_tags(
+        self,
+        mock_boto_client: MagicMock,
+        tts_client: TTSClient,
+        tmp_output_dir: Path,
+    ) -> None:
+        """Polly should never see bracketed vibe tags in the SSML text."""
+        request = SynthesisRequest(text="[serious] Hello world", voice="joanna")
+        out = tmp_output_dir / "stripped.mp3"
+
+        result = tts_client.synthesize(request, out)
+
+        call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
+        assert "[serious]" not in call_kwargs["Text"]
+        assert "Hello world" in call_kwargs["Text"]
+        assert result.text == "Hello world"
+
+    def test_polly_preserves_non_tag_brackets(
+        self,
+        mock_boto_client: MagicMock,
+        tts_client: TTSClient,
+        tmp_output_dir: Path,
+    ) -> None:
+        """Brackets with uppercase or numbers should survive stripping."""
+        request = SynthesisRequest(text="See [Figure 1] for details", voice="joanna")
+        out = tmp_output_dir / "preserved.mp3"
+
+        result = tts_client.synthesize(request, out)
+
+        call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
+        assert "[Figure 1]" in call_kwargs["Text"]
+        assert result.text == "See [Figure 1] for details"
+
+    def test_elevenlabs_v3_keeps_tags(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """ElevenLabs eleven_v3 model should keep expressive tags intact."""
+        provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
+        client = TTSClient(provider)
+        request = SynthesisRequest(text="[serious] Hello world", voice="matilda")
+        out = tmp_output_dir / "kept.mp3"
+
+        result = client.synthesize(request, out)
+
+        call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
+        assert "[serious]" in call_kwargs["text"]
+        assert result.text == "[serious] Hello world"
+
+    def test_elevenlabs_flash_strips_tags(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """ElevenLabs non-v3 models should strip expressive tags."""
+        provider = ElevenLabsProvider(
+            model="eleven_flash_v2_5", client=mock_elevenlabs_client
+        )
+        client = TTSClient(provider)
+        request = SynthesisRequest(text="[warm] Hello world", voice="matilda")
+        out = tmp_output_dir / "stripped.mp3"
+
+        result = client.synthesize(request, out)
+
+        call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
+        assert "[warm]" not in call_kwargs["text"]
+        assert "Hello world" in call_kwargs["text"]
+        assert result.text == "Hello world"
+
+    def test_polly_strips_multiple_tags(
+        self,
+        mock_boto_client: MagicMock,
+        tts_client: TTSClient,
+        tmp_output_dir: Path,
+    ) -> None:
+        """Multiple vibe tags at various positions should all be stripped."""
+        request = SynthesisRequest(
+            text="[warm] Start [excited] middle [calm] end",
+            voice="joanna",
+        )
+        out = tmp_output_dir / "multi.mp3"
+
+        result = tts_client.synthesize(request, out)
+
+        call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
+        assert "[warm]" not in call_kwargs["Text"]
+        assert "[excited]" not in call_kwargs["Text"]
+        assert "[calm]" not in call_kwargs["Text"]
+        assert "Start" in call_kwargs["Text"]
+        assert "middle" in call_kwargs["Text"]
+        assert "end" in call_kwargs["Text"]
+        assert result.text == "Start middle end"

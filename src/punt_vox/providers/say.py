@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
@@ -184,19 +185,20 @@ class SayProvider:
         Bypasses the AIFF -> ffmpeg -> MP3 -> ffplay pipeline.
         """
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        text = strip_vibe_tags(request.text)
         cmd = [
             "say",
             "-v",
             voice_cfg.name,
             "-r",
             str(wpm),
-            request.text,
+            text,
         ]
         logger.info(
             "say direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,
             wpm,
-            len(request.text),
+            len(text),
         )
         try:
             result = subprocess.run(
@@ -226,6 +228,8 @@ class SayProvider:
 
         Produces AIFF via say, then converts to MP3 via ffmpeg.
         """
+        text = strip_vibe_tags(request.text)
+
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,7 +247,7 @@ class SayProvider:
                     str(wpm),
                     "-o",
                     str(aiff_path),
-                    request.text,
+                    text,
                 ],
                 check=True,
                 timeout=60,
@@ -254,7 +258,7 @@ class SayProvider:
                 "say: voice=%s, wpm=%d, chars=%d",
                 voice_cfg.name,
                 wpm,
-                len(request.text),
+                len(text),
             )
 
             subprocess.run(
@@ -282,7 +286,7 @@ class SayProvider:
         language = request.language or _locale_to_iso(voice_cfg.locale)
         return SynthesisResult(
             path=output_path,
-            text=request.text,
+            text=text,
             provider=AudioProviderId.say,
             voice=voice_cfg.name,
             language=language,

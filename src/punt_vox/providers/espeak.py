@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
@@ -229,19 +230,20 @@ class EspeakProvider:
         entirely: same syscall and same audio session as a user shell.
         """
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        text = strip_vibe_tags(request.text)
         cmd = [
             self._binary,
             "-v",
             voice_cfg.name,
             "-s",
             str(wpm),
-            request.text,
+            text,
         ]
         logger.info(
             "espeak direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,
             wpm,
-            len(request.text),
+            len(text),
         )
         try:
             result = subprocess.run(
@@ -269,6 +271,8 @@ class EspeakProvider:
 
         Produces WAV via espeak-ng, then converts to MP3 via ffmpeg.
         """
+        text = strip_vibe_tags(request.text)
+
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,7 +290,7 @@ class EspeakProvider:
                     str(wpm),
                     "-w",
                     str(wav_path),
-                    request.text,
+                    text,
                 ],
                 check=True,
                 timeout=60,
@@ -295,7 +299,7 @@ class EspeakProvider:
                 "espeak-ng: voice=%s, wpm=%d, chars=%d",
                 voice_cfg.name,
                 wpm,
-                len(request.text),
+                len(text),
             )
 
             subprocess.run(
@@ -322,7 +326,7 @@ class EspeakProvider:
         language = request.language or voice_cfg.language
         return SynthesisResult(
             path=output_path,
-            text=request.text,
+            text=text,
             provider=AudioProviderId.espeak,
             voice=voice_cfg.name,
             language=language,

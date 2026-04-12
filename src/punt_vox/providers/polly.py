@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import boto3
 
+from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
@@ -227,10 +228,12 @@ class PollyProvider:
         Resolves the voice name to Polly parameters internally, wraps
         the text in SSML with prosody rate, and writes the MP3 output.
         """
+        text = strip_vibe_tags(request.text)
+
         resolved_voice = request.voice or self.default_voice
         voice_cfg = self._resolve_voice_config(resolved_voice)
         rate = request.rate if request.rate is not None else 100
-        ssml_text = f'<speak><prosody rate="{rate}%">{request.text}</prosody></speak>'
+        ssml_text = f'<speak><prosody rate="{rate}%">{text}</prosody></speak>'
         response = self._client.synthesize_speech(
             Text=ssml_text,
             TextType="ssml",
@@ -244,7 +247,7 @@ class PollyProvider:
         logger.info(
             "API call: provider=polly, voice=%s, chars=%d",
             voice_cfg.voice_id,
-            len(request.text),
+            len(text),
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -254,7 +257,7 @@ class PollyProvider:
         language = request.language or _infer_iso_from_bcp47(voice_cfg.language_code)
         return SynthesisResult(
             path=output_path,
-            text=request.text,
+            text=text,
             provider=AudioProviderId.polly,
             voice=voice_cfg.voice_id,
             language=language,

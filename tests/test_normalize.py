@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.normalize import normalize_for_speech
+from punt_vox.normalize import normalize_for_speech, strip_vibe_tags
 
 # ---------------------------------------------------------------------------
 # snake_case splitting
@@ -334,3 +334,88 @@ class TestSymbolStripping:
 
     def test_punctuation_only_token_dropped(self) -> None:
         assert normalize_for_speech("hello () world") == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# strip_vibe_tags
+# ---------------------------------------------------------------------------
+
+
+class TestStripVibeTags:
+    """Tests for strip_vibe_tags — removal of ElevenLabs expressive tags."""
+
+    def test_single_word_tag(self) -> None:
+        assert strip_vibe_tags("[serious] Hello world") == "Hello world"
+
+    def test_two_word_tag_preserved(self) -> None:
+        """Two-word bracketed tokens are NOT stripped."""
+        text = "[slow breath] Hello world"
+        assert strip_vibe_tags(text) == text
+
+    def test_tag_at_end(self) -> None:
+        assert strip_vibe_tags("Hello world [warm]") == "Hello world"
+
+    def test_tag_in_middle(self) -> None:
+        assert strip_vibe_tags("Hello [excited] world") == "Hello world"
+
+    def test_multiple_tags(self) -> None:
+        assert strip_vibe_tags("[serious] [warm] Hello world") == "Hello world"
+
+    def test_no_tags_passthrough(self) -> None:
+        assert strip_vibe_tags("Hello world") == "Hello world"
+
+    def test_empty_string(self) -> None:
+        assert strip_vibe_tags("") == ""
+
+    def test_all_tags_returns_original(self) -> None:
+        """When stripping removes all content, return the original text."""
+        assert strip_vibe_tags("[serious] [warm]") == "[serious] [warm]"
+
+    def test_single_tag_only_returns_original(self) -> None:
+        assert strip_vibe_tags("[calm]") == "[calm]"
+
+    def test_preserves_uppercase_brackets(self) -> None:
+        assert strip_vibe_tags("[IMPORTANT] Hello") == "[IMPORTANT] Hello"
+
+    def test_preserves_numbered_brackets(self) -> None:
+        assert strip_vibe_tags("[1] Hello") == "[1] Hello"
+
+    def test_preserves_figure_reference(self) -> None:
+        assert strip_vibe_tags("[Figure 1] Hello") == "[Figure 1] Hello"
+
+    def test_preserves_mixed_case_brackets(self) -> None:
+        assert strip_vibe_tags("[Figure A] Hello") == "[Figure A] Hello"
+
+    def test_preserves_three_word_brackets(self) -> None:
+        text = "[citation needed here] Hello"
+        assert strip_vibe_tags(text) == text
+
+    def test_tag_with_digits_not_stripped(self) -> None:
+        assert strip_vibe_tags("[excited2] Hello") == "[excited2] Hello"
+
+    def test_sighs_tag(self) -> None:
+        assert strip_vibe_tags("[sighs] Hello world") == "Hello world"
+
+    def test_multiple_positions(self) -> None:
+        result = strip_vibe_tags("[warm] Start [excited] middle [calm] end")
+        assert result == "Start middle end"
+
+    def test_whitespace_collapsed(self) -> None:
+        result = strip_vibe_tags("[warm]  Hello  [calm]  world")
+        assert result == "Hello world"
+
+    @pytest.mark.parametrize(
+        ("input_text", "expected"),
+        [
+            ("[serious] Hello", "Hello"),
+            ("Hello [warm]", "Hello"),
+            ("[slow breath] text", "[slow breath] text"),
+            ("[sighs] sigh", "sigh"),
+            ("no tags here", "no tags here"),
+            ("[Figure 1] caption", "[Figure 1] caption"),
+            ("[1] item", "[1] item"),
+            ("[LOUD] text", "[LOUD] text"),
+        ],
+    )
+    def test_parametrized(self, input_text: str, expected: str) -> None:
+        assert strip_vibe_tags(input_text) == expected

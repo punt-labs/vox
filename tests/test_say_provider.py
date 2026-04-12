@@ -338,6 +338,16 @@ class TestSayProviderPlayDirectly:
             )
         assert rc == 5
 
+    def test_strips_vibe_tags(self, say_provider: SayProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+        with patch("punt_vox.providers.say.subprocess.run", mock):
+            say_provider.play_directly(
+                SynthesisRequest(text="[serious] Hello world", voice="fred")
+            )
+        args = mock.call_args[0][0]
+        assert "Hello world" in args
+        assert "[serious]" not in " ".join(args)
+
 
 class TestSayProviderCheckHealth:
     def test_darwin_with_say(self) -> None:
