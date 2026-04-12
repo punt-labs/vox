@@ -347,8 +347,10 @@ class TestStripVibeTags:
     def test_single_word_tag(self) -> None:
         assert strip_vibe_tags("[serious] Hello world") == "Hello world"
 
-    def test_two_word_tag(self) -> None:
-        assert strip_vibe_tags("[slow breath] Hello world") == "Hello world"
+    def test_two_word_tag_preserved(self) -> None:
+        """Two-word bracketed tokens are NOT stripped."""
+        text = "[slow breath] Hello world"
+        assert strip_vibe_tags(text) == text
 
     def test_tag_at_end(self) -> None:
         assert strip_vibe_tags("Hello world [warm]") == "Hello world"
@@ -407,7 +409,7 @@ class TestStripVibeTags:
         [
             ("[serious] Hello", "Hello"),
             ("Hello [warm]", "Hello"),
-            ("[slow breath] text", "text"),
+            ("[slow breath] text", "[slow breath] text"),
             ("[sighs] sigh", "sigh"),
             ("no tags here", "no tags here"),
             ("[Figure 1] caption", "[Figure 1] caption"),

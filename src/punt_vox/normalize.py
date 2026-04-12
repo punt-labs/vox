@@ -526,19 +526,19 @@ _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 # ---------------------------------------------------------------------------
 
 
-_VIBE_TAG_RE = re.compile(r"\[([a-z]+(?:\s[a-z]+)?)\]")
+_VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 
 
 def strip_vibe_tags(text: str) -> str:
     """Remove ElevenLabs-style expressive tags from *text*.
 
-    Strips bracketed tokens **at any position** that contain one or two
-    lowercase-alpha words -- e.g. ``[serious]``, ``[slow breath]``,
-    ``[sighs]``.
+    Strips bracketed tokens **at any position** that contain a single
+    lowercase-alpha word -- e.g. ``[serious]``, ``[warm]``, ``[sighs]``.
 
     Preserves brackets that don't match this narrow pattern:
-    ``[Figure 1]`` (uppercase), ``[1]`` (digits), ``[citation needed]``
-    (three words), ``[IMPORTANT]`` (all caps).
+    ``[Figure 1]`` (has space/uppercase), ``[1]`` (digits),
+    ``[citation needed]`` (two words), ``[slow breath]`` (two words),
+    ``[IMPORTANT]`` (all caps).
 
     Collapses any extra whitespace left behind after removal.
 
