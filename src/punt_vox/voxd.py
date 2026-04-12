@@ -511,7 +511,8 @@ async def _probe_duration(path: Path) -> float | None:
         )
     except TimeoutError:
         if proc is not None:
-            proc.kill()
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
             with contextlib.suppress(Exception):
                 await proc.wait()
         return None
