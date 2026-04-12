@@ -865,9 +865,11 @@ class DaemonContext:
         self.music_owner: str = ""
         self.music_vibe: tuple[str, str] = ("", "")  # (vibe, vibe_tags)
         self.music_track: Path | None = None
+        self.music_track_name: str = ""
         self.music_proc: asyncio.subprocess.Process | None = None
         self.music_state: str = "idle"  # "idle" | "generating" | "playing"
         self.music_changed: asyncio.Event = asyncio.Event()
+        self.music_replay: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1710,11 +1712,26 @@ async def _kill_music_proc(ctx: DaemonContext) -> None:
     ctx.music_proc = None
 
 
+def _auto_track_name(ctx: DaemonContext) -> str:
+    """Derive a short auto-name from vibe + style + YYYYMMDD-HHMM."""
+    vibe, _ = ctx.music_vibe
+    style = ctx.music_style
+    stamp = time.strftime("%Y%m%d-%H%M")
+    vibe_part = _slugify(vibe, max_len=20) or "ambient"
+    style_part = _slugify(style, max_len=20) or "mix"
+    return f"{vibe_part}-{style_part}-{stamp}"
+
+
 async def _generate_music_track(ctx: DaemonContext) -> Path:
     """Generate a music track from the current vibe and style.
 
     Extracted so the generation phase can run as an ``asyncio.Task``
     concurrently with the playback loop.
+
+    When ``ctx.music_track_name`` is set, the track is saved under
+    that name in ``~/vox-output/music/``. Otherwise an auto-derived
+    name from vibe + style + YYYYMMDD-HHMM is used. The name is stored back
+    into ``ctx.music_track_name`` for status reporting.
     """
     vibe, vibe_tags = ctx.music_vibe
     style = ctx.music_style
@@ -1730,11 +1747,14 @@ async def _generate_music_track(ctx: DaemonContext) -> Path:
     output_dir = _music_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    vibe_slug = _slugify(vibe) if vibe else "none"
-    style_slug = _slugify(style) if style else "none"
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"{timestamp}_{vibe_slug}_{style_slug}.mp3"
+    # Use explicit name if set, otherwise auto-derive.
+    track_name = ctx.music_track_name or _auto_track_name(ctx)
+    safe_name = _slugify(track_name, max_len=60)
+    filename = f"{safe_name}.mp3"
     output_path = output_dir / filename
+
+    # Store the resolved name back for status reporting.
+    ctx.music_track_name = safe_name
 
     from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 
@@ -1778,18 +1798,28 @@ async def _music_loop(ctx: DaemonContext) -> None:
         try:
             # --- Initial generation (no old track to loop) ----------------
             if current_track is None:
-                ctx.music_state = "generating"
-                ctx.music_changed.clear()
-                current_track = await _generate_music_track(ctx)
-                ctx.music_track = current_track
-                retry_count = 0
+                # Replay: a handler already placed a track in ctx.music_track.
+                if ctx.music_replay:
+                    ctx.music_replay = False
+                    ctx.music_changed.clear()
+                    assert ctx.music_track is not None
+                    current_track = ctx.music_track
+                    retry_count = 0
+                else:
+                    ctx.music_state = "generating"
+                    ctx.music_changed.clear()
+                    current_track = await _generate_music_track(ctx)
+                    ctx.music_track = current_track
+                    retry_count = 0
 
-                # Vibe changed during initial generation — regenerate
-                # immediately (no old track to keep looping).
-                if ctx.music_changed.is_set():
-                    logger.info("Vibe changed during initial generation, regenerating")
-                    current_track = None
-                    continue
+                    # Vibe changed during initial generation — regenerate
+                    # immediately (no old track to keep looping).
+                    if ctx.music_changed.is_set():
+                        logger.info(
+                            "Vibe changed during initial generation, regenerating",
+                        )
+                        current_track = None
+                        continue
 
             # --- Playback loop: loop current_track, generate in parallel --
             assert current_track is not None  # guaranteed by initial generation above
@@ -1877,6 +1907,19 @@ async def _music_loop(ctx: DaemonContext) -> None:
                                 asyncio.CancelledError,
                             ):
                                 await gen_task
+                            gen_task = None
+
+                        # Replay: handler pre-set ctx.music_track.
+                        if ctx.music_replay:
+                            ctx.music_replay = False
+                            assert ctx.music_track is not None
+                            new_track = ctx.music_track
+                            await _kill_music_proc(ctx)
+                            current_track = new_track
+                            retry_count = 0
+                            proc_done = True
+                            break
+
                         ctx.music_state = "generating"
                         gen_task = asyncio.create_task(
                             _generate_music_track(ctx),
@@ -1951,18 +1994,62 @@ async def _handle_music_on(
 
     Ownership transfer is atomic: kill existing subprocess, update all
     state fields, then signal MusicLoop. No interleaving.
+
+    When a ``name`` field is present and a track with that name already
+    exists on disk, the existing file is replayed without generation
+    (zero credits).
     """
     request_id = str(msg.get("id", ""))
     owner_id = str(msg.get("owner_id", ""))
     style = str(msg.get("style", ""))
     vibe = str(msg.get("vibe", ""))
     vibe_tags = str(msg.get("vibe_tags", ""))
+    name = str(msg.get("name", ""))
 
     if not owner_id:
         await websocket.send_json(
             {"type": "error", "id": request_id, "message": "owner_id is required"}
         )
         return
+
+    # Check for existing track by name -- skip generation if found.
+    if name:
+        safe_name = _slugify(name, max_len=60)
+        if not safe_name:
+            await websocket.send_json(
+                {"type": "error", "id": request_id, "message": "invalid track name"}
+            )
+            return
+        existing_path = _music_output_dir() / f"{safe_name}.mp3"
+        if existing_path.exists():
+            await _kill_music_proc(ctx)
+            ctx.music_mode = "on"
+            if style:
+                ctx.music_style = style
+            ctx.music_owner = owner_id
+            ctx.music_vibe = (vibe, vibe_tags)
+            ctx.music_track = existing_path
+            ctx.music_track_name = safe_name
+            ctx.music_state = "playing"
+            ctx.music_replay = True
+            ctx.music_changed.set()
+
+            logger.info(
+                "Music on (replay): owner=%s name=%s track=%s",
+                owner_id,
+                safe_name,
+                existing_path,
+            )
+            await websocket.send_json(
+                {
+                    "type": "music_on",
+                    "id": request_id,
+                    "status": "playing",
+                    "track": str(existing_path),
+                    "name": safe_name,
+                }
+            )
+            return
 
     # Atomic ownership transfer: kill existing, update all fields, signal.
     await _kill_music_proc(ctx)
@@ -1972,14 +2059,17 @@ async def _handle_music_on(
         ctx.music_style = style
     ctx.music_owner = owner_id
     ctx.music_vibe = (vibe, vibe_tags)
+    ctx.music_track_name = _slugify(name, max_len=60) if name else ""
+    ctx.music_replay = False
     ctx.music_state = "generating"
     ctx.music_changed.set()
 
     logger.info(
-        "Music on: owner=%s style=%s vibe=%s",
+        "Music on: owner=%s style=%s vibe=%s name=%s",
         owner_id,
         ctx.music_style,
         vibe,
+        ctx.music_track_name,
     )
     await websocket.send_json(
         {"type": "music_on", "id": request_id, "status": "generating"}
@@ -1997,11 +2087,111 @@ async def _handle_music_off(
     await _kill_music_proc(ctx)
     ctx.music_mode = "off"
     ctx.music_state = "idle"
+    ctx.music_replay = False
     ctx.music_changed.set()
 
     logger.info("Music off")
     await websocket.send_json(
         {"type": "music_off", "id": request_id, "status": "stopped"}
+    )
+
+
+async def _handle_music_play(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_play' message: replay a saved track by name."""
+    request_id = str(msg.get("id", ""))
+    name = str(msg.get("name", ""))
+    owner_id = str(msg.get("owner_id", ""))
+
+    if not name:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "name is required"}
+        )
+        return
+
+    if not owner_id:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "owner_id is required"}
+        )
+        return
+
+    safe_name = _slugify(name, max_len=60)
+    if not safe_name:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "invalid track name"}
+        )
+        return
+    track_path = _music_output_dir() / f"{safe_name}.mp3"
+
+    if not track_path.exists():
+        await websocket.send_json(
+            {
+                "type": "error",
+                "id": request_id,
+                "message": f"track not found: {safe_name}",
+            }
+        )
+        return
+
+    # Kill current playback, set up replay.
+    await _kill_music_proc(ctx)
+    ctx.music_mode = "on"
+    ctx.music_owner = owner_id
+    ctx.music_track = track_path
+    ctx.music_track_name = safe_name
+    ctx.music_state = "playing"
+    ctx.music_replay = True
+    ctx.music_changed.set()
+
+    logger.info(
+        "Music play: owner=%s name=%s track=%s",
+        owner_id,
+        safe_name,
+        track_path,
+    )
+    await websocket.send_json(
+        {
+            "type": "music_play",
+            "id": request_id,
+            "status": "playing",
+            "track": str(track_path),
+            "name": safe_name,
+        }
+    )
+
+
+async def _handle_music_list(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_list' message: return saved tracks with metadata."""
+    request_id = str(msg.get("id", ""))
+
+    output_dir = _music_output_dir()
+    tracks: list[dict[str, object]] = []
+
+    if output_dir.exists():
+        for mp3 in sorted(output_dir.glob("*.mp3")):
+            stat = mp3.stat()
+            tracks.append(
+                {
+                    "name": mp3.stem,
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                    "path": str(mp3),
+                }
+            )
+
+    await websocket.send_json(
+        {
+            "type": "music_list",
+            "id": request_id,
+            "tracks": tracks,
+        }
     )
 
 
@@ -2063,6 +2253,8 @@ _HANDLERS: dict[
     "health": _handle_health,
     "music_on": _handle_music_on,
     "music_off": _handle_music_off,
+    "music_play": _handle_music_play,
+    "music_list": _handle_music_list,
     "music_vibe": _handle_music_vibe,
 }
 

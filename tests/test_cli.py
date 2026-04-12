@@ -2431,7 +2431,7 @@ class TestMusicCommand:
         result = runner.invoke(app, ["music", "on"])
 
         assert result.exit_code == 0
-        mock_instance.music.assert_called_once_with("on", style=None)
+        mock_instance.music.assert_called_once_with("on", style=None, name=None)
         assert "Music on" in result.output
         assert "generating" in result.output
 
@@ -2444,7 +2444,7 @@ class TestMusicCommand:
         result = runner.invoke(app, ["music", "on", "--style", "techno"])
 
         assert result.exit_code == 0
-        mock_instance.music.assert_called_once_with("on", style="techno")
+        mock_instance.music.assert_called_once_with("on", style="techno", name=None)
         assert "Music on" in result.output
         assert "techno" in result.output
 
@@ -2459,7 +2459,9 @@ class TestMusicCommand:
         )
 
         assert result.exit_code == 0
-        mock_instance.music.assert_called_once_with("on", style="lo-fi chill")
+        mock_instance.music.assert_called_once_with(
+            "on", style="lo-fi chill", name=None
+        )
         assert "lo-fi chill" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -2523,3 +2525,153 @@ class TestMusicCommand:
         assert result.exit_code == 0 or result.exit_code == 2
         assert "on" in result.output
         assert "off" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_with_name(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {
+            "status": "playing",
+            "name": "focus_beats",
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "on", "--name", "focus beats"])
+
+        assert result.exit_code == 0
+        mock_instance.music.assert_called_once_with(
+            "on", style=None, name="focus beats"
+        )
+        assert "Playing saved track" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_on_name_generating(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music.return_value = {"status": "generating"}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "on", "--name", "new track"])
+
+        assert result.exit_code == 0
+        assert "Music on" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_play_basic(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_play.return_value = {
+            "status": "playing",
+            "name": "chill_vibes",
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "play", "chill vibes"])
+
+        assert result.exit_code == 0
+        mock_instance.music_play.assert_called_once_with("chill vibes")
+        assert "Playing" in result.output
+        assert "chill_vibes" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_play_connection_error(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_play.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "play", "test"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_play_not_found(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdProtocolError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_play.side_effect = VoxdProtocolError(
+            "track not found: bogus"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "play", "bogus"])
+
+        assert result.exit_code == 1
+        assert "track not found" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_list_with_tracks(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_list.return_value = {
+            "tracks": [
+                {"name": "alpha", "size_bytes": 2048, "modified": 1000.0, "path": "/x"},
+                {"name": "beta", "size_bytes": 4096, "modified": 2000.0, "path": "/y"},
+            ],
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "list"])
+
+        assert result.exit_code == 0
+        assert "2 saved track(s)" in result.output
+        assert "alpha" in result.output
+        assert "beta" in result.output
+        # Dates are included in YYYY-MM-DD HH:MM format.
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", result.output)
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_list_empty(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_list.return_value = {"tracks": []}
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "list"])
+
+        assert result.exit_code == 0
+        assert "No saved tracks" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_list_connection_error(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_list.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["music", "list"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_list_json_output(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_list.return_value = {
+            "tracks": [
+                {"name": "alpha", "size_bytes": 2048, "modified": 1000.0, "path": "/x"},
+            ],
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--json", "music", "list"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data["tracks"]) == 1
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_music_play_json_output(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.music_play.return_value = {
+            "status": "playing",
+            "name": "test_track",
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--json", "music", "play", "test track"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["music"] == "play"
+        assert data["name"] == "test_track"

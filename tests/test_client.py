@@ -926,3 +926,206 @@ class TestVoxClientSync:
         assert sent["vibe"] == "happy"
         assert sent["vibe_tags"] == "[warm]"
         assert sent["owner_id"] == "sess-1"
+
+
+class TestVoxClientMusicName:
+    """Test music() with name parameter."""
+
+    @pytest.mark.asyncio
+    async def test_music_on_with_name(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "n1", "status": "playing", "name": "focus"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            result = await client.music("on", name="focus beats", owner_id="sess-x")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_on"
+        assert sent["name"] == "focus beats"
+        assert result["status"] == "playing"
+
+    @pytest.mark.asyncio
+    async def test_music_on_without_name_omits_field(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "n2", "status": "generating"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            await client.music("on", owner_id="sess-y")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert "name" not in sent
+
+
+class TestVoxClientMusicPlay:
+    """Test music_play method."""
+
+    @pytest.mark.asyncio
+    async def test_music_play_sends_correct_message(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "music_play",
+                    "id": "p1",
+                    "status": "playing",
+                    "name": "chill_vibes",
+                }
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            result = await client.music_play("chill vibes", owner_id="sess-a")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_play"
+        assert sent["name"] == "chill vibes"
+        assert sent["owner_id"] == "sess-a"
+        assert result["status"] == "playing"
+
+    @pytest.mark.asyncio
+    async def test_music_play_error_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "p2", "message": "track not found: bogus"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            with pytest.raises(VoxdProtocolError, match="track not found"):
+                await client.music_play("bogus", owner_id="sess-b")
+
+    @pytest.mark.asyncio
+    async def test_music_play_uses_default_owner(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_play", "id": "p3", "status": "playing", "name": "test"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            await client.music_play("test")
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["owner_id"]  # non-empty default
+
+
+class TestVoxClientMusicList:
+    """Test music_list method."""
+
+    @pytest.mark.asyncio
+    async def test_music_list_returns_tracks(self) -> None:
+        tracks = [
+            {"name": "alpha", "size_bytes": 1024, "modified": 1000.0, "path": "/x.mp3"}
+        ]
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_list", "id": "l1", "tracks": tracks}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            result = await client.music_list()
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_list"
+        assert len(result["tracks"]) == 1
+
+
+class TestVoxClientSyncMusicPlayList:
+    """Sync wrappers for music_play and music_list."""
+
+    def test_music_play(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_play", "id": "sp1", "status": "playing", "name": "x"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music_play("x", owner_id="sess-s")
+            assert result["status"] == "playing"
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["type"] == "music_play"
+
+    def test_music_list(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "music_list", "id": "sl1", "tracks": []})
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music_list()
+            assert result["tracks"] == []
+
+    def test_music_on_with_name(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "music_on", "id": "sn1", "status": "playing", "name": "x"}
+            )
+        )
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            result = sync_client.music("on", name="x", owner_id="sess-t")
+            assert result["status"] == "playing"
+
+        sent = json.loads(mock_ws.send.call_args[0][0])
+        assert sent["name"] == "x"

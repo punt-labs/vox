@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -1445,18 +1446,29 @@ def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
             help="Style modifier for music generation (e.g. techno, jazz).",
         ),
     ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            help="Track name. Replays if exists, otherwise saves.",
+        ),
+    ] = None,
 ) -> None:
     """Start background music generation via voxd."""
     style_str = " ".join(style) if style else None
     client = VoxClientSync()
     try:
-        result = client.music("on", style=style_str)
+        result = client.music("on", style=style_str, name=name)
         status = result.get("status", "unknown")
         payload: dict[str, object] = {"music": "on", "status": status}
         if style_str:
             payload["style"] = style_str
+        if name:
+            payload["name"] = name
         text = f"Music on ({status})"
-        if style_str:
+        if name and status == "playing":
+            text = f"Playing saved track: {name}"
+        elif style_str:
             text += f" — style: {style_str}"
         _emit(payload, text)
     except VoxdConnectionError as exc:
@@ -1475,6 +1487,61 @@ def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         result = client.music("off")
         status = result.get("status", "stopped")
         _emit({"music": "off", "status": status}, f"Music off ({status})")
+    except VoxdConnectionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except VoxdProtocolError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@music_app.command("play")
+def music_play_cmd(  # pyright: ignore[reportUnusedFunction]
+    name: Annotated[
+        str,
+        typer.Argument(help="Name of saved track to play."),
+    ],
+) -> None:
+    """Replay a saved music track by name."""
+    client = VoxClientSync()
+    try:
+        result = client.music_play(name)
+        track_name = result.get("name", name)
+        _emit(
+            {"music": "play", "name": track_name, "status": "playing"},
+            f"Playing: {track_name}",
+        )
+    except VoxdConnectionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except VoxdProtocolError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@music_app.command("list")
+def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """List saved music tracks."""
+    client = VoxClientSync()
+    try:
+        result = client.music_list()
+        tracks: list[dict[str, object]] = result.get("tracks", [])
+        if not tracks:
+            _emit({"tracks": []}, "No saved tracks.")
+            return
+        lines: list[str] = []
+        for t in tracks:
+            raw_size = t.get("size_bytes", 0)
+            size_kb = int(str(raw_size)) // 1024
+            raw_mtime = t.get("modified", 0)
+            date_str = datetime.fromtimestamp(
+                float(str(raw_mtime)),
+            ).strftime("%Y-%m-%d %H:%M")
+            lines.append(f"  {t['name']} ({size_kb} KB, {date_str})")
+        _emit(
+            {"tracks": tracks},
+            f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
+        )
     except VoxdConnectionError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc

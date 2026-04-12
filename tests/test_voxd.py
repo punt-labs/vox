@@ -22,9 +22,12 @@ from punt_vox.voxd import (
     OnceDedup,
     PlaybackItem,
     _apply_vibe_for_synthesis,
+    _auto_track_name,
     _config_dir,
+    _handle_music_list,
     _handle_music_off,
     _handle_music_on,
+    _handle_music_play,
     _handle_music_vibe,
     _handle_synthesize,
     _health_payload_full,
@@ -3146,3 +3149,325 @@ class TestMusicLoopLostWakeup:
         assert generation_happened, (
             "music_loop blocked on wait despite music_mode=='on'"
         )
+
+
+class TestAutoTrackName:
+    """_auto_track_name derives vibe-style-YYYYMMDD-HHMM patterns."""
+
+    def test_with_vibe_and_style(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_vibe = ("happy", "[warm]")
+        ctx.music_style = "techno"
+        name = _auto_track_name(ctx)
+        # Name has vibe-style-YYYYMMDD-HHMM structure.
+        assert name.startswith("happy-techno-")
+        # Suffix is YYYYMMDD-HHMM: 8 digits, dash, 4 digits.
+        parts = name.split("-")
+        assert len(parts[-2]) == 8  # YYYYMMDD
+        assert len(parts[-1]) == 4  # HHMM
+
+    def test_no_vibe_uses_ambient(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_vibe = ("", "")
+        ctx.music_style = ""
+        name = _auto_track_name(ctx)
+        assert name.startswith("ambient-mix-")
+
+    def test_no_style_uses_mix(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_vibe = ("chill", "")
+        ctx.music_style = ""
+        name = _auto_track_name(ctx)
+        assert name.startswith("chill-mix-")
+
+
+class TestDaemonContextTrackName:
+    """DaemonContext.music_track_name defaults to empty string."""
+
+    def test_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_track_name == ""
+
+    def test_music_replay_default(self) -> None:
+        ctx = _make_ctx()
+        assert ctx.music_replay is False
+
+
+class TestHandleMusicOnWithName:
+    """_handle_music_on with name field for track naming and replay."""
+
+    def test_replay_existing_track(self, tmp_path: Path) -> None:
+        """When name matches an existing file, replay without generation."""
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        # Create a fake track on disk.
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+        track = music_dir / "my_focus.mp3"
+        track.write_bytes(b"fake-music")
+
+        msg: dict[str, object] = {
+            "type": "music_on",
+            "id": "req-name-1",
+            "owner_id": "session-x",
+            "name": "my focus",
+        }
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.music_mode == "on"
+        assert ctx.music_track == track
+        assert ctx.music_track_name == "my_focus"
+        assert ctx.music_state == "playing"
+        assert ctx.music_replay is True
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["status"] == "playing"
+        assert resp["name"] == "my_focus"
+        assert str(track) in resp["track"]
+
+    def test_name_not_found_generates(self, tmp_path: Path) -> None:
+        """When name does not match existing file, proceed to generation."""
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+        # No file exists for "new-track".
+
+        msg: dict[str, object] = {
+            "type": "music_on",
+            "id": "req-name-2",
+            "owner_id": "session-y",
+            "name": "new track",
+        }
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.music_mode == "on"
+        assert ctx.music_track_name == "new_track"
+        assert ctx.music_state == "generating"
+        assert ctx.music_changed.is_set()
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["status"] == "generating"
+
+    def test_no_name_clears_track_name(self) -> None:
+        """When no name is given, track_name is empty (auto-naming in generation)."""
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "music_on",
+            "id": "req-no-name",
+            "owner_id": "session-z",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        assert ctx.music_track_name == ""
+        assert ctx.music_state == "generating"
+
+    def test_empty_slugified_name_returns_error(self) -> None:
+        """Name that slugifies to empty string returns error."""
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "music_on",
+            "id": "req-bad-name",
+            "owner_id": "session-q",
+            "name": "---",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert "invalid track name" in resp["message"]
+        assert ctx.music_mode == "off"
+
+
+class TestHandleMusicPlay:
+    """_handle_music_play: replay saved tracks by name."""
+
+    def test_play_existing_track(self, tmp_path: Path) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+        track = music_dir / "chill_vibes.mp3"
+        track.write_bytes(b"fake-music")
+
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": "play-1",
+            "name": "chill vibes",
+            "owner_id": "session-a",
+        }
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_play(msg, ws, ctx))
+
+        assert ctx.music_mode == "on"
+        assert ctx.music_track == track
+        assert ctx.music_track_name == "chill_vibes"
+        assert ctx.music_state == "playing"
+        assert ctx.music_replay is True
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "music_play"
+        assert resp["status"] == "playing"
+        assert resp["name"] == "chill_vibes"
+
+    def test_play_not_found(self, tmp_path: Path) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": "play-2",
+            "name": "nonexistent",
+            "owner_id": "session-b",
+        }
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_play(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert "not found" in resp["message"]
+
+    def test_play_missing_name(self) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": "play-3",
+            "owner_id": "session-c",
+        }
+
+        asyncio.run(_handle_music_play(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert "name is required" in resp["message"]
+
+    def test_play_missing_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": "play-4",
+            "name": "test",
+        }
+
+        asyncio.run(_handle_music_play(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert "owner_id is required" in resp["message"]
+
+    def test_empty_slugified_name_returns_error(self) -> None:
+        """Name that slugifies to empty string returns error."""
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": "play-bad",
+            "name": "---",
+            "owner_id": "session-q",
+        }
+
+        asyncio.run(_handle_music_play(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert "invalid track name" in resp["message"]
+
+
+class TestHandleMusicList:
+    """_handle_music_list: returns saved tracks with metadata."""
+
+    def test_list_empty_dir(self, tmp_path: Path) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+
+        msg: dict[str, object] = {"type": "music_list", "id": "list-1"}
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_list(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "music_list"
+        assert resp["tracks"] == []
+
+    def test_list_with_tracks(self, tmp_path: Path) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music"
+        music_dir.mkdir()
+        (music_dir / "alpha.mp3").write_bytes(b"a" * 1024)
+        (music_dir / "beta.mp3").write_bytes(b"b" * 2048)
+
+        msg: dict[str, object] = {"type": "music_list", "id": "list-2"}
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_list(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "music_list"
+        assert len(resp["tracks"]) == 2
+        names = [t["name"] for t in resp["tracks"]]
+        assert "alpha" in names
+        assert "beta" in names
+        # Each track has required metadata fields.
+        for t in resp["tracks"]:
+            assert "size_bytes" in t
+            assert "modified" in t
+            assert "path" in t
+
+    def test_list_nonexistent_dir(self, tmp_path: Path) -> None:
+        ctx = _make_ctx()
+        ws = AsyncMock()
+
+        music_dir = tmp_path / "music_missing"
+
+        msg: dict[str, object] = {"type": "music_list", "id": "list-3"}
+
+        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+            asyncio.run(_handle_music_list(msg, ws, ctx))
+
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "music_list"
+        assert resp["tracks"] == []
+
+
+class TestHandlerRegistration:
+    """New handlers are registered in _HANDLERS."""
+
+    def test_music_play_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_play" in _HANDLERS
+        assert _HANDLERS["music_play"] is _handle_music_play
+
+    def test_music_list_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_list" in _HANDLERS
+        assert _HANDLERS["music_list"] is _handle_music_list
