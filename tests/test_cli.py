@@ -1327,6 +1327,9 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
+        # Create Music dir so the Music-directory doctor check passes.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1340,6 +1343,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1655,6 +1668,9 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
+        # Create Music dir so the Music-directory doctor check passes.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1668,6 +1684,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1708,6 +1734,9 @@ class TestDoctorCommand:
         mock_client = MagicMock()
         mock_client.health.side_effect = VoxdConnectionError("not running")
 
+        # Create Music dir so the Music-directory doctor check passes.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1721,6 +1750,16 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_CLI}.platform.system", return_value="Darwin"),
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
+            ),
+            patch(
+                f"{_CLI}._legacy_user_unit_path",
+                return_value=tmp_path / "no-such-legacy-unit",
+            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
