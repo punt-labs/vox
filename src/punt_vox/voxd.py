@@ -1744,9 +1744,24 @@ _MUSIC_DURATION_MS = 120_000
 _MUSIC_MAX_RETRIES = 3
 
 
-async def _music_backoff_sleep(seconds: float) -> None:
-    """Sleep for backoff in the music loop. Patchable by tests."""
-    await asyncio.sleep(seconds)
+async def _music_backoff_sleep(seconds: float, ctx: DaemonContext) -> None:
+    """Sleep for backoff in the music loop, interruptible by music_changed.
+
+    Returns immediately if ``music_changed`` fires or ``music_mode``
+    becomes ``"off"`` during the wait.  This lets ``/music off`` and
+    vibe changes break out of exponential backoff without blocking
+    for the full sleep duration.
+    """
+    sleep_task = asyncio.create_task(asyncio.sleep(seconds))
+    changed_task = asyncio.create_task(ctx.music_changed.wait())
+    _done, pending = await asyncio.wait(
+        {sleep_task, changed_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for t in pending:
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await t
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
@@ -1947,7 +1962,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                             # music proc) when max retries are exceeded.
                             gen_task = None
                             retry_count += 1
-                            logger.exception(
+                            logger.error(
                                 "Generation failed during playback "
                                 "(attempt %d/%d), old track continues",
                                 retry_count,
@@ -1970,6 +1985,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                             # after backoff.  The old track keeps looping.
                             await _music_backoff_sleep(
                                 2 ** (retry_count - 1),
+                                ctx,
                             )
                             gen_task = asyncio.create_task(
                                 _generate_music_track(ctx),
@@ -2073,7 +2089,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 retry_count = 0
             else:
                 # Exponential backoff: 1s, 2s, 4s...
-                await _music_backoff_sleep(2 ** (retry_count - 1))
+                await _music_backoff_sleep(2 ** (retry_count - 1), ctx)
 
 
 async def _handle_music_on(

@@ -3623,12 +3623,14 @@ class TestHandlerRegistration:
 class TestGenFailureKeepsOldTrack:
     """Generation failure must not kill the old track subprocess.
 
-    Covers the fix for bead vox-m2l: when the generation task fails
+    Covers the fix for issue vox-m2l: when the generation task fails
     during the playback loop, the old track keeps looping during
     retry/backoff. Only max-retries or a successful handoff kills it.
     """
 
-    def test_failure_then_success_old_track_alive_throughout(self) -> None:
+    def test_failure_then_success_old_track_alive_throughout(
+        self, tmp_path: Path
+    ) -> None:
         """First generation (vibe change) fails, retry succeeds.
 
         The old playback subprocess must remain alive (returncode is
@@ -3703,24 +3705,34 @@ class TestGenFailureKeepsOldTrack:
                 ),
                 patch(
                     "punt_vox.voxd._music_output_dir",
-                    return_value=Path("/tmp/vox-test-gen-fail"),
+                    return_value=tmp_path / "vox-test-gen-fail",
                 ),
                 patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
-                # Let initial generation + first playback start.
-                await asyncio.sleep(0.05)
+
+                # Poll until initial generation + first playback start.
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if ctx.music_proc is not None:
+                        break
 
                 # Trigger vibe change — second generation will fail.
                 ctx.music_vibe = ("happy", "[warm]")
                 ctx.music_changed.set()
 
-                # Wait for failure + backoff + retry + handoff.
-                await asyncio.sleep(0.3)
+                # Poll until failure + backoff + retry + handoff complete.
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if generation_count >= 3:
+                        break
 
                 ctx.music_mode = "off"
                 ctx.music_changed.set()
-                await asyncio.sleep(0.05)
+                for _ in range(50):
+                    await asyncio.sleep(0.01)
+                    if ctx.music_state == "idle":
+                        break
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -3739,7 +3751,7 @@ class TestGenFailureKeepsOldTrack:
             f"old track was killed during gen failure/retry: {old_proc_alive_snapshots}"
         )
 
-    def test_max_retries_stops_music_mode(self) -> None:
+    def test_max_retries_stops_music_mode(self, tmp_path: Path) -> None:
         """After max retries during playback, music_mode becomes 'off'."""
         ctx = _make_ctx()
         ctx.music_mode = "on"
@@ -3795,20 +3807,24 @@ class TestGenFailureKeepsOldTrack:
                 ),
                 patch(
                     "punt_vox.voxd._music_output_dir",
-                    return_value=Path("/tmp/vox-test-gen-maxretry"),
+                    return_value=tmp_path / "vox-test-gen-maxretry",
                 ),
                 patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
-                # Let initial generation + first playback start.
-                await asyncio.sleep(0.05)
+
+                # Poll until initial generation + first playback start.
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if ctx.music_proc is not None:
+                        break
 
                 # Trigger vibe change — all subsequent gens will fail.
                 ctx.music_vibe = ("happy", "[warm]")
                 ctx.music_changed.set()
 
-                # Wait for 3 failures + final shutdown.
-                for _ in range(50):
+                # Poll for 3 failures + final shutdown.
+                for _ in range(100):
                     await asyncio.sleep(0.01)
                     if ctx.music_mode == "off":
                         break
@@ -3826,7 +3842,9 @@ class TestGenFailureKeepsOldTrack:
             f"expected 4 generations (1 ok + 3 fail), got {generation_count}"
         )
 
-    def test_successful_handoff_after_retry_resets_counter(self) -> None:
+    def test_successful_handoff_after_retry_resets_counter(
+        self, tmp_path: Path
+    ) -> None:
         """A successful handoff after one failure resets the retry counter."""
         ctx = _make_ctx()
         ctx.music_mode = "on"
@@ -3836,14 +3854,15 @@ class TestGenFailureKeepsOldTrack:
 
         generation_count = 0
 
-        async def fail_once_then_succeed(
+        async def fail_once_per_cycle(
             self: object, prompt: str, duration_ms: int, output_path: Path
         ) -> Path:
             nonlocal generation_count
             generation_count += 1
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if generation_count == 2:
+            # Fail once per vibe-change cycle: gen #2 and gen #4.
+            if generation_count in (2, 4):
                 msg = "transient error"
                 raise RuntimeError(msg)
 
@@ -3872,7 +3891,7 @@ class TestGenFailureKeepsOldTrack:
                 patch(
                     "punt_vox.providers.elevenlabs_music."
                     "ElevenLabsMusicProvider.generate_track",
-                    fail_once_then_succeed,
+                    fail_once_per_cycle,
                 ),
                 patch(
                     "punt_vox.voxd.asyncio.create_subprocess_exec",
@@ -3880,30 +3899,66 @@ class TestGenFailureKeepsOldTrack:
                 ),
                 patch(
                     "punt_vox.voxd._music_output_dir",
-                    return_value=Path("/tmp/vox-test-gen-reset"),
+                    return_value=tmp_path / "vox-test-gen-reset",
                 ),
                 patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
-                await asyncio.sleep(0.05)
+
+                # Poll until initial generation + first playback start.
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if ctx.music_proc is not None:
+                        break
 
                 # Trigger vibe change — gen #2 fails, #3 succeeds.
                 ctx.music_vibe = ("happy", "[warm]")
                 ctx.music_changed.set()
-                await asyncio.sleep(0.3)
+
+                # Poll until retry succeeds (generation_count >= 3).
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if generation_count >= 3:
+                        break
 
                 # Music should still be on — the retry succeeded.
                 assert ctx.music_mode == "on"
 
+                # Now trigger a SECOND vibe change to prove the retry
+                # counter was actually reset. gen #4 will fail, #5
+                # will succeed. If the counter had accumulated from
+                # the first failure cycle, this second failure would
+                # push past max retries and turn music off.
+                ctx.music_vibe = ("energetic", "[bold]")
+                ctx.music_changed.set()
+
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if generation_count >= 5:
+                        break
+
+                # Music is STILL on — the counter was reset by the
+                # first successful handoff and the second cycle's
+                # single failure did not exceed max retries.
+                assert ctx.music_mode == "on", (
+                    "retry counter was not reset: second failure cycle "
+                    "pushed past max retries"
+                )
+
                 ctx.music_mode = "off"
                 ctx.music_changed.set()
-                await asyncio.sleep(0.05)
+                for _ in range(50):
+                    await asyncio.sleep(0.01)
+                    if ctx.music_state == "idle":
+                        break
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
         asyncio.run(_drive())
 
-        assert generation_count >= 3
-        # Music stayed on because the retry succeeded.
-        # (We set it to "off" ourselves to clean up.)
+        assert generation_count >= 5, (
+            f"expected >=5 generations (2 cycles of fail+succeed), "
+            f"got {generation_count}"
+        )
+        # Music stayed on through both failure+retry cycles.
