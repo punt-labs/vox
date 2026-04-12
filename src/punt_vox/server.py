@@ -505,6 +505,7 @@ def _music_on_message(style: str | None, vibe: str | None) -> str:
 def music(
     mode: str,
     style: str | None = None,
+    name: str | None = None,
 ) -> str:
     """Control background music generation.
 
@@ -517,6 +518,10 @@ def music(
         style: Optional style modifier (e.g. "techno", "jazz").
             Persists across calls -- subsequent ``on`` reuses the
             last-set style.
+        name: Optional track name. When a saved track with this name
+            exists, it is replayed without generation (zero credits).
+            When no saved track exists, the generated track is saved
+            under this name.
 
     Returns:
         JSON string with a human-readable ``message`` field and
@@ -533,6 +538,7 @@ def music(
             vibe=_state.vibe or "",
             vibe_tags=_state.vibe_tags or "",
             owner_id=_state.session_id,
+            name=name,
         )
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music tool; music off", exc_info=True)
@@ -555,9 +561,94 @@ def music(
 
     _state.music_mode = mode
 
-    message = (
-        _music_on_message(style, _state.vibe) if mode == "on" else "\u266a Music off."
-    )
+    # Replay of existing track — status is "playing", not "generating".
+    if resp.get("status") == "playing" and name:
+        message = f"\u266a Playing saved track: {name}"
+    elif mode == "on":
+        message = _music_on_message(style, _state.vibe)
+    else:
+        message = "\u266a Music off."
+    return json.dumps({"message": message, **resp})
+
+
+@mcp.tool()
+def music_play(name: str) -> str:
+    """Replay a saved music track by name.
+
+    Finds the track in the music library and starts looping it.
+    No generation, no credits used.
+
+    Args:
+        name: Track name (as shown by music_list).
+
+    Returns:
+        JSON string with a human-readable ``message`` field and
+        the raw voxd response fields.
+    """
+    client = _voxd_client()
+    try:
+        resp = client.music_play(name, owner_id=_state.session_id)
+    except VoxdConnectionError:
+        logger.warning("voxd unreachable in music_play", exc_info=True)
+        return json.dumps(
+            {
+                "message": "\u266a Daemon unreachable.",
+                "error": "daemon unreachable",
+            }
+        )
+    except Exception as exc:
+        logger.warning("voxd error in music_play", exc_info=True)
+        return json.dumps(
+            {
+                "message": f"\u266a {exc}",
+                "error": str(exc),
+            }
+        )
+
+    _state.music_mode = "on"
+    track_name = resp.get("name", name)
+    message = f"\u266a Now playing: {track_name}"
+    return json.dumps({"message": message, **resp})
+
+
+@mcp.tool()
+def music_list() -> str:
+    """Show saved music tracks with name, size, and date.
+
+    Returns:
+        JSON string with a human-readable ``message`` field and
+        the track list from voxd.
+    """
+    client = _voxd_client()
+    try:
+        resp = client.music_list()
+    except VoxdConnectionError:
+        logger.warning("voxd unreachable in music_list", exc_info=True)
+        return json.dumps(
+            {
+                "message": "\u266a Daemon unreachable.",
+                "error": "daemon unreachable",
+            }
+        )
+    except Exception as exc:
+        logger.warning("voxd error in music_list", exc_info=True)
+        return json.dumps(
+            {
+                "message": f"\u266a {exc}",
+                "error": str(exc),
+            }
+        )
+
+    tracks: list[dict[str, object]] = resp.get("tracks", [])
+    if not tracks:
+        message = "\u266a No saved tracks."
+    else:
+        lines = [f"\u266a {len(tracks)} saved track(s):"]
+        for t in tracks:
+            raw_size = t.get("size_bytes", 0)
+            size_kb = int(str(raw_size)) // 1024
+            lines.append(f"  \u266a {t['name']} ({size_kb} KB)")
+        message = "\n".join(lines)
     return json.dumps({"message": message, **resp})
 
 

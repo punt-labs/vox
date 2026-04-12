@@ -21,6 +21,8 @@ from punt_vox.resolve import (
 from punt_vox.server import (
     SessionState,
     music,
+    music_list,
+    music_play,
     notify,
     record,
     speak,
@@ -981,6 +983,7 @@ class TestMusicTool:
             vibe="focused",
             vibe_tags="[calm]",
             owner_id=srv._state.session_id,
+            name=None,
         )
 
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1215,3 +1218,172 @@ class TestVibeToolMusicPropagation:
         assert result["vibe"]["vibe"] == "sad"
         # But music_mode should be reset.
         assert srv._state.music_mode == "off"
+
+
+# ---------------------------------------------------------------------------
+# music tool — name parameter tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicToolName:
+    """Tests for the music MCP tool with name parameter."""
+
+    def test_music_on_with_name_replay(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replay message when status is 'playing' and name is given."""
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "n1",
+            "status": "playing",
+            "name": "focus_beats",
+            "track": "/home/x/music/focus_beats.mp3",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on", name="focus beats"))
+
+        assert result["message"] == "\u266a Playing saved track: focus beats"
+        assert result["status"] == "playing"
+        assert srv._state.music_mode == "on"
+        mock_client.music.assert_called_once()
+        call_kwargs = mock_client.music.call_args[1]
+        assert call_kwargs["name"] == "focus beats"
+
+    def test_music_on_with_name_generates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Generate message when name given but track not found."""
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "n2",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music(mode="on", name="new track"))
+
+        # No replay — falls through to normal on message.
+        assert "\u266a Music on" in result["message"]
+        assert result["status"] == "generating"
+
+    def test_music_on_name_none_not_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When name is None, it is passed as None to client."""
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "n3",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        music(mode="on")
+
+        call_kwargs = mock_client.music.call_args[1]
+        assert call_kwargs["name"] is None
+
+
+# ---------------------------------------------------------------------------
+# music_play tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicPlayTool:
+    """Tests for the music_play MCP tool."""
+
+    def test_play_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.music_play.return_value = {
+            "type": "music_play",
+            "id": "p1",
+            "status": "playing",
+            "name": "chill_vibes",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_play(name="chill vibes"))
+
+        assert result["message"] == "\u266a Now playing: chill_vibes"
+        assert result["status"] == "playing"
+        assert srv._state.music_mode == "on"
+        mock_client.music_play.assert_called_once_with(
+            "chill vibes", owner_id=srv._state.session_id
+        )
+
+    def test_play_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.music_play.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_play(name="test"))
+
+        assert result["error"] == "daemon unreachable"
+
+    def test_play_protocol_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from punt_vox.client import VoxdProtocolError
+
+        mock_client = MagicMock()
+        mock_client.music_play.side_effect = VoxdProtocolError("track not found")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_play(name="bogus"))
+
+        assert "track not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# music_list tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicListTool:
+    """Tests for the music_list MCP tool."""
+
+    def test_list_with_tracks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.music_list.return_value = {
+            "type": "music_list",
+            "id": "l1",
+            "tracks": [
+                {"name": "alpha", "size_bytes": 2048, "modified": 1000.0, "path": "/x"},
+                {"name": "beta", "size_bytes": 4096, "modified": 2000.0, "path": "/y"},
+            ],
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_list())
+
+        assert "\u266a 2 saved track(s):" in result["message"]
+        assert "\u266a alpha" in result["message"]
+        assert "\u266a beta" in result["message"]
+        assert len(result["tracks"]) == 2
+
+    def test_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.music_list.return_value = {
+            "type": "music_list",
+            "id": "l2",
+            "tracks": [],
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_list())
+
+        assert result["message"] == "\u266a No saved tracks."
+
+    def test_list_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from punt_vox.client import VoxdConnectionError
+
+        mock_client = MagicMock()
+        mock_client.music_list.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_list())
+
+        assert result["error"] == "daemon unreachable"

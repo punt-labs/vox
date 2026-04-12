@@ -435,12 +435,15 @@ class VoxClient:
         vibe: str | None = None,
         vibe_tags: str | None = None,
         owner_id: str | None = None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback.
 
         *mode* is ``"on"`` or ``"off"``. When ``"on"``, optional *style*,
-        *vibe*, *vibe_tags*, and *owner_id* are forwarded to voxd.  When
-        ``"off"``, only *owner_id* is sent.
+        *vibe*, *vibe_tags*, *owner_id*, and *name* are forwarded to voxd.
+        When *name* is given and a track with that name already exists,
+        voxd replays it without generation.  When ``"off"``, only
+        *owner_id* is sent.
         """
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
@@ -459,12 +462,40 @@ class VoxClient:
                 msg["vibe"] = vibe
             if vibe_tags is not None:
                 msg["vibe_tags"] = vibe_tags
+            if name is not None:
+                msg["name"] = name
         else:
             msg = {
                 "type": "music_off",
                 "id": request_id,
                 "owner_id": effective_owner,
             }
+        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
+    async def music_play(
+        self,
+        name: str,
+        *,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replay a saved track by name."""
+        effective_owner = owner_id if owner_id is not None else self._default_owner_id
+        request_id = uuid.uuid4().hex[:12]
+        msg: dict[str, object] = {
+            "type": "music_play",
+            "id": request_id,
+            "name": name,
+            "owner_id": effective_owner,
+        }
+        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
+    async def music_list(self) -> dict[str, Any]:
+        """List saved music tracks."""
+        request_id = uuid.uuid4().hex[:12]
+        msg: dict[str, object] = {
+            "type": "music_list",
+            "id": request_id,
+        }
         return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
     async def music_vibe(
@@ -576,6 +607,7 @@ class VoxClientSync:
         vibe: str | None = None,
         vibe_tags: str | None = None,
         owner_id: str | None = None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback."""
         return self._run(  # type: ignore[no-any-return]
@@ -586,8 +618,24 @@ class VoxClientSync:
                 vibe=vibe,
                 vibe_tags=vibe_tags,
                 owner_id=owner_id,
+                name=name,
             )
         )
+
+    def music_play(
+        self,
+        name: str,
+        *,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replay a saved track by name."""
+        return self._run(  # type: ignore[no-any-return]
+            self._call("music_play", name, owner_id=owner_id)
+        )
+
+    def music_list(self) -> dict[str, Any]:
+        """List saved music tracks."""
+        return self._run(self._call("music_list"))  # type: ignore[no-any-return]
 
     def music_vibe(
         self,
