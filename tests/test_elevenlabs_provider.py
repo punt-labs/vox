@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.providers.elevenlabs import ElevenLabsProvider
+from punt_vox.providers.elevenlabs import (
+    _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
+    ElevenLabsProvider,
+)
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
@@ -44,10 +48,10 @@ class TestElevenLabsProviderResolveVoice:
         import punt_vox.providers.elevenlabs as elevenlabs
 
         saved_voices = dict(elevenlabs.VOICES)
-        saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]
+        saved_loaded = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
 
         elevenlabs.VOICES.clear()
-        elevenlabs._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
 
         try:
             provider = ElevenLabsProvider(client=mock_elevenlabs_client)
@@ -57,7 +61,7 @@ class TestElevenLabsProviderResolveVoice:
         finally:
             elevenlabs.VOICES.clear()
             elevenlabs.VOICES.update(saved_voices)
-            elevenlabs._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_loaded_at = saved_loaded  # pyright: ignore[reportPrivateUsage]
 
     def test_resolve_short_name_from_api_with_descriptions(
         self, mock_elevenlabs_client: MagicMock
@@ -66,10 +70,10 @@ class TestElevenLabsProviderResolveVoice:
         import punt_vox.providers.elevenlabs as elevenlabs
 
         saved_voices = dict(elevenlabs.VOICES)
-        saved_loaded = elevenlabs._voices_loaded  # pyright: ignore[reportPrivateUsage]
+        saved_loaded = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
 
         elevenlabs.VOICES.clear()
-        elevenlabs._voices_loaded = False  # pyright: ignore[reportPrivateUsage]
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
 
         try:
             provider = ElevenLabsProvider(client=mock_elevenlabs_client)
@@ -84,7 +88,7 @@ class TestElevenLabsProviderResolveVoice:
         finally:
             elevenlabs.VOICES.clear()
             elevenlabs.VOICES.update(saved_voices)
-            elevenlabs._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
+            elevenlabs._voices_loaded_at = saved_loaded  # pyright: ignore[reportPrivateUsage]
 
     def test_resolve_unknown_raises(
         self, elevenlabs_provider: ElevenLabsProvider
@@ -445,3 +449,137 @@ class TestElevenLabsProviderLanguageSupport:
         request = SynthesisRequest(text="hello", voice="matilda", rate=100)
         result = elevenlabs_provider.synthesize(request, tmp_output_dir / "test.mp3")
         assert result.language is None
+
+
+class TestElevenLabsVoiceCacheTTL:
+    """Voice cache TTL: stale cache triggers re-fetch, fresh cache does not."""
+
+    def test_no_refetch_within_ttl(self, mock_elevenlabs_client: MagicMock) -> None:
+        """Within TTL, a second call does not re-fetch from the API."""
+        import punt_vox.providers.elevenlabs as elevenlabs
+
+        saved_voices = dict(elevenlabs.VOICES)
+        saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+        elevenlabs.VOICES.clear()
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+
+        try:
+            provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+            # First call fetches.
+            provider.list_voices()
+            assert mock_elevenlabs_client.voices.get_all.call_count == 1
+
+            # Second call within TTL does not re-fetch.
+            provider.list_voices()
+            assert mock_elevenlabs_client.voices.get_all.call_count == 1
+        finally:
+            elevenlabs.VOICES.clear()
+            elevenlabs.VOICES.update(saved_voices)
+            elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+    def test_refetch_after_ttl_expires(self, mock_elevenlabs_client: MagicMock) -> None:
+        """After TTL expires, the next call re-fetches from the API."""
+        import punt_vox.providers.elevenlabs as elevenlabs
+
+        saved_voices = dict(elevenlabs.VOICES)
+        saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+        elevenlabs.VOICES.clear()
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+
+        try:
+            provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+            # First call fetches.
+            provider.list_voices()
+            assert mock_elevenlabs_client.voices.get_all.call_count == 1
+
+            # Simulate TTL expiry by pushing the timestamp into the past.
+            elevenlabs._voices_loaded_at = time.monotonic() - _VOICE_CACHE_TTL_S - 1  # pyright: ignore[reportPrivateUsage]
+
+            # Next call re-fetches.
+            provider.list_voices()
+            assert mock_elevenlabs_client.voices.get_all.call_count == 2
+        finally:
+            elevenlabs.VOICES.clear()
+            elevenlabs.VOICES.update(saved_voices)
+            elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+    def test_new_voice_found_after_ttl_expiry(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        """A voice added after initial fetch is found after TTL expiry."""
+        import punt_vox.providers.elevenlabs as elevenlabs
+
+        saved_voices = dict(elevenlabs.VOICES)
+        saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+        elevenlabs.VOICES.clear()
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+
+        try:
+            provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+            # First fetch: only matilda and drew.
+            provider.list_voices()
+
+            # The new voice "aria" does not exist yet.
+            with pytest.raises(VoiceNotFoundError):
+                provider.resolve_voice("aria")
+
+            # Simulate: user adds "aria" to their ElevenLabs account.
+            voice_aria = MagicMock()
+            voice_aria.name = "Aria - Expressive, warm"
+            voice_aria.voice_id = "9BWtsMINqrJLrRacOk9x"
+
+            old_voices = mock_elevenlabs_client.voices.get_all.return_value.voices
+            updated_response = MagicMock()
+            updated_response.voices = [*list(old_voices), voice_aria]
+            mock_elevenlabs_client.voices.get_all.return_value = updated_response
+
+            # Expire the cache.
+            elevenlabs._voices_loaded_at = time.monotonic() - _VOICE_CACHE_TTL_S - 1  # pyright: ignore[reportPrivateUsage]
+
+            # Now "aria" resolves after TTL-triggered re-fetch.
+            result = provider.resolve_voice("aria")
+            assert result == "aria"
+        finally:
+            elevenlabs.VOICES.clear()
+            elevenlabs.VOICES.update(saved_voices)
+            elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+    def test_deleted_voice_removed_after_ttl_expiry(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        """A voice removed from the account disappears after TTL expiry."""
+        import punt_vox.providers.elevenlabs as elevenlabs
+
+        saved_voices = dict(elevenlabs.VOICES)
+        saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
+
+        elevenlabs.VOICES.clear()
+        elevenlabs._voices_loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+
+        try:
+            provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+            # First fetch: matilda and drew both present.
+            voices = provider.list_voices()
+            assert "drew" in voices
+
+            # Simulate: user removes "drew" from their account.
+            voice_matilda = MagicMock()
+            voice_matilda.name = "Matilda - Knowledgable, Professional"
+            voice_matilda.voice_id = "XrExE9yKIg1WjnnlVkGX"
+            updated_response = MagicMock()
+            updated_response.voices = [voice_matilda]
+            mock_elevenlabs_client.voices.get_all.return_value = updated_response
+
+            # Expire the cache.
+            elevenlabs._voices_loaded_at = time.monotonic() - _VOICE_CACHE_TTL_S - 1  # pyright: ignore[reportPrivateUsage]
+
+            # After re-fetch, "drew" is gone.
+            voices_after = provider.list_voices()
+            assert "drew" not in voices_after
+        finally:
+            elevenlabs.VOICES.clear()
+            elevenlabs.VOICES.update(saved_voices)
+            elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]

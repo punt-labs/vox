@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -51,15 +52,25 @@ _VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 # Cache of resolved voices, keyed by lowercase name → voice_id.
 VOICES: dict[str, str] = {}
 
-# Whether the voice list has been fetched from the API.
-_voices_loaded: bool = False
+# Monotonic timestamp of the last successful voice fetch (0.0 = never).
+_voices_loaded_at: float = 0.0
+
+# Voices are re-fetched after this many seconds so newly added voices
+# appear without a daemon restart.
+_VOICE_CACHE_TTL_S: int = 1800
 
 
 def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplicitAny]
     """Fetch all voices from the ElevenLabs API and populate the cache."""
-    global _voices_loaded
-    if _voices_loaded:
+    global _voices_loaded_at
+    now = time.monotonic()
+    if _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S:
         return
+
+    # Fetch into a new dict, then swap atomically on success. If the
+    # API call raises, the old cache stays intact — no empty-cache
+    # window. The dict reference swap is atomic in CPython (GIL).
+    fresh: dict[str, str] = {}
 
     response: Any = client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -67,15 +78,19 @@ def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplici
         vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         # Store full name (e.g. "adam - dominant, firm").
-        if full_name not in VOICES:
-            VOICES[full_name] = vid
+        if full_name not in fresh:
+            fresh[full_name] = vid
 
         # Also store short name (before " - ") for convenient lookup.
         short_name = full_name.split(" - ", 1)[0]
-        if short_name != full_name and short_name not in VOICES:
-            VOICES[short_name] = vid
+        if short_name != full_name and short_name not in fresh:
+            fresh[short_name] = vid
 
-    _voices_loaded = True
+    # Atomic swap: replace the cache contents in-place so existing
+    # references to the VOICES dict see the new data.
+    VOICES.clear()
+    VOICES.update(fresh)
+    _voices_loaded_at = now
     logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
 
 
