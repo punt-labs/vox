@@ -230,19 +230,20 @@ class EspeakProvider:
         entirely: same syscall and same audio session as a user shell.
         """
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        text = strip_vibe_tags(request.text)
         cmd = [
             self._binary,
             "-v",
             voice_cfg.name,
             "-s",
             str(wpm),
-            request.text,
+            text,
         ]
         logger.info(
             "espeak direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,
             wpm,
-            len(request.text),
+            len(text),
         )
         try:
             result = subprocess.run(

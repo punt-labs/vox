@@ -365,6 +365,13 @@ class TestStripVibeTags:
     def test_empty_string(self) -> None:
         assert strip_vibe_tags("") == ""
 
+    def test_all_tags_returns_original(self) -> None:
+        """When stripping removes all content, return the original text."""
+        assert strip_vibe_tags("[serious] [warm]") == "[serious] [warm]"
+
+    def test_single_tag_only_returns_original(self) -> None:
+        assert strip_vibe_tags("[calm]") == "[calm]"
+
     def test_preserves_uppercase_brackets(self) -> None:
         assert strip_vibe_tags("[IMPORTANT] Hello") == "[IMPORTANT] Hello"
 

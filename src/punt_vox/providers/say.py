@@ -185,19 +185,20 @@ class SayProvider:
         Bypasses the AIFF -> ffmpeg -> MP3 -> ffplay pipeline.
         """
         voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        text = strip_vibe_tags(request.text)
         cmd = [
             "say",
             "-v",
             voice_cfg.name,
             "-r",
             str(wpm),
-            request.text,
+            text,
         ]
         logger.info(
             "say direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,
             wpm,
-            len(request.text),
+            len(text),
         )
         try:
             result = subprocess.run(

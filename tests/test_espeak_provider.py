@@ -384,6 +384,16 @@ class TestEspeakProviderPlayDirectly:
             )
         assert rc == 3
 
+    def test_strips_vibe_tags(self, espeak_provider: EspeakProvider) -> None:
+        mock = MagicMock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+        with patch("punt_vox.providers.espeak.subprocess.run", mock):
+            espeak_provider.play_directly(
+                SynthesisRequest(text="[serious] Hello world", voice="en")
+            )
+        args = mock.call_args[0][0]
+        assert "Hello world" in args
+        assert "[serious]" not in " ".join(args)
+
     def test_binary_missing_returns_error(
         self, espeak_provider: EspeakProvider
     ) -> None:
