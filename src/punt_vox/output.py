@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+from punt_vox.dirs import default_output_dir
 from punt_vox.types import SynthesisRequest, generate_filename
 
-
-def default_output_dir() -> Path:
-    """Resolve the default output directory from environment or fallback.
-
-    Resolution order: ``VOX_OUTPUT_DIR`` env var → ``~/vox-output``.
-    """
-    env_dir = os.environ.get("VOX_OUTPUT_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return Path.home() / "vox-output"
+__all__ = ["default_output_dir", "resolve_output_path"]
 
 
 def resolve_output_path(request: SynthesisRequest) -> Path:

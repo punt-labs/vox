@@ -33,6 +33,7 @@ import platform
 import pwd
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -479,6 +480,86 @@ def _voxd_exec_args() -> list[str]:
         )
         raise SystemExit(msg)
     return [str(voxd_path), "--port", str(DEFAULT_PORT)]
+
+
+# ---------------------------------------------------------------------------
+# Legacy repo config migration (.vox/ -> .punt-labs/vox/)
+# ---------------------------------------------------------------------------
+
+
+def _migrate_legacy_repo_config(repo_root: Path) -> bool:
+    """Migrate .vox/config.md to .punt-labs/vox/config.md.
+
+    Called by ``vox install`` and ``vox daemon install`` with the project
+    root as argument. Returns True if migration occurred.
+
+    Idempotent: safe to call repeatedly. Skips when:
+    - .vox/config.md does not exist
+    - .punt-labs/vox/config.md already exists (don't overwrite)
+    - .vox is a symlink (not ours to touch)
+    - .vox/config.md is a symlink (don't follow indirections)
+    - .punt-labs exists but is not a directory (bail, don't corrupt)
+    """
+    legacy_dir = repo_root / ".vox"
+    legacy_config = legacy_dir / "config.md"
+
+    if not legacy_config.exists():
+        return False
+
+    if legacy_dir.is_symlink():
+        logger.warning(".vox/ is a symlink, skipping migration")
+        return False
+
+    if legacy_config.is_symlink():
+        logger.warning(".vox/config.md is a symlink, skipping migration")
+        return False
+
+    punt_labs_dir = repo_root / ".punt-labs"
+    if punt_labs_dir.exists() and not punt_labs_dir.is_dir():
+        logger.warning(
+            ".punt-labs exists but is not a directory (%s), skipping migration",
+            type(punt_labs_dir),
+        )
+        return False
+
+    new_dir = repo_root / ".punt-labs" / "vox"
+    new_config = new_dir / "config.md"
+
+    if new_config.exists():
+        logger.info("Config already at .punt-labs/vox/config.md, skipping migration")
+        return False
+
+    try:
+        new_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        logger.warning("Could not create %s, skipping migration", new_dir)
+        return False
+
+    try:
+        shutil.move(str(legacy_config), str(new_config))
+    except PermissionError:
+        logger.warning("Could not move config.md, skipping migration")
+        return False
+    except OSError as exc:
+        logger.warning("Could not move config.md: %s, skipping migration", exc)
+        return False
+
+    logger.info("Migrated .vox/config.md -> .punt-labs/vox/config.md")
+
+    # Clean up ephemeral MP3s in .vox/
+    for f in legacy_dir.glob("*.mp3"):
+        f.unlink(missing_ok=True)
+
+    # Remove .vox/ if empty
+    try:
+        legacy_dir.rmdir()
+    except OSError:
+        logger.warning(
+            ".vox/ not empty after migration (user files detected): %s",
+            legacy_dir,
+        )
+
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1051,6 +1132,16 @@ def install() -> str:
 
     # Create per-user state directories as the invoking user.
     state_root = _ensure_user_dirs()
+
+    # Migrate legacy .vox/config.md -> .punt-labs/vox/config.md
+    # Best-effort on $PWD. The authoritative migration is find_config()
+    # walk-up discovery; this catches the common case where install runs
+    # from a project root.
+    cwd = Path.cwd()
+    if (cwd / ".vox" / "config.md").exists():
+        migrated = _migrate_legacy_repo_config(cwd)
+        if migrated:
+            logger.info("Migrated legacy config in %s", cwd)
 
     # Write provider keys into the user's state dir. Normal user
     # permissions — no chown, no fd tricks.

@@ -1,10 +1,10 @@
-"""Centralized read/write for .vox/config.md YAML frontmatter.
+"""Centralized read/write for per-repo config.md YAML frontmatter.
 
 Python components that need config (e.g. server, CLI, watcher) import
 from here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via
-their own bash-based reader.  The canonical path is ``.vox/config.md``
-in the current working directory.  All fields return safe defaults when
-the file is missing.
+their own bash-based reader.  The canonical path is
+``.punt-labs/vox/config.md`` in the repo root (legacy: ``.vox/config.md``).
+All fields return safe defaults when the file is missing.
 """
 
 from __future__ import annotations
@@ -14,19 +14,21 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from punt_vox.dirs import DEFAULT_CONFIG_PATH, find_config
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path(".vox/config.md")
-
-
-def find_config(start: Path | None = None) -> Path | None:
-    """Walk up from start (default: cwd) to find .vox/config.md."""
-    path = (start or Path.cwd()).resolve()
-    for parent in (path, *path.parents):
-        config = parent / ".vox" / "config.md"
-        if config.exists():
-            return config
-    return None
+# Re-export so existing callers that import from config.py keep working.
+__all__ = [
+    "ALLOWED_CONFIG_KEYS",
+    "DEFAULT_CONFIG_PATH",
+    "VoxConfig",
+    "find_config",
+    "read_config",
+    "read_field",
+    "write_field",
+    "write_fields",
+]
 
 
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)

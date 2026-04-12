@@ -6,7 +6,7 @@ if _git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) && [[ -n "$_git
 else
   _repo_root="."
 fi
-[[ -f "${_repo_root}/.vox/config.md" ]] || exit 0
+[[ -f "${_repo_root}/.punt-labs/vox/config.md" ]] || [[ -f "${_repo_root}/.vox/config.md" ]] || exit 0
 
 # Claude Code passes hook_event_name in JSON stdin, not as an env var.
 # Read stdin once and extract the event name with jq (or grep fallback).

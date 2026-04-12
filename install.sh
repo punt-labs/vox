@@ -121,6 +121,41 @@ fi
 
 ok "$BINARY $(command -v "$BINARY")"
 
+# --- Step 4b: Migrate legacy .vox/ config ---
+_migrate_legacy_config() {
+  _mlc_repo_root="$1"
+  _mlc_legacy_dir="${_mlc_repo_root}/.vox"
+  _mlc_legacy_config="${_mlc_legacy_dir}/config.md"
+  _mlc_new_dir="${_mlc_repo_root}/.punt-labs/vox"
+  _mlc_new_config="${_mlc_new_dir}/config.md"
+
+  [ -f "$_mlc_legacy_config" ] || return 0
+  [ -L "$_mlc_legacy_dir" ] && { warn ".vox/ is a symlink, skipping migration"; return 0; }
+  [ -L "$_mlc_legacy_config" ] && { warn ".vox/config.md is a symlink, skipping migration"; return 0; }
+
+  if [ -e "${_mlc_repo_root}/.punt-labs" ] && [ ! -d "${_mlc_repo_root}/.punt-labs" ]; then
+    warn ".punt-labs exists but is not a directory, skipping migration"
+    return 0
+  fi
+
+  [ -f "$_mlc_new_config" ] && { ok "config already at .punt-labs/vox/"; return 0; }
+
+  mkdir -p "$_mlc_new_dir" || { warn "could not create $_mlc_new_dir"; return 0; }
+  mv "$_mlc_legacy_config" "$_mlc_new_config" || { warn "could not move config.md"; return 0; }
+  ok "migrated .vox/config.md -> .punt-labs/vox/config.md"
+
+  # Clean up ephemeral audio
+  rm -f "${_mlc_legacy_dir}"/*.mp3 2>/dev/null
+
+  # Remove .vox/ if empty
+  rmdir "$_mlc_legacy_dir" 2>/dev/null || warn ".vox/ not empty after migration (user files detected)"
+}
+
+if [ -f "${PWD}/.vox/config.md" ]; then
+  info "Checking for legacy .vox/ config..."
+  _migrate_legacy_config "$PWD"
+fi
+
 # --- Step 5: Install daemon ---
 
 info "Installing vox daemon (will prompt once for sudo when placing the system service)..."

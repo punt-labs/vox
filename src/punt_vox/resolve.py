@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import punt_vox.config as _config
+import punt_vox.dirs as _dirs
 from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
 
 logger = logging.getLogger(__name__)
@@ -75,15 +76,16 @@ def resolve_voice_and_language(
     If only voice is provided, infers language from the voice (best-effort).
     If both, validates compatibility.
 
-    When *config_path* is provided (or defaults to ``.vox/config.md``),
-    reads the ``voice`` field as session default.
+    When *config_path* is provided (or defaults to
+    ``.punt-labs/vox/config.md``), reads the ``voice`` field as session
+    default.
     """
     if language is not None:
         language = validate_language(language)
 
     voice_from_config = False
     if voice is None:
-        voice = _config.read_field("voice", config_path or _config.DEFAULT_CONFIG_PATH)
+        voice = _config.read_field("voice", config_path or _dirs.DEFAULT_CONFIG_PATH)
         voice_from_config = voice is not None
 
     if voice is None and language is not None:
@@ -138,7 +140,7 @@ def apply_vibe(
     if not expressive_tags:
         return strip_expressive_tags(text)
     tags = override_tags or _config.read_field(
-        "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
+        "vibe_tags", config_path or _dirs.DEFAULT_CONFIG_PATH
     )
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"

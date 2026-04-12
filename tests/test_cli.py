@@ -1195,6 +1195,9 @@ class TestDoctorCommand:
         # explicit ``legacy_unit_path`` fixture.
         resolved_legacy = legacy_unit_path or (tmp_path / "no-such-legacy-unit")
 
+        # Create Music dir so the Music-directory doctor check passes.
+        (tmp_path / "Music").mkdir(exist_ok=True)
+
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1212,6 +1215,13 @@ class TestDoctorCommand:
             patch(
                 f"{_CLI}._legacy_user_unit_path",
                 return_value=resolved_legacy,
+            ),
+            # Isolate legacy-path doctor checks from the real filesystem.
+            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
+            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(
+                "punt_vox.dirs._resolve_music_dir",
+                return_value=tmp_path / "Music",
             ),
         ):
             result = runner.invoke(app, ["doctor"])

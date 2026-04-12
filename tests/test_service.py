@@ -24,6 +24,7 @@ from punt_vox.service import (
     _launchd_plist_content,  # pyright: ignore[reportPrivateUsage]
     _launchd_stop,  # pyright: ignore[reportPrivateUsage]
     _legacy_user_unit_path,  # pyright: ignore[reportPrivateUsage]
+    _migrate_legacy_repo_config,  # pyright: ignore[reportPrivateUsage]
     _remove_port_file,  # pyright: ignore[reportPrivateUsage]
     _safe_systemd_value,  # pyright: ignore[reportPrivateUsage]
     _systemd_audio_env_lines,  # pyright: ignore[reportPrivateUsage]
@@ -2083,3 +2084,93 @@ def test_install_cleans_stale_user_unit_before_systemd_stop(
         "systemd_stop",
         "ensure_port_free",
     ], f"unexpected install() ordering: {call_order}"
+
+
+# ---------------------------------------------------------------------------
+# _migrate_legacy_repo_config
+# ---------------------------------------------------------------------------
+
+
+class TestMigrateLegacyRepoConfig:
+    def test_happy_path(self, tmp_path: Path) -> None:
+        legacy_dir = tmp_path / ".vox"
+        legacy_dir.mkdir()
+        legacy_config = legacy_dir / "config.md"
+        legacy_config.write_text('---\nnotify: "y"\n---\n')
+        # Add an ephemeral MP3
+        (legacy_dir / "ephemeral.mp3").write_bytes(b"fake")
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is True
+        new_config = tmp_path / ".punt-labs" / "vox" / "config.md"
+        assert new_config.exists()
+        assert new_config.read_text() == '---\nnotify: "y"\n---\n'
+        assert not legacy_config.exists()
+        assert not (legacy_dir / "ephemeral.mp3").exists()
+        # .vox/ should be removed since it's empty
+        assert not legacy_dir.exists()
+
+    def test_no_legacy_config(self, tmp_path: Path) -> None:
+        assert _migrate_legacy_repo_config(tmp_path) is False
+
+    def test_already_migrated(self, tmp_path: Path) -> None:
+        legacy_dir = tmp_path / ".vox"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.md").write_text("old")
+        new_dir = tmp_path / ".punt-labs" / "vox"
+        new_dir.mkdir(parents=True)
+        (new_dir / "config.md").write_text("new")
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is False
+        # New config not overwritten
+        assert (new_dir / "config.md").read_text() == "new"
+
+    def test_legacy_dir_is_symlink(self, tmp_path: Path) -> None:
+        real_dir = tmp_path / "real_vox"
+        real_dir.mkdir()
+        (real_dir / "config.md").write_text("data")
+        (tmp_path / ".vox").symlink_to(real_dir)
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is False
+
+    def test_legacy_config_is_symlink(self, tmp_path: Path) -> None:
+        legacy_dir = tmp_path / ".vox"
+        legacy_dir.mkdir()
+        real_config = tmp_path / "real_config.md"
+        real_config.write_text("data")
+        (legacy_dir / "config.md").symlink_to(real_config)
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is False
+
+    def test_punt_labs_not_a_directory(self, tmp_path: Path) -> None:
+        legacy_dir = tmp_path / ".vox"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.md").write_text("data")
+        # Create .punt-labs as a file, not a directory
+        (tmp_path / ".punt-labs").write_text("not a dir")
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is False
+
+    def test_non_empty_legacy_dir_left_behind(self, tmp_path: Path) -> None:
+        legacy_dir = tmp_path / ".vox"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.md").write_text("data")
+        (legacy_dir / "user_notes.txt").write_text("keep me")
+
+        result = _migrate_legacy_repo_config(tmp_path)
+
+        assert result is True
+        # .vox/ stays because it has user files
+        assert legacy_dir.exists()
+        assert (legacy_dir / "user_notes.txt").exists()
+        # But config.md was moved
+        assert not (legacy_dir / "config.md").exists()

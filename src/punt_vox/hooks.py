@@ -32,13 +32,12 @@ import typer
 
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
-    DEFAULT_CONFIG_PATH,
     VoxConfig,
-    find_config,
     read_config,
     write_field,
     write_fields,
 )
+from punt_vox.dirs import DEFAULT_CONFIG_PATH, find_config
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
     FAREWELL_PHRASES,

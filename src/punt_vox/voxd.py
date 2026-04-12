@@ -459,9 +459,9 @@ def _music_player_command(path: Path) -> list[str]:
 
 def _music_output_dir() -> Path:
     """Return the directory for generated music tracks."""
-    from punt_vox.output import default_output_dir
+    from punt_vox.dirs import music_output_dir
 
-    return default_output_dir() / "music"
+    return music_output_dir()
 
 
 def _record_playback_result(

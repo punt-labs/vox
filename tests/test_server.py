@@ -41,9 +41,11 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 ) -> Path:
     """Return a writable config path and patch config module default."""
     import punt_vox.config as cfg
+    import punt_vox.dirs as dirs
 
     config = tmp_path / "config.md"
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_PATH", config)
     return config
 
 
