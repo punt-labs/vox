@@ -1,9 +1,10 @@
-"""Centralized read/write for per-repo config.md YAML frontmatter.
+"""Centralized read/write for ``.punt-labs/vox/config.md`` YAML frontmatter.
 
 Python components that need config (e.g. server, CLI, watcher) import
 from here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via
 their own bash-based reader.  The canonical path is
-``.punt-labs/vox/config.md`` in the repo root (legacy: ``.vox/config.md``).
+``.punt-labs/vox/config.md`` in the repo root (legacy ``.vox/config.md``
+is discovered by ``find_config()`` for unmigrated repos).
 All fields return safe defaults when the file is missing.
 """
 
@@ -36,7 +37,7 @@ _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 
 @dataclass(frozen=True)
 class VoxConfig:
-    """Snapshot of all config fields from .vox/config.md."""
+    """Snapshot of all config fields from .punt-labs/vox/config.md."""
 
     notify: str  # "y" | "c" | "n"
     speak: str  # "y" | "n"
@@ -121,7 +122,7 @@ _CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
 
 
 def write_field(key: str, value: str, config_path: Path | None = None) -> None:
-    """Write a single YAML frontmatter field to .vox/config.md.
+    """Write a single YAML frontmatter field to .punt-labs/vox/config.md.
 
     Updates the field in-place if present, or inserts it before the
     closing ``---`` if absent. Creates the file with minimal frontmatter

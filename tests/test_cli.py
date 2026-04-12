@@ -1197,6 +1197,8 @@ class TestDoctorCommand:
 
         # Create Music dir so the Music-directory doctor check passes.
         (tmp_path / "Music").mkdir(exist_ok=True)
+        # Create output dir so the output-directory doctor check passes.
+        (tmp_path / "audio").mkdir(exist_ok=True)
 
         runner = CliRunner()
         with (
@@ -1327,8 +1329,9 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
-        # Create Music dir so the Music-directory doctor check passes.
+        # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
 
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1668,8 +1671,9 @@ class TestDoctorCommand:
             "daemon_version": "4.1.1",
         }
 
-        # Create Music dir so the Music-directory doctor check passes.
+        # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
 
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
@@ -1734,8 +1738,9 @@ class TestDoctorCommand:
         mock_client = MagicMock()
         mock_client.health.side_effect = VoxdConnectionError("not running")
 
-        # Create Music dir so the Music-directory doctor check passes.
+        # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
+        (tmp_path / "audio").mkdir(exist_ok=True)
 
         with (
             patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),

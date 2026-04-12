@@ -16,15 +16,17 @@ class TestDefaultOutputDir:
             result = default_output_dir()
         assert result == Path(custom)
 
-    def test_falls_back_to_music_vox(self) -> None:
-        with patch.dict("os.environ", {}, clear=False):
+    def test_falls_back_to_music_vox(self, tmp_path: Path) -> None:
+        music = tmp_path / "Music"
+        with (
+            patch.dict("os.environ", {}, clear=False),
+            patch("punt_vox.dirs._resolve_music_dir", return_value=music),
+        ):
             import os
 
             os.environ.pop("VOX_OUTPUT_DIR", None)
             result = default_output_dir()
-        # Now delegates to dirs.py which returns ~/Music/vox/
-        assert result.name == "vox"
-        assert result.parent.name == "Music"
+        assert result == music / "vox"
 
 
 class TestResolveOutputPath:

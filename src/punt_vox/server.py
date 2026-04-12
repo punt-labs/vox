@@ -201,6 +201,10 @@ def unmute(
     """
     _validate_voice_settings(stability, similarity, style)
 
+    # ephemeral is accepted for callers (architecture spec) but voxd
+    # handles ephemeral cleanup internally today.  Silence linters.
+    _ = ephemeral
+
     # Update in-memory state for persistent fields.
     if provider is not None:
         _state.provider = provider

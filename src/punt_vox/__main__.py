@@ -1039,7 +1039,7 @@ def doctor() -> None:
 
     # Legacy .vox/ directory (vox-4jk migration)
     legacy_vox = Path.cwd() / ".vox"
-    if legacy_vox.is_dir():
+    if legacy_vox.is_dir() and not legacy_vox.is_symlink():
         if (legacy_vox / "config.md").exists():
             _check(
                 _FAIL,
@@ -1200,19 +1200,26 @@ def doctor() -> None:
             required=False,
         )
 
-    # Output directory
+    # Output directory — verify writability without creating it.
+    # The directory is created lazily on first 'vox record'.
     out_dir = default_output_dir()
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        test_file = out_dir / ".doctor_test"
-        test_file.write_text("ok")
-        test_file.unlink()
-        _check(_PASS, f"Output directory: {out_dir}")
-    except OSError as e:
+    if out_dir.is_dir():
+        try:
+            test_file = out_dir / ".doctor_test"
+            test_file.write_text("ok")
+            test_file.unlink()
+            _check(_PASS, f"Output directory: {out_dir}")
+        except OSError as e:
+            _check(
+                _FAIL,
+                f"Output directory: {out_dir} ({e})"
+                " \u2014 check permissions or use --output-dir",
+            )
+    else:
         _check(
-            _FAIL,
-            f"Output directory: {out_dir} ({e})"
-            " \u2014 check permissions or use --output-dir",
+            _WARN,
+            f"Output directory: {out_dir} does not exist"
+            " \u2014 will be created on first 'vox record'",
         )
 
     summary = f"{passed} passed, {failed} failed"
@@ -1260,6 +1267,10 @@ def migrate_audio_cmd(
         typer.echo("Nothing to migrate: source directory does not exist.")
         return
 
+    if not src_dir.is_dir():
+        typer.echo(f"Source is not a directory: {src_dir}")
+        raise typer.Exit(code=1)
+
     # Build list of (src_path, dst_path) pairs.
     pairs: list[tuple[Path, Path]] = []
     conflicts: list[tuple[Path, Path]] = []
@@ -1275,11 +1286,19 @@ def migrate_audio_cmd(
         if parts and parts[0] == "music":
             rel = Path("tracks", *parts[1:])
         dst_file = dst_dir / rel
-        total_size += src_file.stat().st_size
+        try:
+            total_size += src_file.stat().st_size
+        except OSError as e:
+            skipped.append((src_file, f"unreadable ({e})"))
+            continue
 
         if dst_file.exists():
-            src_stat = src_file.stat()
-            dst_stat = dst_file.stat()
+            try:
+                src_stat = src_file.stat()
+                dst_stat = dst_file.stat()
+            except OSError as e:
+                skipped.append((src_file, f"unreadable ({e})"))
+                continue
             same_size = src_stat.st_size == dst_stat.st_size
             same_mtime = abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
             if same_size and same_mtime:

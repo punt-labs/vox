@@ -518,7 +518,7 @@ def _migrate_legacy_repo_config(repo_root: Path) -> bool:
     if punt_labs_dir.exists() and not punt_labs_dir.is_dir():
         logger.warning(
             ".punt-labs exists but is not a directory (%s), skipping migration",
-            type(punt_labs_dir),
+            punt_labs_dir,
         )
         return False
 
