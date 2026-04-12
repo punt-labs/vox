@@ -12,6 +12,7 @@ from typing import Any
 import openai
 
 from punt_vox.core import split_text
+from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import resolve_output_path
 from punt_vox.types import (
     AudioProviderId,
@@ -83,20 +84,25 @@ class OpenAIProvider:
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
         """Synthesize text to an MP3 file using OpenAI TTS."""
+        text = strip_vibe_tags(request.text)
+
         resolved_voice = request.voice or self.default_voice
         voice = self._resolve_voice_name(resolved_voice)
         rate = request.rate if request.rate is not None else 90
         speed = self._rate_to_speed(rate)
 
-        if len(request.text) > _MAX_CHARS:
-            self._chunked_synthesize(request, output_path, voice, speed)
+        if len(text) > _MAX_CHARS:
+            from dataclasses import replace as _replace
+
+            stripped_request = _replace(request, text=text)
+            self._chunked_synthesize(stripped_request, output_path, voice, speed)
         else:
-            self._single_synthesize(request.text, output_path, voice, speed)
+            self._single_synthesize(text, output_path, voice, speed)
 
         logger.info("Wrote %s", output_path)
         return SynthesisResult(
             path=output_path,
-            text=request.text,
+            text=text,
             provider=AudioProviderId.openai,
             voice=voice,
             language=request.language,
