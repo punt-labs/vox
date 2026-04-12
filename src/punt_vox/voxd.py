@@ -1744,9 +1744,24 @@ _MUSIC_DURATION_MS = 120_000
 _MUSIC_MAX_RETRIES = 3
 
 
-async def _music_backoff_sleep(seconds: float) -> None:
-    """Sleep for backoff in the music loop. Patchable by tests."""
-    await asyncio.sleep(seconds)
+async def _music_backoff_sleep(seconds: float, ctx: DaemonContext) -> None:
+    """Sleep for backoff in the music loop, interruptible by music_changed.
+
+    Returns immediately if ``music_changed`` fires or ``music_mode``
+    becomes ``"off"`` during the wait.  This lets ``/music off`` and
+    vibe changes break out of exponential backoff without blocking
+    for the full sleep duration.
+    """
+    sleep_task = asyncio.create_task(asyncio.sleep(seconds))
+    changed_task = asyncio.create_task(ctx.music_changed.wait())
+    _done, pending = await asyncio.wait(
+        {sleep_task, changed_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for t in pending:
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await t
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
@@ -1832,9 +1847,12 @@ async def _music_loop(ctx: DaemonContext) -> None:
     generation, the in-flight generation task is cancelled and a fresh
     one starts — the old track keeps looping throughout.
 
-    Crash recovery: on failure, logs the error, resets state, and
-    retries with backoff (3 attempts).  After 3 failures, sets
-    ``music_mode`` to "off".
+    Crash recovery: generation failures during playback are handled
+    inline — the old track keeps looping while the loop retries with
+    exponential backoff (up to 3 attempts).  After 3 consecutive
+    failures, ``music_mode`` is set to "off" and the old track is
+    killed.  Initial generation failures (no old track yet) propagate
+    to the outer handler which retries the entire cycle.
     """
     retry_count = 0
     current_track: Path | None = None
@@ -1938,8 +1956,42 @@ async def _music_loop(ctx: DaemonContext) -> None:
                     if gen_task is not None and gen_task.done():
                         exc = gen_task.exception()
                         if exc is not None:
+                            # Generation failed — handle inline so the
+                            # old track keeps looping.  Only propagate
+                            # to the outer handler (which kills the
+                            # music proc) when max retries are exceeded.
                             gen_task = None
-                            raise exc
+                            retry_count += 1
+                            logger.error(
+                                "Generation failed during playback "
+                                "(attempt %d/%d), old track continues",
+                                retry_count,
+                                _MUSIC_MAX_RETRIES,
+                                exc_info=exc,
+                            )
+                            if retry_count >= _MUSIC_MAX_RETRIES:
+                                logger.error(
+                                    "Music generation failed %d times, disabling music",
+                                    _MUSIC_MAX_RETRIES,
+                                )
+                                ctx.music_mode = "off"
+                                retry_count = 0
+                                await _kill_music_proc(ctx)
+                                current_track = None
+                                ctx.music_state = "idle"
+                                proc_done = True
+                                break
+                            # Under max retries: start a new gen_task
+                            # after backoff.  The old track keeps looping.
+                            await _music_backoff_sleep(
+                                2 ** (retry_count - 1),
+                                ctx,
+                            )
+                            gen_task = asyncio.create_task(
+                                _generate_music_track(ctx),
+                            )
+                            ctx.music_state = "generating"
+                            continue
                         new_track = gen_task.result()
                         gen_task = None
                         ctx.music_track = new_track
@@ -2037,7 +2089,7 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 retry_count = 0
             else:
                 # Exponential backoff: 1s, 2s, 4s...
-                await _music_backoff_sleep(2 ** (retry_count - 1))
+                await _music_backoff_sleep(2 ** (retry_count - 1), ctx)
 
 
 async def _handle_music_on(
