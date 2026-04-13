@@ -160,9 +160,58 @@ if [[ "$TOOL_NAME" == "who" ]]; then
   exit 0
 fi
 
+if [[ "$TOOL_NAME" == "music" ]]; then
+  STATUS=$(echo "$RESULT" | jq -r '.status // empty' 2>/dev/null)
+  STYLE=$(echo "$RESULT" | jq -r '.style // empty' 2>/dev/null)
+  case "$STATUS" in
+    generating)
+      if [[ -n "$STYLE" ]]; then
+        PHRASES=("♪ dropping a ${STYLE} beat" "♪ ${STYLE} in the booth" "♪ cueing up ${STYLE}" "♪ ${STYLE} on deck")
+      else
+        PHRASES=("♪ next track loading" "♪ beat incoming" "♪ stepping up to the decks")
+      fi
+      ;;
+    playing)
+      NAME=$(echo "$RESULT" | jq -r '.name // empty' 2>/dev/null)
+      if [[ -n "$NAME" ]]; then
+        PHRASES=("♪ now spinning: ${NAME}" "♪ ${NAME} on the decks" "♪ ${NAME} on repeat")
+      else
+        PHRASES=("♪ and we're live" "♪ track on loop" "♪ the set continues")
+      fi
+      ;;
+    stopped)
+      PHRASES=("♪ fading out" "♪ set over" "♪ decks off" "♪ last call")
+      ;;
+    *)
+      PHRASES=("♪ music updated")
+      ;;
+  esac
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "music_play" ]]; then
+  NAME=$(echo "$RESULT" | jq -r '.name // "track"' 2>/dev/null)
+  PHRASES=("♪ bringing back ${NAME}" "♪ ${NAME} encore" "♪ ${NAME} from the vault")
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "music_list" ]]; then
+  COUNT=$(echo "$RESULT" | jq -r '.tracks | length' 2>/dev/null || echo "?")
+  PHRASES=("♪ ${COUNT} track(s) in the crate" "♪ your crate: ${COUNT} track(s)")
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "show_vox" ]]; then
+  emit "♪ vox display updated" "$RESULT"
+  exit 0
+fi
+
 # Generic message fallback: if the result has a "message" field, use it.
-# Covers music, music_play, music_list, show_vox, and any future tool
-# that returns a human-readable message.
+# Safety net for any tool that returns human-readable text but doesn't
+# have a dedicated formatter above.
 MSG_FIELD=$(echo "$RESULT" | jq -r '.message // empty' 2>/dev/null)
 if [[ -n "$MSG_FIELD" ]]; then
   emit "$MSG_FIELD" "$RESULT"
