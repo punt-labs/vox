@@ -160,6 +160,15 @@ if [[ "$TOOL_NAME" == "who" ]]; then
   exit 0
 fi
 
+# Generic message fallback: if the result has a "message" field, use it.
+# Covers music, music_play, music_list, show_vox, and any future tool
+# that returns a human-readable message.
+MSG_FIELD=$(echo "$RESULT" | jq -r '.message // empty' 2>/dev/null)
+if [[ -n "$MSG_FIELD" ]]; then
+  emit "$MSG_FIELD" "$RESULT"
+  exit 0
+fi
+
 # Fallback: full output in panel
 jq -n --arg r "$RESULT" '{
   hookSpecificOutput: {
