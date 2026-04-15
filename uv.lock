@@ -1081,7 +1081,7 @@ wheels = [
 
 [[package]]
 name = "punt-vox"
-version = "4.7.0"
+version = "4.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "audioop-lts" },

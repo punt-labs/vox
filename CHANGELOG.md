@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-04-14
+
 ### Fixed
 
 - **Vibe tags spoken literally by ElevenLabs**: `[serious]`, `[alert]`, and other bracket-style expressive tags were passed through to ElevenLabs `eleven_v3` as literal text instead of being stripped. The model does not interpret them as expressive cues — it speaks "[serious]" aloud. Emptied `_EXPRESSIVE_MODELS` so `strip_vibe_tags` runs unconditionally for all ElevenLabs models.
