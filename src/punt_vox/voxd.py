@@ -19,6 +19,7 @@ import logging.config
 import math
 import os
 import platform
+import re
 import secrets
 import shutil
 import sys
@@ -50,7 +51,6 @@ from punt_vox.paths import (
     run_dir as _user_run_dir,
 )
 from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.resolve import split_leading_expressive_tags
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -65,6 +65,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
+
+# Vibe-tag pattern: single lowercase word in brackets, e.g. [serious], [warm].
+# Duplicated from normalize._VIBE_TAG_RE to avoid importing a private name.
+_VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 
 # Audio deduplication window: skip identical audio within this many seconds.
 _DEDUP_WINDOW_SECONDS = 5.0
@@ -1062,42 +1066,49 @@ def _apply_vibe_for_synthesis(
     Takes the user's RAW ``raw_text`` (NOT yet normalized). The order of
     operations matters because :func:`punt_vox.normalize.normalize_for_speech`
     discards brackets via its non-prosody-punctuation filter. If we let
-    normalization run before stripping or before splitting tags, then
-    ``[serious] hello`` becomes ``serious hello`` and the literal word
-    ``serious`` survives into the TTS input on every non-expressive
-    provider. We have to peel the leading tags off first.
+    normalization run first, ``[serious] hello`` becomes ``serious hello``
+    and the literal word survives into TTS input.
 
-    Steps:
+    Non-expressive path:
+        Strip ALL vibe tags (any position) via ``strip_vibe_tags`` first,
+        then normalize the cleaned text.
 
-    1. Split leading bracket tags off the raw text into ``leading_tags``
-       and ``raw_body``. The split is whitespace-aware and only matches
-       at the very front of the string — embedded ``[tag]`` mid-sentence
-       is left to normalization (which strips its brackets).
-    2. Run ``normalize_for_speech`` on ``raw_body`` only, never on the
-       tags themselves.
-    3. If the active model supports expressive tags, re-attach them in
-       order: ``vibe_tags`` (session-level) first, then the user's own
-       leading tags, then the normalized body.
-    4. If the active model does NOT support expressive tags, drop both
-       ``vibe_tags`` and the user's leading tags. Return only the
-       normalized body so the TTS engine never sees a bracket character
-       or the bare word inside one.
+    Expressive path:
+        Split text into tag / non-tag segments via ``_VIBE_TAG_RE``,
+        normalize only the non-tag segments, reassemble with tags intact,
+        then prepend session ``vibe_tags``.
     """
     expressive = _model_supports_expressive_tags(provider_name, model)
 
-    leading_tags, raw_body = split_leading_expressive_tags(raw_text)
-    body = normalize_for_speech(raw_body)
-
     if not expressive:
-        # Drop both vibe_tags and user-supplied leading tags. The body has
-        # no bracket characters left because we split them off above.
-        return body
+        # Remove tags at ANY position via the regex directly — bypass
+        # strip_vibe_tags's guard (which returns original text when
+        # stripping leaves nothing). For tags-only input like "[serious]"
+        # the correct result is empty, not the bare word "serious".
+        cleaned = _VIBE_TAG_RE.sub("", raw_text)
+        cleaned = re.sub(r"  +", " ", cleaned).strip()
+        return normalize_for_speech(cleaned) if cleaned else ""
+
+    # Expressive: normalize around tags so they survive at any position.
+    # _VIBE_TAG_RE has one capturing group, so split() interleaves:
+    #   even indices → plain text, odd indices → tag word (no brackets).
+    segments = _VIBE_TAG_RE.split(raw_text)
+    rebuilt: list[str] = []
+    for i, seg in enumerate(segments):
+        if i % 2 == 0:
+            # Plain text segment — normalize it.
+            normed = normalize_for_speech(seg)
+            if normed:
+                rebuilt.append(normed)
+        else:
+            # Captured tag word — restore brackets.
+            rebuilt.append(f"[{seg}]")
+
+    body = " ".join(rebuilt)
 
     parts: list[str] = []
     if vibe_tags:
         parts.append(vibe_tags.strip())
-    if leading_tags:
-        parts.append(leading_tags)
     if body:
         parts.append(body)
     return " ".join(parts)
