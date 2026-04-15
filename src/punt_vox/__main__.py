@@ -30,7 +30,6 @@ from punt_vox.config import (
 )
 from punt_vox.dirs import DEFAULT_CONFIG_PATH, default_output_dir, find_config
 from punt_vox.hooks import hook_app
-from punt_vox.normalize import normalize_for_speech
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
 from punt_vox.service import (
@@ -473,7 +472,6 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     client = VoxClientSync()
 
     for seg_text in segments:
-        seg_text = normalize_for_speech(seg_text)
         try:
             result = client.synthesize(
                 seg_text,
@@ -538,7 +536,6 @@ def record(  # pyright: ignore[reportUnusedFunction]
     client = VoxClientSync()
 
     for i, seg_text in enumerate(segments):
-        seg_text = normalize_for_speech(seg_text)
         # Determine output path
         if output is not None and len(segments) == 1:
             out_path = output
