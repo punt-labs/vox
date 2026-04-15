@@ -526,7 +526,7 @@ _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 # ---------------------------------------------------------------------------
 
 
-_VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
+VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 
 
 def strip_vibe_tags(text: str) -> str:
@@ -550,7 +550,7 @@ def strip_vibe_tags(text: str) -> str:
        support expressive tags at all (say, espeak) to sanitise the full
        text before passing it to a subprocess.
     """
-    result = _VIBE_TAG_RE.sub("", text)
+    result = VIBE_TAG_RE.sub("", text)
     # Collapse runs of whitespace left behind by removal.
     result = re.sub(r"  +", " ", result).strip()
     # Guard: if stripping removed all content, return original text

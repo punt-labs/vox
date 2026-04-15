@@ -1891,6 +1891,71 @@ class TestApplyVibeForSynthesis:
         assert result == "my function works"
         assert "whisper" not in result
 
+    # -- vox-6ls: trailing / inline vibe tags at any position ---------------
+
+    def test_trailing_tags_stripped_non_expressive(self) -> None:
+        """Trailing tags like '[alert] [serious]' must be fully removed."""
+        result = _apply_vibe_for_synthesis(
+            "hello [alert] [serious]", None, "polly", None
+        )
+        assert result == "hello"
+        assert "alert" not in result
+        assert "serious" not in result
+
+    def test_inline_tags_stripped_non_expressive(self) -> None:
+        """Inline tags must be fully removed — no bare words left."""
+        result = _apply_vibe_for_synthesis("hello [serious] world", None, "polly", None)
+        assert result == "hello world"
+        assert "serious" not in result
+
+    def test_leading_tags_still_stripped_non_expressive(self) -> None:
+        """Leading tags continue to work (regression guard)."""
+        result = _apply_vibe_for_synthesis("[serious] hello", None, "polly", None)
+        assert result == "hello"
+        assert "serious" not in result
+
+    def _patch_expressive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Force _model_supports_expressive_tags to return True."""
+
+        def _always_expressive(_provider: str, _model: str | None) -> bool:
+            return True
+
+        monkeypatch.setattr(
+            "punt_vox.voxd._model_supports_expressive_tags",
+            _always_expressive,
+        )
+
+    def test_trailing_tags_preserved_expressive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Expressive model keeps trailing tags intact."""
+        self._patch_expressive(monkeypatch)
+        result = _apply_vibe_for_synthesis(
+            "hello [serious]", None, "elevenlabs", "eleven_v3"
+        )
+        assert "[serious]" in result
+        assert "hello" in result
+
+    def test_inline_tags_preserved_expressive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Expressive model keeps inline tags intact."""
+        self._patch_expressive(monkeypatch)
+        result = _apply_vibe_for_synthesis(
+            "hello [serious] world", None, "elevenlabs", "eleven_v3"
+        )
+        assert "[serious]" in result
+        assert "hello" in result
+        assert "world" in result
+
+    def test_session_vibe_tags_prepended_expressive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Session vibe_tags are prepended on expressive models."""
+        self._patch_expressive(monkeypatch)
+        result = _apply_vibe_for_synthesis("hello", "[warm]", "elevenlabs", "eleven_v3")
+        assert result == "[warm] hello"
+
 
 # ---------------------------------------------------------------------------
 # vox-0e9: opt-in once-flag dedup for speech
