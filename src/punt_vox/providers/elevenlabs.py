@@ -169,10 +169,13 @@ class ElevenLabsProvider:
         return "matilda"
 
     # Models that interpret bracket-style expressive tags natively.
-    # No current ElevenLabs model does this; the infrastructure remains
-    # so a future model can be added without changing the conditional
-    # logic in synthesize().
-    _EXPRESSIVE_MODELS: frozenset[str] = frozenset()
+    # eleven_v3 treats bracket tags like [alert] and [serious] as
+    # expressive cues — it does not speak them as literal words.
+    # Note: the ElevenLabs Model API's `can_use_style` refers to the
+    # style voice-settings slider (a float 0-1), not bracket tags.
+    # eleven_v3 reports can_use_style=False yet interprets bracket
+    # tags. No API property exists for bracket-tag support.
+    _EXPRESSIVE_MODELS: frozenset[str] = frozenset({"eleven_v3"})
 
     @property
     def supports_expressive_tags(self) -> bool:
@@ -184,9 +187,8 @@ class ElevenLabsProvider:
 
         Resolves the model the same way ``__init__`` does (explicit param,
         ``TTS_MODEL`` env var, then ``_DEFAULT_MODEL``) and checks
-        membership in the expressive set. Currently returns False for all
-        models — no ElevenLabs model interprets bracket-style tags. The
-        infrastructure remains for future models that may.
+        membership in the expressive set. Returns True for ``eleven_v3``,
+        which treats bracket tags like ``[alert]`` as expressive cues.
 
         Pure: does not construct the provider or touch the ElevenLabs SDK.
         """

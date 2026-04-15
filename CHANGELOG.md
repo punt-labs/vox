@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ElevenLabs**: re-enabled `eleven_v3` in expressive models set — bracket-style tags like `[alert]` and `[serious]` are now preserved and interpreted as expressive cues instead of being stripped. The v4.7.1 removal was based on a misdiagnosis; the CLI was pre-normalizing brackets before the model saw them.
+
 ## [4.7.3] - 2026-04-14
 
 ### Fixed
