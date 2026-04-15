@@ -287,19 +287,18 @@ class TestElevenLabsProviderDefaultModel:
         provider = ElevenLabsProvider(client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
-    def test_default_supports_expressive_tags(
+    def test_default_does_not_support_expressive_tags(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The default model must render /vibe tags as performance cues.
+        """No current model interprets bracket-style tags natively.
 
-        The /vibe feature is the headline product differentiator; a default
-        model that can't interpret bracket-style tags silently breaks it
-        for every user who never sets TTS_MODEL explicitly.
+        Vibe tags are always stripped before synthesis so the TTS engine
+        never speaks "[serious]" as literal text.
         """
         # Clear TTS_MODEL to validate the code default, not an env override.
         monkeypatch.delenv("TTS_MODEL", raising=False)
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider.supports_expressive_tags is True
+        assert provider.supports_expressive_tags is False
 
     def test_explicit_model(self) -> None:
         provider = ElevenLabsProvider(model="eleven_turbo_v2_5", client=MagicMock())
@@ -315,9 +314,9 @@ class TestElevenLabsProviderDefaultModel:
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
-    def test_expressive_tags_supported_on_v3(self) -> None:
+    def test_expressive_tags_not_supported_on_v3(self) -> None:
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
-        assert provider.supports_expressive_tags is True
+        assert provider.supports_expressive_tags is False
 
     def test_expressive_tags_not_supported_on_flash(self) -> None:
         provider = ElevenLabsProvider(model="eleven_flash_v2_5", client=MagicMock())
@@ -330,9 +329,9 @@ class TestElevenLabsProviderDefaultModel:
     def test_model_supports_expressive_tags_classmethod_v3(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Static lookup must return True for eleven_v3 without instantiation."""
+        """Static lookup returns False for eleven_v3 — no native tag support."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
+        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is False
 
     def test_model_supports_expressive_tags_classmethod_flash(
         self, monkeypatch: pytest.MonkeyPatch
@@ -347,9 +346,9 @@ class TestElevenLabsProviderDefaultModel:
     def test_model_supports_expressive_tags_classmethod_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """None argument must resolve to the code default (eleven_v3 → True)."""
+        """None argument resolves to the code default (eleven_v3 → False)."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
+        assert ElevenLabsProvider.model_supports_expressive_tags(None) is False
 
     def test_model_supports_expressive_tags_classmethod_env_override(
         self, monkeypatch: pytest.MonkeyPatch
@@ -361,9 +360,9 @@ class TestElevenLabsProviderDefaultModel:
     def test_model_supports_expressive_tags_classmethod_explicit_beats_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Explicit model arg wins over the TTS_MODEL env var."""
+        """Explicit model arg wins over the TTS_MODEL env var — both False."""
         monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
-        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
+        assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is False
 
 
 class TestElevenLabsProviderCharLimits:
