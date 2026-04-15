@@ -404,12 +404,12 @@ class TestVibeTagStripping:
         assert "[Figure 1]" in call_kwargs["Text"]
         assert result.text == "See [Figure 1] for details"
 
-    def test_elevenlabs_v3_keeps_tags(
+    def test_elevenlabs_v3_strips_tags(
         self,
         mock_elevenlabs_client: MagicMock,
         tmp_output_dir: Path,
     ) -> None:
-        """ElevenLabs eleven_v3 model should keep expressive tags intact."""
+        """ElevenLabs eleven_v3 strips tags — no current model interprets them."""
         provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
         client = TTSClient(provider)
         request = SynthesisRequest(text="[serious] Hello world", voice="matilda")
@@ -418,8 +418,8 @@ class TestVibeTagStripping:
         result = client.synthesize(request, out)
 
         call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
-        assert "[serious]" in call_kwargs["text"]
-        assert result.text == "[serious] Hello world"
+        assert "[serious]" not in call_kwargs["text"]
+        assert result.text == "Hello world"
 
     def test_elevenlabs_flash_strips_tags(
         self,
