@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.2] - 2026-04-14
+
 ### Fixed
 
 - **Trailing vibe tags spoken as literal words**: when vibe tags appeared at the end or middle of text (e.g. `"Wall from claude: hello [alert] [serious]"`), `normalize_for_speech` stripped the brackets but left the bare words "alert serious" in the TTS input. Root cause: `_apply_vibe_for_synthesis` only split *leading* tags before normalization — trailing and inline tags survived into `normalize_for_speech` which strips brackets but not content. Fix: strip all `[tag]` patterns at any position *before* normalization on non-expressive models. Expressive model path also fixed to normalize text around tags at any position, preserving them for future re-enablement. Closes vox-6ls.
