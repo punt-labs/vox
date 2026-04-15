@@ -62,8 +62,9 @@ fi
 # array pattern from punt-kit/standards/permissions.md § 6.
 #
 # Skill names must match deployed commands: unmute.md, mute.md, recap.md,
-# vibe.md, vox.md. If a command is added/renamed, update this list —
-# stale entries cause unexplained permission prompts.
+# vibe.md, vox.md, music.md. If a command is added/renamed, update this
+# list AND scripts/check-skill-permissions.sh — stale entries cause
+# unexplained permission prompts. The lint script enforces parity.
 if ! command -v jq >/dev/null 2>&1; then
   ACTIONS+=("jq not found, skipping permission setup")
 else
@@ -80,7 +81,7 @@ else
 
   # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)"]' 2>/dev/null) || {
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)", "Skill(music)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")
     PLUGIN_RULES=""
   }
