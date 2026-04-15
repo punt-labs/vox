@@ -287,13 +287,10 @@ class TestElevenLabsProviderDefaultModel:
         provider = ElevenLabsProvider(client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
-    def test_default_does_not_support_expressive_tags(
+    def test_default_supports_expressive_tags(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No current model interprets bracket-style tags natively.
-
-        The default model is eleven_v3 which supports expressive tags.
-        """
+        """The default model (eleven_v3) interprets bracket-style tags natively."""
         # Clear TTS_MODEL to validate the code default, not an env override.
         monkeypatch.delenv("TTS_MODEL", raising=False)
         provider = ElevenLabsProvider(client=MagicMock())

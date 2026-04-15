@@ -418,8 +418,8 @@ class TestVibeTagStripping:
         result = client.synthesize(request, out)
 
         call_kwargs = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs
-        assert "[serious]" in call_kwargs["text"]
-        assert "Hello world" in result.text
+        assert call_kwargs["text"] == "[serious] Hello world"
+        assert result.text == "[serious] Hello world"
 
     def test_elevenlabs_flash_strips_tags(
         self,

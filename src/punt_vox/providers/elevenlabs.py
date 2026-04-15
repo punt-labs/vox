@@ -28,10 +28,11 @@ logger = logging.getLogger(__name__)
 __all__ = ["ElevenLabsProvider"]
 
 # Default model — eleven_v3 is the latest model with the best voice
-# quality and multilingual support. No current ElevenLabs model
-# interprets bracket-style expressive tags natively, so vibe tags are
-# always stripped before synthesis. Users who want lower cost or lower
-# latency can override via TTS_MODEL=eleven_flash_v2_5.
+# quality and multilingual support. eleven_v3 interprets bracket-style
+# expressive tags natively (e.g. [whisper], [serious]), so vibe tags
+# are preserved for that model. Other models strip tags before
+# synthesis. Users who want lower cost or lower latency can override
+# via TTS_MODEL=eleven_flash_v2_5.
 _DEFAULT_MODEL = "eleven_v3"
 
 # Character limits per model (from ElevenLabs docs).
@@ -140,10 +141,11 @@ class ElevenLabsProvider:
     """ElevenLabs TTS provider.
 
     Implements the TTSProvider protocol using the ElevenLabs SDK.
-    Defaults to eleven_v3 for best voice quality. No current model
-    interprets bracket-style expressive tags natively, so vibe tags
-    are always stripped before synthesis. Override with ``TTS_MODEL``
-    env var for lower cost or latency (e.g. ``eleven_flash_v2_5``).
+    Defaults to eleven_v3 for best voice quality. eleven_v3 interprets
+    bracket-style expressive tags natively, so tags are preserved for
+    that model. Other models strip tags before synthesis. Override with
+    ``TTS_MODEL`` env var for lower cost or latency (e.g.
+    ``eleven_flash_v2_5``).
     """
 
     def __init__(

@@ -1760,8 +1760,7 @@ class TestApplyVibeForSynthesis:
         result = _apply_vibe_for_synthesis(
             "[whisper] Quiet message", None, "elevenlabs", "eleven_v3"
         )
-        assert "[whisper]" in result
-        assert "Quiet message" in result
+        assert result == "[whisper] Quiet message"
 
     def test_non_expressive_model_drops_vibe_tags(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1848,7 +1847,7 @@ class TestApplyVibeForSynthesis:
         """Tags-only input on eleven_v3 preserves the tag as an expressive cue."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis("[sighs]", None, "elevenlabs", "eleven_v3")
-        assert "[sighs]" in result
+        assert result == "[sighs]"
 
     def test_normalizes_body_through_production_call_path(
         self,
@@ -1885,9 +1884,7 @@ class TestApplyVibeForSynthesis:
         result = _apply_vibe_for_synthesis(
             "[whisper] my_function works", None, "elevenlabs", "eleven_v3"
         )
-        assert "[whisper]" in result
-        assert "my function works" in result
-        assert "_" not in result
+        assert result == "[whisper] my function works"
 
     # -- vox-6ls: trailing / inline vibe tags at any position ---------------
 
