@@ -42,7 +42,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
-from punt_vox.normalize import normalize_for_speech
+from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.paths import (
     config_dir as _user_config_dir,
     ensure_user_dirs,
@@ -65,10 +65,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
-
-# Vibe-tag pattern: single lowercase word in brackets, e.g. [serious], [warm].
-# Duplicated from normalize._VIBE_TAG_RE to avoid importing a private name.
-_VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 
 # Audio deduplication window: skip identical audio within this many seconds.
 _DEDUP_WINDOW_SECONDS = 5.0
@@ -1070,11 +1066,12 @@ def _apply_vibe_for_synthesis(
     and the literal word survives into TTS input.
 
     Non-expressive path:
-        Strip ALL vibe tags (any position) via ``strip_vibe_tags`` first,
-        then normalize the cleaned text.
+        Strip ALL vibe tags (any position) via ``VIBE_TAG_RE.sub(...)``,
+        collapse/trim whitespace, then normalize the cleaned text. If the
+        input contains only tags, return the empty string.
 
     Expressive path:
-        Split text into tag / non-tag segments via ``_VIBE_TAG_RE``,
+        Split text into tag / non-tag segments via ``VIBE_TAG_RE``,
         normalize only the non-tag segments, reassemble with tags intact,
         then prepend session ``vibe_tags``.
     """
@@ -1085,14 +1082,14 @@ def _apply_vibe_for_synthesis(
         # strip_vibe_tags's guard (which returns original text when
         # stripping leaves nothing). For tags-only input like "[serious]"
         # the correct result is empty, not the bare word "serious".
-        cleaned = _VIBE_TAG_RE.sub("", raw_text)
+        cleaned = VIBE_TAG_RE.sub("", raw_text)
         cleaned = re.sub(r"  +", " ", cleaned).strip()
         return normalize_for_speech(cleaned) if cleaned else ""
 
     # Expressive: normalize around tags so they survive at any position.
-    # _VIBE_TAG_RE has one capturing group, so split() interleaves:
+    # VIBE_TAG_RE has one capturing group, so split() interleaves:
     #   even indices → plain text, odd indices → tag word (no brackets).
-    segments = _VIBE_TAG_RE.split(raw_text)
+    segments = VIBE_TAG_RE.split(raw_text)
     rebuilt: list[str] = []
     for i, seg in enumerate(segments):
         if i % 2 == 0:
