@@ -28,12 +28,10 @@ def split_leading_expressive_tags(text: str) -> tuple[str, str]:
     and ``body`` is everything after. When ``text`` does not begin with
     a tag, returns ``("", text)``.
 
-    This split exists so callers can pull the tags off BEFORE running
-    the body through :func:`punt_vox.normalize.normalize_for_speech`,
-    which discards brackets as non-prosody punctuation. Without the
-    early split, ``[serious] hello`` becomes ``serious hello`` after
-    normalization and the brackets cannot be stripped — the literal
-    word ``serious`` survives into the final TTS input.
+    Used by :func:`apply_vibe` to detect and preserve leading tags
+    when composing vibe text. Normalization is now handled entirely
+    inside ``voxd._apply_vibe_for_synthesis``, which uses
+    ``VIBE_TAG_RE`` to split tags at any position — not just leading.
     """
     match = _LEADING_TAGS_RE.match(text)
     if not match:

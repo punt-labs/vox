@@ -205,6 +205,37 @@ class TestUnmuteCommand:
         call_kwargs = mock_instance.synthesize.call_args[1]
         assert call_kwargs["api_key"] is None
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_unmute_preserves_vibe_tags(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        """Vibe tags must reach voxd with brackets intact.
+
+        Regression: the CLI previously called normalize_for_speech before
+        sending text to voxd. normalize_for_speech strips brackets but
+        leaves the words, so ``[alert] [serious]`` became ``alert serious``
+        and voxd's VIBE_TAG_RE could no longer match. The fix is to let
+        voxd handle normalization via _apply_vibe_for_synthesis.
+        """
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        runner = CliRunner()
+        text = "Wall from claude: test 1, 2, 1, 2 [alert] [serious]"
+        result = runner.invoke(app, ["unmute", text])
+
+        assert result.exit_code == 0
+        sent_text = mock_instance.synthesize.call_args[0][0]
+        assert "[alert]" in sent_text
+        assert "[serious]" in sent_text
+        assert "alert serious" not in sent_text
+
 
 # ---------------------------------------------------------------------------
 # API key input path tests
@@ -866,6 +897,31 @@ class TestRecordCommand:
 
         assert result.exit_code == 1
         assert "not running" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_preserves_vibe_tags(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Vibe tags must reach voxd with brackets intact (record path).
+
+        Same regression as test_unmute_preserves_vibe_tags — the CLI
+        previously called normalize_for_speech before sending to voxd.
+        """
+        out = tmp_path / "test.mp3"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+
+        runner = CliRunner()
+        text = "Hello world [warm] [friendly]"
+        result = runner.invoke(app, ["record", text, "-o", str(out)])
+
+        assert result.exit_code == 0
+        sent_text = mock_instance.record.call_args[0][0]
+        assert "[warm]" in sent_text
+        assert "[friendly]" in sent_text
+        assert "warm friendly" not in sent_text
 
 
 # ---------------------------------------------------------------------------
