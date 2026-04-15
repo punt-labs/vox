@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.3] - 2026-04-14
+
 ### Fixed
 
 - **CLI double-normalization defeated vibe tag stripping**: `vox unmute` and `vox record` called `normalize_for_speech` before sending text to voxd. This stripped brackets from vibe tags (e.g. `[alert]` → `alert`) before voxd's `_apply_vibe_for_synthesis` could match and remove them. Result: bare words "alert serious" survived into ElevenLabs. Fix: removed pre-normalization from both CLI commands — voxd already normalizes via `_apply_vibe_for_synthesis`. Closes vox-6kv.
