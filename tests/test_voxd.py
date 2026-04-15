@@ -1681,9 +1681,9 @@ class TestModelSupportsExpressiveTags:
     env-mutation lock that the real synthesize path needs).
     """
 
-    def test_elevenlabs_v3_unsupported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_elevenlabs_v3_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert _model_supports_expressive_tags("elevenlabs", "eleven_v3") is False
+        assert _model_supports_expressive_tags("elevenlabs", "eleven_v3") is True
 
     def test_elevenlabs_flash_does_not_support(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1693,12 +1693,12 @@ class TestModelSupportsExpressiveTags:
             _model_supports_expressive_tags("elevenlabs", "eleven_flash_v2_5") is False
         )
 
-    def test_elevenlabs_default_unsupported(
+    def test_elevenlabs_default_supported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """None model resolves to eleven_v3 — no native tag support."""
+        """None model resolves to eleven_v3 — supports expressive tags."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert _model_supports_expressive_tags("elevenlabs", None) is False
+        assert _model_supports_expressive_tags("elevenlabs", None) is True
 
     def test_polly_never_supports(self) -> None:
         assert _model_supports_expressive_tags("polly", None) is False
@@ -1735,14 +1735,13 @@ class TestApplyVibeForSynthesis:
     both are dropped entirely.
     """
 
-    def test_v3_drops_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """eleven_v3 does not interpret tags — vibe_tags are dropped."""
+    def test_v3_preserves_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """eleven_v3 interprets tags natively — vibe_tags are prepended."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis(
             "Hello world", "[excited]", "elevenlabs", "eleven_v3"
         )
-        assert result == "Hello world"
-        assert "excited" not in result
+        assert result == "[excited] Hello world"
 
     def test_expressive_model_passthrough_when_no_vibe_tags(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1753,14 +1752,15 @@ class TestApplyVibeForSynthesis:
         )
         assert result == "Hello world"
 
-    def test_v3_strips_user_tags_in_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """eleven_v3 strips user-supplied tags — no native tag support."""
+    def test_v3_preserves_user_tags_in_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """eleven_v3 interprets tags natively — user tags are preserved."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis(
             "[whisper] Quiet message", None, "elevenlabs", "eleven_v3"
         )
-        assert result == "Quiet message"
-        assert "whisper" not in result
+        assert result == "[whisper] Quiet message"
 
     def test_non_expressive_model_drops_vibe_tags(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1840,18 +1840,14 @@ class TestApplyVibeForSynthesis:
         )
         assert result == ""
 
-    def test_degenerate_text_only_tags_v3_returns_empty(
+    def test_degenerate_text_only_tags_v3_preserves(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Tags-only input on eleven_v3 returns empty — tags are stripped.
-
-        No current model interprets bracket tags natively, so the tag
-        is split off and dropped, leaving an empty body.
-        """
+        """Tags-only input on eleven_v3 preserves the tag as an expressive cue."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis("[sighs]", None, "elevenlabs", "eleven_v3")
-        assert result == ""
+        assert result == "[sighs]"
 
     def test_normalizes_body_through_production_call_path(
         self,
@@ -1879,17 +1875,16 @@ class TestApplyVibeForSynthesis:
         assert "[" not in result
         assert "_" not in result
 
-    def test_v3_normalizes_body_and_strips_tags(
+    def test_v3_normalizes_body_and_preserves_tags(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """eleven_v3 normalizes the body and strips leading tags."""
+        """eleven_v3 normalizes the body and preserves leading tags."""
         monkeypatch.delenv("TTS_MODEL", raising=False)
         result = _apply_vibe_for_synthesis(
             "[whisper] my_function works", None, "elevenlabs", "eleven_v3"
         )
-        assert result == "my function works"
-        assert "whisper" not in result
+        assert result == "[whisper] my function works"
 
     # -- vox-6ls: trailing / inline vibe tags at any position ---------------
 

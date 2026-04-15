@@ -28,10 +28,11 @@ logger = logging.getLogger(__name__)
 __all__ = ["ElevenLabsProvider"]
 
 # Default model — eleven_v3 is the latest model with the best voice
-# quality and multilingual support. No current ElevenLabs model
-# interprets bracket-style expressive tags natively, so vibe tags are
-# always stripped before synthesis. Users who want lower cost or lower
-# latency can override via TTS_MODEL=eleven_flash_v2_5.
+# quality and multilingual support. eleven_v3 interprets bracket-style
+# expressive tags natively (e.g. [whisper], [serious]), so vibe tags
+# are preserved for that model. Other models strip tags before
+# synthesis. Users who want lower cost or lower latency can override
+# via TTS_MODEL=eleven_flash_v2_5.
 _DEFAULT_MODEL = "eleven_v3"
 
 # Character limits per model (from ElevenLabs docs).
@@ -140,10 +141,11 @@ class ElevenLabsProvider:
     """ElevenLabs TTS provider.
 
     Implements the TTSProvider protocol using the ElevenLabs SDK.
-    Defaults to eleven_v3 for best voice quality. No current model
-    interprets bracket-style expressive tags natively, so vibe tags
-    are always stripped before synthesis. Override with ``TTS_MODEL``
-    env var for lower cost or latency (e.g. ``eleven_flash_v2_5``).
+    Defaults to eleven_v3 for best voice quality. eleven_v3 interprets
+    bracket-style expressive tags natively, so tags are preserved for
+    that model. Other models strip tags before synthesis. Override with
+    ``TTS_MODEL`` env var for lower cost or latency (e.g.
+    ``eleven_flash_v2_5``).
     """
 
     def __init__(
@@ -169,10 +171,13 @@ class ElevenLabsProvider:
         return "matilda"
 
     # Models that interpret bracket-style expressive tags natively.
-    # No current ElevenLabs model does this; the infrastructure remains
-    # so a future model can be added without changing the conditional
-    # logic in synthesize().
-    _EXPRESSIVE_MODELS: frozenset[str] = frozenset()
+    # eleven_v3 treats bracket tags like [alert] and [serious] as
+    # expressive cues — it does not speak them as literal words.
+    # Note: the ElevenLabs Model API's `can_use_style` refers to the
+    # style voice-settings slider (a float 0-1), not bracket tags.
+    # eleven_v3 reports can_use_style=False yet interprets bracket
+    # tags. No API property exists for bracket-tag support.
+    _EXPRESSIVE_MODELS: frozenset[str] = frozenset({"eleven_v3"})
 
     @property
     def supports_expressive_tags(self) -> bool:
@@ -184,9 +189,8 @@ class ElevenLabsProvider:
 
         Resolves the model the same way ``__init__`` does (explicit param,
         ``TTS_MODEL`` env var, then ``_DEFAULT_MODEL``) and checks
-        membership in the expressive set. Currently returns False for all
-        models — no ElevenLabs model interprets bracket-style tags. The
-        infrastructure remains for future models that may.
+        membership in the expressive set. Returns True for ``eleven_v3``,
+        which treats bracket tags like ``[alert]`` as expressive cues.
 
         Pure: does not construct the provider or touch the ElevenLabs SDK.
         """
