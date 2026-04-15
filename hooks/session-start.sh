@@ -61,10 +61,10 @@ fi
 # a permission prompt after enabling the plugin. Uses the PLUGIN_RULES
 # array pattern from punt-kit/standards/permissions.md § 6.
 #
-# Skill names must match deployed commands: unmute.md, mute.md, recap.md,
-# vibe.md, vox.md, music.md. If a command is added/renamed, update this
-# list AND scripts/check-skill-permissions.sh — stale entries cause
-# unexplained permission prompts. The lint script enforces parity.
+# Skill names must match deployed commands. When a command is added
+# or renamed, update the Skill() list below; scripts/check-skill-permissions.sh
+# (wired into `make lint`) enforces parity and catches any drift that
+# would otherwise surface as unexplained permission prompts.
 if ! command -v jq >/dev/null 2>&1; then
   ACTIONS+=("jq not found, skipping permission setup")
 else

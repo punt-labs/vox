@@ -10,7 +10,7 @@ lint: ## Lint and format check (Python + shell)
 	uv run ruff check src/ tests/
 	uv run ruff format --check src/ tests/
 	shellcheck -x hooks/*.sh scripts/*.sh install.sh
-	scripts/check-skill-permissions.sh
+	bash scripts/check-skill-permissions.sh
 
 type: ## Type check with mypy and pyright
 	uv run mypy src/ tests/

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Verify hooks/session-start.sh auto-allows a Skill(<name>) rule for every
 # command in commands/*.md. Drift here causes unexplained permission
-# prompts on first use. Fast (no network, no subprocesses beyond grep/ls).
+# prompts on first use. Fast (no network; uses standard shell utilities only).
 set -euo pipefail
+shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$ROOT/hooks/session-start.sh"
@@ -26,6 +27,11 @@ mapfile -t COMMANDS < <(
     printf '%s\n' "$name"
   done | sort
 )
+
+if [[ ${#COMMANDS[@]} -eq 0 ]]; then
+  echo "error: no *.md files found in $COMMANDS_DIR — expected at least one command" >&2
+  exit 2
+fi
 
 # Skill() rules declared in the hook's PLUGIN_RULES jq expression.
 mapfile -t ALLOWED < <(grep -oE 'Skill\([a-z_-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
