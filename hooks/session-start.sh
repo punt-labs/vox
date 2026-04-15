@@ -61,9 +61,10 @@ fi
 # a permission prompt after enabling the plugin. Uses the PLUGIN_RULES
 # array pattern from punt-kit/standards/permissions.md § 6.
 #
-# Skill names must match deployed commands: unmute.md, mute.md, recap.md,
-# vibe.md, vox.md. If a command is added/renamed, update this list —
-# stale entries cause unexplained permission prompts.
+# Skill names must match deployed commands. When a command is added
+# or renamed, update the Skill() list below; scripts/check-skill-permissions.sh
+# (wired into `make lint`) enforces parity and catches any drift that
+# would otherwise surface as unexplained permission prompts.
 if ! command -v jq >/dev/null 2>&1; then
   ACTIONS+=("jq not found, skipping permission setup")
 else
@@ -80,7 +81,7 @@ else
 
   # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)"]' 2>/dev/null) || {
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)", "Skill(music)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")
     PLUGIN_RULES=""
   }

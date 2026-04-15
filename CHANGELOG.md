@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/music` triggered permission prompt on first use**: `hooks/session-start.sh` auto-allows `Skill()` rules for plugin commands, but `Skill(music)` was missing from the hardcoded list. Added it, and introduced `scripts/check-skill-permissions.sh` (wired into `make lint`) to flag any drift between `commands/*.md` and the hook's allowlist. Closes vox-zz2.
+
 ## [4.7.4] - 2026-04-14
 
 ### Changed
