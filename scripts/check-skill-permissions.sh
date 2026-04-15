@@ -19,8 +19,12 @@ if [[ ! -d "$COMMANDS_DIR" ]]; then
 fi
 
 # Commands deployed to ~/.claude/commands (skip *-dev.md, matching the
-# hook's deployment logic).
-mapfile -t COMMANDS < <(
+# hook's deployment logic). Uses `while read` for Bash 3.2 compatibility
+# (stock macOS) — mapfile is a Bash 4+ builtin.
+COMMANDS=()
+while IFS= read -r name; do
+  COMMANDS+=("$name")
+done < <(
   for f in "$COMMANDS_DIR"/*.md; do
     name="$(basename "$f" .md)"
     [[ "$name" == *-dev ]] && continue
@@ -34,7 +38,10 @@ if [[ ${#COMMANDS[@]} -eq 0 ]]; then
 fi
 
 # Skill() rules declared in the hook's PLUGIN_RULES jq expression.
-mapfile -t ALLOWED < <(grep -oE 'Skill\([a-z_-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
+ALLOWED=()
+while IFS= read -r allow; do
+  ALLOWED+=("$allow")
+done < <(grep -oE 'Skill\([a-z_-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
 
 missing=()
 for cmd in "${COMMANDS[@]}"; do
