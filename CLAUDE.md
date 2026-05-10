@@ -198,7 +198,7 @@ exists. Do not commit, push, or merge — return results to me.
 
 ### Ethos roster (vox-specific worker/evaluator pairings)
 
-Identity: `agent: claude` per `.punt-labs/ethos.yaml`. Sub-agent calls (`Agent(subagent_type=…)`) match ethos identity handles. Worker and evaluator must be distinct handles with no shared role. Claude is the leader, never the evaluator.
+Identity: `agent: claude` per `.punt-labs/ethos.yaml`. Sub-agent calls (`Agent(subagent_type=…)`) match ethos identity handles. Within each row, the worker and evaluator must be distinct handles. Claude is the leader, never the evaluator.
 
 | Task type | Worker | Evaluator |
 |-----------|--------|-----------|
