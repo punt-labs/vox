@@ -196,17 +196,27 @@ will refuse to close until a valid result for the current round
 exists. Do not commit, push, or merge — return results to me.
 ```
 
-### Evaluator defaults
+### Ethos roster (vox-specific worker/evaluator pairings)
 
-| Task type | Evaluator |
-|-----------|-----------|
-| Security-sensitive code | `djb` |
-| Go internals / library design | `mdm` or `bwk` |
-| Python library design | `rmh` |
-| CLI / developer experience | `mdm` |
-| Infrastructure / CI | `adb` |
+Identity: `agent: claude` per `.punt-labs/ethos.yaml`. Sub-agent calls (`Agent(subagent_type=…)`) match ethos identity handles. Worker and evaluator must be distinct handles with no shared role. Claude is the leader, never the evaluator.
 
-Worker and evaluator must be distinct handles with no shared role.
+| Task type | Worker | Evaluator |
+|-----------|--------|-----------|
+| Python core (`core.py`, `client.py`, `config.py`, `resolve.py`) | `rmh` (Hettinger) | `gvr` (van Rossum) |
+| Provider implementations (Polly, OpenAI, ElevenLabs, say, espeak) | `gvr` | `rmh` |
+| `voxd` audio daemon (websocket, queue, cache, playback) | `rmh` | `bwk` (Pike) |
+| MCP server (`server.py`) tool surface | `rmh` | `mdm` (Pike) |
+| CLI (`__main__.py`) command authoring | `mdm` | `rmh` |
+| Hook scripts (`hooks/*.sh`) — Bash, signal classification | `mdm` | `rop` (McIlroy) |
+| `service.py` system daemon install (launchd, systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
+| Provider auth / API-key handling / secrets | `djb` | `rmh` |
+| Audio playback / pydub / ffmpeg pipeline | `gvr` | `kpz` (Karpathy) |
+| Cache design (`cache.py`) — content-addressing, dedup | `rmh` | `kpz` |
+| Voice / vibe / quip prose curation | `claudia` (Massimo) | `mcg` (Cagan) |
+| Lux applet (`applet.py`) — visual surface | `edt` (Tufte) | `dna` (Norman) |
+| Release / plugin name swap / cross-repo propagation | `adb` | `mdm` |
+| Type-checker workarounds (mypy vs pyright) | `gvr` | `rmh` |
+| Test infrastructure / fixtures (esp. mock MP3 bytes) | `rmh` | `gvr` |
 
 ### Task tracking and parallelism
 
