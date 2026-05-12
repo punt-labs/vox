@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-05-12
+
 ### Added
 
 - **Remote voxd connectivity**: client-side env vars `VOXD_HOST`, `VOXD_PORT`, `VOXD_TOKEN` override localhost/file-based discovery, enabling cross-host audio playback without SSH tunnels. Server-side `VOXD_BIND` (via `--host` flag or env var) controls the bind address (default `127.0.0.1`, opt-in `0.0.0.0`). Token auth remains the security boundary. `vox doctor` reports active env var overrides. Access logs redact auth tokens. Warning logged when binding to non-localhost. See `docs/remote-setup.md` for setup guide.
