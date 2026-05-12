@@ -60,16 +60,28 @@ This file is the authoritative record of design decisions, prior approaches, and
 
 ## State Management
 
+Per-project config lives in `.punt-labs/vox/` as two files:
+
 ```text
-.vox/config.md           # per-project, in project root
+.punt-labs/vox/vox.md          # tracked in git — durable preferences
 ---
-voice_enabled: false     # /voice toggle
-notify: "n"              # /notify: y=on, c=continuous, n=off
-speak: "y"               # /speak: y=voice, n=chime
+voice: ""
+provider: ""
+model: ""
+notify: "n"
+speak: "y"
+vibe_mode: "auto"
+---
+
+.punt-labs/vox/vox.local.md    # gitignored — ephemeral session state
+---
+vibe: ""
+vibe_tags: ""
+vibe_signals: ""
 ---
 ```
 
-All hooks and commands read this file for current state. The path is relative to the project root (cwd). See DES-012 for why this is per-project, not global.
+Durable keys (voice, provider, model, notify, speak, vibe_mode) route to `vox.md`. Ephemeral keys (vibe, vibe_tags, vibe_signals) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
 
 ---
 
@@ -165,34 +177,12 @@ The Notification hook runs outside the model's conversation. It cannot call MCP 
 ## DES-003: State File — Extended Config
 
 **Date:** 2026-02-25
-**Status:** SUPERSEDED by DES-012
+**Status:** SUPERSEDED by DES-012, then DES-036
 **Topic:** Where notification and speech state is persisted
 
 ### Original Design (Superseded)
 
-Originally used `~/.claude/tts.local.md` (global). Now uses `.vox/config.md` (per-project). See DES-012 for the migration rationale.
-
-### Current Design
-
-All TTS state in one file per project:
-
-```yaml
----
-voice_enabled: false
-notify: "n"
-speak: "y"
----
-```
-
-### Shell Parsing
-
-Hooks parse YAML frontmatter with grep/sed — no YAML parser needed:
-
-```bash
-notify=$(grep '^notify:' "$STATE_FILE" | sed 's/notify: *"\?\([^"]*\)"\?/\1/')
-```
-
-This is fragile but adequate for flat key-value YAML. If the state file grows complex, migrate to a JSON sidecar.
+Originally used `~/.claude/tts.local.md` (global). Moved to `.vox/config.md` (per-project) in DES-012. Then split into `.punt-labs/vox/vox.md` + `vox.local.md` in DES-036 (v4.7.5). See the State Management section at the top for current layout.
 
 ---
 
@@ -438,10 +428,10 @@ The user ran `install.sh` from a non-git directory. The SSH fallback added an HT
 
 ---
 
-## DES-012: Per-Project Config — `.vox/config.md` Not Global
+## DES-012: Per-Project Config — Not Global
 
 **Date:** 2026-02-26
-**Status:** SETTLED
+**Status:** SETTLED (path evolved: `.vox/config.md` → `.punt-labs/vox/vox.md` + `vox.local.md` in DES-036)
 **Topic:** Where TTS plugin state (notify, speak, voice) is stored
 
 ### Problem
@@ -450,26 +440,18 @@ The original state file was `~/.claude/tts.local.md` — a global path shared ac
 
 ### Design
 
-State file moved to `.vox/config.md` in the project root (cwd). Same YAML frontmatter format, same hook parsing — only the path changed.
-
-```bash
-# Before (global, leaked across projects)
-TTS_STATE_FILE="$HOME/.claude/tts.local.md"
-
-# After (per-project, isolated)
-TTS_STATE_FILE=".vox/config.md"
-```
+State moved to per-project config in the repo root. Originally `.vox/config.md`, now `.punt-labs/vox/vox.md` (durable, tracked) + `vox.local.md` (ephemeral, gitignored). See DES-036 for the two-file split rationale.
 
 ### Why This Works
 
-- `.vox/` is already in `.gitignore` (used for ephemeral audio output)
+- Config directory follows the org filesystem standard (`.punt-labs/<tool>/`)
 - Hooks run in the project root, so relative paths resolve correctly
-- Follows the biff pattern: biff uses `.biff/` in the project root for per-project state
 - Each project gets independent `/notify`, `/speak`, `/voice` settings
+- Durable prefs are tracked in git; ephemeral state is gitignored
 
 ### Migration
 
-No migration needed. The old global file is simply ignored. Users who had settings in `~/.claude/tts.local.md` start fresh per-project, which is the correct behavior (opt-in per project, not inherited globally).
+No migration needed from global to per-project. The `.vox/` → `.punt-labs/vox/` migration was handled by auto-migration in `vox install` and `vox daemon install` (v4.6.0).
 
 ---
 
@@ -793,7 +775,7 @@ only when no MCP tool exists for the operation.
 ### The Read/Write antipattern (never)
 
 ```text
-LLM ──► Read(.vox/config.md)    (file I/O through the model layer)
+LLM ──► Read(.punt-labs/vox/vox.md)    (file I/O through the model layer)
 ```
 
 Never instruct the model to Read or Write config files directly. This
@@ -833,7 +815,7 @@ The `reason` field contains **only** a `♪`-prefixed phrase — nothing else:
 {"decision": "block", "reason": "♪ Saying my piece..."}
 ```
 
-Vibe tags are resolved deterministically from accumulated signals and written to `.vox/config.md` **before** the block response. When Claude calls `unmute` in the continuation turn, `apply_vibe()` reads tags from config automatically. No data passes through the reason string.
+Vibe tags are resolved deterministically from accumulated signals and written to `vox.local.md` **before** the block response. When Claude calls `unmute` in the continuation turn, `apply_vibe()` reads tags from config automatically. No data passes through the reason string.
 
 ```text
 Stop hook fires →
@@ -1304,7 +1286,7 @@ One machine, one set of speakers, one audio daemon (`voxd`). Clients send text +
 
 **Wire protocol:** WebSocket + JSON messages. Streaming-capable for future real-time voice conversation.
 
-**MCP server:** Lightweight stdio process per Claude Code session. Session state in memory. Finds `.vox/config.md` by walking up from CWD (same as biff). Calls `voxd` via WebSocket for synthesis/playback. No provider imports — cold start < 500ms.
+**MCP server:** Lightweight stdio process per Claude Code session. Session state in memory. Finds `.punt-labs/vox/` by walking up from CWD (same as biff). Reads `vox.md` (durable prefs) and `vox.local.md` (ephemeral state). Calls `voxd` via WebSocket for synthesis/playback. No provider imports — cold start < 500ms.
 
 **Hooks:** Three-layer dispatch unchanged (hooks.md standard). Python handlers call `voxd` via WebSocket client. No in-process synthesis.
 
@@ -1485,7 +1467,7 @@ Check `websocket.application_state != WebSocketState.CONNECTED` at the top of th
 
 ### Problem
 
-Generated music tracks are saved to `~/vox-output/music/` but only identifiable by timestamped filenames. Users can't find a track they liked, can't replay it without regenerating (burning credits), and can't build a personal library.
+Generated music tracks are saved to `~/Music/vox/tracks/` but only identifiable by timestamped filenames. Users can't find a track they liked, can't replay it without regenerating (burning credits), and can't build a personal library.
 
 ### Rejected Alternatives
 
@@ -1494,4 +1476,61 @@ Generated music tracks are saved to `~/vox-output/music/` but only identifiable 
 
 ### Decision
 
-Auto-name tracks as `{vibe}-{style}-{YYYYMMDD-HHMM}` (e.g. `happy-techno-20260412-1118`). Users can provide custom names via `/music on --name late-night-flow`. When a name matches an existing file in `~/vox-output/music/`, skip generation entirely and loop the saved track — zero credits, instant playback. `/music play <name>` replays any saved track. `/music list` shows the library with name, size, and date. The `music_replay` flag in `DaemonContext` tells `MusicLoop` to skip generation and go straight to the playback loop.
+Auto-name tracks as `{vibe}-{style}-{YYYYMMDD-HHMM}` (e.g. `happy-techno-20260412-1118`). Users can provide custom names via `/music on --name late-night-flow`. When a name matches an existing file in `~/Music/vox/tracks/`, skip generation entirely and loop the saved track — zero credits, instant playback. `/music play <name>` replays any saved track. `/music list` shows the library with name, size, and date. The `music_replay` flag in `DaemonContext` tells `MusicLoop` to skip generation and go straight to the playback loop.
+
+## DES-036: Config Split — Durable Prefs vs Ephemeral State
+
+**Date:** 2026-05-11
+**Status:** SETTLED
+**Topic:** Why per-repo config is two files instead of one
+
+### Problem
+
+The single `.vox/config.md` mixed durable preferences (voice, provider, notify mode) with ephemeral session state (current vibe, vibe tags, accumulated signals). This caused two problems:
+
+1. **Tracked/untracked conflict.** Users wanted to commit their voice and provider preferences (team defaults), but `vibe_signals` changes every few seconds during a session — committing the file would produce constant noise.
+2. **Directory location.** `.vox/` was a non-standard location. The org filesystem standard puts per-tool config under `.punt-labs/<tool>/`.
+
+### Design
+
+Two files under `.punt-labs/vox/`:
+
+- **`vox.md`** — tracked in git. Durable preferences: `voice`, `provider`, `model`, `notify`, `speak`, `vibe_mode`. These are team-sharable defaults.
+- **`vox.local.md`** — gitignored. Ephemeral session state: `vibe`, `vibe_tags`, `vibe_signals`. These change during a session and have no value across sessions.
+
+Field routing is explicit: `DURABLE_KEYS` and `EPHEMERAL_KEYS` frozensets in `config.py` determine which file a field reads from and writes to. `read_field()`, `write_field()`, and `write_fields()` handle the routing transparently.
+
+The `config_path` parameter throughout the API became `config_dir` — callers pass a directory, and the read/write helpers resolve to the correct file within it.
+
+### Why Two Files, Not Gitignore Patterns
+
+A single file that is partially tracked requires `.gitignore` gymnastics or `git update-index --assume-unchanged`, both of which are fragile and confusing. Two files with clear ownership (tracked vs gitignored) is the standard pattern used by `.envrc` (tracked) + `.envrc.local` (gitignored).
+
+### Migration
+
+Auto-migration from `.vox/config.md` was handled by `vox install` and `vox daemon install` in v4.6.0. The v4.7.5 release removed `.vox/` entirely — no legacy fallback reads.
+
+## DES-037: Remote voxd Connectivity via Env Vars
+
+**Status:** SETTLED
+
+### Problem
+
+voxd binds to `127.0.0.1` and clients discover port/token from local files. Users who SSH from machine A (with speakers) to machine B (headless server) cannot hear audio — synthesis and playback both happen on B, which has no audio device. SSH reverse tunnels proved the protocol works remotely, but required manual file creation on B and stopping B's voxd to avoid port collisions.
+
+### Rejected Alternatives
+
+1. **SSH tunnel only (no code changes)** — works but fragile: requires manual `serve.port`/`serve.token` file creation, port collision if B runs its own voxd, tunnel dies with the session.
+2. **mcp-proxy bridging** — the pattern lux uses for remote display. Vox's remote need is at the `VoxClient → voxd` layer, not the `Claude Code → vox mcp` MCP transport. Wrong connection to configure.
+3. **Full TLS on voxd** — overkill for audio playback. Token auth is sufficient; SSH tunnel covers untrusted networks.
+
+### Decision
+
+Four env vars — three client-side, one server-side:
+
+- `VOXD_HOST` (client): WebSocket host, default `127.0.0.1`
+- `VOXD_PORT` (client): WebSocket port, default from `serve.port` file
+- `VOXD_TOKEN` (client): auth token, default from `serve.token` file
+- `VOXD_BIND` (server): bind address via `typer.Option(envvar="VOXD_BIND")`, default `127.0.0.1`
+
+Resolution: explicit arg > env var > file > default. Two deployment models: direct network (same LAN) and SSH tunnel (different networks). Token auth is the security boundary. Access logs redact tokens. Users configure via `.envrc`. See `docs/remote-setup.md` for the setup guide.

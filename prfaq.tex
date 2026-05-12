@@ -77,7 +77,7 @@
 
 % ── Document version ─────────────────────────────────────────────────────────
 \newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
-\prfaqversion{1}{2}
+\prfaqversion{1}{3}
 
 % ── Header/footer ────────────────────────────────────────────────────────────
 \usepackage{fancyhdr}
@@ -171,9 +171,10 @@
     Free Plugin Adds Voice to AI Coding Agents ---\\
     Developers Hear When Tasks Finish or Need Approval} \\[0.8em]
   {\large\color{AccentGray}
-    punt-vox delivers spoken notifications and on-demand summaries through
-    ElevenLabs, OpenAI, and AWS Polly, so developers can multitask while
-    their agent works}
+    punt-vox delivers spoken notifications, on-demand summaries, and
+    background music through five TTS providers --- including
+    zero-config offline fallbacks --- so developers can multitask while
+    their agent works, even across machines}
 \end{center}
 
 \vspace{0.5em}
@@ -188,11 +189,13 @@ SAN FRANCISCO --- September 2026 --- Today, punt-labs announced the general
 availability of punt-vox, a free, open-source plugin that gives AI coding
 agents a voice. When Claude Code finishes a task, hits an error, or gets stuck
 waiting for permission, the developer hears it --- through premium
-text-to-speech from ElevenLabs, OpenAI, or AWS Polly. Unlike existing
-notification scripts that rely on the operating system's built-in speech
-synthesizer, punt-vox delivers natural-sounding voice through a properly
-packaged Python library with a one-command install, zero configuration, and
-graceful absence when not installed
+text-to-speech from ElevenLabs, OpenAI, or AWS Polly, with zero-config offline
+fallbacks via macOS \texttt{say} and Linux \texttt{espeak-ng}. punt-vox
+delivers natural-sounding voice through a properly packaged Python library with
+a one-command install, zero configuration, and graceful absence when not
+installed. For developers with multi-machine setups, punt-vox supports remote
+audio: run Claude Code on a headless server and hear notifications on the local
+workstation
 (see \faqref{faq:competitors}).
 
 \prsection{Problem}
@@ -222,7 +225,7 @@ that run for extended periods
 
 \prsection{Solution}
 
-punt-vox adds an audio layer to Claude Code through three slash commands.
+punt-vox adds an audio layer to Claude Code through slash commands.
 
 \texttt{/vox y} enables chime notifications for two events: task completion
 and permission prompts. When the agent finishes a multi-file refactor, the
@@ -246,9 +249,18 @@ happened. No scrolling, no parsing diffs. The agent extracts the key points
 and speaks them while the developer scans the code
 (see \faqref{faq:getting-started}).
 
+\texttt{/music on} starts vibe-driven background music that loops during coding
+sessions. The music adapts when the session mood changes: upbeat during green
+test runs, subdued during debugging. Music plays at reduced volume under speech
+and chimes.
+
 The plugin auto-detects the best available TTS provider --- ElevenLabs for
-natural voice quality, OpenAI for low latency, AWS Polly for cost efficiency
---- and requires no voice selection or audio device configuration
+natural voice quality, OpenAI for low latency, AWS Polly for cost efficiency,
+macOS \texttt{say} and Linux \texttt{espeak-ng} for zero-config offline use
+--- and requires no voice selection or audio device configuration. For
+developers who SSH into remote machines, setting \texttt{VOXD\_HOST} and
+\texttt{VOXD\_PORT} routes audio to a local \texttt{voxd} daemon so
+notifications play on the workstation, not the server
 (see \faqref{faq:competitors}).
 
 \prsection{Customer Quote}
@@ -279,10 +291,10 @@ Restart Claude Code and type \texttt{/vox y}. From that moment, every
 task completion and permission prompt produces a chime notification.
 Type \texttt{/vox c} for continuous spoken summaries.
 
-There is no voice selection wizard and no audio device configuration. One
-optional daemon (\texttt{voxd}) handles
-synthesis and playback. If \texttt{vox doctor} passes, everything works. If punt-vox
-is not installed, Claude Code behaves exactly as before --- no error, no
+There is no voice selection wizard and no audio device configuration. The
+\texttt{voxd} daemon handles synthesis, caching, and playback as a system
+service. If \texttt{vox doctor} passes, everything works. If punt-vox is not
+installed, Claude Code behaves exactly as before --- no error, no
 degradation.
 
 \prsection{Spokesperson Quote}
@@ -327,7 +339,9 @@ Restart Claude Code and type \texttt{/vox y}.
   developers who use Claude Code for autonomous tasks --- refactoring,
   debugging, code generation --- and want to know when the agent finishes or
   needs input without watching the terminal. If you multitask while your agent
-  works, punt-vox is for you.
+  works, punt-vox is for you. This includes developers who run Claude Code on
+  remote servers via SSH: punt-vox's remote audio support routes notifications
+  to the local workstation where the developer can hear them.
 \end{faqpair}
 
 \begin{faqpair}{How is this different from agent-notify or AgentVibes?}\label{faq:competitors}
@@ -357,9 +371,11 @@ Restart Claude Code and type \texttt{/vox y}.
   as its speech backend. The MCP server exposes synthesis, batching, and pair
   stitching as tools that any MCP client can call.
 
-  The tradeoff: punt-vox requires a TTS provider API key (ElevenLabs, OpenAI,
-  or AWS). Existing tools work with no API key using OS-level TTS at lower
-  voice quality.
+  Since v0.7.0, punt-vox also includes zero-config offline fallbacks ---
+  macOS \texttt{say} and Linux \texttt{espeak-ng} --- so it works with no API
+  key at all, matching the accessibility of existing tools. The premium
+  providers (ElevenLabs, OpenAI, Polly) require an API key but deliver voice
+  quality that the offline fallbacks cannot match.
 \end{faqpair}
 
 \begin{faqpair}{How do I get started?}\label{faq:getting-started}
@@ -398,8 +414,10 @@ Restart Claude Code and type \texttt{/vox y}.
   punt-vox sends the text of each notification to your chosen TTS provider for
   synthesis. The provider receives the text, returns audio, and punt-vox plays
   it locally. No data is stored by punt-vox beyond a local audio cache in
-  \texttt{\texttildelow/vox-output} (configurable). punt-vox has no telemetry,
-  no analytics, and no cloud service of its own.
+  \texttt{\texttildelow/.punt-labs/vox/cache/} and saved audio in
+  \texttt{\texttildelow/Music/vox/} (configurable via
+  \texttt{VOX\_OUTPUT\_DIR}). punt-vox has no telemetry, no analytics, and no
+  cloud service of its own.
 
   The privacy implication: your TTS provider sees the text of your
   notifications. For ElevenLabs and OpenAI, review their data retention
@@ -521,10 +539,13 @@ Restart Claude Code and type \texttt{/vox y}.
   sustained adoption where OS TTS does not.
 
   \textbf{Honest assessment of risk:} If AgentVibes adds ElevenLabs support,
-  it becomes a strong competitor with a more creative feature set (music,
-  personalities). punt-vox's defense is engineering quality (packaged, tested,
-  typed, reusable as a library) and the separation of concerns (TTS engine
-  vs.\ plugin UX). The competitive moat is narrow.
+  it becomes a strong competitor with a creative feature set (personalities,
+  verbosity levels). punt-vox now also has background music (v4.4.0 via
+  ElevenLabs Music API) and zero-config offline TTS (macOS \texttt{say} and
+  Linux \texttt{espeak-ng}), narrowing the feature gap. punt-vox's defense is
+  engineering quality (packaged, tested, typed, reusable as a library),
+  separation of concerns (TTS engine vs.\ plugin UX), and distributed audio
+  (remote \texttt{voxd}). The competitive moat is narrow.
 \end{faqpair}
 
 \begin{faqpair}{What is the user acquisition strategy?}
@@ -548,14 +569,16 @@ Restart Claude Code and type \texttt{/vox y}.
 \end{faqpair}
 
 \begin{faqpair}{What is your next step to validate your vision?}\label{faq:validation-plan}
-  Ship the \texttt{/vox} command (Stop hook + permission-blocked
-  notification) and \texttt{/unmute}/\texttt{/mute} toggles. Measure:
+  All core features are shipped (v4.7.6). The product is approaching
+  public recommendation. Validation now focuses on adoption and retention:
 
   \begin{enumerate}[leftmargin=1.5em, nosep]
     \item Do users who enable \texttt{/vox y} leave it on after one week?
     \item Which event fires more often: task completion or permission prompt?
     \item Do users stay on chimes (\texttt{/vox y}) or upgrade to voice
           (\texttt{/unmute})?
+    \item Does remote \texttt{voxd} expand the addressable audience to
+          SSH-based workflows?
   \end{enumerate}
 
   If retention after one week is below 30\%, the value proposition is
@@ -585,17 +608,22 @@ Restart Claude Code and type \texttt{/vox y}.
   available provider for notifications; reserve higher-quality providers for
   \texttt{/recap} summaries where latency is less critical.
 
-  \textbf{Audio playback on headless/remote systems (medium risk):} Developers
-  using Claude Code via SSH or in cloud VMs have no local audio device.
-  punt-vox requires a local audio output. Mitigation: \texttt{vox doctor}
-  checks for audio playback capability at install time. Graceful absence: if
-  audio is unavailable, notifications fail silently rather than crashing.
+  \textbf{Audio playback on headless/remote systems (resolved):} Developers
+  using Claude Code via SSH or in cloud VMs previously had no audio path.
+  As of v4.7.7, \texttt{VOXD\_HOST}/\texttt{VOXD\_PORT}/\texttt{VOXD\_TOKEN}
+  env vars route synthesis requests to a remote \texttt{voxd} instance
+  running on the developer's local workstation. Token-based authentication
+  secures the connection. \texttt{vox doctor} reports active env var
+  overrides. For local-only setups, \texttt{vox doctor} still checks audio
+  playback capability at install time and notifications fail silently when
+  audio is unavailable.
 
   All core technical risks have been resolved. The TTS engine (synthesis,
   batching, merging) is built and tested. The Stop hook uses a decision-block
   pattern where the model generates a 1-2 sentence summary and calls the TTS
   tool. Vibe tags are resolved deterministically from accumulated session
-  signals, written to config, and picked up automatically by the TTS tool ---
+  signals, written to a gitignored ephemeral config file
+  (\texttt{vox.local.md}), and picked up automatically by the TTS tool ---
   no data passes through user-visible output.
 \end{faqpair}
 
@@ -617,12 +645,14 @@ Restart Claude Code and type \texttt{/vox y}.
   abandonment.
 
   No runtime cloud dependencies exist beyond the TTS API calls themselves.
-  punt-vox has no backend service, no database, and no telemetry.
+  punt-vox has no backend service, no database, and no telemetry. The optional
+  remote \texttt{voxd} mode connects to a user-controlled daemon on another
+  machine --- not to any punt-labs service.
 \end{faqpair}
 
 \begin{faqpair}{What is the estimated development timeline?}\label{faq:timeline}
-  punt-vox is shipped at v1.2.0 on PyPI. All three phases from the original
-  timeline have been delivered:
+  punt-vox is at v4.7.6 on PyPI (May 2026). The product is nearly
+  feature-complete.
 
   \textbf{Shipped:} Stop hook notification with spoken summaries.
   \texttt{/vox y|n|c} toggle. \texttt{/unmute}/\texttt{/mute} for voice
@@ -633,12 +663,23 @@ Restart Claude Code and type \texttt{/vox y}.
   ElevenLabs expressive tags from accumulated session signals.
   Five providers (ElevenLabs, OpenAI, Polly, macOS \texttt{say}, Linux
   \texttt{espeak-ng}). Mood-aware chimes with pitch shifting
-  (8 signals $\times$ 3 moods). Non-blocking MCP tools (v1.2.0).
+  (8 signals $\times$ 3 moods). Non-blocking MCP tools.
+  \texttt{voxd} audio daemon with WebSocket protocol (v3.0.0) ---
+  separates synthesis/playback from MCP server for sub-10ms hook dispatch.
+  Background music generation via ElevenLabs Music API (v4.4.0).
+  Per-call API key passthrough for billing isolation (v4.3.0).
+  Config split into tracked \texttt{vox.md} and ephemeral
+  \texttt{vox.local.md} (v4.7.5).
   Claude Code plugin on marketplace. CLI global flags
   (\texttt{-{}-json}, \texttt{-{}-verbose}, \texttt{-{}-quiet}).
 
-  \textbf{Next:} Continuous mode milestone updates during long-running tasks.
-  Downstream library adoption beyond langlearn-tts.
+  \textbf{In progress:} Remote \texttt{voxd} connectivity ---
+  \texttt{VOXD\_HOST}/\texttt{VOXD\_PORT}/\texttt{VOXD\_TOKEN} env vars
+  for cross-host audio playback without SSH tunnels.
+  Server-side \texttt{VOXD\_BIND} controls the bind address (v4.7.7).
+
+  \textbf{Next:} Downstream library adoption beyond langlearn-tts. Public
+  recommendation and outreach.
 \end{faqpair}
 
 \begin{faqpair}{What is the scaling story?}
@@ -651,9 +692,10 @@ Restart Claude Code and type \texttt{/vox y}.
   \cite{cnbc2026elevenlabs}). OpenAI and AWS Polly are similarly robust.
   punt-vox will never be a meaningful fraction of any provider's load.
 
-  The only local scaling concern is audio file accumulation in the output
-  directory. punt-vox includes an ephemeral mode (\texttt{.vox/} in cwd)
-  that cleans previous MP3 files before each new synthesis call.
+  The only local scaling concern is audio file accumulation. Saved audio
+  lands in \texttt{\texttildelow/Music/vox/} (configurable); the synthesis
+  cache in \texttt{\texttildelow/.punt-labs/vox/cache/} is content-addressed
+  and can be cleared via \texttt{vox cache clear}.
 \end{faqpair}
 
 \subsubsection*{Business}
@@ -739,9 +781,10 @@ Restart Claude Code and type \texttt{/vox y}.
           output requires fundamentally different architecture (continuous
           reading, cursor tracking, ARIA-like semantics). punt-vox is
           event-driven notifications, not continuous narration.
-    \item \textbf{Not entertainment.} No background music, no personality
-          styles, no ``agent character voices.'' AgentVibes does this well.
-          punt-vox is a tool, not a toy.
+    \item \textbf{Not personality entertainment.} No agent character voices,
+          no conversational persona styles. punt-vox adapts to mood via vibe
+          tags for \emph{information clarity} and plays background music for
+          \emph{ambient focus}, but does not role-play characters.
   \end{itemize}
 \end{faqpair}
 
@@ -785,16 +828,18 @@ Value      & \textcolor{RiskAmber}{\textbf{Medium}} &
   Demand is proven by the existence of two competing tools. The bet is
   that premium voice quality drives sustained adoption where OS TTS does not.
   No primary user data yet. \\
-Usability  & \textcolor{RiskAmber}{\textbf{Medium}} &
-  One-command install and auto-detection of providers. But the prerequisite
-  --- a TTS provider API key --- requires account creation, payment setup,
-  and environment variable configuration. For developers without an existing
-  key, the real onboarding is 5--10 steps, not one. \\
+Usability  & \textcolor{RiskGreen}{\textbf{Low}} &
+  One-command install and auto-detection of providers. Since v0.7.0, offline
+  fallbacks (macOS \texttt{say}, Linux \texttt{espeak-ng}) work with zero
+  API keys --- install and go. Premium providers still require account
+  creation and environment variable configuration, but the onboarding path
+  no longer requires it. \\
 Feasibility & \textcolor{RiskGreen}{\textbf{Low}} &
-  The TTS engine, hooks integration, and all commands are built and shipped.
-  The summary generation strategy uses a decision-block Stop hook that asks
-  the model to summarize and speak. Vibe tags are resolved deterministically
-  from session signals --- no open technical questions remain. \\
+  The TTS engine, hooks integration, \texttt{voxd} daemon, background music,
+  config split, and all commands are built and shipped. Remote audio
+  (v4.7.7) is the last major capability in progress. Vibe tags are resolved
+  deterministically from session signals --- no open design questions
+  remain. \\
 Viability  & \textcolor{RiskGreen}{\textbf{Low}} &
   No revenue model to validate. Zero infrastructure cost. MIT license.
   The only cost is maintainer time. \\
@@ -812,29 +857,37 @@ Viability  & \textcolor{RiskGreen}{\textbf{Low}} &
 Defines the scope boundary for punt-vox. Every feature is explicitly
 categorized to prevent scope creep and force prioritization decisions upfront.
 
-\subsection*{Must Do}
+\subsection*{Shipped}
 
-Features essential for the product to deliver its core value: developers hear
-when their agent finishes or needs approval.
+All features essential for the core value proposition are delivered and
+available on PyPI.
 
 \begin{enumerate}[nosep,leftmargin=2.5em]
-  \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. This is the minimum viable notification.}\label{feat:stop-hook}
-  \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. This is the highest time-saved-per-event feature.}\label{feat:permission}
-  \featureitem{\texttt{/vox} command}{Enable or disable vox: \texttt{y} (chime notifications), \texttt{c} (continuous spoken summaries), \texttt{n} (off). Persists via plugin state file.}\label{feat:notify}
-  \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only.}\label{feat:speak}
-  \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) pitch-shift to match session vibe (bright/neutral/dark). 24 total assets.}\label{feat:chime}
-  \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly. No manual configuration.}\label{feat:autodetect}
+  \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. Shipped v0.2.0.}\label{feat:stop-hook}
+  \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. Shipped v0.2.0.}\label{feat:permission}
+  \featureitem{\texttt{/vox} command}{Enable or disable vox: \texttt{y} (chime notifications), \texttt{c} (continuous spoken summaries), \texttt{n} (off). Shipped v1.0.0.}\label{feat:notify}
+  \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only. Shipped v0.11.0.}\label{feat:speak}
+  \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals pitch-shift to match session vibe (bright/neutral/dark). 24 total assets. Shipped v0.11.0.}\label{feat:chime}
+  \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly > macOS \texttt{say} > Linux \texttt{espeak-ng}. Shipped v0.7.0.}\label{feat:autodetect}
+  \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Shipped v0.2.0.}\label{feat:recap}
+  \featureitem{Plugin marketplace}{Listed in the Claude Code plugin marketplace for one-click install. Shipped v1.2.0.}\label{feat:marketplace}
+  \featureitem{\texttt{voxd} audio daemon}{Dedicated audio server with WebSocket protocol. Separates synthesis/playback from MCP server for sub-10ms hook dispatch. Playback queue, dedup, caching. Shipped v3.0.0.}\label{feat:voxd}
+  \featureitem{Background music}{Vibe-driven instrumental music via ElevenLabs Music API. Adapts to session mood. \texttt{/music on|off}. Shipped v4.4.0.}\label{feat:music}
+  \featureitem{Per-call API key passthrough}{Scope a single synthesis call to a specific provider API key for billing isolation. Four secure input paths. Shipped v4.3.0.}\label{feat:apikey}
+  \featureitem{Config split}{Durable preferences (\texttt{vox.md}, tracked in git) separated from ephemeral session state (\texttt{vox.local.md}, gitignored). Shipped v4.7.5.}\label{feat:config-split}
+  \featureitem{Continuous mode hooks}{UserPromptSubmit acknowledgment, SubagentStart/Stop announcements, SessionEnd farewell, PreCompact notification. Shipped v1.4.0.}\label{feat:continuous}
 \end{enumerate}
 
-\subsection*{Should Do}
+\subsection*{In Progress}
 
-Features that meaningfully improve the product but are not required for the
-core notification use case.
+Features actively being built.
 
 \begin{enumerate}[nosep,leftmargin=2.5em]
-  \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Useful after long output.}\label{feat:recap}
-  \featureitem{Continuous mode milestones}{In \texttt{/vox c} mode, speak progress updates during long-running tasks (e.g., ``completed 3 of 5 files''). Requires hooking into intermediate Claude output.}\label{feat:continuous}
-  \featureitem{Plugin marketplace submission}{List punt-vox in the Claude Code plugin marketplace for one-click install. Requires release workflow (prod/dev namespace separation already built).}\label{feat:marketplace}
+  \featureitem{Remote \texttt{voxd} connectivity}{Client-side env vars
+  \texttt{VOXD\_HOST}, \texttt{VOXD\_PORT}, \texttt{VOXD\_TOKEN} override
+  localhost discovery, enabling cross-host audio playback without SSH
+  tunnels. Server-side \texttt{VOXD\_BIND} controls the bind address.
+  Token auth secures the connection. Targeting v4.7.7.}\label{feat:remote-voxd}
 \end{enumerate}
 
 \subsection*{Won't Do}
@@ -845,7 +898,6 @@ choice.
 \begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{Voice input}{Listening to the developer and converting speech to commands. Different product, different architecture (ASR, wake word detection, continuous listening). punt-vox speaks; it does not listen.}\label{feat:no-voice-input}
   \featureitem{Screen reader / accessibility narrator}{Continuous reading of terminal output for visually impaired users. Requires cursor tracking, ARIA-like semantics, and fundamentally different event architecture. This is valuable but is a different product.}\label{feat:no-screenreader}
-  \featureitem{Background music / ambient audio}{AgentVibes does this. It is a creative feature, not a productivity feature. punt-vox is a tool.}\label{feat:no-music}
   \featureitem{Agent personality voices}{Character voices, conversational tone, entertainment-oriented inflection. punt-vox does adapt to mood --- vibe-driven chime pitch and ElevenLabs expressive tags --- but for \emph{information clarity}, not personality. The voice sounds tired after failures because that is useful signal, not because it is playing a character.}\label{feat:no-personality}
   \featureitem{Custom voice training}{Training a TTS model on the user's voice or a custom voice. ElevenLabs supports this, but exposing it adds configuration complexity that contradicts the zero-config design principle.}\label{feat:no-custom-voice}
 \end{enumerate}
