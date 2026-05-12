@@ -1129,3 +1129,59 @@ class TestVoxClientSyncMusicPlayList:
 
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["name"] == "x"
+
+
+# ---------------------------------------------------------------------------
+# Env var resolution (VOXD_HOST, VOXD_PORT, VOXD_TOKEN)
+# ---------------------------------------------------------------------------
+
+
+class TestEnvVarResolution:
+    def test_voxd_host_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
+        client = VoxClient(port=8421, token="tok")
+        assert client._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_host_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VOXD_HOST", raising=False)
+        client = VoxClient(port=8421, token="tok")
+        assert client._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_host_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
+        client = VoxClient(host="192.168.1.1", port=8421, token="tok")
+        assert client._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_port_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_PORT", "9999")
+        client = VoxClient(token="tok")
+        assert client._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_port_invalid_falls_through(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("VOXD_PORT", "not_a_number")
+        monkeypatch.setattr("punt_vox.client._run_dir", lambda: tmp_path)
+        client = VoxClient(token="tok")
+        with pytest.raises(VoxdConnectionError, match="port file not found"):
+            client._resolve_port()  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_port_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_PORT", "9999")
+        client = VoxClient(port=1234, token="tok")
+        assert client._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
+        client = VoxClient(port=8421)
+        assert client._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
+
+    def test_voxd_token_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
+        client = VoxClient(port=8421, token="local-secret")
+        assert client._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
+
+    def test_sync_client_inherits_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
+        sync_client = VoxClientSync(port=8421, token="tok")
+        assert sync_client._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]

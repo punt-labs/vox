@@ -1036,6 +1036,16 @@ def doctor() -> None:
             f"Daemon: reachable but unhealthy \u2014 {exc}",
         )
 
+    # Report active VOXD_* env var overrides
+    overrides: list[str] = []
+    for env_name in ("VOXD_HOST", "VOXD_PORT", "VOXD_TOKEN"):
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
+            display = "***" if env_name == "VOXD_TOKEN" else env_val
+            overrides.append(f"{env_name}={display}")
+    if overrides:
+        _check(_PASS, f"Remote config: {', '.join(overrides)}")
+
     # Legacy ~/vox-output/ directory (vox-4jk migration)
     legacy_output = Path.home() / "vox-output"
     if legacy_output.is_dir():

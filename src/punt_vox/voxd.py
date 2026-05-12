@@ -66,6 +66,35 @@ logger = logging.getLogger(__name__)
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
 
+_TOKEN_RE = re.compile(r"\?token=[^\s\"']+")
+
+
+class _TokenRedactFilter(logging.Filter):
+    """Strip auth tokens from access log messages."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(getattr(record, "msg", None), str):
+            record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
+        if record.args and isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_RE.sub("?token=REDACTED", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True
+
+
+def _install_token_redact_filter() -> None:
+    """Apply token redaction to uvicorn's access logger.
+
+    Uvicorn sets the access logger level to match log_level (WARNING),
+    but access entries are logged at INFO. Override to INFO so access
+    logs actually fire, with the redact filter stripping tokens.
+    """
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.setLevel(logging.INFO)
+    uvicorn_access.addFilter(_TokenRedactFilter())
+
+
 # Audio deduplication window: skip identical audio within this many seconds.
 _DEDUP_WINDOW_SECONDS = 5.0
 
@@ -2495,7 +2524,9 @@ cli = typer.Typer(add_completion=False)
 @cli.callback(invoke_without_command=True)
 def main(
     port: int = typer.Option(DEFAULT_PORT, "--port", "-p", help="Listen port"),
-    host: str = typer.Option(DEFAULT_HOST, "--host", help="Listen host"),
+    host: str = typer.Option(
+        DEFAULT_HOST, "--host", envvar="VOXD_BIND", help="Listen host"
+    ),
 ) -> None:
     """Start the voxd audio server daemon."""
     # Create (or tighten) per-user state dirs before anything else
@@ -2553,14 +2584,22 @@ def main(
 
     app = build_app(ctx, lifespan=lifespan)
 
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        logger.warning(
+            "Binding to %s — voxd is accessible from the network. "
+            "Ensure VOXD_TOKEN is set on all clients.",
+            host,
+        )
+
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
         log_config=None,
         log_level="warning",
-        access_log=False,
+        access_log=True,
     )
+    _install_token_redact_filter()
     server = uvicorn.Server(config)
 
     # Write port file after bind
