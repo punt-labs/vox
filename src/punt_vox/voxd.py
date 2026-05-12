@@ -84,8 +84,14 @@ class _TokenRedactFilter(logging.Filter):
 
 
 def _install_token_redact_filter() -> None:
-    """Apply token redaction to uvicorn's access logger."""
+    """Apply token redaction to uvicorn's access logger.
+
+    Uvicorn sets the access logger level to match log_level (WARNING),
+    but access entries are logged at INFO. Override to INFO so access
+    logs actually fire, with the redact filter stripping tokens.
+    """
     uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.setLevel(logging.INFO)
     uvicorn_access.addFilter(_TokenRedactFilter())
 
 
