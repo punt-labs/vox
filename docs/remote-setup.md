@@ -163,7 +163,7 @@ use `autossh` or an SSH config entry with `RemoteForward`.
 
 Add to `~/.ssh/config` on machine A:
 
-```
+```text
 Host machine-B
   HostName machine-B.example.com
   RemoteForward 18421 localhost:8421
