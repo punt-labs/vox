@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bump authlib 1.6.9 → 1.6.11: CSRF fix in Starlette OAuth client, unvalidated `redirect_uri` on UnsupportedResponseTypeError (#236)
+- Bump python-multipart 0.0.22 → 0.0.27: multipart header limits (DoS hardening), `chunk_size` validation (#233)
+- Bump python-dotenv 1.2.1 → 1.2.2: symlink following fix in `set_key`/`unset_key` (#234)
+- Bump pytest 9.0.2 → 9.0.3: insecure temporary directory CVE-2025-71176 (#235)
+
+### Removed
+
+- Dead `assets` symlink at repo root (pointed to `src/punt_vox/assets/`, unused since v3.0.0) (#241)
+
 ## [4.7.5] - 2026-05-11
 
 ### Changed
