@@ -10,7 +10,6 @@ from punt_vox.config import (
     ALLOWED_CONFIG_KEYS,
     DURABLE_KEYS,
     EPHEMERAL_KEYS,
-    VoxConfig,
     read_config,
     read_field,
     write_field,
@@ -105,6 +104,19 @@ class TestReadConfig:
         assert cfg.vibe == "happy"
         assert cfg.vibe_tags == "[joyful]"
 
+    def test_repo_name_derived_from_config_dir(self, tmp_path: Path) -> None:
+        """repo_name is the directory two levels above config_dir."""
+        repo = tmp_path / "my-repo"
+        config_dir = repo / ".punt-labs" / "vox"
+        config_dir.mkdir(parents=True)
+        cfg = read_config(config_dir=config_dir)
+        assert cfg.repo_name == "my-repo"
+
+    def test_repo_name_none_when_config_dir_none(self) -> None:
+        """repo_name is None when no config_dir is provided."""
+        cfg = read_config(config_dir=None)
+        assert cfg.repo_name is None
+
     def test_local_durable_keys_ignored(self, tmp_path: Path) -> None:
         """Durable keys in vox.local.md must not override vox.md."""
         _write_frontmatter(tmp_path / "vox.md", {"notify": "n", "provider": "polly"})
@@ -120,17 +132,15 @@ class TestReadConfig:
     def test_read_config_missing_files(self, tmp_path: Path) -> None:
         """Test 6: neither file exists, safe defaults."""
         cfg = read_config(config_dir=tmp_path)
-        assert cfg == VoxConfig(
-            notify="n",
-            speak="y",
-            vibe_mode="auto",
-            voice=None,
-            provider=None,
-            model=None,
-            vibe=None,
-            vibe_tags=None,
-            vibe_signals=None,
-        )
+        assert cfg.notify == "n"
+        assert cfg.speak == "y"
+        assert cfg.vibe_mode == "auto"
+        assert cfg.voice is None
+        assert cfg.provider is None
+        assert cfg.model is None
+        assert cfg.vibe is None
+        assert cfg.vibe_tags is None
+        assert cfg.vibe_signals is None
 
     def test_read_config_only_durable(self, tmp_path: Path) -> None:
         """Test 7: only vox.md exists, ephemeral fields default."""
@@ -247,17 +257,15 @@ class TestReadConfigLegacy:
 
     def test_defaults_when_files_missing(self, tmp_path: Path) -> None:
         result = read_config(config_dir=tmp_path)
-        assert result == VoxConfig(
-            notify="n",
-            speak="y",
-            vibe_mode="auto",
-            voice=None,
-            provider=None,
-            model=None,
-            vibe=None,
-            vibe_tags=None,
-            vibe_signals=None,
-        )
+        assert result.notify == "n"
+        assert result.speak == "y"
+        assert result.vibe_mode == "auto"
+        assert result.voice is None
+        assert result.provider is None
+        assert result.model is None
+        assert result.vibe is None
+        assert result.vibe_tags is None
+        assert result.vibe_signals is None
 
     def test_reads_all_fields(self, tmp_path: Path) -> None:
         _write_frontmatter(

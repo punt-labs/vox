@@ -72,6 +72,7 @@ class VoxConfig:
     vibe: str | None
     vibe_tags: str | None
     vibe_signals: str | None
+    repo_name: str | None = None
 
 
 # ── Internal helpers ─────────────────────────────────────────────────
@@ -90,7 +91,11 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
     return fields
 
 
-def _fields_to_config(fields: dict[str, str]) -> VoxConfig:
+def _fields_to_config(
+    fields: dict[str, str],
+    *,
+    repo_name: str | None = None,
+) -> VoxConfig:
     """Build a VoxConfig from raw field dict, applying validation and defaults."""
     notify = fields.get("notify", "n")
     if notify not in ("y", "c", "n"):
@@ -114,6 +119,7 @@ def _fields_to_config(fields: dict[str, str]) -> VoxConfig:
         vibe=fields.get("vibe"),
         vibe_tags=fields.get("vibe_tags"),
         vibe_signals=fields.get("vibe_signals"),
+        repo_name=repo_name,
     )
 
 
@@ -192,6 +198,21 @@ def read_field(field: str, config_dir: Path | None = None) -> str | None:
     return _read_single_field(d / "vox.md", field)
 
 
+def _derive_repo_name(config_dir: Path | None) -> str | None:
+    """Derive the repo name from config_dir.
+
+    config_dir is ``<repo>/.punt-labs/vox/``, so the repo root is two
+    parents up and its ``.name`` gives the repo directory name.  Returns
+    None when config_dir is None or when the path is too shallow.
+    """
+    if config_dir is None:
+        return None
+    repo_root = config_dir.parent.parent
+    # Guard against degenerate paths like "/" where .name is ""
+    name = repo_root.name
+    return name if name else None
+
+
 def read_config(config_dir: Path | None = None) -> VoxConfig:
     """Read all config fields, merging vox.md and vox.local.md."""
     d = config_dir or DEFAULT_CONFIG_DIR
@@ -204,7 +225,7 @@ def read_config(config_dir: Path | None = None) -> VoxConfig:
     local = _parse_frontmatter(d / "vox.local.md")
     fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
 
-    return _fields_to_config(fields)
+    return _fields_to_config(fields, repo_name=_derive_repo_name(config_dir))
 
 
 def _validate_value(value: str) -> None:
