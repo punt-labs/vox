@@ -200,8 +200,9 @@ def read_config(config_dir: Path | None = None) -> VoxConfig:
     # Base layer: durable prefs
     fields.update(_parse_frontmatter(d / "vox.md"))
 
-    # Overlay: ephemeral session state (wins on conflict)
-    fields.update(_parse_frontmatter(d / "vox.local.md"))
+    # Overlay: ephemeral session state — only EPHEMERAL_KEYS accepted
+    local = _parse_frontmatter(d / "vox.local.md")
+    fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
 
     return _fields_to_config(fields)
 

@@ -105,12 +105,17 @@ class TestReadConfig:
         assert cfg.vibe == "happy"
         assert cfg.vibe_tags == "[joyful]"
 
-    def test_read_config_ephemeral_wins_on_conflict(self, tmp_path: Path) -> None:
-        """Test 5: same key in both files, ephemeral value wins."""
-        _write_frontmatter(tmp_path / "vox.md", {"voice": "stale"})
-        _write_frontmatter(tmp_path / "vox.local.md", {"voice": "fresh"})
+    def test_local_durable_keys_ignored(self, tmp_path: Path) -> None:
+        """Durable keys in vox.local.md must not override vox.md."""
+        _write_frontmatter(tmp_path / "vox.md", {"notify": "n", "provider": "polly"})
+        _write_frontmatter(
+            tmp_path / "vox.local.md",
+            {"notify": "c", "provider": "elevenlabs", "vibe": "calm"},
+        )
         cfg = read_config(config_dir=tmp_path)
-        assert cfg.voice == "fresh"
+        assert cfg.notify == "n"
+        assert cfg.provider == "polly"
+        assert cfg.vibe == "calm"
 
     def test_read_config_missing_files(self, tmp_path: Path) -> None:
         """Test 6: neither file exists, safe defaults."""
