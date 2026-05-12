@@ -253,8 +253,10 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
     # Resolve tags and write to config so apply_vibe picks them up
-    # automatically — no data in the user-visible reason string.
+    # automatically — no vibe tags or signals in the reason string.
     phrase = random.choice(STOP_PHRASES)
+    if config.repo_name:
+        phrase = f"{config.repo_name}. {phrase}"
     logger.info(
         "Stop hook: blocking for voice summary (signals=%s)",
         config.vibe_signals,
@@ -360,13 +362,26 @@ def handle_post_bash(data: dict[str, object], config_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _pick_notification_phrase(notification_type: str, message: str) -> str:
-    """Pick a phrase for a notification type."""
+def _pick_notification_phrase(
+    notification_type: str,
+    message: str,
+    *,
+    repo_name: str | None = None,
+) -> str:
+    """Pick a phrase for a notification type.
+
+    When *repo_name* is set, prepends it with a period separator so
+    the TTS engine inserts a natural pause.
+    """
     if notification_type == "permission_prompt":
-        return random.choice(PERMISSION_PHRASES)
-    if notification_type == "idle_prompt":
-        return random.choice(IDLE_PHRASES)
-    return f"Notification: {message[:80]}"
+        text = random.choice(PERMISSION_PHRASES)
+    elif notification_type == "idle_prompt":
+        text = random.choice(IDLE_PHRASES)
+    else:
+        text = f"Notification: {message[:80]}"
+    if repo_name:
+        text = f"{repo_name}. {text}"
+    return text
 
 
 def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
@@ -397,7 +412,9 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
         return
 
     # Voice mode: synthesize via voxd
-    text = _pick_notification_phrase(notification_type, message)
+    text = _pick_notification_phrase(
+        notification_type, message, repo_name=config.repo_name
+    )
     _speak_via_voxd(text, config)
 
 
@@ -415,13 +432,17 @@ def _speak_phrase(
     """Pick a random phrase and speak or chime it via voxd.
 
     Common pattern for async continuous-mode hooks: check speak mode,
-    play a chime or synthesize speech.
+    play a chime or synthesize speech.  When ``config.repo_name`` is
+    set, prepends it with a period separator so the TTS engine inserts
+    a natural pause between the repo name and the phrase.
     """
     if config.speak == "n":
         _chime_via_voxd(chime_signal)
         return
 
     text = random.choice(phrases)
+    if config.repo_name:
+        text = f"{config.repo_name}. {text}"
     _speak_via_voxd(text, config)
 
 

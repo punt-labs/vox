@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
 from punt_vox.hooks import (
+    _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
@@ -42,6 +43,7 @@ def _make_config(
     vibe: str | None = None,
     vibe_signals: str | None = "tests-pass@12:00",
     voice: str | None = None,
+    repo_name: str | None = None,
 ) -> VoxConfig:
     return VoxConfig(
         notify=notify,
@@ -53,6 +55,7 @@ def _make_config(
         vibe=vibe,
         vibe_tags=None,
         vibe_signals=vibe_signals,
+        repo_name=repo_name,
     )
 
 
@@ -697,6 +700,101 @@ class TestQuipPools:
 
     def test_pre_compact_phrases_count(self) -> None:
         assert len(PRE_COMPACT_PHRASES) >= 7
+
+
+# ---------------------------------------------------------------------------
+# repo_name prefix tests
+# ---------------------------------------------------------------------------
+
+
+class TestRepoNamePrefix:
+    """Verify repo_name is prepended to spoken text across all speech paths."""
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_speak_phrase_prepends_repo_name(self, mock_speak: MagicMock) -> None:
+        """_speak_phrase prepends 'repo. phrase' when repo_name is set."""
+        config = _make_config(notify="c", speak="y", repo_name="vox")
+        _speak_phrase(("On it.",), config, chime_signal="done")
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("vox. ")
+        assert text == "vox. On it."
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_speak_phrase_no_prefix_when_repo_name_none(
+        self, mock_speak: MagicMock
+    ) -> None:
+        """_speak_phrase omits prefix when repo_name is None."""
+        config = _make_config(notify="c", speak="y", repo_name=None)
+        _speak_phrase(("On it.",), config, chime_signal="done")
+        text = mock_speak.call_args[0][0]
+        assert text == "On it."
+
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_speak_phrase_chime_mode_ignores_repo_name(
+        self, mock_chime: MagicMock
+    ) -> None:
+        """Chime mode skips speech entirely — repo_name irrelevant."""
+        config = _make_config(notify="c", speak="n", repo_name="vox")
+        _speak_phrase(("On it.",), config, chime_signal="done")
+        mock_chime.assert_called_once_with("done")
+
+    def test_pick_notification_phrase_prepends_repo_name(self) -> None:
+        """_pick_notification_phrase prepends repo_name to permission phrases."""
+        text = _pick_notification_phrase("permission_prompt", "", repo_name="quarry")
+        assert text.startswith("quarry. ")
+
+    def test_pick_notification_phrase_no_prefix_when_none(self) -> None:
+        """_pick_notification_phrase omits prefix when repo_name is None."""
+        text = _pick_notification_phrase("idle_prompt", "", repo_name=None)
+        assert not text.startswith("None")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_handle_notification_passes_repo_name(self, mock_speak: MagicMock) -> None:
+        """handle_notification threads repo_name to the spoken phrase."""
+        config = _make_config(speak="y", repo_name="biff")
+        handle_notification({"notification_type": "permission_prompt"}, config)
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("biff. ")
+
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.find_config_dir")
+    def test_handle_stop_prepends_repo_name_to_reason(
+        self, _mock_path: MagicMock, _mock_write: MagicMock
+    ) -> None:
+        """handle_stop includes repo_name in the block reason string."""
+        config = _make_config(repo_name="vox")
+        result = handle_stop({}, config)
+        assert result is not None
+        reason = str(result["reason"])
+        assert reason.startswith("vox. ")
+
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.find_config_dir")
+    def test_handle_stop_no_prefix_when_repo_name_none(
+        self, _mock_path: MagicMock, _mock_write: MagicMock
+    ) -> None:
+        """handle_stop reason is a plain phrase when repo_name is None."""
+        config = _make_config(repo_name=None)
+        result = handle_stop({}, config)
+        assert result is not None
+        reason = str(result["reason"])
+        assert any(reason == phrase for phrase in STOP_PHRASES)
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_handle_pre_compact_prepends_repo_name(self, mock_speak: MagicMock) -> None:
+        """handle_pre_compact speaks with repo_name prefix."""
+        config = _make_config(notify="c", speak="y", repo_name="ethos")
+        handle_pre_compact(config)
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("ethos. ")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_handle_session_end_prepends_repo_name(self, mock_speak: MagicMock) -> None:
+        """handle_session_end speaks with repo_name prefix."""
+        config = _make_config(notify="y", speak="y", vibe_signals=None, repo_name="lux")
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("lux. ")
 
 
 # ---------------------------------------------------------------------------

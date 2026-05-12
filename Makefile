@@ -1,4 +1,4 @@
-.PHONY: help test lint type check format build clean depot prfaq clean-tex zspec zspec-test
+.PHONY: help test lint type docs check format build clean depot prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -16,7 +16,10 @@ type: ## Type check with mypy and pyright
 	uv run mypy src/ tests/
 	uv run pyright src/ tests/
 
-check: lint type test ## Run all quality gates
+docs: ## Lint markdown files (matches CI docs job)
+	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
+
+check: lint type docs test ## Run all quality gates
 
 format: ## Auto-format code
 	uv run ruff format src/ tests/
