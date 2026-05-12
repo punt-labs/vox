@@ -41,12 +41,8 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 ) -> Path:
     """Return a writable config directory and patch config module default.
 
-    Returns tmp_path as the config directory. Callers that write
-    ``vox.md`` or ``vox.local.md`` should place them inside tmp_path.
-    For backwards-compat, tests that write to the returned path directly
-    (e.g. ``_patch_config.write_text(...)``) will create a file whose
-    name is the last component of tmp_path — migrate such tests to write
-    to ``tmp_path / "vox.md"`` or ``tmp_path / "vox.local.md"``.
+    Returns tmp_path as the config directory. Callers write
+    ``vox.md`` or ``vox.local.md`` inside tmp_path.
     """
     import punt_vox.config as cfg
     import punt_vox.dirs as dirs

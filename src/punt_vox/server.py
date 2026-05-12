@@ -50,7 +50,7 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 @dataclass
 class SessionState:
-    """In-memory session state. Seeded from .punt-labs/vox/ config on startup."""
+    """In-memory session state. Seeded from vox.md + vox.local.md."""
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     notify: str = "n"

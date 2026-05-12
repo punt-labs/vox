@@ -535,7 +535,9 @@ def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
 @hook_app.command("stop")
 def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Stop hook: task-completion notification."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     data = _read_hook_input()
     result = handle_stop(data, config)
@@ -546,7 +548,9 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("post-bash")
 def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PostToolUse hook: accumulate vibe signals from Bash."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     data = _read_hook_input()
     handle_post_bash(data, config_dir)
 
@@ -554,7 +558,9 @@ def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("notification")
 def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Notification hook: permission/idle prompt audio alerts."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     data = _read_hook_input()
     handle_notification(data, config)
@@ -563,7 +569,9 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("pre-compact")
 def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PreCompact hook: playful 'be right back' message."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     handle_pre_compact(config)
 
@@ -571,7 +579,9 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("user-prompt-submit")
 def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """UserPromptSubmit hook: acknowledgment in continuous mode."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     handle_user_prompt_submit(config)
 
@@ -579,7 +589,9 @@ def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("subagent-start")
 def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStart hook: announce subagent spawn."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     handle_subagent_start(config)
 
@@ -587,7 +599,9 @@ def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("subagent-stop")
 def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStop hook: announce subagent completion."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     handle_subagent_stop(config)
 
@@ -595,7 +609,9 @@ def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("session-end")
 def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SessionEnd hook: farewell speech."""
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config_dir = find_config_dir()
+    if config_dir is None:
+        return
     config = read_config(config_dir)
     handle_session_end(config, config_dir)
 
