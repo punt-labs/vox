@@ -859,7 +859,9 @@ def _systemd_unit_content(user: str) -> str:
     path_value = raw_path.replace("%", "%%")
     audio_lines = _systemd_audio_env_lines(user)
     bind = os.environ.get("VOXD_BIND")
-    bind_lines = [f'Environment="VOXD_BIND={bind}"'] if bind else []
+    bind_lines: list[str] = []
+    if bind and _safe_systemd_value(bind):
+        bind_lines = [f'Environment="VOXD_BIND={bind.replace("%", "%%")}"']
     env_block = ("\n" + " " * 8).join(
         [f'Environment="PATH={path_value}"', *audio_lines, *bind_lines]
     )

@@ -81,24 +81,30 @@ class VoxdProtocolError(Exception):
 
 def _env_host() -> str:
     """Return VOXD_HOST or default."""
-    return os.environ.get("VOXD_HOST", "127.0.0.1")
+    val = os.environ.get("VOXD_HOST", "").strip()
+    return val if val else "127.0.0.1"
 
 
 def _env_port() -> int | None:
     """Return VOXD_PORT as int, or None to fall back to file."""
-    raw = os.environ.get("VOXD_PORT")
-    if raw is None:
+    raw = os.environ.get("VOXD_PORT", "").strip()
+    if not raw:
         return None
     try:
-        return int(raw)
+        port = int(raw)
     except ValueError:
         logger.warning("VOXD_PORT=%r is not an integer, ignoring", raw)
         return None
+    if not 1 <= port <= 65535:
+        logger.warning("VOXD_PORT=%d is out of range (1-65535), ignoring", port)
+        return None
+    return port
 
 
 def _env_token() -> str | None:
     """Return VOXD_TOKEN, or None to fall back to file."""
-    return os.environ.get("VOXD_TOKEN")
+    val = os.environ.get("VOXD_TOKEN", "").strip()
+    return val if val else None
 
 
 def _run_dir() -> Path:

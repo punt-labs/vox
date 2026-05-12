@@ -73,8 +73,13 @@ class _TokenRedactFilter(logging.Filter):
     """Strip auth tokens from access log messages."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if hasattr(record, "msg") and isinstance(record.msg, str):
+        if isinstance(getattr(record, "msg", None), str):
             record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
+        if record.args and isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_RE.sub("?token=REDACTED", a) if isinstance(a, str) else a
+                for a in record.args
+            )
         return True
 
 
@@ -2573,7 +2578,7 @@ def main(
 
     app = build_app(ctx, lifespan=lifespan)
 
-    if host not in ("127.0.0.1", "::1"):
+    if host not in ("127.0.0.1", "::1", "localhost"):
         logger.warning(
             "Binding to %s — voxd is accessible from the network. "
             "Ensure VOXD_TOKEN is set on all clients.",

@@ -1037,15 +1037,12 @@ def doctor() -> None:
         )
 
     # Report active VOXD_* env var overrides
-    overrides = [
-        f"{k}={v}"
-        for k, v in [
-            ("VOXD_HOST", os.environ.get("VOXD_HOST")),
-            ("VOXD_PORT", os.environ.get("VOXD_PORT")),
-            ("VOXD_TOKEN", os.environ.get("VOXD_TOKEN")),
-        ]
-        if v is not None
-    ]
+    overrides: list[str] = []
+    for env_name in ("VOXD_HOST", "VOXD_PORT", "VOXD_TOKEN"):
+        env_val = os.environ.get(env_name)
+        if env_val is not None:
+            display = "***" if env_name == "VOXD_TOKEN" else env_val
+            overrides.append(f"{env_name}={display}")
     if overrides:
         _check(_PASS, f"Remote config: {', '.join(overrides)}")
 
