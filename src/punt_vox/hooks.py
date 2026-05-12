@@ -253,7 +253,7 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
 
     # Voice mode: block the stop, ask Claude to summarize and speak.
     # Resolve tags and write to config so apply_vibe picks them up
-    # automatically — no data in the user-visible reason string.
+    # automatically — no vibe tags or signals in the reason string.
     phrase = random.choice(STOP_PHRASES)
     if config.repo_name:
         phrase = f"{config.repo_name}. {phrase}"

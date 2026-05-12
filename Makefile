@@ -17,7 +17,7 @@ type: ## Type check with mypy and pyright
 	uv run pyright src/ tests/
 
 docs: ## Lint markdown files (matches CI docs job)
-	npx markdownlint-cli2 "**/*.md"
+	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
 check: lint type docs test ## Run all quality gates
 
