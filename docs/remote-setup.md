@@ -39,7 +39,8 @@ The daemon will bind to all interfaces on every start.
 **2. macOS firewall (macOS only):**
 
 When voxd first binds to a network interface, macOS should prompt you
-to allow `python3.14` to accept incoming connections. Click **Allow**.
+to allow the Python process (shown as `python3` or `python3.X`) to
+accept incoming connections. Click **Allow**.
 
 If you missed the prompt or it didn't appear:
 

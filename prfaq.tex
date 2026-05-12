@@ -258,8 +258,9 @@ The plugin auto-detects the best available TTS provider --- ElevenLabs for
 natural voice quality, OpenAI for low latency, AWS Polly for cost efficiency,
 macOS \texttt{say} and Linux \texttt{espeak-ng} for zero-config offline use
 --- and requires no voice selection or audio device configuration. For
-developers who SSH into remote machines, setting \texttt{VOXD\_HOST} and
-\texttt{VOXD\_PORT} routes audio to a local \texttt{voxd} daemon so
+developers who SSH into remote machines, setting \texttt{VOXD\_HOST},
+\texttt{VOXD\_PORT}, and \texttt{VOXD\_TOKEN} routes audio to a local
+\texttt{voxd} daemon so
 notifications play on the workstation, not the server
 (see \faqref{faq:competitors}).
 
@@ -836,10 +837,8 @@ Usability  & \textcolor{RiskGreen}{\textbf{Low}} &
   no longer requires it. \\
 Feasibility & \textcolor{RiskGreen}{\textbf{Low}} &
   The TTS engine, hooks integration, \texttt{voxd} daemon, background music,
-  config split, and all commands are built and shipped. Remote audio
-  (v4.7.7) is the last major capability in progress. Vibe tags are resolved
-  deterministically from session signals --- no open design questions
-  remain. \\
+  config split, remote audio, and all commands are built and shipped.
+  No open design questions remain. \\
 Viability  & \textcolor{RiskGreen}{\textbf{Low}} &
   No revenue model to validate. Zero infrastructure cost. MIT license.
   The only cost is maintainer time. \\
@@ -876,18 +875,11 @@ available on PyPI.
   \featureitem{Per-call API key passthrough}{Scope a single synthesis call to a specific provider API key for billing isolation. Four secure input paths. Shipped v4.3.0.}\label{feat:apikey}
   \featureitem{Config split}{Durable preferences (\texttt{vox.md}, tracked in git) separated from ephemeral session state (\texttt{vox.local.md}, gitignored). Shipped v4.7.5.}\label{feat:config-split}
   \featureitem{Continuous mode hooks}{UserPromptSubmit acknowledgment, SubagentStart/Stop announcements, SessionEnd farewell, PreCompact notification. Shipped v1.4.0.}\label{feat:continuous}
-\end{enumerate}
-
-\subsection*{In Progress}
-
-Features actively being built.
-
-\begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{Remote \texttt{voxd} connectivity}{Client-side env vars
   \texttt{VOXD\_HOST}, \texttt{VOXD\_PORT}, \texttt{VOXD\_TOKEN} override
   localhost discovery, enabling cross-host audio playback without SSH
   tunnels. Server-side \texttt{VOXD\_BIND} controls the bind address.
-  Token auth secures the connection. Targeting v4.7.7.}\label{feat:remote-voxd}
+  Token auth secures the connection. Shipped v4.7.7.}\label{feat:remote-voxd}
 \end{enumerate}
 
 \subsection*{Won't Do}
