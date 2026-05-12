@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13"
 
 [[package]]
@@ -1066,7 +1066,7 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.15.1"
+version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
@@ -1074,14 +1074,14 @@ dependencies = [
     { name = "rich" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/e2/a5f7fd733d2d4a671321dba0f106965bbd4179cf4f8858b48c0ecb4c4971/punt_lux-0.15.1.tar.gz", hash = "sha256:c0724f5e862a30a1e4151e821910dcee9ade2dabcfef82890406c6a582c9a470", size = 78087, upload-time = "2026-03-16T14:11:35.703Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/1a/4c8d0d48b906919543b6309c96168312b3374c9be65d1775a1779999ece5/punt_lux-0.17.1.tar.gz", hash = "sha256:5f378aceef44c5ce9d6b09d167de71f39e12c47c6d9b1d82d1a7071380be8ca8", size = 73648, upload-time = "2026-05-11T23:49:52.234Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/17/70507b255714d5402d2e5a9d0021ec93be8dcae017317037b3455138c8b7/punt_lux-0.15.1-py3-none-any.whl", hash = "sha256:0d4fe212245a3fe04be94d97781c14041c5649ac22d8ea09c1f3785359319d6f", size = 83226, upload-time = "2026-03-16T14:11:34.427Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/9c/fd0af0812447539b765656436f52cdfa92409f4593e2748d1a60e30faf63/punt_lux-0.17.1-py3-none-any.whl", hash = "sha256:ed0e42130e5ab9286d82189e61b9a9f245b5a6a478c53405b4018459d737dd25", size = 78049, upload-time = "2026-05-11T23:49:50.819Z" },
 ]
 
 [[package]]
 name = "punt-vox"
-version = "4.7.4"
+version = "4.7.5"
 source = { editable = "." }
 dependencies = [
     { name = "audioop-lts" },

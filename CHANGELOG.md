@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.5] - 2026-05-11
+
 ### Changed
 
 - **Config split into two files**: per-repo config moved from single `.vox/config.md` to two files under `.punt-labs/vox/`: `vox.md` (tracked in git, durable preferences: voice, provider, model, notify, speak, vibe_mode) and `vox.local.md` (gitignored, ephemeral session state: vibe, vibe_tags, vibe_signals). Removed legacy `.vox/` directory entirely. The `config_path` parameter is now `config_dir` throughout the API. Read/write helpers route fields by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. `find_config()` renamed to `find_config_dir()` in new `dirs.py` module.
