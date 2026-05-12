@@ -12,6 +12,7 @@ import binascii
 import contextlib
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +79,28 @@ class VoxdProtocolError(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _env_host() -> str:
+    """Return VOXD_HOST or default."""
+    return os.environ.get("VOXD_HOST", "127.0.0.1")
+
+
+def _env_port() -> int | None:
+    """Return VOXD_PORT as int, or None to fall back to file."""
+    raw = os.environ.get("VOXD_PORT")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("VOXD_PORT=%r is not an integer, ignoring", raw)
+        return None
+
+
+def _env_token() -> str | None:
+    """Return VOXD_TOKEN, or None to fall back to file."""
+    return os.environ.get("VOXD_TOKEN")
+
+
 def _run_dir() -> Path:
     """Return ``~/.punt-labs/vox/run`` — holds ``serve.port`` / ``serve.token``."""
     return _user_run_dir()
@@ -111,11 +134,11 @@ class VoxClient:
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
+        host: str | None = None,
         port: int | None = None,
         token: str | None = None,
     ) -> None:
-        self._host = host
+        self._host = host if host is not None else _env_host()
         self._explicit_port = port
         self._explicit_token = token
         self._port = port
@@ -129,6 +152,9 @@ class VoxClient:
         """Return the port, reading from file if needed."""
         if self._port is not None:
             return self._port
+        env = _env_port()
+        if env is not None:
+            return env
         port = read_port_file()
         if port is None:
             msg = "voxd port file not found. Is the daemon running? Start it with: voxd"
@@ -139,6 +165,9 @@ class VoxClient:
         """Return the token, reading from file if needed."""
         if self._token is not None:
             return self._token
+        env = _env_token()
+        if env is not None:
+            return env
         return read_token_file()
 
     def _build_uri(self) -> str:
@@ -534,11 +563,11 @@ class VoxClientSync:
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
+        host: str | None = None,
         port: int | None = None,
         token: str | None = None,
     ) -> None:
-        self._host = host
+        self._host = host if host is not None else _env_host()
         self._port = port
         self._token = token
 

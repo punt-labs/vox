@@ -512,6 +512,15 @@ _LAUNCHD_DIR = Path("/Library/LaunchDaemons")
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
 
+def _extra_launchd_env() -> dict[str, str]:
+    """Return extra env vars to bake into the launchd plist."""
+    extras: dict[str, str] = {}
+    bind = os.environ.get("VOXD_BIND")
+    if bind:
+        extras["VOXD_BIND"] = bind
+    return extras
+
+
 def _launchd_plist_content(user: str) -> str:
     args = _voxd_exec_args()
     # Plist XML reads <string> values literally — use html.escape for
@@ -526,6 +535,11 @@ def _launchd_plist_content(user: str) -> str:
     stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
     path_value = html.escape(os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"))
     escaped_user = html.escape(user)
+    extra_env = "".join(
+        f"\n            <key>{html.escape(k)}</key>"
+        f"\n            <string>{html.escape(v)}</string>"
+        for k, v in _extra_launchd_env().items()
+    )
     return textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -543,7 +557,7 @@ def _launchd_plist_content(user: str) -> str:
             <key>EnvironmentVariables</key>
             <dict>
                 <key>PATH</key>
-                <string>{path_value}</string>
+                <string>{path_value}</string>{extra_env}
             </dict>
             <key>RunAtLoad</key>
             <true/>
@@ -844,8 +858,10 @@ def _systemd_unit_content(user: str) -> str:
     raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     path_value = raw_path.replace("%", "%%")
     audio_lines = _systemd_audio_env_lines(user)
+    bind = os.environ.get("VOXD_BIND")
+    bind_lines = [f'Environment="VOXD_BIND={bind}"'] if bind else []
     env_block = ("\n" + " " * 8).join(
-        [f'Environment="PATH={path_value}"', *audio_lines]
+        [f'Environment="PATH={path_value}"', *audio_lines, *bind_lines]
     )
     # Runtime state lives in the user's home dir (see punt_vox.paths),
     # so there is no RuntimeDirectory= here — systemd does not need to
