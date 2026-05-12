@@ -1039,8 +1039,8 @@ def doctor() -> None:
     # Report active VOXD_* env var overrides
     overrides: list[str] = []
     for env_name in ("VOXD_HOST", "VOXD_PORT", "VOXD_TOKEN"):
-        env_val = os.environ.get(env_name)
-        if env_val is not None:
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
             display = "***" if env_name == "VOXD_TOKEN" else env_val
             overrides.append(f"{env_name}={display}")
     if overrides:
