@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.1] - 2026-05-12
+
 ### Fixed
 
 - **Long audio cut off at 30 seconds**: `_PLAYBACK_TIMEOUT_DEFAULT_S` in voxd was 30s, used as the fallback when ffprobe can't determine audio duration. Long `/recap` summaries producing >30s of audio were killed mid-sentence. Raised to 120s. Music playback is unaffected (separate playback path with no timeout).
