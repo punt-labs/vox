@@ -231,7 +231,7 @@ class TestPlayAudioProportionalTimeout:
     """``_play_audio`` uses probed duration for its timeout."""
 
     def test_uses_probed_duration_for_timeout(self, tmp_path: Path) -> None:
-        """A 34s file gets timeout = max(34+10, 30) = 44s, not 30s."""
+        """A 150s file gets timeout = max(150+10, 120) = 160s."""
         audio = tmp_path / "out.mp3"
         audio.write_bytes(b"\xff\xfbfake mp3 body")
         ctx = _make_ctx()
@@ -246,7 +246,7 @@ class TestPlayAudioProportionalTimeout:
             return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
 
         with (
-            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=34.3)),
+            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=150.0)),
             patch(
                 "punt_vox.voxd.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
@@ -257,7 +257,7 @@ class TestPlayAudioProportionalTimeout:
             asyncio.run(_play_audio(audio, ctx))
 
         assert len(captured_timeout) == 1
-        assert captured_timeout[0] == pytest.approx(44.3, abs=0.1)  # pyright: ignore[reportUnknownMemberType]
+        assert captured_timeout[0] == pytest.approx(160.0, abs=0.1)  # pyright: ignore[reportUnknownMemberType]
 
     def test_falls_back_to_default_when_probe_fails(self, tmp_path: Path) -> None:
         audio = tmp_path / "out.mp3"
@@ -288,7 +288,7 @@ class TestPlayAudioProportionalTimeout:
         assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
 
     def test_short_duration_uses_default_minimum(self, tmp_path: Path) -> None:
-        """A 5s file gets timeout = max(5+10, 30) = 30s (default wins)."""
+        """A 5s file gets timeout = max(5+10, 120) = 120s (default wins)."""
         audio = tmp_path / "out.mp3"
         audio.write_bytes(b"\xff\xfbfake mp3 body")
         ctx = _make_ctx()
