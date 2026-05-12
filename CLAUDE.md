@@ -47,11 +47,12 @@ Module structure under `src/punt_vox/`:
 |--------|---------------|
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
-| `output.py` | Output path resolution: `VOX_OUTPUT_DIR` env var, `~/vox-output` fallback |
+| `output.py` | Output path resolution: delegates to `dirs.default_output_dir()` (`VOX_OUTPUT_DIR` env var, `~/Music/vox/` fallback) |
 | `logging_config.py` | Logging setup (used by CLI and hooks, not by voxd) |
 | `voxd.py` | **Audio daemon** (`voxd` binary). WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew prefix on macOS, FHS on Linux). No MCP, no sessions, no project awareness. |
 | `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync wrapper). Lightweight — stdlib + websockets only. |
-| `config.py` | Read `.vox/config.md` YAML frontmatter: `read_field()`, `read_config()`, `write_field()`, `find_config()`. No ContextVar. |
+| `config.py` | Read/write two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. Public API: `read_field()`, `read_config()`, `write_field()`, `write_fields()`. No ContextVar. |
+| `dirs.py` | Cross-platform directory resolution: `DEFAULT_CONFIG_DIR` (`.punt-labs/vox/`), `find_config_dir()`, `default_output_dir()`, `music_output_dir()`, `ephemeral_dir()` |
 | `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `apply_vibe()` |
 | `normalize.py` | Text normalization for speech: `normalize_for_speech()` — snake_case, camelCase, abbreviation expansion |
 | `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
@@ -88,7 +89,7 @@ Plugin structure (Claude Code hooks and commands):
 | `assets/chime_done.mp3` | Task-complete chime tone |
 | `assets/chime_prompt.mp3` | Needs-approval chime tone |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_playback.py`, `test_cli.py`, `test_client.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_keys.py`, `test_server.py`, `test_server_partition.py`, `test_service.py`, `test_applet.py`, `test_watcher.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
+Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_playback.py`, `test_cli.py`, `test_client.py`, `test_config.py`, `test_dirs.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_keys.py`, `test_server.py`, `test_server_partition.py`, `test_service.py`, `test_applet.py`, `test_watcher.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
 ## Python Coding Standards
 

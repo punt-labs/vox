@@ -143,7 +143,7 @@ class TestHandleStop:
         assert result is None
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config")
+    @patch("punt_vox.hooks.find_config_dir")
     def test_voice_mode_blocks_clean_reason(
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
@@ -159,7 +159,7 @@ class TestHandleStop:
         assert "vibe_signals" not in reason
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config")
+    @patch("punt_vox.hooks.find_config_dir")
     def test_auto_mode_writes_tags_and_clears_signals(
         self, mock_path: MagicMock, mock_write: MagicMock
     ) -> None:
@@ -172,7 +172,7 @@ class TestHandleStop:
         )
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config")
+    @patch("punt_vox.hooks.find_config_dir")
     def test_continuous_mode_blocks(
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
@@ -307,80 +307,86 @@ class TestHandlePostBash:
     def test_appends_signal(self, tmp_path: Path) -> None:
         from punt_vox.hooks import handle_post_bash
 
-        config_path = tmp_path / ".vox" / "config.md"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text('---\nnotify: "y"\n---\n')
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
 
         data: dict[str, object] = {
             "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
         }
-        handle_post_bash(data, config_path)
+        handle_post_bash(data, config_dir)
 
-        text = config_path.read_text()
+        # vibe_signals is ephemeral — written to vox.local.md
+        local_md = config_dir / "vox.local.md"
+        assert local_md.exists()
+        text = local_md.read_text()
         assert "vibe_signals" in text
         assert "tests-pass" in text
 
     def test_no_signal_no_write(self, tmp_path: Path) -> None:
         from punt_vox.hooks import handle_post_bash
 
-        config_path = tmp_path / ".vox" / "config.md"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text('---\nnotify: "y"\n---\n')
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
 
         data: dict[str, object] = {
             "tool_response": {"exit_code": 0, "stdout": "hello world"}
         }
-        handle_post_bash(data, config_path)
+        handle_post_bash(data, config_dir)
 
-        text = config_path.read_text()
-        assert "vibe_signals" not in text
+        # No signal matched — vox.local.md should not be created
+        local_md = config_dir / "vox.local.md"
+        assert not local_md.exists()
 
     def test_accumulates_signals(self, tmp_path: Path) -> None:
         from punt_vox.hooks import handle_post_bash
 
-        config_path = tmp_path / ".vox" / "config.md"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(
-            '---\nnotify: "y"\nvibe_signals: "lint-pass@11:00"\n---\n'
-        )
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
+        local_md = config_dir / "vox.local.md"
+        local_md.write_text('---\nvibe_signals: "lint-pass@11:00"\n---\n')
 
         data: dict[str, object] = {
             "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
         }
-        handle_post_bash(data, config_path)
+        handle_post_bash(data, config_dir)
 
-        text = config_path.read_text()
+        text = local_md.read_text()
         assert "lint-pass@11:00" in text
         assert "tests-pass" in text
 
     def test_invalid_tool_response(self, tmp_path: Path) -> None:
         from punt_vox.hooks import handle_post_bash
 
-        config_path = tmp_path / ".vox" / "config.md"
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text('---\nnotify: "y"\n---\n')
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
 
         data: dict[str, object] = {"tool_response": "not a dict"}
-        handle_post_bash(data, config_path)
+        handle_post_bash(data, config_dir)
 
-        text = config_path.read_text()
-        assert "vibe_signals" not in text
+        local_md = config_dir / "vox.local.md"
+        assert not local_md.exists()
 
     def test_prunes_signals_at_max(self, tmp_path: Path) -> None:
         from punt_vox.hooks import MAX_VIBE_SIGNALS, handle_post_bash
 
-        config_path = tmp_path / ".vox" / "config.md"
-        config_path.parent.mkdir(parents=True)
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
+        local_md = config_dir / "vox.local.md"
         # Seed with exactly MAX signals already present
         existing = ",".join(f"old-{i}@00:00" for i in range(MAX_VIBE_SIGNALS))
-        config_path.write_text(f'---\nnotify: "y"\nvibe_signals: "{existing}"\n---\n')
+        local_md.write_text(f'---\nvibe_signals: "{existing}"\n---\n')
 
         data: dict[str, object] = {
             "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
         }
-        handle_post_bash(data, config_path)
+        handle_post_bash(data, config_dir)
 
-        text = config_path.read_text()
+        text = local_md.read_text()
         # Extract the vibe_signals value
         for line in text.splitlines():
             if "vibe_signals" in line:
@@ -619,7 +625,7 @@ class TestHandleSessionEnd:
         self, mock_run: MagicMock, mock_enqueue: MagicMock
     ) -> None:
         config = _make_config(notify="n")
-        handle_session_end(config, Path("/fake/.vox/config.md"))
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_run.assert_not_called()
         mock_enqueue.assert_not_called()
 
@@ -627,13 +633,13 @@ class TestHandleSessionEnd:
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         """Fires for notify=y (not just continuous)."""
         config = _make_config(notify="y", speak="n", vibe_signals=None)
-        handle_session_end(config, Path("/fake/.vox/config.md"))
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_enqueue.assert_called_once()
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="y", speak="y", vibe_signals=None)
-        handle_session_end(config, Path("/fake/.vox/config.md"))
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
         text = mock_speak.call_args[0][0]
         assert text in FAREWELL_PHRASES
@@ -641,7 +647,7 @@ class TestHandleSessionEnd:
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_continuous_mode_speaks(self, mock_speak: MagicMock) -> None:
         config = _make_config(notify="c", speak="y", vibe_signals=None)
-        handle_session_end(config, Path("/fake/.vox/config.md"))
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
 
     @patch("punt_vox.hooks.write_field")
@@ -651,9 +657,9 @@ class TestHandleSessionEnd:
     ) -> None:
         """SessionEnd clears vibe_signals to prevent stale leakage."""
         config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
-        config_path = Path("/fake/.vox/config.md")
-        handle_session_end(config, config_path)
-        mock_write.assert_called_once_with("vibe_signals", "", config_path)
+        config_dir = Path("/fake/.punt-labs/vox")
+        handle_session_end(config, config_dir)
+        mock_write.assert_called_once_with("vibe_signals", "", config_dir)
 
     @patch("punt_vox.hooks.write_field")
     @patch("punt_vox.hooks._speak_via_voxd")
@@ -662,7 +668,7 @@ class TestHandleSessionEnd:
     ) -> None:
         """Does not write config if vibe_signals is already empty."""
         config = _make_config(notify="y", speak="y", vibe_signals=None)
-        handle_session_end(config, Path("/fake/.vox/config.md"))
+        handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_write.assert_not_called()
 
 

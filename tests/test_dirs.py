@@ -6,80 +6,69 @@ from pathlib import Path
 from unittest.mock import patch
 
 from punt_vox.dirs import (
-    DEFAULT_CONFIG_PATH,
+    DEFAULT_CONFIG_DIR,
     _parse_xdg_user_dir,  # pyright: ignore[reportPrivateUsage]
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
     ephemeral_dir,
-    find_config,
+    find_config_dir,
     music_output_dir,
 )
 
 # ---------------------------------------------------------------------------
-# DEFAULT_CONFIG_PATH
+# DEFAULT_CONFIG_DIR
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultConfigPath:
+class TestDefaultConfigDir:
     def test_uses_punt_labs_subdir(self) -> None:
-        assert Path(".punt-labs/vox/config.md") == DEFAULT_CONFIG_PATH
+        assert Path(".punt-labs/vox") == DEFAULT_CONFIG_DIR
 
 
 # ---------------------------------------------------------------------------
-# find_config
+# find_config_dir
 # ---------------------------------------------------------------------------
 
 
-class TestFindConfig:
-    def test_finds_new_path(self, tmp_path: Path) -> None:
-        new_config = tmp_path / ".punt-labs" / "vox" / "config.md"
-        new_config.parent.mkdir(parents=True)
-        new_config.write_text("---\nnotify: y\n---\n")
-        result = find_config(tmp_path)
-        assert result == new_config
+class TestFindConfigDir:
+    def test_finds_dir_with_vox_md(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        config_dir.mkdir(parents=True)
+        (config_dir / "vox.md").write_text("---\nnotify: y\n---\n")
+        result = find_config_dir(tmp_path)
+        assert result == config_dir
 
-    def test_falls_back_to_legacy(self, tmp_path: Path) -> None:
+    def test_finds_dir_with_vox_local_md(self, tmp_path: Path) -> None:
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        config_dir.mkdir(parents=True)
+        (config_dir / "vox.local.md").write_text("---\nvibe: calm\n---\n")
+        result = find_config_dir(tmp_path)
+        assert result == config_dir
+
+    def test_no_legacy_fallback(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".vox" / "config.md"
         legacy.parent.mkdir(parents=True)
         legacy.write_text("---\nnotify: y\n---\n")
-        result = find_config(tmp_path)
-        assert result == legacy
-
-    def test_prefers_new_over_legacy(self, tmp_path: Path) -> None:
-        new_config = tmp_path / ".punt-labs" / "vox" / "config.md"
-        new_config.parent.mkdir(parents=True)
-        new_config.write_text("---\nnotify: y\n---\n")
-        legacy = tmp_path / ".vox" / "config.md"
-        legacy.parent.mkdir(parents=True)
-        legacy.write_text("---\nnotify: n\n---\n")
-        result = find_config(tmp_path)
-        assert result == new_config
+        result = find_config_dir(tmp_path)
+        if result is not None:
+            assert not result.is_relative_to(tmp_path / ".vox")
 
     def test_returns_none_when_absent(self, tmp_path: Path) -> None:
-        # Create an isolated directory tree with no config anywhere
-        # above it by starting from a fresh root with no parents to walk.
         isolated = tmp_path / "isolated"
         isolated.mkdir()
         with patch("punt_vox.dirs.Path.cwd", return_value=isolated):
-            # Walk up from isolated; tmp_path has no config files
-            # but walk-up may reach the real repo root. Pass the
-            # isolated dir explicitly so the walk stays bounded.
-            result = find_config(isolated)
-        # May find a parent config if tmp_path is inside a repo
-        # with .punt-labs/vox/config.md. The contract is that
-        # find_config returns None when no config exists in the
-        # walk-up chain. Test only with an isolated subtree.
+            result = find_config_dir(isolated)
         if result is not None:
             assert not result.is_relative_to(isolated)
 
     def test_walks_up_to_parent(self, tmp_path: Path) -> None:
-        new_config = tmp_path / ".punt-labs" / "vox" / "config.md"
-        new_config.parent.mkdir(parents=True)
-        new_config.write_text("---\n---\n")
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        config_dir.mkdir(parents=True)
+        (config_dir / "vox.md").write_text("---\n---\n")
         child = tmp_path / "sub" / "dir"
         child.mkdir(parents=True)
-        result = find_config(child)
-        assert result == new_config
+        result = find_config_dir(child)
+        assert result == config_dir
 
 
 # ---------------------------------------------------------------------------

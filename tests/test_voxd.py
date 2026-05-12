@@ -836,7 +836,7 @@ class TestApiKeyPassthroughIntegration:
         def fake_get_provider(
             name: str,
             *,
-            config_path: object = None,
+            config_dir: object = None,
             model: str | None = None,
         ) -> object:
             assert name == "elevenlabs"
@@ -1077,7 +1077,7 @@ class TestCacheApiKeyBypass:
         def fake_get_provider(
             name: str,
             *,
-            config_path: object = None,
+            config_dir: object = None,
             model: str | None = None,
         ) -> object:
             assert name == "elevenlabs"

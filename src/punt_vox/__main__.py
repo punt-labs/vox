@@ -28,7 +28,7 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import DEFAULT_CONFIG_PATH, default_output_dir, find_config
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
@@ -633,16 +633,16 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
 ) -> None:
     """Set session mood for TTS voice."""
-    cp = find_config() or DEFAULT_CONFIG_PATH
+    cd = find_config_dir() or DEFAULT_CONFIG_DIR
     if mood == "auto":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_path=cp)
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_dir=cd)
         _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_path=cp)
+        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_dir=cd)
         _emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
         write_fields(
-            {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_path=cp
+            {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_dir=cd
         )
         _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
@@ -668,14 +668,16 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y, n, or c.", err=True)
         raise typer.Exit(code=1)
 
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    first_init = not config_path.exists()
+    from punt_vox.config import read_field
+
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    first_init = read_field("notify", config_dir) is None
     updates: dict[str, str] = {"notify": mode}
     if mode == "c" or (first_init and mode == "y"):
         updates["speak"] = "y"
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_path=config_path)
+    write_fields(updates, config_dir=config_dir)
 
     labels = {
         "y": "Notifications enabled.",
@@ -702,7 +704,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    write_field("speak", mode, config_path=find_config() or DEFAULT_CONFIG_PATH)
+    write_field("speak", mode, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _emit({"speak": mode}, label)
 
@@ -717,7 +719,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
 ) -> None:
     """Set the session voice."""
-    write_field("voice", name, config_path=find_config() or DEFAULT_CONFIG_PATH)
+    write_field("voice", name, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
     _emit({"voice": name}, f"{name}'s here.")
 
 
@@ -740,7 +742,7 @@ def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @app.command("status")
 def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Show current state (daemon, voice, vibe, notify)."""
-    cfg = read_config(config_path=find_config() or DEFAULT_CONFIG_PATH)
+    cfg = read_config(config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
 
     # Try to get provider from voxd health
     daemon_provider: str | None = None
@@ -1033,22 +1035,6 @@ def doctor() -> None:
             _FAIL,
             f"Daemon: reachable but unhealthy \u2014 {exc}",
         )
-
-    # Legacy .vox/ directory (vox-4jk migration)
-    legacy_vox = Path.cwd() / ".vox"
-    if legacy_vox.is_dir() and not legacy_vox.is_symlink():
-        if (legacy_vox / "config.md").exists():
-            _check(
-                _FAIL,
-                f"Legacy .vox/ directory: {legacy_vox} contains config.md"
-                " \u2014 run 'vox install' to migrate to .punt-labs/vox/",
-            )
-        else:
-            _check(
-                _WARN,
-                f"Legacy .vox/ directory: {legacy_vox} exists but has no"
-                " config.md \u2014 safe to remove manually",
-            )
 
     # Legacy ~/vox-output/ directory (vox-4jk migration)
     legacy_output = Path.home() / "vox-output"

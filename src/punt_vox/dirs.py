@@ -10,26 +10,20 @@ from pathlib import Path
 # Per-repo subdirectory under .punt-labs/
 _REPO_SUBDIR = Path(".punt-labs") / "vox"
 
-# Legacy per-repo directory
-_LEGACY_REPO_DIR = Path(".vox")
-
-DEFAULT_CONFIG_PATH = _REPO_SUBDIR / "config.md"
+DEFAULT_CONFIG_DIR = _REPO_SUBDIR  # Path(".punt-labs/vox")
 
 
-def find_config(start: Path | None = None) -> Path | None:
-    """Walk up from start (default: cwd) to find per-repo config.
+def find_config_dir(start: Path | None = None) -> Path | None:
+    """Walk up from *start* (default: cwd) to find ``.punt-labs/vox/``.
 
-    Checks ``.punt-labs/vox/config.md`` first, then falls back to the
-    legacy ``.vox/config.md`` for unmigrated repos.
+    Returns the directory if either ``vox.md`` or ``vox.local.md``
+    exists inside it.  No legacy fallback.
     """
     path = (start or Path.cwd()).resolve()
     for parent in (path, *path.parents):
-        new = parent / _REPO_SUBDIR / "config.md"
-        if new.exists():
-            return new
-        legacy = parent / _LEGACY_REPO_DIR / "config.md"
-        if legacy.exists():
-            return legacy
+        d = parent / _REPO_SUBDIR
+        if (d / "vox.md").exists() or (d / "vox.local.md").exists():
+            return d
     return None
 
 

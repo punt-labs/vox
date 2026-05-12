@@ -1,11 +1,10 @@
-"""Centralized read/write for ``.punt-labs/vox/config.md`` YAML frontmatter.
+"""Read/write for split vox config: ``vox.md`` (durable) + ``vox.local.md`` (ephemeral).
 
-Python components that need config (e.g. server, CLI, watcher) import
-from here.  Shell hooks (e.g. ``hooks/*.sh``) read the same file via
-their own bash-based reader.  The canonical path is
-``.punt-labs/vox/config.md`` in the repo root (legacy ``.vox/config.md``
-is discovered by ``find_config()`` for unmigrated repos).
-All fields return safe defaults when the file is missing.
+Python components that need config import from here.  Shell hooks read
+the same files via their own bash-based reader.  The canonical directory
+is ``.punt-labs/vox/`` in the repo root; ``find_config_dir()`` walks up
+from cwd to locate it.  All fields return safe defaults when files are
+missing.
 """
 
 from __future__ import annotations
@@ -15,16 +14,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from punt_vox.dirs import DEFAULT_CONFIG_PATH, find_config
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 
 logger = logging.getLogger(__name__)
 
-# Re-export so existing callers that import from config.py keep working.
 __all__ = [
     "ALLOWED_CONFIG_KEYS",
-    "DEFAULT_CONFIG_PATH",
+    "DEFAULT_CONFIG_DIR",
+    "DURABLE_KEYS",
+    "EPHEMERAL_KEYS",
     "VoxConfig",
-    "find_config",
+    "find_config_dir",
     "read_config",
     "read_field",
     "write_field",
@@ -33,11 +33,35 @@ __all__ = [
 
 
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
+
+# ── Field-to-file routing ────────────────────────────────────────────
+
+DURABLE_KEYS: frozenset[str] = frozenset(
+    {
+        "model",
+        "notify",
+        "provider",
+        "speak",
+        "vibe_mode",
+        "voice",
+    }
+)
+
+EPHEMERAL_KEYS: frozenset[str] = frozenset(
+    {
+        "vibe",
+        "vibe_tags",
+        "vibe_signals",
+    }
+)
+
+ALLOWED_CONFIG_KEYS: frozenset[str] = DURABLE_KEYS | EPHEMERAL_KEYS
 
 
 @dataclass(frozen=True)
 class VoxConfig:
-    """Snapshot of all config fields from .punt-labs/vox/config.md."""
+    """Snapshot of all config fields from vox.md + vox.local.md."""
 
     notify: str  # "y" | "c" | "n"
     speak: str  # "y" | "n"
@@ -50,31 +74,24 @@ class VoxConfig:
     vibe_signals: str | None
 
 
-def read_field(field: str, config_path: Path | None = None) -> str | None:
-    """Read a single YAML frontmatter field.  Returns None if absent."""
-    path = config_path or DEFAULT_CONFIG_PATH
+# ── Internal helpers ─────────────────────────────────────────────────
+
+
+def _parse_frontmatter(path: Path) -> dict[str, str]:
+    """Parse YAML frontmatter fields from *path*.  Returns empty dict if missing."""
     if not path.exists():
-        return None
+        return {}
     text = path.read_text(encoding="utf-8")
-    pattern = re.compile(rf"^{re.escape(field)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
-    match = pattern.search(text)
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    return None
-
-
-def read_config(config_path: Path | None = None) -> VoxConfig:
-    """Read all config fields.  Returns defaults when file is missing."""
-    path = config_path or DEFAULT_CONFIG_PATH
     fields: dict[str, str] = {}
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-        for match in _FIELD_RE.finditer(text):
-            key = match.group(1)
-            val = match.group(2).strip()
-            if val:
-                fields[key] = val
+    for match in _FIELD_RE.finditer(text):
+        val = match.group(2).strip()
+        if val:
+            fields[match.group(1)] = val
+    return fields
 
+
+def _fields_to_config(fields: dict[str, str]) -> VoxConfig:
+    """Build a VoxConfig from raw field dict, applying validation and defaults."""
     notify = fields.get("notify", "n")
     if notify not in ("y", "c", "n"):
         notify = "n"
@@ -100,42 +117,21 @@ def read_config(config_path: Path | None = None) -> VoxConfig:
     )
 
 
-# ---------------------------------------------------------------------------
-# Write helpers
-# ---------------------------------------------------------------------------
-
-ALLOWED_CONFIG_KEYS: frozenset[str] = frozenset(
-    {
-        "model",
-        "notify",
-        "provider",
-        "speak",
-        "voice",
-        "vibe",
-        "vibe_tags",
-        "vibe_mode",
-        "vibe_signals",
-    }
-)
-
-_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
+def _read_single_field(path: Path, field: str) -> str | None:
+    """Read a single YAML frontmatter field from *path*.  Returns None if absent."""
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    pattern = re.compile(rf"^{re.escape(field)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
+    match = pattern.search(text)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return None
 
 
-def write_field(key: str, value: str, config_path: Path | None = None) -> None:
-    """Write a single YAML frontmatter field to .punt-labs/vox/config.md.
-
-    Updates the field in-place if present, or inserts it before the
-    closing ``---`` if absent. Creates the file with minimal frontmatter
-    if it does not exist.
-    """
-    if key not in ALLOWED_CONFIG_KEYS:
-        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-        raise ValueError(msg)
-
-    path = config_path or DEFAULT_CONFIG_PATH
+def _write_single(path: Path, key: str, value: str) -> None:
+    """Write a single key-value pair to the YAML frontmatter in *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
-
     replacement = f'{key}: "{value}"'
 
     if not path.exists():
@@ -157,20 +153,8 @@ def write_field(key: str, value: str, config_path: Path | None = None) -> None:
     logger.info("Config: set %s = %r in %s", key, value, path)
 
 
-def write_fields(updates: dict[str, str], config_path: Path | None = None) -> None:
-    """Write multiple YAML frontmatter fields in a single read-write cycle.
-
-    Reads the file once, applies all regex substitutions, writes once.
-    All keys are validated before any I/O so a single bad key aborts
-    the entire batch.
-    """
-    for key in updates:
-        if key not in ALLOWED_CONFIG_KEYS:
-            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-            raise ValueError(msg)
-
-    path = config_path or DEFAULT_CONFIG_PATH
+def _write_batch(path: Path, updates: dict[str, str]) -> None:
+    """Write multiple key-value pairs in a single read-write cycle."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if not path.exists():
@@ -195,3 +179,69 @@ def write_fields(updates: dict[str, str], config_path: Path | None = None) -> No
     path.write_text(text)
     for key, value in updates.items():
         logger.info("Config: set %s = %r in %s", key, value, path)
+
+
+# ── Public API ───────────────────────────────────────────────────────
+
+
+def read_field(field: str, config_dir: Path | None = None) -> str | None:
+    """Read a single config field from the correct file."""
+    d = config_dir or DEFAULT_CONFIG_DIR
+    if field in EPHEMERAL_KEYS:
+        return _read_single_field(d / "vox.local.md", field)
+    return _read_single_field(d / "vox.md", field)
+
+
+def read_config(config_dir: Path | None = None) -> VoxConfig:
+    """Read all config fields, merging vox.md and vox.local.md."""
+    d = config_dir or DEFAULT_CONFIG_DIR
+    fields: dict[str, str] = {}
+
+    # Base layer: durable prefs
+    fields.update(_parse_frontmatter(d / "vox.md"))
+
+    # Overlay: ephemeral session state — only EPHEMERAL_KEYS accepted
+    local = _parse_frontmatter(d / "vox.local.md")
+    fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
+
+    return _fields_to_config(fields)
+
+
+def _validate_value(value: str) -> None:
+    """Reject values that would corrupt YAML frontmatter."""
+    if "\n" in value or "\r" in value:
+        msg = f"Config values must not contain newlines, got: {value!r}"
+        raise ValueError(msg)
+
+
+def write_field(key: str, value: str, config_dir: Path | None = None) -> None:
+    """Write a single config field to the correct file."""
+    if key not in ALLOWED_CONFIG_KEYS:
+        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+        raise ValueError(msg)
+    _validate_value(value)
+
+    d = config_dir or DEFAULT_CONFIG_DIR
+    if key in EPHEMERAL_KEYS:
+        _write_single(d / "vox.local.md", key, value)
+    else:
+        _write_single(d / "vox.md", key, value)
+
+
+def write_fields(updates: dict[str, str], config_dir: Path | None = None) -> None:
+    """Write multiple config fields, routing each to the correct file."""
+    for key, value in updates.items():
+        if key not in ALLOWED_CONFIG_KEYS:
+            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+            raise ValueError(msg)
+        _validate_value(value)
+
+    d = config_dir or DEFAULT_CONFIG_DIR
+    durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
+    ephemeral_updates = {k: v for k, v in updates.items() if k in EPHEMERAL_KEYS}
+    if durable_updates:
+        _write_batch(d / "vox.md", durable_updates)
+    if ephemeral_updates:
+        _write_batch(d / "vox.local.md", ephemeral_updates)
