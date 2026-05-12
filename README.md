@@ -159,6 +159,12 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 - **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
 - **Background music** --- `/music on` generates vibe-driven instrumental tracks via the ElevenLabs Music API and loops them at low volume while you work. When the vibe changes, a new track generates to match. Style modifiers (`/music on style techno`) persist across invocations. Requires an ElevenLabs paid plan; each track costs ~2,000 credits
 
+## Remote Audio
+
+Run Claude Code on a headless server or cloud VM and hear audio on your local machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point at your local voxd, or use an SSH tunnel for network-boundary crossings.
+
+See [docs/remote-setup.md](docs/remote-setup.md) for the full walkthrough (direct network and SSH tunnel approaches).
+
 ## What It Looks Like
 
 ### Enable notifications
@@ -313,7 +319,7 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 
 **`voxd`** is a system-level audio daemon. It synthesizes text via TTS providers and plays audio through the speakers. It owns the playback queue (sequential, no overlap), deduplicates identical requests within 5 seconds, and caches synthesis results. It knows nothing about MCP, hooks, projects, or Claude Code.
 
-**`vox mcp`** is a lightweight stdio MCP server, one per Claude Code session. It holds session state (voice, vibe, notify mode) in memory and delegates synthesis to `voxd` over WebSocket. It inherits its working directory from Claude Code and finds `.vox/config.md` by walking up from there.
+**`vox mcp`** is a lightweight stdio MCP server, one per Claude Code session. It holds session state (voice, vibe, notify mode) in memory and delegates synthesis to `voxd` over WebSocket. It inherits its working directory from Claude Code and finds `.punt-labs/vox/` by walking up from there.
 
 **`vox hook <event>`** handlers call `voxd` for chimes and speech. Hook shell scripts are thin gates per the [hooks standard](https://github.com/punt-labs/punt-kit/blob/main/standards/hooks.md).
 
@@ -344,7 +350,7 @@ vox prompts once for your sudo password when it installs the system service unit
 
 ### Session State
 
-Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory. The daemon is stateless with respect to sessions. Per-project enablement and initial state are read from `.vox/config.md` in the project directory at MCP server startup. Hook handlers also read and write `.vox/config.md` for signal accumulation (`vibe_signals`). The daemon never reads this file.
+Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory. The daemon is stateless with respect to sessions. Per-project config lives in `.punt-labs/vox/` as two files: `vox.md` (tracked, durable preferences) and `vox.local.md` (gitignored, ephemeral session state like vibe signals). The MCP server reads these at startup; hook handlers read and write `vox.local.md` for signal accumulation. The daemon never reads either file.
 
 ### Daemon Restart
 
@@ -383,7 +389,11 @@ vox daemon status                              # Check if daemon is running
 |----------|-------------|---------|
 | `TTS_PROVIDER` | Force a specific provider | auto-detect |
 | `TTS_MODEL` | Model override | provider default |
-| `VOX_OUTPUT_DIR` | Output directory | `~/vox-output` |
+| `VOX_OUTPUT_DIR` | Output directory | `~/Music/vox/` |
+| `VOXD_HOST` | Remote voxd host (client) | `127.0.0.1` |
+| `VOXD_PORT` | Remote voxd port (client) | read `serve.port` file |
+| `VOXD_TOKEN` | Remote voxd auth token (client) | read `serve.token` file |
+| `VOXD_BIND` | voxd bind address (server) | `127.0.0.1` |
 
 Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.punt-labs/vox/keys.env`, not in your shell rc. See [Configure providers](#configure-providers) for the full walkthrough.
 

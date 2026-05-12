@@ -245,7 +245,7 @@ Mission contract YAMLs go in `.tmp/missions/`. Result artifact YAMLs go in `.tmp
 
 ## Issue Tracking with Beads
 
-This project uses **beads** (`bd`) for issue tracking. The shared Hosted DoltDB instance filters by repo label — every `bd create` in this repo **must** include `--add-label "repo:vox"` or the issue will be invisible in `bd list` and `bd ready`.
+This project uses **beads** (`bd`) for issue tracking. The shared Hosted DoltDB instance filters by repo label — every `bd create` in this repo **must** include `--labels="repo:vox"` or the issue will be invisible in `bd list` and `bd ready`.
 
 ### When to Use Beads vs TodoWrite
 
@@ -264,7 +264,7 @@ bd list --status=open       # All open issues
 bd show <id>                # View issue details
 bd update <id> --status=in_progress   # Claim work
 bd close <id>               # Mark complete
-bd create --title="..." --type=task --add-label "repo:vox"  # Create issue
+bd create --title="..." --type=task --labels="repo:vox"  # Create issue
 bd dep add <child> <parent> # child depends on parent
 bd sync                     # Sync with git remote
 ```
