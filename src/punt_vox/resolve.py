@@ -63,7 +63,7 @@ def resolve_voice_and_language(
     voice: str | None,
     language: str | None,
     *,
-    config_path: Path | None = None,
+    config_dir: Path | None = None,
 ) -> tuple[str, str | None]:
     """Resolve voice and language from user input.
 
@@ -73,8 +73,8 @@ def resolve_voice_and_language(
     If only voice is provided, infers language from the voice (best-effort).
     If both, validates compatibility.
 
-    When *config_path* is provided (or defaults to
-    ``.punt-labs/vox/config.md``), reads the ``voice`` field as session
+    When *config_dir* is provided (or defaults to
+    ``.punt-labs/vox/``), reads the ``voice`` field as session
     default.
     """
     if language is not None:
@@ -82,7 +82,7 @@ def resolve_voice_and_language(
 
     voice_from_config = False
     if voice is None:
-        voice = _config.read_field("voice", config_path or _config.DEFAULT_CONFIG_PATH)
+        voice = _config.read_field("voice", config_dir or _config.DEFAULT_CONFIG_DIR)
         voice_from_config = voice is not None
 
     if voice is None and language is not None:
@@ -120,7 +120,7 @@ def apply_vibe(
     *,
     expressive_tags: bool,
     override_tags: str | None = None,
-    config_path: Path | None = None,
+    config_dir: Path | None = None,
 ) -> str:
     """Prepend vibe tags to text if the provider supports them.
 
@@ -137,7 +137,7 @@ def apply_vibe(
     if not expressive_tags:
         return strip_expressive_tags(text)
     tags = override_tags or _config.read_field(
-        "vibe_tags", config_path or _config.DEFAULT_CONFIG_PATH
+        "vibe_tags", config_dir or _config.DEFAULT_CONFIG_DIR
     )
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"

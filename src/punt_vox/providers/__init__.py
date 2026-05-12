@@ -144,27 +144,27 @@ def auto_detect_provider() -> str:
 
 def get_provider(
     name: str | None = None,
-    config_path: Path | None = None,
+    config_dir: Path | None = None,
     **kwargs: str | None,
 ) -> TTSProvider:
     """Look up a provider by name, or auto-detect.
 
     Resolution priority for provider name:
       1. Explicit ``name`` argument
-      2. Session config (``.punt-labs/vox/config.md`` provider field)
+      2. Session config (``.punt-labs/vox/`` provider field)
       3. ``TTS_PROVIDER`` env var / API key auto-detection
 
     Resolution priority for model (passed via kwargs):
       1. Explicit ``model`` kwarg
-      2. Session config (``.punt-labs/vox/config.md`` model field)
+      2. Session config (``.punt-labs/vox/`` model field)
       3. ``TTS_MODEL`` env var / provider default
 
     Args:
         name: Provider name (e.g. 'polly', 'openai'). If None, checks
             session config then auto-detects.
-        config_path: Path to session config file. Use
-            ``find_config()`` to locate the nearest config.
-            Defaults to ``.punt-labs/vox/config.md`` in the current directory.
+        config_dir: Path to session config directory. Use
+            ``find_config_dir()`` to locate the nearest config.
+            Defaults to ``.punt-labs/vox/`` in the current directory.
         **kwargs: Provider-specific options (e.g. model='tts-1-hd').
 
     Returns:
@@ -176,7 +176,7 @@ def get_provider(
     # Read session config for fallback values.
     from punt_vox.config import read_config
 
-    config = read_config(config_path=config_path)
+    config = read_config(config_dir=config_dir)
 
     if name is not None:
         resolved = name.lower()

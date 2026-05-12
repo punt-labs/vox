@@ -195,9 +195,9 @@ class TestNotificationConsumer:
     """Notification consumer config gating and throttle behavior."""
 
     def test_skips_when_notify_not_c(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "y"\n---\n')
-        consumer = make_notification_consumer(config_path=config_path)
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
+        consumer = make_notification_consumer(config_dir=tmp_path)
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
@@ -207,11 +207,9 @@ class TestNotificationConsumer:
             mock_voice.assert_not_called()
 
     def test_fires_when_notify_c_speak_y(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
-        consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=0.0
-        )
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        consumer = make_notification_consumer(config_dir=tmp_path, throttle_seconds=0.0)
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
@@ -221,11 +219,9 @@ class TestNotificationConsumer:
             mock_voice.assert_called_once_with(event)
 
     def test_chime_mode_when_speak_n(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "n"\n---\n')
-        consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=0.0
-        )
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "n"\n---\n')
+        consumer = make_notification_consumer(config_dir=tmp_path, throttle_seconds=0.0)
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
@@ -235,11 +231,11 @@ class TestNotificationConsumer:
             mock_chime.assert_called_once_with("tests-pass", None)
 
     def test_chime_mode_passes_vibe(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "n"\nvibe: "happy"\n---\n')
-        consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=0.0
-        )
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "n"\n---\n')
+        local_md = tmp_path / "vox.local.md"
+        local_md.write_text('---\nvibe: "happy"\n---\n')
+        consumer = make_notification_consumer(config_dir=tmp_path, throttle_seconds=0.0)
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )
@@ -249,10 +245,10 @@ class TestNotificationConsumer:
             mock_chime.assert_called_once_with("tests-pass", "happy")
 
     def test_throttles_same_signal(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
         consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=100.0
+            config_dir=tmp_path, throttle_seconds=100.0
         )
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
@@ -264,10 +260,10 @@ class TestNotificationConsumer:
             assert mock_voice.call_count == 1
 
     def test_different_signals_not_throttled(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
         consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=100.0
+            config_dir=tmp_path, throttle_seconds=100.0
         )
         e1 = SessionEvent(signal="tests-pass", timestamp=time.time(), source_text="ok")
         e2 = SessionEvent(signal="lint-pass", timestamp=time.time(), source_text="ok")
@@ -292,10 +288,10 @@ class TestNotificationConsumer:
         This test mocks time.monotonic to return a value smaller than the
         throttle window, simulating the CI runner condition.
         """
-        config_path = tmp_path / "config.md"
-        config_path.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
         consumer = make_notification_consumer(
-            config_path=config_path, throttle_seconds=100.0
+            config_dir=tmp_path, throttle_seconds=100.0
         )
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
@@ -311,7 +307,7 @@ class TestNotificationConsumer:
             )
 
     def test_skips_when_no_config_file(self, tmp_path: Path) -> None:
-        consumer = make_notification_consumer(config_path=tmp_path / "missing.md")
+        consumer = make_notification_consumer(config_dir=tmp_path / "missing_dir")
         event = SessionEvent(
             signal="tests-pass", timestamp=time.time(), source_text="ok"
         )

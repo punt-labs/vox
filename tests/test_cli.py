@@ -933,8 +933,7 @@ class TestVibeCommand:
     def test_vibe_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "excited"])
@@ -944,8 +943,7 @@ class TestVibeCommand:
     def test_vibe_auto(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
@@ -955,8 +953,7 @@ class TestVibeCommand:
     def test_vibe_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
@@ -973,9 +970,8 @@ class TestNotifyCommand:
     def test_notify_y(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "y"])
@@ -985,9 +981,8 @@ class TestNotifyCommand:
     def test_notify_n(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "n"])
@@ -997,9 +992,8 @@ class TestNotifyCommand:
     def test_notify_c(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
@@ -1012,36 +1006,35 @@ class TestNotifyCommand:
         """Continuous mode always sets speak=y, even if file exists."""
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        config.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        vox_md = tmp_path / "vox.md"
+        vox_md.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c"])
         assert result.exit_code == 0
-        text = config.read_text()
+        text = vox_md.read_text()
         assert 'speak: "y"' in text
         assert 'notify: "c"' in text
 
     def test_notify_c_with_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "c", "--voice", "matilda"])
         assert result.exit_code == 0
-        text = config.read_text()
+        vox_md = tmp_path / "vox.md"
+        text = vox_md.read_text()
         assert 'voice: "matilda"' in text
         assert 'notify: "c"' in text
         assert 'speak: "y"' in text
 
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        config = tmp_path / "config.md"
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "x"])
@@ -1052,9 +1045,8 @@ class TestSpeakCommand:
     def test_speak_y(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "y"])
@@ -1064,9 +1056,8 @@ class TestSpeakCommand:
     def test_speak_n(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "n"])
@@ -1078,9 +1069,8 @@ class TestVoiceCommand:
     def test_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-        monkeypatch.setattr("punt_vox.__main__.find_config", lambda: config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "matilda"])
@@ -1113,8 +1103,7 @@ class TestStatusCommand:
     ) -> None:
         import punt_vox.config as cfg
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = {"provider": "elevenlabs"}
@@ -1133,8 +1122,7 @@ class TestStatusCommand:
         import punt_vox.config as cfg
         from punt_vox.client import VoxdConnectionError
 
-        config = tmp_path / "config.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         mock_instance = mock_client_cls.return_value
         mock_instance.health.side_effect = VoxdConnectionError("not running")

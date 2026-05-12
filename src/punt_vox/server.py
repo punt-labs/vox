@@ -35,7 +35,8 @@ mcp = FastMCP(
         "ephemeral=true. Mood tags are pre-resolved in config \u2014 do not "
         "pass vibe_tags. No other output.\n\n"
         "Do NOT use Read, Write, or Bash tools to access "
-        ".punt-labs/vox/config.md. All config state is available through "
+        ".punt-labs/vox/vox.md or .punt-labs/vox/vox.local.md. "
+        "All config state is available through "
         "MCP tools or hook context."
     ),
 )
@@ -49,7 +50,7 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 @dataclass
 class SessionState:
-    """In-memory session state. Seeded from .punt-labs/vox/config.md on startup."""
+    """In-memory session state. Seeded from .punt-labs/vox/ config on startup."""
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     notify: str = "n"
@@ -73,21 +74,21 @@ _state: SessionState = SessionState()
 # ---------------------------------------------------------------------------
 
 
-def _find_config() -> Path | None:
-    """Walk up from cwd to find per-repo config.md."""
-    from punt_vox.dirs import find_config
+def _find_config_dir() -> Path | None:
+    """Walk up from cwd to find per-repo .punt-labs/vox/ directory."""
+    from punt_vox.dirs import find_config_dir
 
-    return find_config()
+    return find_config_dir()
 
 
-def _seed_state_from_config(config_path: Path | None) -> SessionState:
-    """Read per-repo config.md once and return a SessionState."""
-    if config_path is None or not config_path.exists():
+def _seed_state_from_config(config_dir: Path | None) -> SessionState:
+    """Read per-repo config once and return a SessionState."""
+    if config_dir is None:
         return SessionState()
 
     from punt_vox.config import read_config
 
-    cfg = read_config(config_path=config_path)
+    cfg = read_config(config_dir=config_dir)
     return SessionState(
         notify=cfg.notify,
         speak=cfg.speak,
@@ -471,7 +472,7 @@ def vibe(
     # Persist to disk so hooks (which read config independently) see the change
     from punt_vox.config import write_fields
 
-    write_fields(updates, _find_config())
+    write_fields(updates, _find_config_dir())
 
     # Propagate vibe change to music loop if this session owns music.
     if _state.music_mode == "on":
@@ -748,7 +749,7 @@ def notify(
     # Persist to disk so hooks (which read config independently) see the change
     from punt_vox.config import write_fields
 
-    write_fields(updates, _find_config())
+    write_fields(updates, _find_config_dir())
 
     return json.dumps({"notify": updates})
 
@@ -792,7 +793,7 @@ def speak(
     # Persist to disk so hooks (which read config independently) see the change
     from punt_vox.config import write_fields
 
-    write_fields(updates, _find_config())
+    write_fields(updates, _find_config_dir())
 
     return json.dumps(updates)
 
@@ -869,15 +870,15 @@ def run_server() -> None:
     configure_logging(stderr_level="INFO")
     logger.info("Starting vox MCP server (mic)")
 
-    # Seed session state from per-repo config.md if it exists.
-    config_path = _find_config()
-    _state = _seed_state_from_config(config_path)
+    # Seed session state from per-repo config if it exists.
+    config_dir = _find_config_dir()
+    _state = _seed_state_from_config(config_dir)
 
     # Mark speak as explicitly set if the config file had it.
-    if config_path is not None and config_path.exists():
+    if config_dir is not None:
         from punt_vox.config import read_field
 
-        if read_field("speak", config_path) is not None:
+        if read_field("speak", config_dir) is not None:
             _speak_explicit = True
 
     logger.info(

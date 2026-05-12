@@ -37,7 +37,7 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import DEFAULT_CONFIG_PATH, find_config
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
     FAREWELL_PHRASES,
@@ -265,8 +265,8 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         pass  # Manual mode with existing tags — already set
     else:
         tags = resolve_tags_from_signals(config.vibe_signals)
-        config_path = find_config() or DEFAULT_CONFIG_PATH
-        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_path)
+        config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
     return {"decision": "block", "reason": phrase}
 
 
@@ -311,10 +311,10 @@ def classify_signal(exit_code: int | None, stdout: str) -> str | None:
     return None
 
 
-def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
+def handle_post_bash(data: dict[str, object], config_dir: Path) -> None:
     """Accumulate vibe signals from Bash tool execution.
 
-    Appends a signal token to ``vibe_signals`` in ``.vox/config.md``.
+    Appends a signal token to ``vibe_signals`` in ``vox.local.md``.
 
     .. todo:: Signal accumulation should move to the MCP server so hooks
        don't write to config. Kept here as the one exception to preserve
@@ -345,14 +345,14 @@ def handle_post_bash(data: dict[str, object], config_path: Path) -> None:
     timestamp = datetime.now().strftime("%H:%M")
     token = f"{signal}@{timestamp}"
 
-    current = read_config(config_path).vibe_signals or ""
+    current = read_config(config_dir).vibe_signals or ""
     new_signals = f"{current},{token}" if current else token
 
     parts = new_signals.split(",")
     if len(parts) > MAX_VIBE_SIGNALS:
         new_signals = ",".join(parts[-MAX_VIBE_SIGNALS:])
 
-    write_field("vibe_signals", new_signals, config_path)
+    write_field("vibe_signals", new_signals, config_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +508,7 @@ def handle_subagent_stop(config: VoxConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
-def handle_session_end(config: VoxConfig, config_path: Path) -> None:
+def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     """Speak a farewell and clean up session state.
 
     Fires when notify != 'n' (both on-demand and continuous).
@@ -524,7 +524,7 @@ def handle_session_end(config: VoxConfig, config_path: Path) -> None:
 
     # Clean slate for next session
     if config.vibe_signals:
-        write_field("vibe_signals", "", config_path)
+        write_field("vibe_signals", "", config_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -535,11 +535,8 @@ def handle_session_end(config: VoxConfig, config_path: Path) -> None:
 @hook_app.command("stop")
 def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Stop hook: task-completion notification."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     data = _read_hook_input()
     result = handle_stop(data, config)
     if result is not None:
@@ -549,22 +546,16 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("post-bash")
 def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PostToolUse hook: accumulate vibe signals from Bash."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
     data = _read_hook_input()
-    handle_post_bash(data, config_path)
+    handle_post_bash(data, config_dir)
 
 
 @hook_app.command("notification")
 def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Notification hook: permission/idle prompt audio alerts."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     data = _read_hook_input()
     handle_notification(data, config)
 
@@ -572,56 +563,41 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("pre-compact")
 def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PreCompact hook: playful 'be right back' message."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     handle_pre_compact(config)
 
 
 @hook_app.command("user-prompt-submit")
 def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """UserPromptSubmit hook: acknowledgment in continuous mode."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     handle_user_prompt_submit(config)
 
 
 @hook_app.command("subagent-start")
 def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStart hook: announce subagent spawn."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     handle_subagent_start(config)
 
 
 @hook_app.command("subagent-stop")
 def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStop hook: announce subagent completion."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
     handle_subagent_stop(config)
 
 
 @hook_app.command("session-end")
 def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SessionEnd hook: farewell speech."""
-    config_path = find_config() or DEFAULT_CONFIG_PATH
-    if not config_path.exists():
-        return
-
-    config = read_config(config_path)
-    handle_session_end(config, config_path)
+    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
+    config = read_config(config_dir)
+    handle_session_end(config, config_dir)
 
 
 @hook_app.command("_chime", hidden=True)

@@ -39,14 +39,21 @@ from punt_vox.voices import voice_not_found_message
 def _patch_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Return a writable config path and patch config module default."""
+    """Return a writable config directory and patch config module default.
+
+    Returns tmp_path as the config directory. Callers that write
+    ``vox.md`` or ``vox.local.md`` should place them inside tmp_path.
+    For backwards-compat, tests that write to the returned path directly
+    (e.g. ``_patch_config.write_text(...)``) will create a file whose
+    name is the last component of tmp_path — migrate such tests to write
+    to ``tmp_path / "vox.md"`` or ``tmp_path / "vox.local.md"``.
+    """
     import punt_vox.config as cfg
     import punt_vox.dirs as dirs
 
-    config = tmp_path / "config.md"
-    monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_PATH", config)
-    return config
+    monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
+    return tmp_path
 
 
 @pytest.fixture(autouse=True)
@@ -67,43 +74,47 @@ class TestApplyVibe:
     """Tests for apply_vibe text injection."""
 
     def test_prepends_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[excited]"\n---\n')
         result = apply_vibe("Hello world", expressive_tags=True)
         assert result == "[excited] Hello world"
 
     def test_multiple_tags(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[frustrated] [sighs]"\n---\n')
+        (_patch_config / "vox.local.md").write_text(
+            '---\nvibe_tags: "[frustrated] [sighs]"\n---\n'
+        )
         result = apply_vibe("Hello world", expressive_tags=True)
         assert result == "[frustrated] [sighs] Hello world"
 
     def test_skips_prepend_when_text_starts_with_tag(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        (_patch_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe("[calm] Already tagged", expressive_tags=True)
         assert result == "[calm] Already tagged"
 
     def test_skips_prepend_when_text_starts_with_different_tag(
         self, _patch_config: Path
     ) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        (_patch_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe("[excited] Different tag", expressive_tags=True)
         assert result == "[excited] Different tag"
 
     def test_skips_prepend_when_tag_contains_punctuation(
         self, _patch_config: Path
     ) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        (_patch_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe("[dramatic tone] Something important", expressive_tags=True)
         assert result == "[dramatic tone] Something important"
 
     def test_passthrough_when_no_tags(self, tmp_path: Path, monkeypatch: Any) -> None:
         import punt_vox.config as cfg
 
-        missing = tmp_path / "missing.md"
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", missing)
+        missing = tmp_path / "missing_dir"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", missing)
         assert apply_vibe("Hello world", expressive_tags=True) == "Hello world"
 
     def test_skips_tags_when_not_supported(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[excited]"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[excited]"\n---\n')
         result = apply_vibe("Hello world", expressive_tags=False)
         assert result == "Hello world"
 
@@ -122,7 +133,7 @@ class TestApplyVibe:
         assert result == "[serious]"
 
     def test_override_tags_win_over_config(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        (_patch_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe(
             "Hello world",
             expressive_tags=True,
@@ -133,7 +144,7 @@ class TestApplyVibe:
     def test_override_tags_empty_falls_through_to_config(
         self, _patch_config: Path
     ) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[calm]"\n---\n')
+        (_patch_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
         result = apply_vibe("Hello world", expressive_tags=True, override_tags="")
         assert result == "[calm] Hello world"
 
@@ -230,69 +241,78 @@ class TestWriteConfigField:
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
         write_field("vibe_tags", "[excited]")
-        assert _patch_config.exists()
-        text = _patch_config.read_text()
+        local_md = _patch_config / "vox.local.md"
+        assert local_md.exists()
+        text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert text.startswith("---\n")
         assert text.rstrip().endswith("---")
 
     def test_updates_existing_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[tired]"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
         write_field("vibe_tags", "[excited]")
-        text = _patch_config.read_text()
+        text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[tired]" not in text
 
     def test_updates_unquoted_field(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\nvibe_tags: [whispers]\n---\n")
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text("---\nvibe_tags: [whispers]\n---\n")
         write_field("vibe_tags", "[excited]")
-        text = _patch_config.read_text()
+        text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[whispers]" not in text
 
     def test_inserts_new_field_before_closing_fence(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nnotify: "y"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe: "happy"\n---\n')
         write_field("vibe_tags", "[excited]")
-        text = _patch_config.read_text()
+        text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
-        assert 'notify: "y"' in text
+        assert 'vibe: "happy"' in text
 
     def test_preserves_other_fields(self, _patch_config: Path) -> None:
-        _patch_config.write_text(
-            '---\nnotify: "y"\nvibe_tags: "[tired]"\nspeak: "y"\n---\n'
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text(
+            '---\nvibe: "happy"\nvibe_tags: "[tired]"\nvibe_signals: "x"\n---\n'
         )
         write_field("vibe_tags", "[excited]")
-        text = _patch_config.read_text()
-        assert 'notify: "y"' in text
-        assert 'speak: "y"' in text
+        text = local_md.read_text()
+        assert 'vibe: "happy"' in text
+        assert 'vibe_signals: "x"' in text
         assert 'vibe_tags: "[excited]"' in text
 
     def test_clears_field_with_empty_string(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nvibe_tags: "[tired]"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
         write_field("vibe_tags", "")
-        text = _patch_config.read_text()
+        text = local_md.read_text()
         assert 'vibe_tags: ""' in text
 
     def test_rejects_unknown_key(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
             write_field("bad_key", "value")
 
     def test_creates_parent_directory(self, tmp_path: Path) -> None:
-        nested = tmp_path / "deep" / "dir" / "config.md"
+        nested = tmp_path / "deep" / "dir"
         write_field("notify", "y", nested)
-        assert nested.exists()
-        assert 'notify: "y"' in nested.read_text()
+        vox_md = nested / "vox.md"
+        assert vox_md.exists()
+        assert 'notify: "y"' in vox_md.read_text()
 
     def test_malformed_file_warns_and_overwrites(
         self, _patch_config: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        _patch_config.write_text("no frontmatter at all\n")
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text("no frontmatter at all\n")
         import logging
 
         with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
             write_field("notify", "y", _patch_config)
-        assert 'notify: "y"' in _patch_config.read_text()
+        assert 'notify: "y"' in vox_md.read_text()
         assert "Malformed config" in caplog.text
 
 
@@ -300,54 +320,67 @@ class TestWriteConfigFields:
     """Tests for write_fields batch helper."""
 
     def test_writes_multiple_fields(self, _patch_config: Path) -> None:
-        _patch_config.write_text('---\nnotify: "y"\n---\n')
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
         updates = {
             "vibe": "happy",
             "vibe_tags": "[cheerful]",
             "vibe_mode": "manual",
         }
         write_fields(updates)
-        text = _patch_config.read_text()
-        assert 'vibe: "happy"' in text
-        assert 'vibe_tags: "[cheerful]"' in text
-        assert 'vibe_mode: "manual"' in text
-        assert 'notify: "y"' in text
+        # vibe_mode is durable -> vox.md
+        vox_text = vox_md.read_text()
+        assert 'vibe_mode: "manual"' in vox_text
+        assert 'notify: "y"' in vox_text
+        # vibe, vibe_tags are ephemeral -> vox.local.md
+        local_text = (_patch_config / "vox.local.md").read_text()
+        assert 'vibe: "happy"' in local_text
+        assert 'vibe_tags: "[cheerful]"' in local_text
 
     def test_updates_existing_fields(self, _patch_config: Path) -> None:
-        _patch_config.write_text(
-            '---\nvibe: "old"\nvibe_tags: "[old]"\nvibe_mode: "off"\n---\n'
-        )
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text('---\nvibe_mode: "off"\n---\n')
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text('---\nvibe: "old"\nvibe_tags: "[old]"\n---\n')
         updates = {
             "vibe": "new",
             "vibe_tags": "[new]",
             "vibe_mode": "manual",
         }
         write_fields(updates)
-        text = _patch_config.read_text()
-        assert 'vibe: "new"' in text
-        assert 'vibe_tags: "[new]"' in text
-        assert 'vibe_mode: "manual"' in text
-        assert "old" not in text
+        vox_text = vox_md.read_text()
+        assert 'vibe_mode: "manual"' in vox_text
+        assert "off" not in vox_text
+        local_text = local_md.read_text()
+        assert 'vibe: "new"' in local_text
+        assert 'vibe_tags: "[new]"' in local_text
+        assert "old" not in local_text
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
         write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
-        text = _patch_config.read_text()
+        local_md = _patch_config / "vox.local.md"
+        text = local_md.read_text()
         assert text.startswith("---\n")
         assert 'vibe: "happy"' in text
         assert 'vibe_tags: "[cheerful]"' in text
         assert text.rstrip().endswith("---")
 
     def test_rejects_invalid_key(self, _patch_config: Path) -> None:
-        _patch_config.write_text("---\n---\n")
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
             write_fields({"vibe": "ok", "bad_key": "fail"})
-        assert _patch_config.read_text() == "---\n---\n"
+        # vox.md should be unchanged — validation fails before any write
+        assert vox_md.read_text() == "---\n---\n"
 
     def test_atomic_single_read_write(
         self, _patch_config: Path, monkeypatch: Any
     ) -> None:
-        """Verify batch performs one read and one write."""
-        _patch_config.write_text("---\n---\n")
+        """Verify batch performs one read and one write per file."""
+        local_md = _patch_config / "vox.local.md"
+        local_md.write_text("---\n---\n")
+        vox_md = _patch_config / "vox.md"
+        vox_md.write_text("---\n---\n")
         read_count = 0
         write_count = 0
         orig_read = Path.read_text
@@ -355,21 +388,20 @@ class TestWriteConfigFields:
 
         def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
             nonlocal read_count
-            if self == _patch_config:
+            if self == local_md:
                 read_count += 1
             return orig_read(self, *args, **kwargs)
 
         def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
             nonlocal write_count
-            if self == _patch_config:
+            if self == local_md:
                 write_count += 1
             return orig_write(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", counting_read)
         monkeypatch.setattr(Path, "write_text", counting_write)
-        write_fields(
-            {"vibe": "a", "vibe_tags": "[b]", "vibe_mode": "manual"}, _patch_config
-        )
+        # All ephemeral keys -> single file write to vox.local.md
+        write_fields({"vibe": "a", "vibe_tags": "[b]"}, _patch_config)
         assert read_count == 1
         assert write_count == 1
 

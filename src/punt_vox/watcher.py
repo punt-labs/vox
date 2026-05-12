@@ -169,7 +169,7 @@ _SIGNAL_PHRASES: dict[str, str] = {
 
 
 def make_notification_consumer(
-    config_path: Path | None = None,
+    config_dir: Path | None = None,
     throttle_seconds: float = 15.0,
 ) -> SessionEventConsumer:
     """Create a consumer that announces events via speech or chime.
@@ -180,7 +180,7 @@ def make_notification_consumer(
     last_fired: dict[str, float] = {}
 
     def _consumer(event: SessionEvent) -> None:
-        config = read_config(config_path)
+        config = read_config(config_dir)
         if config.notify != "c":
             return
 

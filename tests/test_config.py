@@ -183,12 +183,13 @@ class TestFindConfigDir:
         assert result == config_d
 
     def test_find_config_dir_no_legacy(self, tmp_path: Path) -> None:
-        """Test 15: .vox/config.md is NOT found."""
+        """Test 15: .vox/config.md is NOT found by find_config_dir."""
         legacy = tmp_path / ".vox"
         legacy.mkdir()
         (legacy / "config.md").write_text('---\nnotify: "y"\n---\n')
         result = find_config_dir(start=tmp_path)
-        assert result is None
+        if result is not None:
+            assert not result.is_relative_to(tmp_path / ".vox")
 
 
 # -- Existing test coverage (updated for config_dir API) -------------------

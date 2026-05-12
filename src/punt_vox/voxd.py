@@ -1174,7 +1174,7 @@ async def _synthesize_to_file(
                 os.environ[env_key_name] = api_key
 
         try:
-            provider = get_provider(provider_name, config_path=None, model=model)
+            provider = get_provider(provider_name, config_dir=None, model=model)
             request = _build_audio_request(
                 normalized,
                 voice,
@@ -1333,7 +1333,7 @@ async def _try_direct_play(
     )
 
     def _factory() -> TTSProvider:
-        return get_provider(provider_name, config_path=None, model=model)
+        return get_provider(provider_name, config_dir=None, model=model)
 
     start = _monotonic()
     try:
@@ -1670,7 +1670,7 @@ async def _handle_voices(
     provider_name = _parse_optional_str(msg, "provider") or auto_detect_provider()
 
     try:
-        provider = get_provider(provider_name, config_path=None)
+        provider = get_provider(provider_name, config_dir=None)
         voice_list = await asyncio.to_thread(provider.list_voices)
     except Exception as exc:
         logger.exception("Voice listing failed for provider=%s", provider_name)
