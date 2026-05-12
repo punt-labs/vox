@@ -410,7 +410,7 @@ _AUDIO_ENV_KEYS: tuple[str, ...] = (
 # Playback under 50ms is a "success" that almost certainly played nothing.
 _SUSPICIOUS_ELAPSED_S = 0.05
 
-_PLAYBACK_TIMEOUT_DEFAULT_S = 30.0
+_PLAYBACK_TIMEOUT_DEFAULT_S = 120.0
 _PLAYBACK_TIMEOUT_PADDING_S = 10.0
 _PROBE_TIMEOUT_S = 5.0
 
