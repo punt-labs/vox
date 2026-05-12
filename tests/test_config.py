@@ -60,6 +60,14 @@ class TestWriteFieldRouting:
         with pytest.raises(ValueError, match="Unknown config key 'bogus'"):
             write_field("bogus", "val", config_dir=tmp_path)
 
+    def test_write_field_rejects_newline_in_value(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="must not contain newlines"):
+            write_field("voice", "fin\nevil: injection", config_dir=tmp_path)
+
+    def test_write_fields_rejects_newline_in_value(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="must not contain newlines"):
+            write_fields({"voice": "ok", "vibe": "calm\nbad"}, config_dir=tmp_path)
+
 
 class TestWriteFieldsRouting:
     """Design test 3."""

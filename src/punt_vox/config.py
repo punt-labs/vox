@@ -206,12 +206,20 @@ def read_config(config_dir: Path | None = None) -> VoxConfig:
     return _fields_to_config(fields)
 
 
+def _validate_value(value: str) -> None:
+    """Reject values that would corrupt YAML frontmatter."""
+    if "\n" in value or "\r" in value:
+        msg = f"Config values must not contain newlines, got: {value!r}"
+        raise ValueError(msg)
+
+
 def write_field(key: str, value: str, config_dir: Path | None = None) -> None:
     """Write a single config field to the correct file."""
     if key not in ALLOWED_CONFIG_KEYS:
         allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
         msg = f"Unknown config key '{key}'. Allowed: {allowed}"
         raise ValueError(msg)
+    _validate_value(value)
 
     d = config_dir or DEFAULT_CONFIG_DIR
     if key in EPHEMERAL_KEYS:
@@ -222,11 +230,12 @@ def write_field(key: str, value: str, config_dir: Path | None = None) -> None:
 
 def write_fields(updates: dict[str, str], config_dir: Path | None = None) -> None:
     """Write multiple config fields, routing each to the correct file."""
-    for key in updates:
+    for key, value in updates.items():
         if key not in ALLOWED_CONFIG_KEYS:
             allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
             msg = f"Unknown config key '{key}'. Allowed: {allowed}"
             raise ValueError(msg)
+        _validate_value(value)
 
     d = config_dir or DEFAULT_CONFIG_DIR
     durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
