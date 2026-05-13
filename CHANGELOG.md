@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP server state went stale after CLI config writes**: the MCP server seeded `SessionState` from config at startup but never re-read. CLI commands like `vox vibe auto` wrote to `vox.local.md` but the MCP server retained the old values, causing `/music on` to report stale mood. All MCP tools now call `_refresh_state_from_config()` to re-read config before acting. Closes vox-duw.
+
 ## [4.8.1] - 2026-05-12
 
 ### Fixed

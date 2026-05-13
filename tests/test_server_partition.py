@@ -28,11 +28,16 @@ from punt_vox.server import SessionState, notify, speak
 
 @pytest.fixture(autouse=True)
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Reset server session state before every test."""
+    """Reset server session state before every test.
+
+    Stubs _find_config_dir to return None so _refresh_state_from_config
+    is a no-op -- partition tests control state via _set_state only.
+    """
     import punt_vox.server as srv
 
     monkeypatch.setattr(srv, "_state", SessionState())
     monkeypatch.setattr(srv, "_speak_explicit", False)
+    monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
 
 def _set_state(

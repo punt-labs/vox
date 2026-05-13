@@ -102,6 +102,45 @@ def _seed_state_from_config(config_dir: Path | None) -> SessionState:
     )
 
 
+def _refresh_state_from_config() -> None:
+    """Re-read config files and update _state with current values.
+
+    Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags,
+    vibe_signals) always take the config value — the config file is
+    the source of truth since CLI and hooks write there directly.
+
+    For voice, provider, and model the MCP tool may have set a value
+    that was not persisted to config (e.g. an in-tool override).  Only
+    overwrite _state when config has a non-None value so those
+    overrides survive.
+    """
+    global _speak_explicit
+    config_dir = _find_config_dir()
+    if config_dir is None:
+        return
+
+    from punt_vox.config import read_config, read_field
+
+    cfg = read_config(config_dir=config_dir)
+
+    _state.vibe = cfg.vibe
+    _state.vibe_tags = cfg.vibe_tags
+    _state.vibe_signals = cfg.vibe_signals or ""
+    _state.vibe_mode = cfg.vibe_mode
+    _state.notify = cfg.notify
+    _state.speak = cfg.speak
+
+    if read_field("speak", config_dir) is not None:
+        _speak_explicit = True
+
+    if cfg.voice is not None:
+        _state.voice = cfg.voice
+    if cfg.provider is not None:
+        _state.provider = cfg.provider
+    if cfg.model is not None:
+        _state.model = cfg.model
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -200,6 +239,7 @@ def unmute(
     Returns:
         JSON string with synthesis results.
     """
+    _refresh_state_from_config()
     _validate_voice_settings(stability, similarity, style)
 
     # ephemeral is accepted for callers (architecture spec) but voxd
@@ -339,6 +379,7 @@ def record(
     Returns:
         JSON string with synthesis results including file path.
     """
+    _refresh_state_from_config()
     _validate_voice_settings(stability, similarity, style)
 
     # Normalize input: text -> single segment.
@@ -451,6 +492,7 @@ def vibe(
     Returns:
         JSON string with the updated vibe state.
     """
+    _refresh_state_from_config()
     updates: dict[str, str] = {}
     if mood is not None:
         updates["vibe"] = mood
@@ -531,6 +573,7 @@ def music(
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
+    _refresh_state_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
 
@@ -582,6 +625,8 @@ def music_play(name: str) -> str:
     Finds the track in the music library and starts looping it.
     No generation, no credits used.
 
+    .. note:: Calls ``_refresh_state_from_config()`` for consistency.
+
     Args:
         name: Track name (as shown by music_list).
 
@@ -589,6 +634,7 @@ def music_play(name: str) -> str:
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
+    _refresh_state_from_config()
     client = _voxd_client()
     try:
         resp = client.music_play(name, owner_id=_state.session_id)
@@ -623,6 +669,7 @@ def music_list() -> str:
         JSON string with a human-readable ``message`` field and
         the track list from voxd.
     """
+    _refresh_state_from_config()
     client = _voxd_client()
     try:
         resp = client.music_list()
@@ -674,6 +721,7 @@ def who(language: str | None = None) -> str:
         JSON string with provider, current voice, featured voices,
         and full voice list.
     """
+    _refresh_state_from_config()
     client = _voxd_client()
 
     try:
@@ -729,6 +777,7 @@ def notify(
     Returns:
         JSON string with the updated config fields.
     """
+    _refresh_state_from_config()
     if mode not in ("y", "n", "c"):
         return _error(f"Invalid mode '{mode}'. Use y/n/c.")
 
@@ -778,6 +827,7 @@ def speak(
         JSON string with the updated fields.
     """
     global _speak_explicit
+    _refresh_state_from_config()
 
     if mode not in ("y", "n"):
         return _error(f"Invalid mode '{mode}'. Use y/n.")
@@ -806,6 +856,7 @@ def status() -> str:
         JSON string with provider, voice, notify mode, speak mode,
         vibe mode, and current vibe.
     """
+    _refresh_state_from_config()
     return json.dumps(
         {
             "provider": _state.provider,
@@ -832,6 +883,7 @@ def show_vox() -> str:
     Returns:
         JSON string with status ("ok" or "error" with message).
     """
+    _refresh_state_from_config()
     from punt_vox.applet import show_applet
     from punt_vox.config import VoxConfig
 
