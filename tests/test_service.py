@@ -906,7 +906,7 @@ def test_write_keys_env_mode_0600(tmp_path: Path) -> None:
     """keys.env must always be chmod 0600 — it holds provider secrets."""
     keys_path = tmp_path / "keys.env"
     _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
-    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+    mode = stat_mod.S_IMODE(keys_path.stat().st_mode)
     assert mode == 0o600, f"keys.env mode is {oct(mode)}, expected 0o600"
 
 
@@ -987,7 +987,7 @@ def test_write_keys_env_handles_unreadable_existing_file(tmp_path: Path) -> None
     # The garbage must be gone.
     assert "garbage" not in content
     # Mode is still 0600.
-    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+    mode = stat_mod.S_IMODE(keys_path.stat().st_mode)
     assert mode == 0o600
 
 
@@ -1041,7 +1041,7 @@ def test_write_keys_env_never_exposes_world_readable_state(
     try:
         keys_path = tmp_path / "keys.env"
         _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
-        mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+        mode = stat_mod.S_IMODE(keys_path.stat().st_mode)
         assert mode == 0o600, (
             f"keys.env mode is {oct(mode)} under umask 0002 — the "
             "os.open path should create the file at exactly 0o600 "
@@ -1066,12 +1066,12 @@ def test_write_keys_env_tightens_parent_dir(tmp_path: Path) -> None:
     state_root.mkdir(parents=True)
     # Simulate an older install that left the dir at 0755.
     state_root.chmod(0o755)
-    assert stat_mod.S_IMODE(os.stat(state_root).st_mode) == 0o755
+    assert stat_mod.S_IMODE(state_root.stat().st_mode) == 0o755
 
     keys_path = state_root / "keys.env"
     _write_keys_env({"OPENAI_API_KEY": "sk-test"}, keys_path)
 
-    mode = stat_mod.S_IMODE(os.stat(state_root).st_mode)
+    mode = stat_mod.S_IMODE(state_root.stat().st_mode)
     assert mode == 0o700, (
         f"parent dir mode is {oct(mode)} after _write_keys_env; "
         "the helper must tighten the parent to 0700 so a secrets "
@@ -1205,7 +1205,7 @@ def test_install_runs_as_user_creates_keys_env(
 
     keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
     assert keys_path.exists(), f"install() failed to create {keys_path}"
-    mode = stat_mod.S_IMODE(os.stat(keys_path).st_mode)
+    mode = stat_mod.S_IMODE(keys_path.stat().st_mode)
     assert mode == 0o600, f"keys.env mode is {oct(mode)}, expected 0o600"
     content = keys_path.read_text()
     assert "OPENAI_API_KEY=sk-test-openai" in content

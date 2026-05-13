@@ -355,7 +355,7 @@ def generate_filename(text: str, prefix: str = "") -> str:
     Returns:
         A filename like "a1b2c3d4.mp3" or "pair_a1b2c3d4.mp3".
     """
-    digest = hashlib.md5(text.encode()).hexdigest()[:12]
+    digest = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]
     if prefix:
         return f"{prefix}{digest}.mp3"
     return f"{digest}.mp3"

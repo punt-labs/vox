@@ -31,7 +31,7 @@ __all__ = ["SayProvider"]
 _DEFAULT_WPM = 175
 
 # Regex to parse `say -v '?'` output lines.
-# Format: "Fred                en_US    # Hello! My name is Fred."
+# Each line looks like: Fred                en_US    # Hello! My name is Fred.
 _VOICE_LINE_RE = re.compile(r"^(.+?)\s{2,}(\w{2}_\w{2})\s+#")
 
 # Default voice per language (ISO 639-1 → lowercase macOS voice name).

@@ -184,8 +184,7 @@ class TestSayProviderSynthesize:
             msg = f"Unexpected subprocess call: {args}"
             raise ValueError(msg)
 
-        mock = MagicMock(side_effect=side_effect)
-        return mock
+        return MagicMock(side_effect=side_effect)
 
     def test_synthesize_creates_file(
         self, say_provider: SayProvider, tmp_output_dir: Path

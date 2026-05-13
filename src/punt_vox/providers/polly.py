@@ -251,7 +251,7 @@ class PollyProvider:
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "wb") as f:
+        with output_path.open("wb") as f:
             f.write(response["AudioStream"].read())
         logger.info("Wrote %s", output_path)
         language = request.language or _infer_iso_from_bcp47(voice_cfg.language_code)

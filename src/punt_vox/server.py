@@ -442,7 +442,10 @@ def record(
             else:
                 import hashlib
 
-                text_hash = hashlib.md5(seg_text.encode()).hexdigest()[:10]
+                text_hash = hashlib.md5(
+                    seg_text.encode(),
+                    usedforsecurity=False,
+                ).hexdigest()[:10]
                 filename = f"{text_hash}.mp3"
                 file_path = dir_path / filename
 

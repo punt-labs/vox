@@ -1548,7 +1548,6 @@ class TestVoxdStartupEnforces0700:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A pre-existing 0755 logs dir is chmod'd to 0700."""
-        import os as _os
         import stat as _stat
 
         fake_home = tmp_path / "home" / "user"
@@ -1559,7 +1558,7 @@ class TestVoxdStartupEnforces0700:
         # an older voxd left behind before the 0700 contract.
         logs.chmod(0o755)
         state_root.chmod(0o755)
-        assert _stat.S_IMODE(_os.stat(logs).st_mode) == 0o755
+        assert _stat.S_IMODE(logs.stat().st_mode) == 0o755
 
         monkeypatch.setenv("HOME", str(fake_home))
 
@@ -1568,7 +1567,7 @@ class TestVoxdStartupEnforces0700:
 
         # Every subdir and the root are now 0700.
         for target in (state_root, logs, state_root / "run", state_root / "cache"):
-            mode = _stat.S_IMODE(_os.stat(target).st_mode)
+            mode = _stat.S_IMODE(target.stat().st_mode)
             assert mode == 0o700, (
                 f"{target} mode is {oct(mode)} after ensure_user_dirs(); expected 0o700"
             )
@@ -1579,7 +1578,6 @@ class TestVoxdStartupEnforces0700:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Fresh ``$HOME`` with no state dir: ensure_user_dirs creates it."""
-        import os as _os
         import stat as _stat
 
         fake_home = tmp_path / "home" / "fresh"
@@ -1593,7 +1591,7 @@ class TestVoxdStartupEnforces0700:
         for name in ("logs", "run", "cache"):
             d = state_root / name
             assert d.is_dir()
-            mode = _stat.S_IMODE(_os.stat(d).st_mode)
+            mode = _stat.S_IMODE(d.stat().st_mode)
             assert mode == 0o700
 
 
@@ -2187,7 +2185,7 @@ class TestOnceDedup:
         import hashlib
 
         def _md5(s: str) -> str:
-            return hashlib.md5(s.encode()).hexdigest()
+            return hashlib.md5(s.encode(), usedforsecurity=False).hexdigest()
 
         # Dict size is bounded by the hard cap.
         assert len(dedup._seen) == _ONCE_DEDUP_MAX_ENTRIES

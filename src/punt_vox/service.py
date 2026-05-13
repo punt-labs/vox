@@ -245,7 +245,7 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
     # worst it was user-only (0o600 & ~0o077 == 0o600 on a typical
     # umask, 0o600 & ~0o000 == 0o600 on umask 0000). This chmod only
     # narrows an already-safe mode to the exact target.
-    os.chmod(keys_path, 0o600)
+    keys_path.chmod(0o600)
     return keys_path
 
 
@@ -298,9 +298,11 @@ def _find_pid_on_port(port: int) -> list[int]:
             # lsof: one PID per line.  fuser: "8421/tcp:  6789 1234".
             # Split the entire output on whitespace/colons and collect
             # every purely numeric token.
-            for token in re.split(r"[\s:]+", result.stdout.strip()):
-                if token.isdigit():
-                    pids.append(int(token))
+            pids.extend(
+                int(token)
+                for token in re.split(r"[\s:]+", result.stdout.strip())
+                if token.isdigit()
+            )
             return pids
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass

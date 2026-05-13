@@ -52,7 +52,7 @@ def _parse_xdg_user_dir(key: str) -> Path | None:
     except OSError:
         return None
 
-    # Format: XDG_MUSIC_DIR="$HOME/Music"
+    # Expected line format: XDG_MUSIC_DIR="$HOME/Music"
     pattern = re.compile(
         rf'^{re.escape(key)}="([^"]*)"',
         re.MULTILINE,

@@ -407,7 +407,7 @@ class ElevenLabsProvider:
             voice_id,
             len(text),
         )
-        with open(output_path, "wb") as f:
+        with output_path.open("wb") as f:
             for chunk in response:  # pyright: ignore[reportUnknownVariableType]
                 f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
 

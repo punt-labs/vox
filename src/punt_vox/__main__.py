@@ -790,7 +790,7 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 # doctor
 # ---------------------------------------------------------------------------
 
-_PASS = "\u2713"
+_OK = "\u2713"
 _FAIL = "\u2717"
 _OPTIONAL = "\u25cb"
 _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
@@ -799,7 +799,7 @@ _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
 # distinguish warnings from hard failures.  The existing ``passed`` bool
 # is kept for back-compat; ``status_kind`` is the richer replacement.
 _STATUS_KIND: dict[str, str] = {
-    _PASS: "pass",
+    _OK: "pass",
     _FAIL: "fail",
     _OPTIONAL: "skip",
     _WARN: "warn",
@@ -951,10 +951,10 @@ def doctor() -> None:
                 "status_kind": _STATUS_KIND.get(symbol, "fail"),
                 "message": message,
                 "required": required,
-                "passed": symbol == _PASS,
+                "passed": symbol == _OK,
             }
         )
-        if symbol == _PASS:
+        if symbol == _OK:
             passed += 1
         elif symbol == _FAIL and required:
             failed += 1
@@ -964,7 +964,7 @@ def doctor() -> None:
     # Python version
     v = sys.version_info
     if v >= (3, 13):
-        _check(_PASS, f"Python {v.major}.{v.minor}.{v.micro}")
+        _check(_OK, f"Python {v.major}.{v.minor}.{v.micro}")
     else:
         _check(
             _FAIL,
@@ -975,7 +975,7 @@ def doctor() -> None:
     # ffmpeg
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
-        _check(_PASS, f"ffmpeg: {ffmpeg}")
+        _check(_OK, f"ffmpeg: {ffmpeg}")
     else:
         hint = {
             "Darwin": "brew install ffmpeg",
@@ -991,7 +991,7 @@ def doctor() -> None:
         espeak = shutil.which("espeak-ng") or shutil.which("espeak")
         if espeak:
             espeak_name = Path(espeak).name
-            _check(_PASS, f"{espeak_name}: {espeak} (offline fallback)")
+            _check(_OK, f"{espeak_name}: {espeak} (offline fallback)")
         else:
             _check(
                 _FAIL,
@@ -1021,7 +1021,7 @@ def doctor() -> None:
         else:
             version_note = f", version {running_version}" if running_version else ""
             _check(
-                _PASS,
+                _OK,
                 f"Daemon: running on port {port}"
                 f" (provider: {provider_name}{version_note})",
             )
@@ -1044,7 +1044,7 @@ def doctor() -> None:
             display = "***" if env_name == "VOXD_TOKEN" else env_val
             overrides.append(f"{env_name}={display}")
     if overrides:
-        _check(_PASS, f"Remote config: {', '.join(overrides)}")
+        _check(_OK, f"Remote config: {', '.join(overrides)}")
 
     # Legacy ~/vox-output/ directory (vox-4jk migration)
     legacy_output = Path.home() / "vox-output"
@@ -1143,15 +1143,15 @@ def doctor() -> None:
             )
         else:
             _check(
-                _PASS,
+                _OK,
                 f"Legacy user unit: {legacy_unit} references current"
                 f" 'vox {referenced}' subcommand",
             )
 
-    # uvx (optional)
+    # Check for uvx — optional dependency for plugin management
     uvx = shutil.which("uvx")
     if uvx:
-        _check(_PASS, f"uvx: {uvx}", required=False)
+        _check(_OK, f"uvx: {uvx}", required=False)
     else:
         _check(
             _OPTIONAL,
@@ -1162,14 +1162,14 @@ def doctor() -> None:
     # Claude Desktop config (optional)
     config_path = _claude_desktop_config_path()
     if config_path.exists():
-        _check(_PASS, f"Claude Desktop config: {config_path}", required=False)
+        _check(_OK, f"Claude Desktop config: {config_path}", required=False)
 
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             servers = data.get("mcpServers", {})
             if "tts" in servers:
                 _check(
-                    _PASS,
+                    _OK,
                     "Claude Desktop MCP: registered",
                     required=False,
                 )
@@ -1201,7 +1201,7 @@ def doctor() -> None:
             test_file = out_dir / ".doctor_test"
             test_file.write_text("ok")
             test_file.unlink()
-            _check(_PASS, f"Output directory: {out_dir}")
+            _check(_OK, f"Output directory: {out_dir}")
         except OSError as e:
             _check(
                 _FAIL,

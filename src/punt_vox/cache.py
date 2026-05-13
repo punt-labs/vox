@@ -62,7 +62,7 @@ def cache_key(text: str, voice: str | None, provider: str | None) -> str:
     # byte-identical to pre-v4.2.1 so existing on-disk cache entries
     # remain reachable after upgrade. Per-call credential overrides
     # never reach this function — see the module docstring.
-    digest = hashlib.md5(payload).hexdigest()
+    digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
     return f"{digest}.mp3"
 
 

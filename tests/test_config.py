@@ -75,13 +75,13 @@ class TestWriteFieldsRouting:
         """Test 3: mixed durable + ephemeral routes correctly."""
         write_fields({"notify": "y", "vibe_tags": "[calm]"}, config_dir=tmp_path)
 
-        # notify (durable) in vox.md
+        # Durable key "notify" must be in vox.md
         assert read_field("notify", config_dir=tmp_path) == "y"
         vox_text = (tmp_path / "vox.md").read_text()
         assert "notify" in vox_text
         assert "vibe_tags" not in vox_text
 
-        # vibe_tags (ephemeral) in vox.local.md
+        # Ephemeral key "vibe_tags" must be in vox.local.md
         assert read_field("vibe_tags", config_dir=tmp_path) == "[calm]"
         local_text = (tmp_path / "vox.local.md").read_text()
         assert "vibe_tags" in local_text

@@ -1,4 +1,4 @@
-.PHONY: help test lint type docs check format build clean depot prfaq clean-tex zspec zspec-test
+.PHONY: help test lint type docs check check-oo report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -19,7 +19,20 @@ type: ## Type check with mypy and pyright
 docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
-check: lint type docs test ## Run all quality gates
+check: check-oo lint type docs test ## Run all quality gates
+
+check-oo: ## OO structure score (tools/oo_score.py)
+	uv run python tools/oo_score.py src/punt_vox/
+
+report: ## Full diagnostics (OO score + all checks, no fail-fast)
+	-uv run python tools/oo_score.py src/punt_vox/ --threshold
+	-uv run mypy src/ tests/
+	-uv run ruff format --check src/ tests/
+	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,C1901,S101 src/ tests/
+	-uv run pyright src/ tests/
+	-shellcheck -x hooks/*.sh scripts/*.sh install.sh
+	-uv run pytest
+	@echo "Report complete."
 
 format: ## Auto-format code
 	uv run ruff format src/ tests/
@@ -30,6 +43,9 @@ build: ## Build wheel and sdist
 	uv build
 	uvx twine check dist/*
 
+install: build ## Build and install locally
+	uv tool install --force dist/*.whl
+
 clean: ## Remove build artifacts
 	rm -rf dist/ .tmp/
 
@@ -39,6 +55,12 @@ depot: build ## Build and copy wheel to local depot
 	@mkdir -p $(DEPOT)
 	@cp dist/*.whl $(DEPOT)/
 	@echo "depot: $$(ls dist/*.whl | xargs -n1 basename) -> $(DEPOT)/"
+
+metrics: ## Run ABC complexity metrics on src/
+	python scripts/run_metrics.py
+
+coverage: ## Run tests with coverage report
+	uv run python scripts/run_coverage.py
 
 # LaTeX intermediate files to remove after compilation
 LATEX_ARTIFACTS = *.aux *.log *.out *.bbl *.bcf *.blg *.run.xml *.fls \

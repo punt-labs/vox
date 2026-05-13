@@ -55,7 +55,7 @@ class SynthesizeResult:
 
 
 # ---------------------------------------------------------------------------
-# Timeouts (seconds)
+# Timeouts — values in seconds
 # ---------------------------------------------------------------------------
 
 _TIMEOUT_SYNTHESIS = 30.0
@@ -459,8 +459,7 @@ class VoxClient:
 
     async def health(self) -> dict[str, object]:
         """Check daemon health."""
-        resp = await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
-        return resp
+        return await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
 
     async def music(
         self,

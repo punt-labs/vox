@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -314,14 +313,14 @@ class TestStitchAudio:
     def test_stitch_appends_trailing_silence(self, tmp_path: Path) -> None:
         seg = tmp_path / "a.mp3"
         self._write_fake_mp3(seg)
-        original_audio: Any = AudioSegment.from_mp3(str(seg))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        original_ms: int = len(original_audio)  # pyright: ignore[reportUnknownArgumentType]
+        original_audio = AudioSegment.from_mp3(str(seg))
+        original_ms = len(original_audio)
 
         out = tmp_path / "stitched.mp3"
         stitch_audio([seg], out, pause_ms=0)
 
-        stitched: Any = AudioSegment.from_mp3(str(out))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        stitched_ms: int = len(stitched)  # pyright: ignore[reportUnknownArgumentType]
+        stitched = AudioSegment.from_mp3(str(out))
+        stitched_ms = len(stitched)
         # Stitched file should be longer by ~TRAILING_SILENCE_MS.
         # Allow 50ms tolerance for MP3 frame alignment.
         assert stitched_ms >= original_ms + TRAILING_SILENCE_MS - 50
@@ -340,8 +339,8 @@ class TestTrailingSilence:
 
         # Read the file back — it should have trailing silence beyond
         # the raw 50ms silence the mock provider writes.
-        audio: Any = AudioSegment.from_mp3(str(out))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        duration_ms: int = len(audio)  # pyright: ignore[reportUnknownArgumentType]
+        audio = AudioSegment.from_mp3(str(out))
+        duration_ms = len(audio)
         assert duration_ms >= TRAILING_SILENCE_MS
 
     def test_batch_separate_pads_each_file(
@@ -357,14 +356,14 @@ class TestTrailingSilence:
         )
 
         for r in results:
-            audio: Any = AudioSegment.from_mp3(str(r.path))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-            duration_ms: int = len(audio)  # pyright: ignore[reportUnknownArgumentType]
+            audio = AudioSegment.from_mp3(str(r.path))
+            duration_ms = len(audio)
             assert duration_ms >= TRAILING_SILENCE_MS
 
     def _make_mp3_bytes(self, duration_ms: int = 50) -> bytes:
         silence = AudioSegment.silent(duration=duration_ms)
         buf = io.BytesIO()
-        silence.export(buf, format="mp3")  # pyright: ignore[reportUnknownMemberType]
+        silence.export(buf, format="mp3")
         return buf.getvalue()
 
 
