@@ -1,7 +1,7 @@
 ---
 description: "Control background music generation"
-argument-hint: "on [--name ...] [style ...] | off | play <name> | list"
-allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__music_play", "mcp__plugin_vox_mic__music_list", "mcp__plugin_vox_mic__status"]
+argument-hint: "on [--name ...] [style ...] | off | next | play <name> | list"
+allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__music_play", "mcp__plugin_vox_mic__music_list", "mcp__plugin_vox_mic__music_next", "mcp__plugin_vox_mic__status"]
 ---
 
 # /music command
@@ -17,6 +17,7 @@ generates to match.
 - `/music on style techno` -- start music with a style modifier
 - `/music on --name focus-beats` -- generate and save as "focus-beats", or replay if it exists
 - `/music off` -- stop music
+- `/music next` -- skip to a new generated track (gapless)
 - `/music play <name>` -- replay a saved track by name
 - `/music list` -- show saved tracks with metadata
 - `/music` -- show current music state
@@ -49,6 +50,11 @@ confirms.
 
 Call the `music` MCP tool with `mode="off"`. No text output -- the
 panel confirms.
+
+### `next`
+
+Call the `music_next` MCP tool. Triggers regeneration while the current
+track keeps playing (gapless). No text output -- the panel confirms.
 
 ### `play <name>`
 

@@ -26,6 +26,7 @@ from punt_vox.voxd import (
     _auto_track_name,
     _config_dir,
     _handle_music_list,
+    _handle_music_next,
     _handle_music_off,
     _handle_music_on,
     _handle_music_play,
@@ -2767,6 +2768,144 @@ class TestHandleMusicVibe:
             {"type": "music_vibe", "id": "vibe-3", "status": "ignored"}
         )
         assert not ctx.music_changed.is_set()
+
+
+class TestHandleMusicOnWhilePlaying:
+    """_handle_music_on: gapless handoff when music is already playing."""
+
+    def test_same_owner_skips_kill(self) -> None:
+        """Re-sending music_on while playing (same owner) does not kill proc."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "session-abc"
+
+        fake_proc = MagicMock()
+        fake_proc.returncode = None
+        fake_proc.kill = MagicMock()
+        fake_proc.wait = AsyncMock(return_value=0)
+        ctx.music_proc = fake_proc
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-gapless",
+            "owner_id": "session-abc",
+            "style": "jazz",
+            "vibe": "chill",
+            "vibe_tags": "[mellow]",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        # Proc was NOT killed — gapless handoff via MusicLoop.
+        fake_proc.kill.assert_not_called()
+        assert ctx.music_mode == "on"
+        assert ctx.music_style == "jazz"
+        assert ctx.music_vibe == ("chill", "[mellow]")
+        assert ctx.music_changed.is_set()
+
+    def test_different_owner_kills_proc(self) -> None:
+        """Ownership transfer while playing kills the existing proc."""
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "old-owner"
+
+        fake_proc = MagicMock()
+        fake_proc.returncode = None
+        fake_proc.kill = MagicMock()
+        fake_proc.wait = AsyncMock(return_value=0)
+        ctx.music_proc = fake_proc
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "req-transfer",
+            "owner_id": "new-owner",
+            "vibe": "upbeat",
+            "vibe_tags": "[energetic]",
+        }
+
+        asyncio.run(_handle_music_on(msg, ws, ctx))
+
+        fake_proc.kill.assert_called_once()
+        assert ctx.music_owner == "new-owner"
+        assert ctx.music_proc is None
+
+
+class TestHandleMusicNext:
+    """_handle_music_next: skip-track handler tests."""
+
+    def test_signals_music_changed(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "session-abc"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "next-1",
+            "owner_id": "session-abc",
+        }
+
+        asyncio.run(_handle_music_next(msg, ws, ctx))
+
+        assert ctx.music_changed.is_set()
+        ws.send_json.assert_called_once_with(
+            {"type": "music_next", "id": "next-1", "status": "generating"}
+        )
+
+    def test_ignored_when_music_off(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "off"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "next-2",
+            "owner_id": "session-abc",
+        }
+
+        asyncio.run(_handle_music_next(msg, ws, ctx))
+
+        assert not ctx.music_changed.is_set()
+        ws.send_json.assert_called_once_with(
+            {"type": "music_next", "id": "next-2", "status": "ignored"}
+        )
+
+    def test_ignored_when_not_owner(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ctx.music_owner = "session-abc"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "next-3",
+            "owner_id": "other-session",
+        }
+
+        asyncio.run(_handle_music_next(msg, ws, ctx))
+
+        assert not ctx.music_changed.is_set()
+        ws.send_json.assert_called_once_with(
+            {"type": "music_next", "id": "next-3", "status": "ignored"}
+        )
+
+    def test_error_when_no_owner_id(self) -> None:
+        ctx = _make_ctx()
+        ctx.music_mode = "on"
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        msg: dict[str, object] = {"id": "next-4"}
+
+        asyncio.run(_handle_music_next(msg, ws, ctx))
+
+        ws.send_json.assert_called_once_with(
+            {"type": "error", "id": "next-4", "message": "owner_id is required"}
+        )
+
+    def test_music_next_registered(self) -> None:
+        from punt_vox.voxd import _HANDLERS
+
+        assert "music_next" in _HANDLERS
+        assert _HANDLERS["music_next"] is _handle_music_next
 
 
 class TestMusicPlayerCommand:

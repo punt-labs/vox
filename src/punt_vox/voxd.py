@@ -2195,8 +2195,14 @@ async def _handle_music_on(
             )
             return
 
-    # Atomic ownership transfer: kill existing, update all fields, signal.
-    await _kill_music_proc(ctx)
+    # When music is already playing for a different owner, kill existing
+    # playback so the new owner starts fresh.  When the *same* owner
+    # re-sends music_on (e.g. style change), skip the kill — let the
+    # MusicLoop's vibe-change path handle gapless handoff while the
+    # current track keeps looping.
+    is_already_playing = ctx.music_mode == "on" and ctx.music_proc is not None
+    if not is_already_playing or ctx.music_owner != owner_id:
+        await _kill_music_proc(ctx)
 
     ctx.music_mode = "on"
     if style:
@@ -2378,6 +2384,46 @@ async def _handle_music_vibe(
     )
 
 
+async def _handle_music_next(
+    msg: dict[str, object],
+    websocket: WebSocket,
+    ctx: DaemonContext,
+) -> None:
+    """Handle a 'music_next' message: skip to a new track.
+
+    Signals MusicLoop to regenerate without changing vibe or style.
+    The current track keeps playing until the new one is ready
+    (gapless handoff via the vibe-change path).
+    """
+    request_id = str(msg.get("id", ""))
+    owner_id = str(msg.get("owner_id", ""))
+
+    if not owner_id:
+        await websocket.send_json(
+            {"type": "error", "id": request_id, "message": "owner_id is required"}
+        )
+        return
+
+    if ctx.music_mode != "on":
+        await websocket.send_json(
+            {"type": "music_next", "id": request_id, "status": "ignored"}
+        )
+        return
+
+    if owner_id != ctx.music_owner:
+        await websocket.send_json(
+            {"type": "music_next", "id": request_id, "status": "ignored"}
+        )
+        return
+
+    ctx.music_changed.set()
+
+    logger.info("Music next: owner=%s", owner_id)
+    await websocket.send_json(
+        {"type": "music_next", "id": request_id, "status": "generating"}
+    )
+
+
 # ---------------------------------------------------------------------------
 # WebSocket route
 # ---------------------------------------------------------------------------
@@ -2400,6 +2446,7 @@ _HANDLERS: dict[
     "music_play": _handle_music_play,
     "music_list": _handle_music_list,
     "music_vibe": _handle_music_vibe,
+    "music_next": _handle_music_next,
 }
 
 

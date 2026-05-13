@@ -23,6 +23,7 @@ from punt_vox.server import (
     _refresh_state_from_config,
     music,
     music_list,
+    music_next,
     music_play,
     notify,
     record,
@@ -1428,6 +1429,73 @@ class TestMusicListTool:
         result = json.loads(music_list())
 
         assert result["error"] == "daemon unreachable"
+
+
+# ---------------------------------------------------------------------------
+# music_next tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestMusicNextTool:
+    """Tests for the music_next MCP tool."""
+
+    def test_next_while_playing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_next.return_value = {
+            "type": "music_next",
+            "id": "n1",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_next())
+
+        assert result["message"] == "♪ Skipping — generating next track..."
+        assert result["status"] == "generating"
+        mock_client.music_next.assert_called_once_with(
+            owner_id=srv._state.session_id,
+        )
+
+    def test_next_when_not_playing(self) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "off"
+
+        result = json.loads(music_next())
+
+        assert result["status"] == "ignored"
+        assert "not playing" in result["message"]
+
+    def test_next_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+        from punt_vox.client import VoxdConnectionError
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_next.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_next())
+
+        assert result["error"] == "daemon unreachable"
+
+    def test_next_protocol_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        srv._state.music_mode = "on"
+
+        mock_client = MagicMock()
+        mock_client.music_next.side_effect = Exception("unexpected")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(music_next())
+
+        assert "unexpected" in result["error"]
 
 
 # ---------------------------------------------------------------------------
