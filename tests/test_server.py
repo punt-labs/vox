@@ -20,6 +20,7 @@ from punt_vox.resolve import (
 )
 from punt_vox.server import (
     SessionState,
+    _refresh_state_from_config,
     music,
     music_list,
     music_play,
@@ -54,11 +55,17 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 
 @pytest.fixture(autouse=True)
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Reset server session state before every test."""
+    """Reset server session state before every test.
+
+    Also stubs _find_config_dir to return None so _refresh_state_from_config
+    is a no-op by default.  Tests that need refresh behavior override via
+    the _refresh_config fixture.
+    """
     import punt_vox.server as srv
 
     monkeypatch.setattr(srv, "_state", SessionState())
     monkeypatch.setattr(srv, "_speak_explicit", False)
+    monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
 
 # ---------------------------------------------------------------------------
@@ -1421,3 +1428,261 @@ class TestMusicListTool:
         result = json.loads(music_list())
 
         assert result["error"] == "daemon unreachable"
+
+
+# ---------------------------------------------------------------------------
+# _refresh_state_from_config tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _refresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # pyright: ignore[reportUnusedFunction]
+    """Patch _find_config_dir and DEFAULT_CONFIG_DIR for refresh tests."""
+    import punt_vox.config as cfg
+    import punt_vox.dirs as dirs
+    import punt_vox.server as srv
+
+    monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(srv, "_find_config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+class TestRefreshStateFromConfig:
+    """Tests for _refresh_state_from_config reading external changes."""
+
+    def test_ephemeral_fields_always_updated(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Vibe/tags/signals written externally are picked up on refresh."""
+        import punt_vox.server as srv
+
+        srv._state.vibe = "old-mood"
+        srv._state.vibe_tags = "[old]"
+        srv._state.vibe_signals = "old-signal"
+
+        (_refresh_config / "vox.local.md").write_text(
+            "---\n"
+            'vibe: "happy"\n'
+            'vibe_tags: "[warm]"\n'
+            'vibe_signals: "tests-pass@10:00"\n'
+            "---\n"
+        )
+
+        _refresh_state_from_config()
+
+        assert srv._state.vibe == "happy"
+        assert srv._state.vibe_tags == "[warm]"
+        assert srv._state.vibe_signals == "tests-pass@10:00"
+
+    def test_ephemeral_cleared_when_config_empty(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When config has no vibe fields, in-memory vibe is cleared."""
+        import punt_vox.server as srv
+
+        srv._state.vibe = "stale-mood"
+        srv._state.vibe_tags = "[stale]"
+        srv._state.vibe_signals = "stale-signal"
+
+        # Config exists but has no vibe fields
+        (_refresh_config / "vox.local.md").write_text("---\n---\n")
+        (_refresh_config / "vox.md").write_text("---\n---\n")
+
+        _refresh_state_from_config()
+
+        assert srv._state.vibe is None
+        assert srv._state.vibe_tags is None  # type: ignore[unreachable]
+        assert srv._state.vibe_signals == ""
+
+    def test_durable_fields_updated_from_config(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """notify, speak, vibe_mode always take config value."""
+        import punt_vox.server as srv
+
+        srv._state.notify = "n"
+        srv._state.speak = "n"
+        srv._state.vibe_mode = "off"
+
+        (_refresh_config / "vox.md").write_text(
+            '---\nnotify: "c"\nspeak: "y"\nvibe_mode: "auto"\n---\n'
+        )
+
+        _refresh_state_from_config()
+
+        assert srv._state.notify == "c"
+        assert srv._state.speak == "y"
+        assert srv._state.vibe_mode == "auto"
+
+    def test_voice_only_overwritten_when_config_has_value(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In-memory voice survives refresh when config has no voice."""
+        import punt_vox.server as srv
+
+        srv._state.voice = "matilda"
+
+        # Config has no voice field
+        (_refresh_config / "vox.md").write_text("---\n---\n")
+
+        _refresh_state_from_config()
+
+        assert srv._state.voice == "matilda"
+
+    def test_voice_overwritten_when_config_has_value(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config voice overwrites in-memory voice."""
+        import punt_vox.server as srv
+
+        srv._state.voice = "matilda"
+
+        (_refresh_config / "vox.md").write_text('---\nvoice: "roger"\n---\n')
+
+        _refresh_state_from_config()
+
+        assert srv._state.voice == "roger"
+
+    def test_provider_survives_when_config_empty(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In-memory provider override survives when config has no provider."""
+        import punt_vox.server as srv
+
+        srv._state.provider = "openai"
+
+        (_refresh_config / "vox.md").write_text("---\n---\n")
+
+        _refresh_state_from_config()
+
+        assert srv._state.provider == "openai"
+
+    def test_model_survives_when_config_empty(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In-memory model override survives when config has no model."""
+        import punt_vox.server as srv
+
+        srv._state.model = "eleven_v3"
+
+        (_refresh_config / "vox.md").write_text("---\n---\n")
+
+        _refresh_state_from_config()
+
+        assert srv._state.model == "eleven_v3"
+
+    def test_no_config_dir_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When _find_config_dir returns None, refresh is a no-op."""
+        import punt_vox.server as srv
+
+        monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
+        srv._state.vibe = "should-survive"
+
+        _refresh_state_from_config()
+
+        assert srv._state.vibe == "should-survive"
+
+
+class TestRefreshIntegrationWithTools:
+    """Verify tool calls pick up external config writes via refresh."""
+
+    def test_status_reflects_external_vibe_change(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI writes vibe to config; status tool reads the new value."""
+        import punt_vox.server as srv
+
+        srv._state.vibe = "sad"
+        srv._state.vibe_tags = "[gloomy]"
+
+        # Simulate CLI writing new vibe to config
+        write_fields(
+            {"vibe": "happy", "vibe_tags": "[cheerful]"},
+            _refresh_config,
+        )
+
+        result = json.loads(status())
+
+        assert result["vibe"] == "happy"
+        assert result["vibe_tags"] == "[cheerful]"
+
+    def test_status_reflects_external_notify_change(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """External notify write is reflected in status."""
+        import punt_vox.server as srv
+
+        srv._state.notify = "n"
+
+        write_field("notify", "c", _refresh_config)
+
+        result = json.loads(status())
+
+        assert result["notify"] == "c"
+
+    def test_music_gets_fresh_vibe(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """music tool reads fresh vibe from config, not stale in-memory."""
+        import punt_vox.server as srv
+
+        srv._state.vibe = "old-mood"
+        srv._state.vibe_tags = "[old]"
+
+        # External write clears vibe (e.g. `vox vibe auto`)
+        write_fields({"vibe": "", "vibe_tags": ""}, _refresh_config)
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "x",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        music(mode="on")
+
+        call_kwargs = mock_client.music.call_args[1]
+        # Vibe should be empty -- the config cleared it
+        assert call_kwargs["vibe"] == ""
+        assert call_kwargs["vibe_tags"] == ""
+
+    def test_unmute_uses_refreshed_voice(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """unmute picks up voice written to config externally."""
+        import punt_vox.server as srv
+
+        srv._state.voice = "matilda"
+
+        write_field("voice", "roger", _refresh_config)
+
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="r1")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        unmute(text="Hello")
+
+        call_kwargs = mock_client.synthesize.call_args[1]
+        assert call_kwargs["voice"] == "roger"
+
+    def test_unmute_preserves_inmemory_provider_when_config_empty(
+        self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Provider set via MCP tool survives refresh when config is empty."""
+        import punt_vox.server as srv
+
+        srv._state.provider = "openai"
+
+        # Config has no provider field
+        (_refresh_config / "vox.md").write_text("---\n---\n")
+
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = SynthesizeResult(request_id="r2")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        unmute(text="Hello")
+
+        call_kwargs = mock_client.synthesize.call_args[1]
+        assert call_kwargs["provider"] == "openai"
