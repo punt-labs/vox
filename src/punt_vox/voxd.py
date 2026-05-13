@@ -42,6 +42,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
+from punt_vox.keys import PROVIDER_KEY_NAMES
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.paths import (
     config_dir as _user_config_dir,
@@ -252,22 +253,8 @@ def _configure_logging(log_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Key loading (inline -- not importing keys.py)
+# Key loading
 # ---------------------------------------------------------------------------
-
-_PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
-    {
-        "ELEVENLABS_API_KEY",
-        "OPENAI_API_KEY",
-        "AWS_PROFILE",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_DEFAULT_REGION",
-        "TTS_PROVIDER",
-        "TTS_MODEL",
-    }
-)
 
 
 def _load_keys(config_dir: Path) -> frozenset[str]:
@@ -297,7 +284,7 @@ def _load_keys(config_dir: Path) -> frozenset[str]:
         key, _, value = stripped.partition("=")
         key = key.strip()
         value = value.strip()
-        if key in _PROVIDER_KEY_NAMES and value and key not in os.environ:
+        if key in PROVIDER_KEY_NAMES and value and key not in os.environ:
             os.environ[key] = value
             loaded.add(key)
     return frozenset(loaded)

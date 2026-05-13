@@ -6,3 +6,4 @@
 {"ts":"2026-05-13T22:30:36Z","commit":"20b3974","files_scored":35,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{}}
 {"ts":"2026-05-13T22:41:55Z","commit":"623b7d9","files_scored":35,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{}}
 {"ts":"2026-05-13T22:59:25Z","commit":"623b7d9","files_scored":35,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/output.py":{"method_ratio":[0.0,1.0],"module_size":[19,24.0],"classes_per_module":[0,1.0],"class_to_func_ratio":[0.0,1.0]}}}
+{"ts":"2026-05-13T23:57:03Z","commit":"fe09312","files_scored":35,"files_improved":2,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/service.py":{"module_size":[990.0,978.0]},"src/punt_vox/voxd.py":{"module_size":[2342.0,2330.0]}}}

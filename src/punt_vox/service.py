@@ -40,6 +40,7 @@ import textwrap
 import time
 from pathlib import Path
 
+from punt_vox.keys import PROVIDER_KEY_NAMES
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
@@ -77,20 +78,6 @@ def _run_dir() -> Path:
 # ---------------------------------------------------------------------------
 # Keys.env writing — writes directly to the installing user's state dir.
 # ---------------------------------------------------------------------------
-
-_PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
-    {
-        "ELEVENLABS_API_KEY",
-        "OPENAI_API_KEY",
-        "AWS_PROFILE",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_DEFAULT_REGION",
-        "TTS_PROVIDER",
-        "TTS_MODEL",
-    }
-)
 
 
 def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
@@ -187,7 +174,7 @@ def _write_keys_env(env: dict[str, str], keys_path: Path) -> Path:
                 existing[key] = value
 
     merged = dict(existing)
-    for k in _PROVIDER_KEY_NAMES:
+    for k in PROVIDER_KEY_NAMES:
         if k in env:
             if env[k]:
                 value = env[k]

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _KEYS_FILE = VOX_DATA_DIR / "keys.env"
 
-_PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
+PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
     {
         "ELEVENLABS_API_KEY",
         "OPENAI_API_KEY",
@@ -79,7 +79,7 @@ def write_keys_env(env: Mapping[str, str]) -> Path:
             logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
 
     merged = dict(existing)
-    for k in _PROVIDER_KEY_NAMES:
+    for k in PROVIDER_KEY_NAMES:
         if k in env:
             if env[k]:  # non-empty: set it
                 merged[k] = env[k]
@@ -117,7 +117,7 @@ def load_keys_env() -> frozenset[str]:
         return frozenset()
     parsed = parse_keys_env(text)
     loaded: set[str] = set()
-    for k in _PROVIDER_KEY_NAMES:
+    for k in PROVIDER_KEY_NAMES:
         v = parsed.get(k)
         if v and k not in os.environ:
             os.environ[k] = v
