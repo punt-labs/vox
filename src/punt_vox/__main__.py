@@ -1727,6 +1727,25 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         raise typer.Exit(code=1) from exc
 
 
+@music_app.command("next")
+def music_next_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Skip to a new generated track (gapless)."""
+    client = VoxClientSync()
+    try:
+        result = client.music_next()
+        status = result.get("status", "unknown")
+        _emit(
+            {"music": "next", "status": status},
+            f"Music next ({status})",
+        )
+    except VoxdConnectionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except VoxdProtocolError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 # ---------------------------------------------------------------------------
 # daemon subcommand group
 # ---------------------------------------------------------------------------

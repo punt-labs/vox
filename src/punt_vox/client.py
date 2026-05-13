@@ -554,6 +554,21 @@ class VoxClient:
             msg["vibe_tags"] = vibe_tags
         return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
+    async def music_next(
+        self,
+        *,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Skip to the next generated track."""
+        effective_owner = owner_id if owner_id is not None else self._default_owner_id
+        request_id = uuid.uuid4().hex[:12]
+        msg: dict[str, object] = {
+            "type": "music_next",
+            "id": request_id,
+            "owner_id": effective_owner,
+        }
+        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
 
 # ---------------------------------------------------------------------------
 # Sync wrapper
@@ -687,4 +702,14 @@ class VoxClientSync:
                 vibe_tags=vibe_tags,
                 owner_id=owner_id,
             )
+        )
+
+    def music_next(
+        self,
+        *,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Skip to the next generated track."""
+        return self._run(  # type: ignore[no-any-return]
+            self._call("music_next", owner_id=owner_id)
         )

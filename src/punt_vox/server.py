@@ -708,6 +708,49 @@ def music_list() -> str:
 
 
 @mcp.tool()
+def music_next() -> str:
+    """Skip to a new generated track.
+
+    Signals voxd to regenerate without changing vibe or style. The
+    current track keeps playing until the new one is ready (gapless).
+
+    Returns:
+        JSON string with a human-readable ``message`` field and
+        the raw voxd response fields.
+    """
+    _refresh_state_from_config()
+    if _state.music_mode != "on":
+        return json.dumps(
+            {
+                "message": "♪ Music is not playing.",
+                "status": "ignored",
+            }
+        )
+
+    client = _voxd_client()
+    try:
+        resp = client.music_next(owner_id=_state.session_id)
+    except VoxdConnectionError:
+        logger.warning("voxd unreachable in music_next", exc_info=True)
+        return json.dumps(
+            {
+                "message": "♪ Daemon unreachable.",
+                "error": "daemon unreachable",
+            }
+        )
+    except Exception as exc:
+        logger.warning("voxd error in music_next", exc_info=True)
+        return json.dumps(
+            {
+                "message": f"♪ {exc}",
+                "error": str(exc),
+            }
+        )
+
+    return json.dumps({"message": "♪ Skipping — generating next track...", **resp})
+
+
+@mcp.tool()
 def who(language: str | None = None) -> str:
     """List available voices for the current provider.
 
