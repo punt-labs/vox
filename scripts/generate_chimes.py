@@ -213,7 +213,6 @@ def main() -> None:
     for name, generator in CHIMES.items():
         audio = generator()
 
-        # Neutral (original)
         path = ASSETS_DIR / f"{name}.mp3"
         audio.export(path, format="mp3")  # pyright: ignore[reportUnknownMemberType]
         print(f"  {path.name} ({path.stat().st_size:,} bytes)")

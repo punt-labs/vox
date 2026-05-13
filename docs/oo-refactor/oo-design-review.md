@@ -101,7 +101,7 @@ defeats the purpose of extraction.
 
 ### 2.1 method_ratio >= 0.80
 
-**Verdict: INCOMPLETE for 2 files**
+Verdict: INCOMPLETE for 2 files
 
 The plan achieves this for most files by wrapping module-level functions into
 classes. The pattern is applied consistently in Steps 18-43 (Part 3).
@@ -119,7 +119,7 @@ still top-level functions, not methods -- `method_ratio` and
 
 ### 2.2 encapsulation_ratio >= 1.0
 
-**Verdict: COVERED**
+Verdict: COVERED
 
 Step 22 fixes the `VoiceNotFoundError` public attributes. Steps 0-10 migrate
 voxd.py's public attributes to private attributes on new classes. Conditional
@@ -127,14 +127,14 @@ on fix 1b above (delegation setters).
 
 ### 2.3 avg_params <= 4.0
 
-**Verdict: COVERED**
+Verdict: COVERED
 
 No file currently fails this metric. The plan does not introduce any new
 parameter bloat.
 
 ### 2.4 max_complexity <= 10
 
-**Verdict: INCOMPLETE for 2 files**
+Verdict: INCOMPLETE for 2 files
 
 The plan addresses complexity in `resolve.py` (Step 40: "Extract Method on
 the function with CC=11"), `espeak.py` (Step 27: "The method with CC=14 needs
@@ -162,7 +162,7 @@ Extract Method to bring it under 10" -- this is covered.
 
 ### 2.5 avg_complexity <= 5.0
 
-**Verdict: INCOMPLETE for 2 files**
+Verdict: INCOMPLETE for 2 files
 
 - `__main__.py` (6.02): not addressed beyond DoctorCheck extraction
 - `server.py` (6.36): not addressed beyond SessionConfig refactor
@@ -174,7 +174,7 @@ their complexity. Extract Method is needed on the complex functions.
 
 ### 2.6 module_size <= 300
 
-**Verdict: INCOMPLETE for 2 files**
+Verdict: INCOMPLETE for 2 files
 
 The plan is thorough here for most files. Section 3.0 correctly reconciles the
 Part 2 target (500) down to the tool's threshold (300), and adds splits for
@@ -189,7 +189,7 @@ step. An implementer executing steps 0-44 will skip this.
 
 ### 2.7 classes_per_module <= 3
 
-**Verdict: COVERED**
+Verdict: COVERED
 
 Step 22 splits `types.py` (8 classes) into 3 files. Step 21 splits `client.py`
 (5 classes) into 2 files. The voxd/* extraction distributes voxd.py's 7 classes
@@ -197,14 +197,14 @@ across separate modules.
 
 ### 2.8 class_to_func_ratio >= 0.5
 
-**Verdict: INCOMPLETE for 2 files**
+Verdict: INCOMPLETE for 2 files
 
 Same gaps as method_ratio: `__main__.py` and `server.py`. Every other file
 is covered.
 
 ### 2.9 init_violations == 0
 
-**Verdict: INCOMPLETE**
+Verdict: INCOMPLETE
 
 Part 3 fixes existing init_violations (providers, core.py, watcher.py, types.py,
 client.py). But Part 2 *introduces* 14 new init_violations (see Section 1a).
@@ -214,15 +214,14 @@ No step addresses it.
 
 ### 2.10 public_attr_violations == 0
 
-**Verdict: COVERED**
+Verdict: COVERED
 
 Step 22 fixes `types.py` (2 violations). Steps 0-10 fix `voxd.py` (2
 violations) by migrating to new classes with private attributes.
 
 ### 2.11 future_annotations == 1
 
-**Verdict: COVERED**
-
+Verdict: COVERED.
 Step 44 adds the import to `assets/__init__.py`, the only file missing it.
 All new files created in Part 2 will need it too, but that follows from the
 project's standard Python conventions.
@@ -257,7 +256,7 @@ If the tool is the gate, `__main__.py` must pass.
 | avg_complexity <= 5.0 | `__main__.py`, `server.py`, `applet.py` |
 | module_size <= 300 | `__main__.py`, `server.py` |
 | class_to_func_ratio >= 0.5 | `__main__.py`, `server.py` |
-| init_violations == 0 | 14 new voxd/* and service/* classes (Part 2), `elevenlabs_music.py` |
+| init_violations == 0 | 14 new voxd/*and service/* classes (Part 2), `elevenlabs_music.py` |
 
 ---
 

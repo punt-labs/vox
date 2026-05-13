@@ -1490,7 +1490,7 @@ class TestMusicNextTool:
         srv._state.music_mode = "on"
 
         mock_client = MagicMock()
-        mock_client.music_next.side_effect = Exception("unexpected")
+        mock_client.music_next.side_effect = OSError("unexpected")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(music_next())

@@ -1041,6 +1041,7 @@ def _build_audio_request(
     stability: float | None,
     similarity: float | None,
     style: float | None,
+    *,
     speaker_boost: bool | None,
     provider_id: str,
 ) -> AudioRequest:
@@ -1151,6 +1152,7 @@ async def _synthesize_to_file(
     stability: float | None,
     similarity: float | None,
     style: float | None,
+    *,
     speaker_boost: bool | None,
     api_key: str | None,
     request_id: str = "",
@@ -1212,8 +1214,8 @@ async def _synthesize_to_file(
                 stability,
                 similarity,
                 style,
-                speaker_boost,
-                provider_name,
+                speaker_boost=speaker_boost,
+                provider_id=provider_name,
             )
             client = TTSClient(provider)
 
@@ -1357,8 +1359,8 @@ async def _try_direct_play(
         stability,
         similarity,
         style,
-        speaker_boost,
-        provider_name,
+        speaker_boost=speaker_boost,
+        provider_id=provider_name,
     )
 
     def _factory() -> TTSProvider:
@@ -1555,8 +1557,8 @@ async def _handle_synthesize(
             stability,
             similarity,
             style,
-            speaker_boost,
-            api_key,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
             request_id=request_id,
         )
     except Exception as exc:
@@ -1583,7 +1585,7 @@ async def _handle_synthesize(
 async def _handle_record(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'record' message: TTS without playback, return audio bytes."""
     request_id = str(msg.get("id", ""))
@@ -1627,8 +1629,8 @@ async def _handle_record(
             stability,
             similarity,
             style,
-            speaker_boost,
-            api_key,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
             request_id=request_id,
         )
     except Exception as exc:
@@ -1693,7 +1695,7 @@ async def _handle_chime(
 async def _handle_voices(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'voices' message: list available voices."""
     provider_name = _parse_optional_str(msg, "provider") or auto_detect_provider()
@@ -1763,7 +1765,7 @@ def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
 
 
 async def _handle_health(
-    msg: dict[str, object],
+    _msg: dict[str, object],
     websocket: WebSocket,
     ctx: DaemonContext,
 ) -> None:
@@ -1920,7 +1922,9 @@ async def _playback_wait_loop(
             # Replay: handler pre-set ctx.music_track.
             if ctx.music_replay:
                 ctx.music_replay = False
-                assert ctx.music_track is not None
+                if ctx.music_track is None:
+                    msg = "music_replay set but music_track is None"
+                    raise RuntimeError(msg)
                 replay_track: Path = ctx.music_track
                 await _kill_music_proc(ctx)
                 return _PlaybackWaitResult(
@@ -2037,7 +2041,9 @@ async def _generate_music_track(ctx: DaemonContext) -> Path:
     return await provider.generate_track(prompt, _MUSIC_DURATION_MS, output_path)
 
 
-async def _music_loop(ctx: DaemonContext) -> None:
+async def _music_loop(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+    ctx: DaemonContext,
+) -> None:
     """Background task: generate and loop music tracks.
 
     Runs for the lifetime of the daemon.  When ``music_mode`` is "on",
@@ -2080,7 +2086,9 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 if ctx.music_replay:
                     ctx.music_replay = False
                     ctx.music_changed.clear()
-                    assert ctx.music_track is not None
+                    if ctx.music_track is None:
+                        msg = "music_replay set but music_track is None"
+                        raise RuntimeError(msg)
                     current_track = ctx.music_track
                     retry_count = 0
                 else:
@@ -2100,7 +2108,9 @@ async def _music_loop(ctx: DaemonContext) -> None:
                         continue
 
             # --- Playback loop: loop current_track, generate in parallel --
-            assert current_track is not None  # guaranteed by initial generation above
+            # current_track is guaranteed non-None by the initial generation
+            # block above — the only path that sets it to None also continues
+            # back to the top of the while loop.
             gen_task = None
             while ctx.music_mode == "on":
                 ctx.music_state = "playing" if gen_task is None else "generating"
@@ -2371,7 +2381,7 @@ async def _handle_music_play(
 async def _handle_music_list(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'music_list' message: return saved tracks with metadata."""
     request_id = str(msg.get("id", ""))

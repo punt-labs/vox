@@ -64,7 +64,22 @@ See `docs/architecture.tex` for the full system description.
 
 ## Code Quality
 
-**OO metrics:** `make check-oo` runs `tools/oo_score.py` against `src/punt_vox/`. `make metrics` for ABC complexity. `make coverage` for test coverage HTML report.
+**OO ratchet:** `make check-oo` (part of `make check`) compares current OO scores against `.oo-baseline.json`. It passes only if no metric regressed on touched files and at least one metric improved. It fails if any metric got worse or nothing improved.
+
+Workflow:
+
+1. Write code that improves OO quality on the files you touch.
+2. `make check` runs `check-oo --check` automatically. If it fails, fix the regression.
+3. After all checks pass, run `make update-oo` to write the new baseline.
+4. Stage `.oo-baseline.json` and `.oo-audit.jsonl` with your commit — they are committed files.
+
+Bootstrap (first time only): run `make update-oo` to create the initial baseline.
+
+- `make check-oo` — OO ratchet against baseline.
+- `make update-oo` — update baseline and append to audit log after improvements.
+- `make report` — full diagnostics including per-file OO breakdown.
+- `make metrics` — ABC complexity analysis.
+- `make coverage` — test coverage HTML report.
 
 **Known type checker workarounds:**
 

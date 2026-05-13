@@ -675,7 +675,7 @@ def _launchd_install(user: str) -> None:
 
 def _launchd_uninstall() -> None:
     if _LAUNCHD_PLIST.exists():
-        print(_SUDO_NOTICE, file=sys.stderr)
+        logger.warning(_SUDO_NOTICE)
         subprocess.run(
             ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
             check=False,  # may already be unloaded
@@ -995,7 +995,7 @@ def _systemd_install(user: str) -> None:
 
 def _systemd_uninstall() -> None:
     if _SYSTEMD_UNIT.exists():
-        print(_SUDO_NOTICE, file=sys.stderr)
+        logger.warning(_SUDO_NOTICE)
         subprocess.run(
             ["sudo", "systemctl", "disable", "--now", "voxd"],
             check=False,  # may already be stopped
@@ -1092,7 +1092,7 @@ def install() -> str:
     # port check idempotent: anything still listening is stale state
     # that survived a manager crash and is safe to kill outright.
     # Cursor Bugbot 3048416720 on PR #162.
-    print(_SUDO_NOTICE, file=sys.stderr)
+    logger.warning(_SUDO_NOTICE)
     if plat == "macos":
         _launchd_stop()
     else:

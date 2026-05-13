@@ -79,7 +79,8 @@ class ElevenLabsMusicProvider:
         bytes_written = 0
 
         try:
-            with open(fd, "wb") as f:
+            os.close(fd)  # close mkstemp fd; reopen via pathlib below
+            with tmp_path.open("wb") as f:
                 for chunk in response:  # pyright: ignore[reportUnknownVariableType]
                     f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
                     bytes_written += len(chunk)  # pyright: ignore[reportUnknownArgumentType]

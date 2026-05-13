@@ -474,7 +474,7 @@ class TestVoxClientReconnect:
     @pytest.mark.asyncio
     async def test_reconnect_on_dead_connection(self) -> None:
         mock_ws_old = _make_mock_ws()
-        mock_ws_old.ping = AsyncMock(side_effect=Exception("closed"))
+        mock_ws_old.ping = AsyncMock(side_effect=OSError("closed"))
 
         mock_ws_new = _make_mock_ws()
         mock_ws_new.recv = AsyncMock(

@@ -83,7 +83,7 @@ def _emit(payload: object, text: str) -> None:
         typer.echo(text)
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(*, verbose: bool) -> None:
     from punt_vox.logging_config import configure_logging
 
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
@@ -194,6 +194,7 @@ def _resolve_api_key(
     ctx: typer.Context,
     api_key: str | None,
     api_key_file: Path | None,
+    *,
     api_key_stdin: bool,
 ) -> str | None:
     """Resolve the per-call API key from the first configured source.
@@ -395,9 +396,9 @@ TextArg = Annotated[
 
 @app.callback()
 def _callback(  # pyright: ignore[reportUnusedFunction]
-    json_output: JsonOutput = False,
-    verbose: Verbose = False,
-    quiet: Quiet = False,
+    json_output: JsonOutput = False,  # noqa: FBT002 -- typer CLI requires bool default
+    verbose: Verbose = False,  # noqa: FBT002 -- typer CLI requires bool default
+    quiet: Quiet = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Text-to-speech CLI."""
     if verbose and quiet:
@@ -405,7 +406,7 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     global _json_output, _quiet_output
     _json_output = json_output
     _quiet_output = quiet
-    _configure_logging(verbose)
+    _configure_logging(verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +427,11 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     stability: StabilityOpt = None,
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
+    speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
     once: OnceOpt = None,
     api_key: ApiKeyOpt = None,
     api_key_file: ApiKeyFileOpt = None,
-    api_key_stdin: ApiKeyStdinFlag = False,
+    api_key_stdin: ApiKeyStdinFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
@@ -465,7 +466,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
     # ``_resolve_api_key`` for the full rationale.
-    resolved_api_key = _resolve_api_key(ctx, api_key, api_key_file, api_key_stdin)
+    resolved_api_key = _resolve_api_key(
+        ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
+    )
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -522,7 +525,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
     stability: StabilityOpt = None,
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
+    speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Synthesize and save audio to file via voxd."""
     from punt_vox.types import generate_filename
@@ -934,7 +937,7 @@ def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor() -> None:  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     """Check system health for vox."""
     passed = 0
     failed = 0
@@ -1239,8 +1242,8 @@ def doctor() -> None:
 
 
 @app.command("migrate-audio")
-def migrate_audio_cmd(
-    execute: Annotated[
+def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+    execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
         bool, typer.Option("--execute", help="Actually move files.")
     ] = False,
     source: Annotated[
@@ -1385,15 +1388,15 @@ def install() -> None:
     typer.echo("  \u2713 plugin installed")
 
     # Step 2: daemon service (best-effort — not available in CI/containers)
-    # Catch BaseException because service.detect_platform() raises
-    # SystemExit on unsupported platforms (not a subclass of Exception).
+    # SystemExit: service.detect_platform() raises on unsupported platforms.
+    # OSError/CalledProcessError: subprocess and filesystem failures during install.
     typer.echo("[2/2] Registering vox daemon...")
     try:
         from punt_vox.service import install as svc_install
 
         msg = svc_install()
         typer.echo(f"  \u2713 {msg}")
-    except (Exception, SystemExit) as exc:
+    except (SystemExit, OSError, subprocess.CalledProcessError) as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 
@@ -1963,8 +1966,11 @@ def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
     try:
         url = f"http://127.0.0.1:{port}/health"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        if not url.startswith("http://"):  # S310: validate scheme before urlopen
+            msg = f"unexpected URL scheme: {url}"
+            raise ValueError(msg)
+        req = urllib.request.Request(url, method="GET")  # noqa: S310 -- scheme validated above
+        with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310 -- scheme validated above
             data = json.loads(resp.read())
         uptime = data.get("uptime_seconds", "?")
         sessions = data.get("active_sessions", "?")
