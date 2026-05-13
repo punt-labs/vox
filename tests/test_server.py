@@ -1460,21 +1460,21 @@ class TestMusicNextTool:
             owner_id=srv._state.session_id,
         )
 
-    def test_next_when_not_playing(self) -> None:
-        import punt_vox.server as srv
-
-        srv._state.music_mode = "off"
+    def test_next_when_not_playing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_client = MagicMock()
+        mock_client.music_next.return_value = {
+            "type": "music_next",
+            "id": "n1",
+            "status": "ignored",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(music_next())
 
         assert result["status"] == "ignored"
-        assert "not playing" in result["message"]
 
     def test_next_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
         from punt_vox.client import VoxdConnectionError
-
-        srv._state.music_mode = "on"
 
         mock_client = MagicMock()
         mock_client.music_next.side_effect = VoxdConnectionError("not running")

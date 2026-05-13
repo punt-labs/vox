@@ -84,7 +84,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 **Known type checker workarounds:**
 
 - **mypy vs pyright on boto3** (`providers/polly.py`): boto3-stubs types `boto3.client("polly")` correctly for mypy but pyright sees partially unknown overloads. Solution: `cast("PollyClientType", boto3.client("polly"))` with `# type: ignore[redundant-cast]` + `# pyright: ignore[reportUnknownMemberType]`.
-- **pydub and elevenlabs have no type stubs.** Use `Any` annotations and pyright inline ignores. These are the only acceptable `Any` usages. Both have `[[tool.mypy.overrides]]` with `ignore_missing_imports = true`.
+- **pydub and elevenlabs have no type stubs.** Use `Any` annotations and pyright inline ignores. These are the only acceptable `Any` usages. mypy overrides for these modules are needed but currently missing from `pyproject.toml` — add them when mypy errors surface.
 - **`voxd` logs to stderr only in daemon mode.** Never use `print()` in server or daemon code.
 
 ## Testing

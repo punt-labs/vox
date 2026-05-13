@@ -7,6 +7,7 @@ via VoxClient.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
@@ -440,8 +441,6 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             if output_path and len(segments) == 1:
                 file_path = Path(output_path)
             else:
-                import hashlib
-
                 text_hash = hashlib.md5(
                     seg_text.encode(),
                     usedforsecurity=False,
@@ -722,14 +721,6 @@ def music_next() -> str:
         the raw voxd response fields.
     """
     _refresh_state_from_config()
-    if _state.music_mode != "on":
-        return json.dumps(
-            {
-                "message": "♪ Music is not playing.",
-                "status": "ignored",
-            }
-        )
-
     client = _voxd_client()
     try:
         resp = client.music_next(owner_id=_state.session_id)
