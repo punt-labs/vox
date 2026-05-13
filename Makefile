@@ -31,7 +31,7 @@ report: ## Full diagnostics (OO score + all checks, no fail-fast)
 	-uv run python tools/oo_score.py src/punt_vox/ --threshold
 	-uv run mypy src/ tests/
 	-uv run ruff format --check src/ tests/
-	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,C1901,S101 src/ tests/
+	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,PLC1901,S101 src/ tests/
 	-uv run pyright src/ tests/
 	-shellcheck -x hooks/*.sh scripts/*.sh install.sh
 	-uv run pytest
@@ -60,7 +60,7 @@ depot: build ## Build and copy wheel to local depot
 	@echo "depot: $$(ls dist/*.whl | xargs -n1 basename) -> $(DEPOT)/"
 
 metrics: ## Run ABC complexity metrics on src/
-	python tools/run_metrics.py
+	uv run python tools/run_metrics.py
 
 coverage: ## Run tests with coverage report
 	uv run python tools/run_coverage.py
