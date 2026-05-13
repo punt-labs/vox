@@ -2136,6 +2136,11 @@ async def _handle_music_on(
 ) -> None:
     """Handle a 'music_on' message: start or transfer music ownership.
 
+    When the same owner re-sends music_on while already playing, the
+    current subprocess is kept alive and music_changed is signaled —
+    the MusicLoop's gapless handoff path generates the new track while
+    the old one keeps playing.
+
     Ownership transfer is atomic: kill existing subprocess, update all
     state fields, then signal MusicLoop. No interleaving.
 
@@ -2416,6 +2421,7 @@ async def _handle_music_next(
         )
         return
 
+    ctx.music_track_name = ""
     ctx.music_changed.set()
 
     logger.info("Music next: owner=%s", owner_id)
