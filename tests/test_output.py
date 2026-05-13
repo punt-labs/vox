@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from punt_vox.output import default_output_dir, resolve_output_path
+from punt_vox.output import OutputResolver, default_output_dir
 from punt_vox.types import SynthesisRequest
 
 
@@ -37,7 +37,7 @@ class TestResolveOutputPath:
             voice="joanna",
             metadata={"output_path": str(explicit)},
         )
-        result = resolve_output_path(request)
+        result = OutputResolver.resolve(request)
         assert result == explicit
 
     def test_uses_output_dir_from_metadata(self, tmp_path: Path) -> None:
@@ -46,7 +46,7 @@ class TestResolveOutputPath:
             voice="joanna",
             metadata={"output_dir": str(tmp_path)},
         )
-        result = resolve_output_path(request)
+        result = OutputResolver.resolve(request)
         assert result.parent == tmp_path
 
     def test_falls_back_to_default_output_dir(self, tmp_path: Path) -> None:
@@ -54,5 +54,5 @@ class TestResolveOutputPath:
             "punt_vox.output.default_output_dir", return_value=tmp_path / "audio"
         ):
             request = SynthesisRequest(text="hello", voice="joanna")
-            result = resolve_output_path(request)
+            result = OutputResolver.resolve(request)
         assert result.parent == tmp_path / "audio"

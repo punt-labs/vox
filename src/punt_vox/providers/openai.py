@@ -13,7 +13,7 @@ import openai
 
 from punt_vox.core import split_text
 from punt_vox.normalize import strip_vibe_tags
-from punt_vox.output import resolve_output_path
+from punt_vox.output import OutputResolver
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -72,7 +72,7 @@ class OpenAIProvider:
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
-        output_path = resolve_output_path(request)
+        output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
     def generate_audios(

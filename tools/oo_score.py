@@ -481,21 +481,31 @@ class Ratchet:
 
     @staticmethod
     def _git_touched_files() -> list[str] | None:
-        """Return repo-relative paths changed in the latest commit."""
-        try:
-            # Compare HEAD against its parent — works in CI (clean checkout)
-            result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD~1..HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return [line for line in result.stdout.strip().splitlines() if line]
-            # HEAD~1 may not exist (initial commit) — fall through to None
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return None
+        """Return repo-relative paths changed in the latest commit or working tree."""
+        touched: set[str] = set()
+        commands = [
+            # Last commit vs parent — works in CI (clean checkout)
+            ["git", "diff", "--name-only", "HEAD~1..HEAD"],
+            # Unstaged working tree changes
+            ["git", "diff", "--name-only"],
+            # Staged changes
+            ["git", "diff", "--cached", "--name-only"],
+        ]
+        for cmd in commands:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    touched.update(
+                        line for line in result.stdout.strip().splitlines() if line
+                    )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        return sorted(touched) if touched else None
 
     # ------------------------------------------------------------------
     # Metric comparison helpers
@@ -520,9 +530,15 @@ class Ratchet:
         """Return True if current is at least as good as baseline for the metric."""
         op, target = Scorer.THRESHOLDS[metric]
         if op == ">=":
-            return current >= baseline_val
+            if current >= baseline_val:
+                return True  # improved or equal
+            # Current is worse than baseline — only regress if it's below threshold
+            return current >= target
         if op == "<=":
-            return current <= baseline_val
+            if current <= baseline_val:
+                return True  # improved or equal
+            # Current is worse than baseline — only regress if it exceeds threshold
+            return current <= target
         # op == "==" — closer to target is better (or equal)
         return abs(current - target) <= abs(baseline_val - target)
 
