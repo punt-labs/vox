@@ -2870,23 +2870,22 @@ class TestHandleMusicNext:
             {"type": "music_next", "id": "next-2", "status": "ignored"}
         )
 
-    def test_ignored_when_not_owner(self) -> None:
+    def test_clears_replay_flag(self) -> None:
         ctx = _make_ctx()
         ctx.music_mode = "on"
         ctx.music_owner = "session-abc"
+        ctx.music_replay = True
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {
             "id": "next-3",
-            "owner_id": "other-session",
+            "owner_id": "session-abc",
         }
 
         asyncio.run(_handle_music_next(msg, ws, ctx))
 
-        assert not ctx.music_changed.is_set()
-        ws.send_json.assert_called_once_with(
-            {"type": "music_next", "id": "next-3", "status": "ignored"}
-        )
+        assert ctx.music_replay is False
+        assert ctx.music_changed.is_set()
 
     def test_error_when_no_owner_id(self) -> None:
         ctx = _make_ctx()

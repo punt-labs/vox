@@ -2415,13 +2415,8 @@ async def _handle_music_next(
         )
         return
 
-    if owner_id != ctx.music_owner:
-        await websocket.send_json(
-            {"type": "music_next", "id": request_id, "status": "ignored"}
-        )
-        return
-
     ctx.music_track_name = ""
+    ctx.music_replay = False
     ctx.music_changed.set()
 
     logger.info("Music next: owner=%s", owner_id)
