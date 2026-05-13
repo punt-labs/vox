@@ -224,7 +224,7 @@ def _resolve_token(self) -> str | None:
 1. In the `doctor` command: after probing the daemon, display any
    active `VOXD_*` env var overrides in the output. Example:
 
-   ```
+   ```text
    OK  Daemon: running on port 8421 (provider: elevenlabs, version 4.7.5)
        (via VOXD_HOST=192.168.1.100, VOXD_PORT=8421)
    ```

@@ -82,7 +82,7 @@ When music turns on or the vibe changes:
 
 The `_music_loop` changes structurally:
 
-```
+```python
 while music_mode == "on":
     ctx.music_tracks = _discover_and_shuffle(ctx)
     ctx.music_track_index = 0
