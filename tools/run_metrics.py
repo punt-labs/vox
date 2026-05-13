@@ -35,17 +35,17 @@ def run_metrics() -> None:
             "Or set PYTHON_ABC_DIR to a custom location.",
             file=sys.stderr,
         )
-        sys.exit(0)
+        sys.exit(1)
 
     venv_python = python_abc_dir / "venv" / "bin" / "python"
     if not venv_python.is_file():
         print(
             f"python-abc venv not found at {venv_python}\n"
-            "Run: cd {python_abc_dir} && python -m venv venv "
+            f"Run: cd {python_abc_dir} && python -m venv venv "
             "&& venv/bin/pip install -e .",
             file=sys.stderr,
         )
-        sys.exit(0)
+        sys.exit(1)
 
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
 
