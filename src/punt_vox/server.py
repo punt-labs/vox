@@ -105,23 +105,24 @@ def _seed_state_from_config(config_dir: Path | None) -> SessionState:
 def _refresh_state_from_config() -> None:
     """Re-read config files and update _state with current values.
 
-    Ephemeral fields (vibe, vibe_tags, vibe_signals, vibe_mode, notify,
-    speak) always take the config value -- the config file is the source
-    of truth since CLI and hooks write there directly.
+    Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags,
+    vibe_signals) always take the config value — the config file is
+    the source of truth since CLI and hooks write there directly.
 
-    For voice, provider, and model the MCP tool may have set a value that
-    was not persisted to config (e.g. an in-tool override).  Only overwrite
-    _state when config has a non-None value so those overrides survive.
+    For voice, provider, and model the MCP tool may have set a value
+    that was not persisted to config (e.g. an in-tool override).  Only
+    overwrite _state when config has a non-None value so those
+    overrides survive.
     """
+    global _speak_explicit
     config_dir = _find_config_dir()
     if config_dir is None:
         return
 
-    from punt_vox.config import read_config
+    from punt_vox.config import read_config, read_field
 
     cfg = read_config(config_dir=config_dir)
 
-    # Ephemeral fields -- always take config value
     _state.vibe = cfg.vibe
     _state.vibe_tags = cfg.vibe_tags
     _state.vibe_signals = cfg.vibe_signals or ""
@@ -129,7 +130,9 @@ def _refresh_state_from_config() -> None:
     _state.notify = cfg.notify
     _state.speak = cfg.speak
 
-    # Durable identity fields -- only overwrite when config has a value
+    if read_field("speak", config_dir) is not None:
+        _speak_explicit = True
+
     if cfg.voice is not None:
         _state.voice = cfg.voice
     if cfg.provider is not None:
@@ -622,6 +625,8 @@ def music_play(name: str) -> str:
     Finds the track in the music library and starts looping it.
     No generation, no credits used.
 
+    .. note:: Calls ``_refresh_state_from_config()`` for consistency.
+
     Args:
         name: Track name (as shown by music_list).
 
@@ -629,6 +634,7 @@ def music_play(name: str) -> str:
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
+    _refresh_state_from_config()
     client = _voxd_client()
     try:
         resp = client.music_play(name, owner_id=_state.session_id)
@@ -663,6 +669,7 @@ def music_list() -> str:
         JSON string with a human-readable ``message`` field and
         the track list from voxd.
     """
+    _refresh_state_from_config()
     client = _voxd_client()
     try:
         resp = client.music_list()
