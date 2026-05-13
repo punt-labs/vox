@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
@@ -329,7 +330,7 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             results.append(entry)
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Synthesis failed")
         return _error(str(exc))
 
@@ -462,7 +463,7 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             )
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Record failed")
         return _error(str(exc))
 
@@ -527,7 +528,7 @@ def vibe(
                 vibe_tags=_state.vibe_tags or "",
                 owner_id=_state.session_id,
             )
-        except (VoxdConnectionError, VoxdProtocolError, OSError):
+        except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
             logger.warning(
                 "voxd error during vibe propagation; music off",
                 exc_info=True,
@@ -598,7 +599,7 @@ def music(
                 "error": "daemon unreachable",
             }
         )
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
         _state.music_mode = "off"
         return json.dumps(
@@ -648,7 +649,7 @@ def music_play(name: str) -> str:
                 "error": "daemon unreachable",
             }
         )
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_play", exc_info=True)
         return json.dumps(
             {
@@ -683,7 +684,7 @@ def music_list() -> str:
                 "error": "daemon unreachable",
             }
         )
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_list", exc_info=True)
         return json.dumps(
             {
@@ -732,7 +733,7 @@ def music_next() -> str:
                 "error": "daemon unreachable",
             }
         )
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_next", exc_info=True)
         return json.dumps(
             {
@@ -765,7 +766,7 @@ def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for fut
         all_voices = client.voices(provider=_state.provider)
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except (VoxdProtocolError, OSError, ValueError) as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Voice listing failed")
         return _error(str(exc))
 
@@ -940,7 +941,7 @@ def show_vox() -> str:
     try:
         client = _voxd_client()
         voice_roster = client.voices(provider=_state.provider)
-    except (VoxdConnectionError, VoxdProtocolError, OSError):
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
         voice_roster = []
 
     provider_name = _state.provider or "elevenlabs"

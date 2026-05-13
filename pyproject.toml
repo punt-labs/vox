@@ -59,6 +59,9 @@ lux = ["punt-lux>=0.9.0"]
 requires = ["uv_build>=0.9.14,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-name = "punt_vox"
+
 [tool.ruff]
 line-length = 88
 target-version = "py313"
@@ -103,7 +106,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S108", "S603", "S607", "T20", "SLF001", "ARG", "FBT", "PLC0415"]
 "scripts/*" = ["T20", "S108", "S603", "S607", "PLC0415"]
-"tools/*" = ["T20", "S603", "S607"]
+"tools/*" = ["T20", "S603", "S607", "C901"]
 "typings/*" = ["A002"]
 "src/punt_vox/__main__.py" = ["T20", "PLC0415", "S603", "S607"]
 "src/punt_vox/server.py" = ["PLC0415"]
@@ -154,6 +157,10 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 enable_error_code = ["ignore-without-code"]
+
+[[tool.mypy.overrides]]
+module = "punt_lux.*"
+ignore_missing_imports = true
 
 [tool.pyright]
 pythonVersion = "3.13"

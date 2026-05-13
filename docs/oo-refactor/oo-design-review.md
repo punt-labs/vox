@@ -256,7 +256,7 @@ If the tool is the gate, `__main__.py` must pass.
 | avg_complexity <= 5.0 | `__main__.py`, `server.py`, `applet.py` |
 | module_size <= 300 | `__main__.py`, `server.py` |
 | class_to_func_ratio >= 0.5 | `__main__.py`, `server.py` |
-| init_violations == 0 | 14 new voxd/*and service/* classes (Part 2), `elevenlabs_music.py` |
+| init_violations == 0 | 14 new voxd and service classes (Part 2), `elevenlabs_music.py` |
 
 ---
 

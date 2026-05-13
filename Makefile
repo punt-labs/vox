@@ -19,7 +19,7 @@ type: ## Type check with mypy and pyright
 docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
-check: check-oo lint type docs test ## Run all quality gates
+check: lint type docs test check-oo ## Run all quality gates
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
 	uv run python tools/oo_score.py src/punt_vox/ --check
@@ -38,8 +38,8 @@ report: ## Full diagnostics (OO score + all checks, no fail-fast)
 	@echo "Report complete."
 
 format: ## Auto-format code
-	uv run ruff format src/ tests/
-	uv run ruff check --fix src/ tests/
+	uv run ruff format .
+	uv run ruff check --fix .
 
 build: ## Build wheel and sdist
 	rm -rf dist/
@@ -60,10 +60,10 @@ depot: build ## Build and copy wheel to local depot
 	@echo "depot: $$(ls dist/*.whl | xargs -n1 basename) -> $(DEPOT)/"
 
 metrics: ## Run ABC complexity metrics on src/
-	python scripts/run_metrics.py
+	python tools/run_metrics.py
 
 coverage: ## Run tests with coverage report
-	uv run python scripts/run_coverage.py
+	uv run python tools/run_coverage.py
 
 # LaTeX intermediate files to remove after compilation
 LATEX_ARTIFACTS = *.aux *.log *.out *.bbl *.bcf *.blg *.run.xml *.fls \
