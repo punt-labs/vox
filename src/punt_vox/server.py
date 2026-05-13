@@ -7,6 +7,7 @@ via VoxClient.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
@@ -17,9 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
-from punt_vox.client import VoxClientSync, VoxdConnectionError
+from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.logging_config import configure_logging
 from punt_vox.voices import VOICE_BLURBS
 
@@ -185,18 +187,18 @@ def _error(message: str) -> str:
 
 
 @mcp.tool()
-def unmute(
+def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     text: str | None = None,
     voice: str | None = None,
     language: str | None = None,
     segments: list[dict[str, str]] | None = None,
     rate: int = 90,
-    pause_ms: int = 500,
-    ephemeral: bool = True,
+    pause_ms: int = 500,  # noqa: ARG001 -- reserved for future multi-segment pause
+    ephemeral: bool = True,  # noqa: FBT001, FBT002 -- MCP tool schema requires bool param
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
-    speaker_boost: bool | None = None,
+    speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
     vibe_tags: str | None = None,
     provider: str | None = None,
     model: str | None = None,
@@ -328,7 +330,7 @@ def unmute(
             results.append(entry)
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Synthesis failed")
         return _error(str(exc))
 
@@ -338,19 +340,19 @@ def unmute(
 
 
 @mcp.tool()
-def record(
+def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     text: str | None = None,
     voice: str | None = None,
     language: str | None = None,
     segments: list[dict[str, str]] | None = None,
     rate: int = 90,
-    pause_ms: int = 500,
+    pause_ms: int = 500,  # noqa: ARG001 -- reserved for future multi-segment pause
     output_path: str | None = None,
     output_dir: str | None = None,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
-    speaker_boost: bool | None = None,
+    speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
 ) -> str:
     """Synthesize and save audio to a file.
 
@@ -440,9 +442,10 @@ def record(
             if output_path and len(segments) == 1:
                 file_path = Path(output_path)
             else:
-                import hashlib
-
-                text_hash = hashlib.md5(seg_text.encode()).hexdigest()[:10]
+                text_hash = hashlib.md5(
+                    seg_text.encode(),
+                    usedforsecurity=False,
+                ).hexdigest()[:10]
                 filename = f"{text_hash}.mp3"
                 file_path = dir_path / filename
 
@@ -460,7 +463,7 @@ def record(
             )
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Record failed")
         return _error(str(exc))
 
@@ -525,7 +528,7 @@ def vibe(
                 vibe_tags=_state.vibe_tags or "",
                 owner_id=_state.session_id,
             )
-        except Exception:
+        except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
             logger.warning(
                 "voxd error during vibe propagation; music off",
                 exc_info=True,
@@ -596,7 +599,7 @@ def music(
                 "error": "daemon unreachable",
             }
         )
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
         _state.music_mode = "off"
         return json.dumps(
@@ -646,7 +649,7 @@ def music_play(name: str) -> str:
                 "error": "daemon unreachable",
             }
         )
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_play", exc_info=True)
         return json.dumps(
             {
@@ -681,7 +684,7 @@ def music_list() -> str:
                 "error": "daemon unreachable",
             }
         )
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_list", exc_info=True)
         return json.dumps(
             {
@@ -719,14 +722,6 @@ def music_next() -> str:
         the raw voxd response fields.
     """
     _refresh_state_from_config()
-    if _state.music_mode != "on":
-        return json.dumps(
-            {
-                "message": "♪ Music is not playing.",
-                "status": "ignored",
-            }
-        )
-
     client = _voxd_client()
     try:
         resp = client.music_next(owner_id=_state.session_id)
@@ -738,7 +733,7 @@ def music_next() -> str:
                 "error": "daemon unreachable",
             }
         )
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music_next", exc_info=True)
         return json.dumps(
             {
@@ -751,7 +746,7 @@ def music_next() -> str:
 
 
 @mcp.tool()
-def who(language: str | None = None) -> str:
+def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for future language filtering
     """List available voices for the current provider.
 
     Returns the voice roster with personality blurbs, the full list
@@ -771,7 +766,7 @@ def who(language: str | None = None) -> str:
         all_voices = client.voices(provider=_state.provider)
     except VoxdConnectionError as exc:
         return _error(str(exc))
-    except Exception as exc:
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.exception("Voice listing failed")
         return _error(str(exc))
 
@@ -946,7 +941,7 @@ def show_vox() -> str:
     try:
         client = _voxd_client()
         voice_roster = client.voices(provider=_state.provider)
-    except Exception:
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
         voice_roster = []
 
     provider_name = _state.provider or "elevenlabs"

@@ -1,10 +1,15 @@
-# CLAUDE.md
+# Vox
 
-## No "Pre-existing" Excuse
+Part of [Punt Labs](https://github.com/punt-labs). This repo must be checked out inside the `punt-labs/` workspace meta-repo so that org-wide configuration loads via Claude Code's ancestor directory walk:
 
-There is no such thing as a "pre-existing" issue. If you see a problem — in code you wrote, code a reviewer flagged, or code you happen to be reading — you fix it. Do not classify issues as "pre-existing" to justify ignoring them. Do not suggest that something is "outside the scope of this change." If it is broken and you can see it, it is your problem now.
+- **`punt-labs/CLAUDE.md`** — org workflow, delegation model, beads issue tracking, tool configuration
+- **`punt-labs/.claude/rules/python-*.md`** — 19 Python OO coding rules, scoped via `paths:` frontmatter (load on-demand when `.py` files are touched)
+- **`punt-labs/.envrc`** — git identity, beads DB connection, API keys from platform keychain
+- **`punt-kit/standards/`** — canonical reference docs
 
-## Project Overview
+If cloned outside the workspace, these rules and configuration will not be present.
+
+**OO Python standards adopted 2026-05-13.** The codebase does not yet fully comply. Every commit must improve OO scores (`make check-oo`), never regress. Do not match existing code patterns that violate the rules — write new code to the standard and improve touched files incrementally.
 
 Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (premium), AWS Polly, and OpenAI TTS.
 
@@ -13,431 +18,154 @@ Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (pre
 - **MCP server**: `vox-server`
 - **Python**: 3.13+, managed with `uv`
 
-## Build & Run
-
-```bash
-# Install with dev dependencies
-uv sync --all-extras
-
-# CLI
-uv run vox --help
-uv run vox doctor
-
-# MCP server (stdio transport)
-uv run vox-server
-```
-
-## Scratch Files
-
-Use `.tmp/` at the project root for scratch and temporary files — never `/tmp`. The `TMPDIR` environment variable is set via `.envrc` so that `tempfile` and subprocesses automatically use it. Contents are gitignored; only `.gitkeep` is tracked.
-
-## Quality Gates
-
-Run before every commit:
-
-```bash
-make check
-```
-
 ## Architecture
 
-Module structure under `src/punt_vox/`:
+### How synthesis works
+
+An agent (or human) calls an MCP tool or CLI command requesting speech. The request flows through the thin client layer (`client.py` → WebSocket → `voxd`). The daemon selects a provider (ElevenLabs > OpenAI > Polly > platform fallback), synthesizes audio, optionally caches the result (content-addressed by text+voice+provider via MD5), and plays it through the system audio stack (afplay on macOS, ffplay on Linux). Long texts are split by `core.py` into sentence-boundary chunks and synthesized in parallel.
+
+### Key architectural boundary: daemon vs. clients
+
+**`voxd`** is the persistent audio daemon — it owns the playback queue, provider connections, cache, and system service lifecycle. It has no MCP awareness, no session state, no project context. **Clients** (`VoxClient`/`VoxClientSync`) are lightweight WebSocket wrappers. The MCP server (`server.py`) and hook handlers (`hooks.py`) are both thin clients of `voxd` — they translate MCP/hook semantics into daemon RPC calls. No business logic in the client layer.
+
+This separation means: daemon bugs are about audio, providers, caching, and system paths. Client bugs are about session state, MCP protocol, and hook classification. They never overlap.
+
+### Module map
 
 | Module | Responsibility |
 |--------|---------------|
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
-| `output.py` | Output path resolution: delegates to `dirs.default_output_dir()` (`VOX_OUTPUT_DIR` env var, `~/Music/vox/` fallback) |
-| `logging_config.py` | Logging setup (used by CLI and hooks, not by voxd) |
-| `voxd.py` | **Audio daemon** (`voxd` binary). WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew prefix on macOS, FHS on Linux). No MCP, no sessions, no project awareness. |
-| `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync wrapper). Lightweight — stdlib + websockets only. |
-| `config.py` | Read/write two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. Public API: `read_field()`, `read_config()`, `write_field()`, `write_fields()`. No ContextVar. |
-| `dirs.py` | Cross-platform directory resolution: `DEFAULT_CONFIG_DIR` (`.punt-labs/vox/`), `find_config_dir()`, `default_output_dir()`, `music_output_dir()`, `ephemeral_dir()` |
-| `resolve.py` | Shared resolution helpers: `resolve_voice_and_language()`, `apply_vibe()` |
-| `normalize.py` | Text normalization for speech: `normalize_for_speech()` — snake_case, camelCase, abbreviation expansion |
-| `voices.py` | Voice metadata: `VOICE_BLURBS`, `voice_not_found_message()` |
-| `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples, grouped by event |
+| `voxd.py` | Audio daemon. WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew on macOS, FHS on Linux). |
+| `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync). Lightweight — stdlib + websockets only. |
+| `config.py` | Two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. |
+| `hooks.py` | Hook handlers for Claude Code events. Call `voxd` via `VoxClientSync`. `classify_signal()`, `resolve_tags_from_signals()`. |
+| `server.py` | FastMCP server (key: `mic`) — thin client of `voxd`. Session state in memory (`SessionState` dataclass). |
+| `providers/` | Provider registry + ElevenLabs, OpenAI, Polly, macOS `say`, Linux `espeak-ng`. Each provider is the only file importing its SDK. |
 | `cache.py` | MP3 cache for quip phrases. Content-addressed by (text, voice, provider) via MD5. Runs inside `voxd`. |
-| `hooks.py` | Hook handlers for Claude Code events. Call `voxd` via `VoxClientSync` for audio. `classify_signal()`, `resolve_tags_from_signals()`. |
-| `__main__.py` | Typer CLI — unmute, record, vibe, on/off, mute, version, status, doctor, install, uninstall, play, mcp, daemon, hook, cache |
+| `service.py` | System daemon lifecycle. macOS: `/Library/LaunchDaemons/`. Linux: `/etc/systemd/system/`. |
+| `normalize.py` | Text normalization for speech: snake_case, camelCase, abbreviation expansion |
+| `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples |
 | `applet.py` | Lux display applet: builds element tree, connects to display server |
-| `server.py` | FastMCP server (key: `mic`) — thin client of `voxd`. MCP tools: `unmute`, `record`, `vibe`, `who`, `notify`, `speak`, `status`, `show_vox`. Session state in memory (`SessionState` dataclass). |
-| `service.py` | System-level daemon lifecycle. macOS: `/Library/LaunchDaemons/` (sudo). Linux: `/etc/systemd/system/` (sudo). Installs `voxd`. |
-| `playback.py` | `play_audio()` — blocking audio playback via afplay/ffplay. Used by `voxd` internally. |
-| `providers/__init__.py` | Provider registry, `get_provider()`, auto-detection (ElevenLabs > OpenAI > Polly) |
-| `providers/polly.py` | `PollyProvider` — AWS Polly synthesis, voice resolution, health checks. Only file with boto3 |
-| `providers/openai.py` | `OpenAIProvider` — OpenAI TTS synthesis, static voices, auto-chunking >4096 chars. Only file with openai |
-| `providers/elevenlabs.py` | `ElevenLabsProvider` — ElevenLabs synthesis, voice settings, voice resolution, health checks. Only file with elevenlabs |
-| `providers/say.py` | `SayProvider` — macOS `say` synthesis, voice resolution. Zero-config offline fallback |
-| `providers/espeak.py` | `EspeakProvider` — Linux `espeak-ng` synthesis, voice resolution. Zero-config offline fallback |
 
-Plugin structure (Claude Code hooks and commands):
+### Plugin structure
 
 | Path | Responsibility |
 |------|---------------|
 | `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (mic tools + Bash), Stop, Notification |
-| `hooks/notify.sh` | Stop hook: thin gate → `vox hook stop` |
-| `hooks/signal.sh` | PostToolUse hook (Bash): thin gate → `vox hook post-bash` |
-| `hooks/notify-permission.sh` | Notification hook: thin gate → `vox hook notification` |
-| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel (self-contained bash) |
-| `hooks/session-start.sh` | SessionStart hook: deploys commands, cleans retired commands, auto-allows MCP tools |
-| `commands/vox.md` | `/vox y\|n\|c` — enable, disable, or continuous mode |
-| `commands/unmute.md` | `/unmute [@voice]` — enable voice mode, set session voice, browse roster |
-| `commands/mute.md` | `/mute` — chimes only |
-| `commands/recap.md` | `/recap` — on-demand spoken summary (uses `unmute` MCP tool) |
-| `commands/vibe.md` | `/vibe <mood>\|auto\|off` — session mood with auto-detection (uses `vibe` MCP tool) |
-| `assets/chime_done.mp3` | Task-complete chime tone |
-| `assets/chime_prompt.mp3` | Needs-approval chime tone |
+| `hooks/notify.sh` | Stop hook → `vox hook stop` |
+| `hooks/signal.sh` | PostToolUse hook (Bash) → `vox hook post-bash` |
+| `hooks/notify-permission.sh` | Notification hook → `vox hook notification` |
+| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
+| `hooks/session-start.sh` | SessionStart: deploys commands, cleans retired commands, auto-allows MCP tools |
+| `commands/` | `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe` |
 
-Tests mirror source: `test_types.py`, `test_core.py`, `test_output.py`, `test_playback.py`, `test_cli.py`, `test_client.py`, `test_config.py`, `test_dirs.py`, `test_hooks.py`, `test_normalize.py`, `test_cache.py`, `test_keys.py`, `test_server.py`, `test_server_partition.py`, `test_service.py`, `test_applet.py`, `test_watcher.py`, `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py` plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
+See `docs/architecture.tex` for the full system description.
 
-## Python Coding Standards
+## Code Quality
 
-### Types
+**OO ratchet:** `make check-oo` (part of `make check`) compares current OO scores against `.oo-baseline.json`. It passes only if no metric regressed on touched files and at least one metric improved. It fails if any metric got worse or nothing improved.
 
-- `from __future__ import annotations` in every file.
-- Full type annotations on every function signature and return type.
-- mypy strict mode and pyright strict mode. Zero errors.
-- Never `Any` unless interfacing with untyped libraries (pydub). Document why with inline ignores.
-- `@dataclass(frozen=True)` for immutable value types.
-- Use Protocol classes for abstractions. Never `hasattr()` or duck typing.
-- `cast()` in string form for ruff TC006: `cast("list[str]", x)`.
+Workflow:
 
-### Exceptions and Error Handling
+1. Write code that improves OO quality on the files you touch.
+2. `make check` runs `check-oo --check` automatically. If it fails, fix the regression.
+3. After all checks pass, run `make update-oo` to write the new baseline.
+4. Stage `.oo-baseline.json` and `.oo-audit.jsonl` with your commit — they are committed files.
 
-- Fail fast. Raise exceptions on invalid input. No defensive fallbacks.
-- No warning filters to hide problems. Fix root causes.
-- `ValueError` for domain violations. `click.ClickException` for CLI user errors.
-- Never catch broad `Exception` unless re-raising or at a boundary (CLI entry point, MCP tool handler).
+Bootstrap (first time only): run `make update-oo` to create the initial baseline.
 
-### Logging
+- `make check-oo` — OO ratchet against baseline.
+- `make update-oo` — update baseline and append to audit log after improvements.
+- `make report` — full diagnostics including per-file OO breakdown.
+- `make metrics` — ABC complexity analysis.
+- `make coverage` — test coverage HTML report.
 
-- `logger = logging.getLogger(__name__)` per module.
-- `logging.basicConfig()` configured once in CLI and server entry points.
-- `logger.debug()` for synthesis details. `logger.info()` for file writes.
-- MCP server logs to stderr only (stdout reserved for stdio transport).
+**Known type checker workarounds:**
 
-### Imports and Style
-
-- All imports at top of file, grouped per PEP 8 (stdlib → third-party → local).
-- Double quotes. 88-character line limit. Enforced by ruff.
-- No inline imports. No `type | None` parameters unless necessary.
-- No backwards-compatibility shims. No `# removed` tombstones. No re-exports of dead symbols.
-
-### Prohibited Patterns
-
-- No `hasattr()` — use protocols.
-- No mock objects in production code.
-- No defensive coding or fallback logic unless explicitly requested.
-- No `Any` without a documented reason and inline type-ignore comment.
+- **mypy vs pyright on boto3** (`providers/polly.py`): boto3-stubs types `boto3.client("polly")` correctly for mypy but pyright sees partially unknown overloads. Solution: `cast("PollyClientType", boto3.client("polly"))` with `# type: ignore[redundant-cast]` + `# pyright: ignore[reportUnknownMemberType]`.
+- **pydub** has local type stubs in `typings/pydub/`. No `Any` annotations needed.
+- **elevenlabs** ships `py.typed` but has pyright issues on some generated client code. Inline pyright ignores where needed.
+- **`voxd` logs to stderr only in daemon mode.** Never use `print()` in server or daemon code.
 
 ## Testing
 
-- **All tests must pass.** If a test is failing, fix it.
-- If a test fails, fix it. Do not skip, ignore, or work around it.
-- Mock Polly responses need valid MP3 bytes — pydub hands files to ffmpeg which rejects fake data. Use `AudioSegment.silent(duration=50)` in fixtures.
-- Use `side_effect=lambda` instead of `return_value` for fresh mocks per call.
-- Integration tests requiring AWS credentials are marked `@pytest.mark.integration`.
+### Pyramid
 
-## Delegation with Missions
+| Layer | Make target | Runs in CI | What it covers |
+|-------|-------------|------------|----------------|
+| Unit | `make test` | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
+| Integration | `@pytest.mark.integration` | no (needs AWS creds) | Real provider synthesis end-to-end |
+| Shell scripts | `make lint` (shellcheck) | yes | hooks/*.sh, scripts/*.sh, install.sh |
 
-All code delegation uses ethos missions (`/mission` skill). Missions are typed contracts between a leader (claude) and a worker (bwk, rmh, mdm, adb, djb) that enforce write-set admission, frozen evaluators, bounded rounds, and append-only event logs.
+Tests mirror source: one `test_*.py` per module plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
-### When to use missions
+### What good testing means in this project
 
-- Any bounded task with clear success criteria and a known set of files to touch.
-- Sized for 1-3 rounds of one worker plus one evaluator.
-- The Phase 3 runtime enforces the contract — write-set admission, frozen evaluator, result artifacts — instead of trusting prompt discipline.
+Vox has five TTS providers, each with different SDKs, authentication, voice models, and error modes. The recurring failure mode is provider tests that pass with mocks but fail with real APIs because the mock doesn't match the SDK's actual behavior. Testing discipline:
 
-Do NOT use missions for: exploratory research, work you do yourself, or epics that need decomposition first (decompose into multiple missions).
+- **Mock Polly responses need valid MP3 bytes.** pydub hands files to ffmpeg which rejects fake data. Use `AudioSegment.silent(duration=50)` in fixtures — never empty bytes or random data.
+- **Use `side_effect=lambda` instead of `return_value`** for fresh mocks per call. `return_value` shares the same object across calls, causing aliasing bugs in tests that mutate results.
+- **Every provider must test both success and auth failure paths.** A provider that can't authenticate should raise a clear error, not silently fall back.
+- **Hook tests must verify signal classification.** The `classify_signal()` function in `hooks.py` determines what event type a Bash command represents. Misclassification means the wrong audio plays — test the classification logic explicitly.
 
-### Workflow
+## Ethos & Delegation
 
-0. **Claim**: `bd update <id> --status=in_progress` and `biff plan "<bead-id>: <summary>"`. Both must be set before any work starts — other agents check `/who` to see what's active.
-1. **Scaffold**: `/mission` skill scaffolds the contract YAML from conversation context.
-2. **Confirm**: present the contract to the user (or decide as leader). Edit any field before creation.
-3. **Create**: `ethos mission create --file .tmp/missions/<name>.yaml` — returns a mission ID. Update biff plan to include the mission ID.
-4. **Spawn**: `Agent(subagent_type=<worker>, run_in_background=true)` with a prompt that points at the mission ID. The worker reads the contract via `ethos mission show <id>` as its first action.
-5. **Track**: `ethos mission show <id>`, `ethos mission log <id>`, `ethos mission results <id>`.
-6. **Review**: read the result artifact. Pass → `ethos mission close <id>`. Continue → `ethos mission reflect <id> --file <path>` then `ethos mission advance <id>`. Fail → `ethos mission close <id> --status failed`.
+Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses ethos missions. Every non-trivial delegation has two phases: (1) **design mission** — describes problem, constraints, and invariants but does NOT prescribe a write set; (2) **implementation mission** — uses the write set produced by the design phase. The design mission's output IS the write set — the specialist decides what to create, split, or extract. This is critical: prescribing a write set before design prevents refactoring and forces code into existing modules.
 
-### Contract schema (required fields)
+### Why these pairings
 
-```yaml
-leader: claude
-worker: rmh                    # bwk|rmh|mdm|adb|djb|kpz
-evaluator:
-  handle: djb                  # must differ from worker, no shared role
-inputs:
-  bead: vox-0qi                # optional bead link
-write_set:                     # repo-relative paths, at least one
-  - src/punt_vox/music.py
-  - tests/test_music.py
-success_criteria:              # at least one verifiable criterion
-  - vibe_to_prompt returns correct prompt for all test cases
-  - make check passes
-budget:
-  rounds: 2                    # 1-10
-  reflection_after_each: true  # leader reflects after each round
-```
-
-Optional: `context` (design notes), `tools` (worker allowlist), `session`, `repo`.
-Do NOT set: `mission_id`, `status`, `created_at`, `evaluator.pinned_at`, `evaluator.hash`, `current_round` — the store manages these.
-
-### Worker prompt template
-
-```text
-Mission <id> is yours. Read it first: `ethos mission show <id>`.
-The contract names the write set, success criteria, and budget.
-Your first write must land inside the write set — the store
-refuses anything else. After your work for this round, submit a
-result artifact: `ethos mission result <id> --file <path>`. See
-`ethos mission result --help` for the YAML shape. The mission
-will refuse to close until a valid result for the current round
-exists. Do not commit, push, or merge — return results to me.
-```
-
-### Ethos roster (vox-specific worker/evaluator pairings)
-
-Identity: `agent: claude` per `.punt-labs/ethos.yaml`. Sub-agent calls (`Agent(subagent_type=…)`) match ethos identity handles. Within each row, the worker and evaluator must be distinct handles. Claude is the leader, never the evaluator.
+Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio formats, playback pipeline, daemon lifecycle — `rmh` for core Python, `gvr` for provider implementations, `kpz` for audio/playback performance; (2) **system integration** — launchd/systemd service, platform paths, hook scripts — `adb` for infrastructure, `djb` for auth/secrets, `mdm`/`rop` for shell/CLI; (3) **UX** — voice curation, vibe system, Lux applet — `claudia` for prose, `edt`/`dna` for visual.
 
 | Task type | Worker | Evaluator |
 |-----------|--------|-----------|
 | Python core (`core.py`, `client.py`, `config.py`, `resolve.py`) | `rmh` (Hettinger) | `gvr` (van Rossum) |
 | Provider implementations (Polly, OpenAI, ElevenLabs, say, espeak) | `gvr` | `rmh` |
-| `voxd` audio daemon (websocket, queue, cache, playback) | `rmh` | `bwk` (Pike) |
+| `voxd` audio daemon (WebSocket, queue, cache, playback) | `rmh` | `bwk` (Pike) |
 | MCP server (`server.py`) tool surface | `rmh` | `mdm` (Pike) |
 | CLI (`__main__.py`) command authoring | `mdm` | `rmh` |
-| Hook scripts (`hooks/*.sh`) — Bash, signal classification | `mdm` | `rop` (McIlroy) |
-| `service.py` system daemon install (launchd, systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
+| Hook scripts (`hooks/*.sh`) — bash, signal classification | `mdm` | `rop` (McIlroy) |
+| System daemon install (`service.py`, launchd/systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
 | Provider auth / API-key handling / secrets | `djb` | `rmh` |
 | Audio playback / pydub / ffmpeg pipeline | `gvr` | `kpz` (Karpathy) |
 | Cache design (`cache.py`) — content-addressing, dedup | `rmh` | `kpz` |
 | Voice / vibe / quip prose curation | `claudia` (Massimo) | `mcg` (Cagan) |
 | Lux applet (`applet.py`) — visual surface | `edt` (Tufte) | `dna` (Norman) |
 | Release / plugin name swap / cross-repo propagation | `adb` | `mdm` |
-| Type-checker workarounds (mypy vs pyright) | `gvr` | `rmh` |
 | Test infrastructure / fixtures (esp. mock MP3 bytes) | `rmh` | `gvr` |
 
-### Task tracking and parallelism
+### Pipeline selection
 
-For multi-phase features (T1/T2), create a TaskCreate list with all missions up front and wire dependencies via `addBlockedBy`. This gives the user visibility into progress and lets you parallelize independent phases.
-
-- **Create all tasks first**, then set dependencies. Mark phase 1 complete immediately if already done.
-- **Launch independent missions in parallel** — if phases 2 and 3 don't depend on each other, create both missions and spawn both workers in the same message. Two `Agent()` calls, both `run_in_background: true`.
-- **As each mission completes**: review the result, close the mission, commit, mark the task completed, check what's unblocked, and launch the next mission(s).
-- **The task list is the source of truth** for what's done, what's in flight, and what's blocked. Update it as missions close.
-
-### Review-cycle fix rounds: bare Agent(), not missions
-
-When Copilot or Bugbot flags findings on a PR, use a bare `Agent()` call — not a mission. These are mechanical 1-round fixes where the write-set is obvious (the files the findings are in). Missions are for work with design ambiguity or multi-round potential. The overhead of scaffold/create/close isn't justified for "fix these 3 lint findings."
+Use `standard` pipeline for new features, provider additions, daemon changes, or anything touching the hook/signal classification system. Use `quick` for single-module bugfixes that don't cross the daemon/client boundary. Review-cycle fix rounds (Copilot/Bugbot findings) use bare `Agent()`, not missions.
 
 ### Lessons from vox-0qi (2026-04-11)
 
-- Write-set admission is the highest-value feature. It guaranteed parallel phases 2+3 had zero file conflicts.
-- Workers don't always read the contract via `ethos mission show` or submit results via `ethos mission result` — enforcement is partial. Verify the result artifact exists before closing (`ethos mission results <id>`).
-- **Context/prompt split**: the contract `context` field carries the *what* (goal, constraints, acceptance criteria). The Agent `prompt` carries the *how* (specific invocation instructions). Move durable design guidance into `context`; keep the prompt to "execute the contract at `<id>`" plus any session-specific notes. Don't duplicate between the two.
-- All 7 vox-0qi missions closed round 1. The reflect→advance→re-spec cycle is untested under pressure. When a mission does go to round 2, use `ethos mission reflect` to record why before advancing.
+- Write-set admission is the highest-value feature. It guaranteed parallel phases had zero file conflicts.
+- Workers don't always read the contract via `ethos mission show` or submit results via `ethos mission result` — enforcement is partial. Verify the result artifact exists before closing.
+- **Context/prompt split**: contract `context` carries the *what* (goal, constraints). Agent `prompt` carries the *how* (invocation instructions). Don't duplicate between the two.
+- All 7 vox-0qi missions closed round 1. The reflect→advance cycle is untested under pressure.
 
-### Scratch files
+See ethos docs for mission contract schema, worker prompt template, and the full mission lifecycle.
 
-Mission contract YAMLs go in `.tmp/missions/`. Result artifact YAMLs go in `.tmp/missions/results/`.
+## Release
 
-## Issue Tracking with Beads
+Use `/punt:auto release [version=X.Y.Z]`. Vox is a CLI + Plugin Hybrid — releases publish to both PyPI (`punt-vox`) and the marketplace.
 
-This project uses **beads** (`bd`) for issue tracking. The shared Hosted DoltDB instance filters by repo label — every `bd create` in this repo **must** include `--labels="repo:vox"` or the issue will be invisible in `bd list` and `bd ready`.
+### Dev plugin testing
 
-### When to Use Beads vs TodoWrite
-
-| Use Beads (`bd`) | Use TodoWrite |
-|------------------|---------------|
-| Multi-session work | Single-session tasks |
-| Work with dependencies | Simple linear execution |
-| Discovered work to track | Immediate TODO items |
-| Strategic planning | Tactical execution |
-
-### Essential Commands
-
-```bash
-bd ready                    # Show issues ready to work
-bd list --status=open       # All open issues
-bd show <id>                # View issue details
-bd update <id> --status=in_progress   # Claim work
-bd close <id>               # Mark complete
-bd create --title="..." --type=task --labels="repo:vox"  # Create issue
-bd dep add <child> <parent> # child depends on parent
-bd sync                     # Sync with git remote
-```
-
-## Development Workflow
-
-### Changelog
-
-CHANGELOG entries are written **in the PR branch, before merge** — not retroactively on main. The entry is part of the diff that gets reviewed. Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. Add entries under `[Unreleased]`. Categories: Added, Changed, Deprecated, Removed, Fixed, Security. See [Workflow standards §6](../punt-kit/standards/workflow.md) for full guidance.
-
-### Branch Discipline
-
-All code changes go on feature branches. Never commit directly to main.
-
-**Use worktrees by default.** Before creating a branch, check `/who` for other active sessions. If other sessions are active, use a worktree to avoid interfering with their working tree. If no other sessions are active, a regular branch is fine.
-
-```bash
-# Default: worktree (safe when other sessions are active)
-# Use the EnterWorktree tool, then work normally inside the worktree
-
-# Alternative: regular branch (only when /who shows no other sessions)
-git checkout -b feat/short-description main
-# ... work, commit, push ...
-gh pr create --title "feat: description" --body "..."
-```
-
-**One worktree per agent, many PRs within it.** A worktree is an isolated working directory for the session. Branch freely inside it — each PR gets its own branch, not its own worktree.
-
-```bash
-# Session start: enter worktree once
-# EnterWorktree tool creates it
-
-# PR 1
-git checkout -b fix/thing-one main
-# ... work, commit, push, PR, merge ...
-
-# PR 2
-git checkout main && git pull
-git checkout -b feat/thing-two main
-# ... work, commit, push, PR, merge ...
-
-# Session end: /exit cleans up the worktree
-```
-
-**After creating a PR, watch CI and reviews without blocking your main shell.** Run `gh pr checks <number> --watch` in the background so you are notified when checks complete. Do not stop waiting — CI, Copilot, and Bugbot all need time to post.
-
-```bash
-gh pr checks <number> --watch          # Run in background task: polls until all checks resolve
-```
-
-**Expect 2-6 review cycles before merging.** Do not rush to merge after the first review. Each cycle: read feedback, fix, re-push, wait for new reviews. A PR is ready to merge ONLY when the most recent review cycle raised zero new issues — zero new comments, zero requested changes, all checks green.
-
-**Read feedback using MCP GitHub tools.** Prefer MCP over `gh` CLI for all PR interactions:
-
-```bash
-# Primary: MCP tools (richer data, no local side effects)
-mcp__github__pull_request_read  # method: get_reviews — review verdicts and bodies
-mcp__github__pull_request_read  # method: get_review_comments — inline code comments
-
-# Fallback only if MCP is unavailable
-gh pr view <number> --comments
-```
-
-**Take every comment seriously.** There is no such thing as "pre-existing" or "unrelated to this change" — if you can see it, you own it. If a reviewer flags it, it matters. If you genuinely disagree, explain why in a reply — do not silently ignore. Copilot and Bugbot may take 1-3 minutes to post after CI completes; wait for them.
-
-**Fix, re-push, and repeat.** After addressing feedback, push the fixes and wait for the next review cycle. Continue until the last cycle is uneventful — no new comments, no requested changes, all checks green. Only then is the PR ready to merge.
-
-**Prefer MCP GitHub tools over `gh` CLI.** Use MCP tools for PR creation (`mcp__github__create_pull_request`), review reading (`mcp__github__pull_request_read`), and merging (`mcp__github__merge_pull_request`). MCP calls are API-only with no local git side effects. `gh pr merge` tries to checkout main locally, which fails inside a worktree.
-
-**Merge via MCP, not `gh`.** Use `mcp__github__merge_pull_request` (API-only, no local git side effects). After merging, pull main to stay ready for the next PR.
-
-```bash
-# mcp__github__merge_pull_request(owner="punt-labs", repo="vox", pullNumber=N, merge_method="squash")
-git fetch origin main && git checkout origin/main  # Detached HEAD (worktree can't checkout main branch)
-git checkout -b feat/next-thing                     # New branch from latest main
-```
-
-**Worktree cleanup.** Never remove a worktree from inside it — the session cwd becomes invalid and unrecoverable. Let `/exit` handle cleanup. It prompts to keep or remove the worktree on session end.
-
-| Prefix | Use |
-|--------|-----|
-| `feat/` | New features |
-| `fix/` | Bug fixes |
-| `refactor/` | Code improvements |
-| `docs/` | Documentation only |
-
-### Micro-Commits
-
-- One logical change per commit. 1-5 files, under 100 lines.
-- Quality gates pass before every commit.
-- Commit message format: `type(scope): description`
-
-| Prefix | Use |
-|--------|-----|
-| `feat:` | New feature |
-| `fix:` | Bug fix |
-| `refactor:` | Code change, no behavior change |
-| `test:` | Adding or updating tests |
-| `docs:` | Documentation |
-| `chore:` | Build, dependencies, CI |
-
-### Release Workflow
-
-Use `/punt:auto release` (the slash command), which runs the `punt release` CLI
-through the playbook executor with LLM-driven error diagnosis. It handles all
-11 phases automatically: preflight, version bump, build, release PR, tag, CI wait,
-GitHub release, PyPI verify, post-release (README SHA bump), cross-repo propagation
-(install-all.sh, marketplace, website), and verification.
-
-```text
-/punt:auto release [version=X.Y.Z]
-```
-
-See [release-process.md](https://github.com/punt-labs/punt-kit/blob/main/standards/release-process.md) for
-the full 11-phase specification. PyPI publishing is owned by the
-tag-triggered `release.yml` workflow — never upload manually.
-
-### Dev Plugin Testing
-
-The plugin uses dev/prod namespace isolation. The working tree has `"name": "vox-dev"` in plugin.json, so it can run alongside the installed production plugin.
+The plugin uses dev/prod namespace isolation. Working tree has `"name": "vox-dev"` in plugin.json.
 
 ```bash
 uv tool install --force --editable .   # Editable install (vox binary = working tree)
 claude --plugin-dir .                   # Load dev plugin as vox-dev alongside prod vox
 ```
 
-Dev commands (`/vox-dev:say-dev`, `/vox-dev:recap-dev`) use dev-namespaced MCP tools (`mcp__plugin_vox-dev_vox__*`). Prod commands (`/say`, `/recap`) continue using the installed plugin.
+Release scripts: `scripts/release-plugin.sh` (swap `vox-dev` → `vox`), `scripts/restore-dev-plugin.sh` (restore dev state after tag).
 
-Release scripts swap the name before tagging:
+## Key Documents
 
-- `bash scripts/release-plugin.sh` — swap `vox-dev` → `vox`, remove `*-dev.md`
-- `bash scripts/restore-dev-plugin.sh` — restore dev state after tagging
-
-### Session Close Protocol
-
-Before ending any session:
-
-```bash
-git status                  # Check for uncommitted work
-git add <files>             # Stage changes
-git commit -m "..."         # Commit
-bd sync                     # Sync beads
-git push                    # Push to remote
-git status                  # Must show "up to date with origin"
-```
-
-Work is NOT complete until `git push` succeeds.
-
-## Pre-PR Checklist
-
-- [ ] **CHANGELOG entry included in the PR diff** under `## [Unreleased]` (not retroactively on main)
-- [ ] **README updated** if user-facing behavior changed (new commands, flags, providers, config)
-- [ ] **prfaq.tex updated** if the change shifts product direction or validates/invalidates a risk
-- [ ] **Quality gates pass** — `uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/ && uv run mypy src/ tests/ && uv run pyright src/ tests/ && uv run pytest tests/ -v && shellcheck -x hooks/*.sh scripts/*.sh install.sh`
-
-## Known Type Checker Workarounds
-
-### mypy vs pyright on boto3 (in providers/polly.py)
-
-boto3-stubs types `boto3.client("polly")` correctly for mypy but pyright sees partially unknown overloads. Solution:
-
-```python
-cast("PollyClientType", boto3.client("polly"))  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
-```
-
-### pydub and elevenlabs have no type stubs
-
-Use `Any` annotations and pyright inline ignores. These are the acceptable `Any` usages. Both have `[[tool.mypy.overrides]]` with `ignore_missing_imports = true`.
-
-## Standards
-
-- Always find the root cause. No workarounds, no shortcuts.
-- Do not suggest skipping tests, lowering standards, or ignoring failures.
-- Do not present workarounds for failing tests — fix the actual problem.
-- Report complete, unfiltered data.
-- The user makes decisions. Ask before making up rationales.
+- `DESIGN.md` — ADR log
+- `TESTING.md` — testing philosophy, fixture patterns, provider-specific test strategies
+- `docs/architecture.tex` → `docs/architecture.pdf` — system architecture
+- `prfaq.tex` → `prfaq.pdf` — product direction
+- `docs/vox-notify.tex` — Z specification for notification system

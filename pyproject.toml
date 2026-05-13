@@ -46,10 +46,10 @@ voxd = "punt_vox.voxd:entrypoint"
 
 [project.optional-dependencies]
 dev = [
-    "mypy>=1.14.0",
-    "pyright>=1.1.390",
-    "ruff>=0.9.0",
-    "pytest>=8.3.0",
+    "mypy>=1.18.1",
+    "pyright>=1.1.400",
+    "ruff>=0.13.0",
+    "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
 ]
@@ -68,23 +68,67 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "N",   # pep8-naming
-    "SIM", # flake8-simplify
-    "TCH", # flake8-type-checking
-    "TID", # flake8-tidy-imports
-    "RUF", # Ruff-specific rules
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "TID",  # flake8-tidy-imports
+    "RUF",  # Ruff-specific rules
+    "S",    # flake8-bandit (security)
+    "BLE",  # flake8-blind-except
+    "T10",  # flake8-debugger
+    "T20",  # flake8-print
+    "A",    # flake8-builtins
+    "ERA",  # flake8-eradicate (commented code)
+    "PIE",  # flake8-pie
+    "RSE",  # flake8-raise
+    "ARG",  # flake8-unused-arguments
+    "RET",  # flake8-return
+    "PERF", # perflint
+    "PTH",  # flake8-use-pathlib
+    "ISC",  # flake8-implicit-str-concat
+    "FBT",  # flake8-boolean-trap
+    "C90",  # mccabe complexity
 ]
+extend-select = ["PLC0415"]
+
 ignore = [
-    "TC001",  # Move import into TYPE_CHECKING
+    "TC001",  # Move import into TYPE_CHECKING - too aggressive
     "TC003",  # Move standard lib import into TYPE_CHECKING
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S108", "S603", "S607", "T20", "SLF001", "ARG", "FBT", "PLC0415"]
+"scripts/*" = ["T20", "S108", "S603", "S607", "PLC0415"]
+"tools/*" = ["T20", "S603", "S607", "C901"]
+"typings/*" = ["A002"]
+"src/punt_vox/__main__.py" = ["T20", "PLC0415", "S603", "S607"]
+"src/punt_vox/server.py" = ["PLC0415"]
+"src/punt_vox/voxd.py" = ["PLC0415"]
+"src/punt_vox/applet.py" = ["PLC0415"]
+"src/punt_vox/client.py" = ["PLC0415"]
+"src/punt_vox/hooks.py" = ["T20", "PLC0415", "S603", "S607", "S311"]
+"src/punt_vox/watcher.py" = ["PLC0415"]
+"src/punt_vox/paths.py" = ["PLC0415"]
+"src/punt_vox/service.py" = ["S603", "S607", "PLC0415"]
+"src/punt_vox/playback.py" = ["S603", "S607"]
+"src/punt_vox/voices.py" = ["S311"]
+"src/punt_vox/providers/__init__.py" = ["PLC0415", "S603", "S607"]
+"src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
+"src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
+"src/punt_vox/providers/openai.py" = ["PLC0415"]
+"src/punt_vox/providers/polly.py" = ["PLC0415"]
+"src/punt_vox/providers/say.py" = ["S603", "S607"]
+"src/punt_vox/providers/espeak.py" = ["S603", "S607"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.isort]
 known-first-party = ["punt_vox"]
@@ -98,6 +142,7 @@ line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.13"
+mypy_path = "typings"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -110,18 +155,8 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-
-[[tool.mypy.overrides]]
-module = "pydub.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "elevenlabs.*"
-ignore_missing_imports = true
+strict_equality = true
+enable_error_code = ["ignore-without-code"]
 
 [[tool.mypy.overrides]]
 module = "punt_lux.*"
@@ -130,29 +165,45 @@ ignore_missing_imports = true
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
-reportMissingTypeStubs = "warning"
+reportMissingTypeStubs = "error"
+venvPath = "."
+venv = ".venv"
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportPrivateUsage = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q"
+addopts = "-ra -q -m 'not slow and not integration and not e2e'"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (requires provider API credentials)",
+    "slow: marks tests as slow",
+    "e2e: marks end-to-end tests requiring full stack",
 ]
 filterwarnings = [
+    # Upstream elevenlabs SDK bug: pydantic v1 compat on Python 3.14. Remove when elevenlabs ships a fix.
     "ignore:Core Pydantic V1 functionality isn't compatible with Python 3.14:UserWarning:elevenlabs\\.core\\.pydantic_utilities$",
 ]
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["tests/*"]
+omit = ["tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
-    "if TYPE_CHECKING:",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
     "raise NotImplementedError",
+    "if __name__ == \"__main__\":",
+    "if TYPE_CHECKING:",
 ]
 show_missing = true
 precision = 2

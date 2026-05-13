@@ -7,7 +7,6 @@ import re
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Any
 
 from punt_vox.types import (
     MergeStrategy,
@@ -37,10 +36,10 @@ TRAILING_SILENCE_MS = 150
 
 def _pad_audio_file(path: Path) -> None:
     """Append trailing silence to an MP3 file to prevent end-of-audio clipping."""
-    audio: Any = AudioSegment.from_mp3(str(path))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    tail: Any = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
-    padded: Any = audio + tail  # pyright: ignore[reportUnknownVariableType]
-    padded.export(str(path), format="mp3")  # pyright: ignore[reportUnknownMemberType]
+    audio = AudioSegment.from_mp3(str(path))
+    tail = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+    padded = audio + tail
+    padded.export(str(path), format="mp3")
 
 
 # Sentence-ending punctuation followed by a space.
@@ -110,8 +109,9 @@ def _split_at_words(text: str, max_chars: int) -> list[str]:
             if current:
                 chunks.append(current)
                 current = ""
-            for i in range(0, len(word), max_chars):
-                chunks.append(word[i : i + max_chars])
+            chunks.extend(
+                word[i : i + max_chars] for i in range(0, len(word), max_chars)
+            )
             continue
 
         candidate = f"{current} {word}" if current else word
@@ -348,21 +348,21 @@ def stitch_audio(segments: list[Path], output_path: Path, pause_ms: int = 500) -
     if not segments:
         raise ValueError("segments must not be empty")
 
-    silence: Any = AudioSegment.silent(duration=pause_ms)
-    combined: Any = None
+    silence = AudioSegment.silent(duration=pause_ms)
+    combined: AudioSegment | None = None
 
     for path in segments:
         if not path.exists():
             raise FileNotFoundError(f"Segment not found: {path}")
-        segment: Any = AudioSegment.from_mp3(str(path))  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        combined = segment if combined is None else combined + silence + segment  # pyright: ignore[reportUnknownVariableType]
+        segment = AudioSegment.from_mp3(str(path))
+        combined = segment if combined is None else combined + silence + segment
 
     if combined is None:
         raise ValueError("No audio segments to stitch")
 
-    tail: Any = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
-    combined = combined + tail  # pyright: ignore[reportUnknownVariableType]
+    tail = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+    combined = combined + tail
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    combined.export(str(output_path), format="mp3")  # pyright: ignore[reportUnknownMemberType]
+    combined.export(str(output_path), format="mp3")
     logger.info("Stitched %d segments → %s", len(segments), output_path)

@@ -1270,9 +1270,7 @@ class TestDoctorCommand:
                 return_value=tmp_path / "Music",
             ),
         ):
-            result = runner.invoke(app, ["doctor"])
-
-        return result
+            return runner.invoke(app, ["doctor"])
 
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)

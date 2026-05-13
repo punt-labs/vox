@@ -78,8 +78,8 @@ def _read_state() -> dict[str, str | None | bool]:
 
 
 # ---------------------------------------------------------------------------
-# VoxOn -- notify(mode="y")
-# Z spec: notify' = nOn; speak' = IF speak = sUnset THEN sVoice ELSE speak
+# VoxOn -- the notify tool called with mode "y"
+# Z spec: notify -> nOn; speak -> sVoice when unset, else unchanged
 # ---------------------------------------------------------------------------
 
 
@@ -143,8 +143,8 @@ class TestVoxOn:
 
 
 # ---------------------------------------------------------------------------
-# VoxOff -- notify(mode="n")
-# Z spec: notify' = nOff; speak' = speak; voice' = voice
+# VoxOff -- the notify tool called with mode "n"
+# Z spec: notify -> nOff; speak and voice unchanged
 # ---------------------------------------------------------------------------
 
 
@@ -193,8 +193,8 @@ class TestVoxOff:
 
 
 # ---------------------------------------------------------------------------
-# VoxCont -- notify(mode="c")
-# Z spec: notify' = nCont; speak' = IF speak = sUnset THEN sVoice ELSE speak
+# VoxCont -- the notify tool called with mode "c"
+# Z spec: notify -> nCont; speak -> sVoice when unset, else unchanged
 # ---------------------------------------------------------------------------
 
 
@@ -236,9 +236,9 @@ class TestVoxCont:
 
 
 # ---------------------------------------------------------------------------
-# Unmute -- speak(mode="y", voice=...)
-# Z spec: notify' = notify; speak' = sVoice;
-#         voice' = IF v? = empty THEN voice ELSE v?
+# Unmute -- the speak tool called with mode "y" and optional voice
+# Z spec: notify unchanged; speak -> sVoice;
+#         voice -> given voice when provided, else unchanged
 # ---------------------------------------------------------------------------
 
 
@@ -313,8 +313,8 @@ class TestUnmute:
 
 
 # ---------------------------------------------------------------------------
-# Mute -- speak(mode="n")
-# Z spec: notify' = notify; speak' = sChime; voice' = voice
+# Mute -- the speak tool called with mode "n"
+# Z spec: notify unchanged; speak -> sChime; voice unchanged
 # ---------------------------------------------------------------------------
 
 

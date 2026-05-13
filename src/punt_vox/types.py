@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+from punt_vox.types_audio import AudioRequest, AudioResult
+from punt_vox.types_errors import VoiceNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +36,6 @@ __all__ = [
 ]
 
 
-class VoiceNotFoundError(ValueError):
-    """Raised when a voice name cannot be resolved by a provider."""
-
-    def __init__(self, name: str, available: list[str]) -> None:
-        self.voice_name = name
-        self.available = available
-        super().__init__(name)
-
-
-def _metadata() -> dict[str, str]:
-    return {}
-
-
 class AudioProviderId(StrEnum):
     """Supported text-to-speech providers."""
 
@@ -55,34 +44,6 @@ class AudioProviderId(StrEnum):
     openai = "openai"
     say = "say"
     espeak = "espeak"
-
-
-@dataclass(frozen=True)
-class AudioRequest:
-    """Request to synthesize a single audio clip."""
-
-    text: str
-    voice: str | None = None
-    language: str | None = None
-    rate: int | None = None
-    stability: float | None = None
-    similarity: float | None = None
-    style: float | None = None
-    speaker_boost: bool | None = None
-    provider: AudioProviderId | None = None
-    metadata: dict[str, str] = field(default_factory=_metadata)
-
-
-@dataclass(frozen=True)
-class AudioResult:
-    """Result of an audio synthesis request."""
-
-    path: Path
-    text: str
-    provider: AudioProviderId
-    voice: str | None = None
-    language: str | None = None
-    metadata: dict[str, str] = field(default_factory=_metadata)
 
 
 @runtime_checkable
@@ -136,27 +97,7 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
 }
 
 
-def validate_language(code: str) -> str:
-    """Validate and normalize an ISO 639-1 language code.
-
-    Checks format only (2 lowercase ASCII letters). Does not check
-    whether the code is in SUPPORTED_LANGUAGES — providers decide
-    what they support.
-
-    Returns:
-        The lowercase code.
-
-    Raises:
-        ValueError: If the code is not 2 ASCII letters.
-    """
-    normalized = code.strip().lower()
-    if len(normalized) != 2 or not normalized.isascii() or not normalized.isalpha():
-        msg = (
-            f"Invalid language code '{code}'. "
-            "Expected ISO 639-1 format (2 letters, e.g. 'de', 'ko')."
-        )
-        raise ValueError(msg)
-    return normalized
+validate_language = AudioRequest.validate_language
 
 
 @dataclass(frozen=True)
@@ -180,20 +121,7 @@ SynthesisRequest = AudioRequest
 SynthesisResult = AudioResult
 
 
-def result_to_dict(result: AudioResult) -> dict[str, str]:
-    """Serialize AudioResult to a dict suitable for MCP tool responses."""
-    d: dict[str, str] = {
-        "path": str(result.path),
-        "text": result.text,
-        "provider": result.provider.value,
-    }
-    if result.voice is not None:
-        d["voice"] = result.voice
-    if result.language is not None:
-        d["language"] = result.language
-    if result.metadata:
-        d.update(result.metadata)
-    return d
+result_to_dict = AudioResult.to_dict
 
 
 @runtime_checkable
@@ -342,20 +270,4 @@ class MusicProvider(Protocol):
         ...
 
 
-def generate_filename(text: str, prefix: str = "") -> str:
-    """Generate a deterministic MP3 filename from text content.
-
-    Uses an MD5 hash of the text to produce a stable, filesystem-safe
-    filename. An optional prefix is prepended for disambiguation.
-
-    Args:
-        text: The source text.
-        prefix: Optional prefix (e.g. "pair_").
-
-    Returns:
-        A filename like "a1b2c3d4.mp3" or "pair_a1b2c3d4.mp3".
-    """
-    digest = hashlib.md5(text.encode()).hexdigest()[:12]
-    if prefix:
-        return f"{prefix}{digest}.mp3"
-    return f"{digest}.mp3"
+generate_filename = AudioRequest.generate_filename

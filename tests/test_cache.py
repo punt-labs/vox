@@ -76,12 +76,19 @@ class TestCacheKey:
         # produced. Per-call api_key scopes do not reach cache.py at
         # all — the bypass happens in voxd._synthesize_to_file.
         text, voice, provider = "hello", "matilda", "elevenlabs"
-        legacy_digest = hashlib.md5(f"{text}\0{voice}\0{provider}".encode()).hexdigest()
+        payload = f"{text}\0{voice}\0{provider}".encode()
+        legacy_digest = hashlib.md5(
+            payload,
+            usedforsecurity=False,
+        ).hexdigest()
         assert cache_key(text, voice, provider) == f"{legacy_digest}.mp3"
         # And for the None-voice / None-provider case the historical
         # format substituted empty strings — same invariant applies.
         text2 = "greetings"
-        legacy_digest_2 = hashlib.md5(f"{text2}\0\0".encode()).hexdigest()
+        legacy_digest_2 = hashlib.md5(
+            f"{text2}\0\0".encode(),
+            usedforsecurity=False,
+        ).hexdigest()
         assert cache_key(text2, None, None) == f"{legacy_digest_2}.mp3"
 
 

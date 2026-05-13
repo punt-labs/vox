@@ -1,4 +1,4 @@
-.PHONY: help test lint type docs check format build clean depot prfaq clean-tex zspec zspec-test
+.PHONY: help test lint type docs check check-oo update-oo report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -7,8 +7,8 @@ test: ## Run tests
 	uv run pytest
 
 lint: ## Lint and format check (Python + shell)
-	uv run ruff check src/ tests/
-	uv run ruff format --check src/ tests/
+	uv run ruff check .
+	uv run ruff format --check .
 	shellcheck -x hooks/*.sh scripts/*.sh install.sh
 	bash scripts/check-skill-permissions.sh
 
@@ -19,16 +19,35 @@ type: ## Type check with mypy and pyright
 docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
-check: lint type docs test ## Run all quality gates
+check: lint type docs test check-oo ## Run all quality gates
+
+check-oo: ## OO ratchet — must improve over baseline, never regress
+	uv run python tools/oo_score.py src/punt_vox/ --check
+
+update-oo: ## Update OO baseline after improvements (stage .oo-baseline.json and .oo-audit.jsonl)
+	uv run python tools/oo_score.py src/punt_vox/ --update
+
+report: ## Full diagnostics (OO score + all checks, no fail-fast)
+	-uv run python tools/oo_score.py src/punt_vox/ --threshold
+	-uv run mypy src/ tests/
+	-uv run ruff format --check src/ tests/
+	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,PLC1901,S101 src/ tests/
+	-uv run pyright src/ tests/
+	-shellcheck -x hooks/*.sh scripts/*.sh install.sh
+	-uv run pytest
+	@echo "Report complete."
 
 format: ## Auto-format code
-	uv run ruff format src/ tests/
-	uv run ruff check --fix src/ tests/
+	uv run ruff format .
+	uv run ruff check --fix .
 
 build: ## Build wheel and sdist
 	rm -rf dist/
 	uv build
 	uvx twine check dist/*
+
+install: build ## Build and install locally
+	uv tool install --force dist/*.whl
 
 clean: ## Remove build artifacts
 	rm -rf dist/ .tmp/
@@ -39,6 +58,12 @@ depot: build ## Build and copy wheel to local depot
 	@mkdir -p $(DEPOT)
 	@cp dist/*.whl $(DEPOT)/
 	@echo "depot: $$(ls dist/*.whl | xargs -n1 basename) -> $(DEPOT)/"
+
+metrics: ## Run ABC complexity metrics on src/
+	uv run python tools/run_metrics.py
+
+coverage: ## Run tests with coverage report
+	uv run python tools/run_coverage.py
 
 # LaTeX intermediate files to remove after compilation
 LATEX_ARTIFACTS = *.aux *.log *.out *.bbl *.bcf *.blg *.run.xml *.fls \

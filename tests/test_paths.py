@@ -9,7 +9,6 @@ per-OS splits, no FHS system paths.
 from __future__ import annotations
 
 import importlib.metadata
-import os
 import re
 import stat
 from pathlib import Path
@@ -93,7 +92,7 @@ def test_ensure_user_dirs_sets_all_subdirs_mode_0700(tmp_path: Path) -> None:
     ensure_user_dirs(state)
     for name in ("", "logs", "run", "cache"):
         target = state / name if name else state
-        mode = stat.S_IMODE(os.stat(target).st_mode)
+        mode = stat.S_IMODE(target.stat().st_mode)
         assert mode == 0o700, f"{target} mode is {oct(mode)}, expected 0o700"
 
 
@@ -105,7 +104,7 @@ def test_ensure_user_dirs_is_idempotent(tmp_path: Path) -> None:
     assert (state / "run").is_dir()
     for name in ("", "logs", "run", "cache"):
         target = state / name if name else state
-        mode = stat.S_IMODE(os.stat(target).st_mode)
+        mode = stat.S_IMODE(target.stat().st_mode)
         assert mode == 0o700
 
 

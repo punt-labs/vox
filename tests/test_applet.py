@@ -125,8 +125,8 @@ class TestBuildVoxElements:
         cfg = _default_config(notify="y", speak="y")
         elements = build_vox_elements(cfg, "polly", ROSTER)
         tooltip = elements[0].tooltip
-        # Active: SessionStart, Post-Bash (always), Stop, Notification,
-        # SessionEnd (notify)
+        # Active hooks: SessionStart, Post-Bash, Stop, Notification,
+        # and SessionEnd when notify is enabled
         assert "SessionStart" in tooltip
         assert "Stop" in tooltip
         assert "Post-Bash" in tooltip

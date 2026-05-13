@@ -59,7 +59,7 @@ def format_voice_hint(names: list[str], limit: int = 10) -> str:
 PROVIDER_REGISTRY: dict[str, Callable[..., TTSProvider]] = {}
 
 
-def _register_polly(**kwargs: str | None) -> TTSProvider:
+def _register_polly(**_kwargs: str | None) -> TTSProvider:
     from punt_vox.providers.polly import PollyProvider
 
     return PollyProvider()
@@ -79,13 +79,13 @@ def _register_elevenlabs(**kwargs: str | None) -> TTSProvider:
     return ElevenLabsProvider(model=model)
 
 
-def _register_say(**kwargs: str | None) -> TTSProvider:
+def _register_say(**_kwargs: str | None) -> TTSProvider:
     from punt_vox.providers.say import SayProvider
 
     return SayProvider()
 
 
-def _register_espeak(**kwargs: str | None) -> TTSProvider:
+def _register_espeak(**_kwargs: str | None) -> TTSProvider:
     from punt_vox.providers.espeak import EspeakProvider
 
     return EspeakProvider()

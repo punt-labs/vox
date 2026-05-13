@@ -25,7 +25,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,7 +191,7 @@ def _log_voxd_environment() -> None:
         os.getpid(),
         uid,
         gid,
-        os.getcwd(),
+        Path.cwd(),
         sys.executable,
         __file__,
         env,
@@ -753,7 +753,7 @@ class ChimeDedup:
 
     def should_play(self, signal: str) -> bool:
         """Return True if this chime should play (not a recent duplicate)."""
-        key = hashlib.md5(f"chime:{signal}".encode()).hexdigest()
+        key = hashlib.md5(f"chime:{signal}".encode(), usedforsecurity=False).hexdigest()
         now = time.monotonic()
         last = self._seen.get(key)
         if last is not None and (now - last) < self._window:
@@ -870,7 +870,7 @@ class OnceDedup:
             )
             ttl_seconds = _ONCE_DEDUP_MAX_TTL_SECONDS
 
-        key = hashlib.md5(text.encode()).hexdigest()
+        key = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
         now_mono = time.monotonic()
         now_wall = time.time()
 
@@ -913,7 +913,7 @@ class OnceDedup:
         against a playback that never happened. Idempotent — safe
         to call when no entry exists.
         """
-        key = hashlib.md5(text.encode()).hexdigest()
+        key = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
         self._seen.pop(key, None)
 
 
@@ -1041,6 +1041,7 @@ def _build_audio_request(
     stability: float | None,
     similarity: float | None,
     style: float | None,
+    *,
     speaker_boost: bool | None,
     provider_id: str,
 ) -> AudioRequest:
@@ -1151,6 +1152,7 @@ async def _synthesize_to_file(
     stability: float | None,
     similarity: float | None,
     style: float | None,
+    *,
     speaker_boost: bool | None,
     api_key: str | None,
     request_id: str = "",
@@ -1212,8 +1214,8 @@ async def _synthesize_to_file(
                 stability,
                 similarity,
                 style,
-                speaker_boost,
-                provider_name,
+                speaker_boost=speaker_boost,
+                provider_id=provider_name,
             )
             client = TTSClient(provider)
 
@@ -1357,8 +1359,8 @@ async def _try_direct_play(
         stability,
         similarity,
         style,
-        speaker_boost,
-        provider_name,
+        speaker_boost=speaker_boost,
+        provider_id=provider_name,
     )
 
     def _factory() -> TTSProvider:
@@ -1555,8 +1557,8 @@ async def _handle_synthesize(
             stability,
             similarity,
             style,
-            speaker_boost,
-            api_key,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
             request_id=request_id,
         )
     except Exception as exc:
@@ -1583,7 +1585,7 @@ async def _handle_synthesize(
 async def _handle_record(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'record' message: TTS without playback, return audio bytes."""
     request_id = str(msg.get("id", ""))
@@ -1627,8 +1629,8 @@ async def _handle_record(
             stability,
             similarity,
             style,
-            speaker_boost,
-            api_key,
+            speaker_boost=speaker_boost,
+            api_key=api_key,
             request_id=request_id,
         )
     except Exception as exc:
@@ -1693,7 +1695,7 @@ async def _handle_chime(
 async def _handle_voices(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'voices' message: list available voices."""
     provider_name = _parse_optional_str(msg, "provider") or auto_detect_provider()
@@ -1763,7 +1765,7 @@ def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
 
 
 async def _handle_health(
-    msg: dict[str, object],
+    _msg: dict[str, object],
     websocket: WebSocket,
     ctx: DaemonContext,
 ) -> None:
@@ -1779,6 +1781,176 @@ async def _handle_health(
 
 _MUSIC_DURATION_MS = 120_000
 _MUSIC_MAX_RETRIES = 3
+
+
+@dataclass(frozen=True)
+class _PlaybackWaitResult:
+    """Outcome of one iteration of the inner playback-wait loop.
+
+    Returned by :func:`_playback_wait_loop` to tell :func:`_music_loop`
+    what state transitions occurred while waiting on a subprocess.
+    """
+
+    current_track: Path | None
+    gen_task: asyncio.Task[Path] | None
+    retry_count: int
+    handoff_occurred: bool
+
+
+async def _playback_wait_loop(
+    ctx: DaemonContext,
+    proc: asyncio.subprocess.Process,
+    current_track: Path,
+    gen_task: asyncio.Task[Path] | None,
+    retry_count: int,
+) -> _PlaybackWaitResult:
+    """Wait on a music subprocess, handling events until it should stop.
+
+    Races the subprocess against ``ctx.music_changed`` and an optional
+    in-flight generation task.  Handles music-off, generation completion
+    (success and failure with retry), vibe changes, replay, and natural
+    subprocess termination.
+
+    Returns a :class:`_PlaybackWaitResult` describing the new state.
+    The caller uses this to decide whether to respawn the subprocess,
+    break out of the playback loop, or continue with a new track.
+    """
+
+    while True:
+        wait_task = asyncio.create_task(proc.wait())
+        changed_task: asyncio.Task[bool] = asyncio.create_task(
+            ctx.music_changed.wait(),
+        )
+        waitables: set[asyncio.Future[object]] = {
+            cast("asyncio.Future[object]", wait_task),
+            cast("asyncio.Future[object]", changed_task),
+        }
+        if gen_task is not None:
+            waitables.add(cast("asyncio.Future[object]", gen_task))
+
+        _done, pending = await asyncio.wait(
+            waitables,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            # Don't cancel the generation task — it may
+            # still be running and we want it to finish.
+            if t is gen_task:
+                continue
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        # --- /music off: kill everything immediately ----------
+        if ctx.music_mode != "on":
+            if gen_task is not None and not gen_task.done():
+                gen_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await gen_task
+                gen_task = None
+            await _kill_music_proc(ctx)
+            return _PlaybackWaitResult(
+                current_track=None,
+                gen_task=None,
+                retry_count=retry_count,
+                handoff_occurred=False,
+            )
+
+        # --- Generation task completed: handoff ---------------
+        if gen_task is not None and gen_task.done():
+            exc: BaseException | None = gen_task.exception()
+            if exc is not None:
+                # Generation failed — handle inline so the old track
+                # keeps looping.  Only disable music when max retries
+                # are exceeded.
+                gen_task = None
+                retry_count += 1
+                logger.error(
+                    "Generation failed during playback "
+                    "(attempt %d/%d), old track continues",
+                    retry_count,
+                    _MUSIC_MAX_RETRIES,
+                    exc_info=exc,
+                )
+                if retry_count >= _MUSIC_MAX_RETRIES:
+                    logger.error(
+                        "Music generation failed %d times, disabling music",
+                        _MUSIC_MAX_RETRIES,
+                    )
+                    ctx.music_mode = "off"
+                    retry_count = 0
+                    await _kill_music_proc(ctx)
+                    ctx.music_state = "idle"
+                    return _PlaybackWaitResult(
+                        current_track=None,
+                        gen_task=None,
+                        retry_count=retry_count,
+                        handoff_occurred=False,
+                    )
+                # Under max retries: start a new gen_task after backoff.
+                # The old track keeps looping.
+                await _music_backoff_sleep(2 ** (retry_count - 1), ctx)
+                gen_task = asyncio.create_task(
+                    _generate_music_track(ctx),
+                )
+                ctx.music_state = "generating"
+                continue
+            new_track: Path = gen_task.result()
+            gen_task = None
+            ctx.music_track = new_track
+            retry_count = 0
+            await _kill_music_proc(ctx)
+            # Don't clear music_changed here — a vibe change may have
+            # arrived during generation.  The next iteration's is_set()
+            # check will catch it.
+            return _PlaybackWaitResult(
+                current_track=new_track,
+                gen_task=None,
+                retry_count=retry_count,
+                handoff_occurred=True,
+            )
+
+        # --- Vibe changed: start/restart generation -----------
+        if ctx.music_changed.is_set():
+            ctx.music_changed.clear()
+            if gen_task is not None and not gen_task.done():
+                gen_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await gen_task
+                gen_task = None
+
+            # Replay: handler pre-set ctx.music_track.
+            if ctx.music_replay:
+                ctx.music_replay = False
+                if ctx.music_track is None:
+                    msg = "music_replay set but music_track is None"
+                    raise RuntimeError(msg)
+                replay_track: Path = ctx.music_track
+                await _kill_music_proc(ctx)
+                return _PlaybackWaitResult(
+                    current_track=replay_track,
+                    gen_task=None,
+                    retry_count=0,
+                    handoff_occurred=False,
+                )
+
+            ctx.music_state = "generating"
+            gen_task = asyncio.create_task(
+                _generate_music_track(ctx),
+            )
+            # Don't kill the proc — let it keep looping.
+            # Re-enter this wait loop so we race the same proc
+            # against the new gen_task.
+            continue
+
+        # --- Subprocess ended naturally -----------------------
+        # Return the same current_track so the caller respawns it.
+        return _PlaybackWaitResult(
+            current_track=current_track,
+            gen_task=gen_task,
+            retry_count=retry_count,
+            handoff_occurred=False,
+        )
 
 
 async def _music_backoff_sleep(seconds: float, ctx: DaemonContext) -> None:
@@ -1869,7 +2041,9 @@ async def _generate_music_track(ctx: DaemonContext) -> Path:
     return await provider.generate_track(prompt, _MUSIC_DURATION_MS, output_path)
 
 
-async def _music_loop(ctx: DaemonContext) -> None:
+async def _music_loop(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+    ctx: DaemonContext,
+) -> None:
     """Background task: generate and loop music tracks.
 
     Runs for the lifetime of the daemon.  When ``music_mode`` is "on",
@@ -1912,7 +2086,9 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 if ctx.music_replay:
                     ctx.music_replay = False
                     ctx.music_changed.clear()
-                    assert ctx.music_track is not None
+                    if ctx.music_track is None:
+                        msg = "music_replay set but music_track is None"
+                        raise RuntimeError(msg)
                     current_track = ctx.music_track
                     retry_count = 0
                 else:
@@ -1932,7 +2108,9 @@ async def _music_loop(ctx: DaemonContext) -> None:
                         continue
 
             # --- Playback loop: loop current_track, generate in parallel --
-            assert current_track is not None  # guaranteed by initial generation above
+            # current_track is guaranteed non-None by the initial generation
+            # block above — the only path that sets it to None also continues
+            # back to the top of the while loop.
             gen_task = None
             while ctx.music_mode == "on":
                 ctx.music_state = "playing" if gen_task is None else "generating"
@@ -1946,145 +2124,27 @@ async def _music_loop(ctx: DaemonContext) -> None:
                 )
                 ctx.music_proc = proc
 
-                # Wait on this subprocess, re-entering the wait when
-                # only a vibe change fired (the proc is still alive).
-                proc_done = False
-                handoff_occurred = False
-                while not proc_done:
-                    wait_task = asyncio.create_task(proc.wait())
-                    changed_task = asyncio.create_task(
-                        ctx.music_changed.wait(),
-                    )
-                    waitables: set[asyncio.Future[object]] = {
-                        cast("asyncio.Future[object]", wait_task),
-                        cast("asyncio.Future[object]", changed_task),
-                    }
-                    if gen_task is not None:
-                        waitables.add(cast("asyncio.Future[object]", gen_task))
+                result = await _playback_wait_loop(
+                    ctx,
+                    proc,
+                    current_track,
+                    gen_task,
+                    retry_count,
+                )
+                gen_task = result.gen_task
+                retry_count = result.retry_count
 
-                    _done, pending = await asyncio.wait(
-                        waitables,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for t in pending:
-                        # Don't cancel the generation task — it may
-                        # still be running and we want it to finish.
-                        if t is gen_task:
-                            continue
-                        t.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await t
-
-                    # --- /music off: kill everything immediately ----------
-                    if ctx.music_mode != "on":
-                        if gen_task is not None and not gen_task.done():
-                            gen_task.cancel()
-                            with contextlib.suppress(
-                                asyncio.CancelledError,
-                            ):
-                                await gen_task
-                            gen_task = None
-                        await _kill_music_proc(ctx)
-                        current_track = None
-                        proc_done = True
-                        break
-
-                    # --- Generation task completed: handoff ---------------
-                    if gen_task is not None and gen_task.done():
-                        exc = gen_task.exception()
-                        if exc is not None:
-                            # Generation failed — handle inline so the
-                            # old track keeps looping.  Only propagate
-                            # to the outer handler (which kills the
-                            # music proc) when max retries are exceeded.
-                            gen_task = None
-                            retry_count += 1
-                            logger.error(
-                                "Generation failed during playback "
-                                "(attempt %d/%d), old track continues",
-                                retry_count,
-                                _MUSIC_MAX_RETRIES,
-                                exc_info=exc,
-                            )
-                            if retry_count >= _MUSIC_MAX_RETRIES:
-                                logger.error(
-                                    "Music generation failed %d times, disabling music",
-                                    _MUSIC_MAX_RETRIES,
-                                )
-                                ctx.music_mode = "off"
-                                retry_count = 0
-                                await _kill_music_proc(ctx)
-                                current_track = None
-                                ctx.music_state = "idle"
-                                proc_done = True
-                                break
-                            # Under max retries: start a new gen_task
-                            # after backoff.  The old track keeps looping.
-                            await _music_backoff_sleep(
-                                2 ** (retry_count - 1),
-                                ctx,
-                            )
-                            gen_task = asyncio.create_task(
-                                _generate_music_track(ctx),
-                            )
-                            ctx.music_state = "generating"
-                            continue
-                        new_track = gen_task.result()
-                        gen_task = None
-                        ctx.music_track = new_track
-                        retry_count = 0
-                        await _kill_music_proc(ctx)
-                        current_track = new_track
-                        # Don't clear music_changed here — a vibe change
-                        # may have arrived during generation.  The next
-                        # iteration's is_set() check will catch it.
-                        handoff_occurred = True
-                        proc_done = True
-                        break
-
-                    # --- Vibe changed: start/restart generation -----------
-                    if ctx.music_changed.is_set():
-                        ctx.music_changed.clear()
-                        if gen_task is not None and not gen_task.done():
-                            gen_task.cancel()
-                            with contextlib.suppress(
-                                asyncio.CancelledError,
-                            ):
-                                await gen_task
-                            gen_task = None
-
-                        # Replay: handler pre-set ctx.music_track.
-                        if ctx.music_replay:
-                            ctx.music_replay = False
-                            assert ctx.music_track is not None
-                            new_track = ctx.music_track
-                            await _kill_music_proc(ctx)
-                            current_track = new_track
-                            retry_count = 0
-                            proc_done = True
-                            break
-
-                        ctx.music_state = "generating"
-                        gen_task = asyncio.create_task(
-                            _generate_music_track(ctx),
-                        )
-                        # Don't kill the proc — let it keep looping.
-                        # Re-enter this inner wait loop so we race
-                        # the same proc against the new gen_task.
-                        continue
-
-                    # --- Subprocess ended naturally -----------------------
-                    proc_done = True
-
-                # If music was turned off, the outer while condition
-                # handles exiting.  Otherwise fall through to respawn
-                # the subprocess (same or new track).
-                if current_track is None:
+                # Music was turned off or max retries exceeded.
+                if result.current_track is None:
+                    current_track = None
                     break
 
-                # After handoff, the old proc was killed intentionally —
+                # Handoff, replay, or natural subprocess end.
+                current_track = result.current_track
+
+                # After handoff, the old proc was killed intentionally --
                 # non-zero rc is expected, not worth warning about.
-                if not handoff_occurred:
+                if not result.handoff_occurred:
                     rc = proc.returncode
                     if rc is not None and rc != 0:
                         logger.warning(
@@ -2321,7 +2381,7 @@ async def _handle_music_play(
 async def _handle_music_list(
     msg: dict[str, object],
     websocket: WebSocket,
-    ctx: DaemonContext,
+    _ctx: DaemonContext,
 ) -> None:
     """Handle a 'music_list' message: return saved tracks with metadata."""
     request_id = str(msg.get("id", ""))
@@ -2609,7 +2669,7 @@ def main(
     logger.info("Starting voxd on %s:%d", host, port)
 
     @asynccontextmanager
-    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+    async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # Start playback consumer
         consumer_task = asyncio.create_task(_playback_consumer(ctx))
         logger.info("Playback consumer started")

@@ -14,7 +14,7 @@ from typing import Any
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.normalize import strip_vibe_tags
-from punt_vox.output import resolve_output_path
+from punt_vox.output import OutputResolver
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -198,7 +198,7 @@ class ElevenLabsProvider:
         return effective in cls._EXPRESSIVE_MODELS
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
-        output_path = resolve_output_path(request)
+        output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
     def generate_audios(
@@ -252,7 +252,7 @@ class ElevenLabsProvider:
             metadata=request.metadata,
         )
 
-    def resolve_voice(self, name: str, language: str | None = None) -> str:
+    def resolve_voice(self, name: str, language: str | None = None) -> str:  # noqa: ARG002 -- protocol requires language param
         """Validate and resolve a voice name to its canonical form.
 
         Language is accepted but not validated — ElevenLabs voices are
@@ -310,14 +310,14 @@ class ElevenLabsProvider:
 
         return checks
 
-    def get_default_voice(self, language: str) -> str:
+    def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default ElevenLabs voice for a language.
 
         ElevenLabs voices are multilingual; always returns 'matilda'.
         """
         return self.default_voice
 
-    def list_voices(self, language: str | None = None) -> list[str]:
+    def list_voices(self, language: str | None = None) -> list[str]:  # noqa: ARG002 -- protocol requires language param
         """List available voices.
 
         ElevenLabs voices are multilingual; language filter is accepted
@@ -327,7 +327,7 @@ class ElevenLabsProvider:
         _load_voices_from_api(self._client)
         return sorted(k for k in VOICES if " - " not in k)
 
-    def infer_language_from_voice(self, voice: str) -> str | None:
+    def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
 
         ElevenLabs voices are multilingual; always returns None.
@@ -407,7 +407,7 @@ class ElevenLabsProvider:
             voice_id,
             len(text),
         )
-        with open(output_path, "wb") as f:
+        with output_path.open("wb") as f:
             for chunk in response:  # pyright: ignore[reportUnknownVariableType]
                 f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
 

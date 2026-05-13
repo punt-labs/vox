@@ -83,7 +83,7 @@ def _emit(payload: object, text: str) -> None:
         typer.echo(text)
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(*, verbose: bool) -> None:
     from punt_vox.logging_config import configure_logging
 
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
@@ -194,6 +194,7 @@ def _resolve_api_key(
     ctx: typer.Context,
     api_key: str | None,
     api_key_file: Path | None,
+    *,
     api_key_stdin: bool,
 ) -> str | None:
     """Resolve the per-call API key from the first configured source.
@@ -395,9 +396,9 @@ TextArg = Annotated[
 
 @app.callback()
 def _callback(  # pyright: ignore[reportUnusedFunction]
-    json_output: JsonOutput = False,
-    verbose: Verbose = False,
-    quiet: Quiet = False,
+    json_output: JsonOutput = False,  # noqa: FBT002 -- typer CLI requires bool default
+    verbose: Verbose = False,  # noqa: FBT002 -- typer CLI requires bool default
+    quiet: Quiet = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Text-to-speech CLI."""
     if verbose and quiet:
@@ -405,7 +406,7 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     global _json_output, _quiet_output
     _json_output = json_output
     _quiet_output = quiet
-    _configure_logging(verbose)
+    _configure_logging(verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +427,11 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     stability: StabilityOpt = None,
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
+    speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
     once: OnceOpt = None,
     api_key: ApiKeyOpt = None,
     api_key_file: ApiKeyFileOpt = None,
-    api_key_stdin: ApiKeyStdinFlag = False,
+    api_key_stdin: ApiKeyStdinFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Synthesize and play audio via voxd."""
     _validate_voice_settings(stability, similarity, style)
@@ -465,7 +466,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
     # ``_resolve_api_key`` for the full rationale.
-    resolved_api_key = _resolve_api_key(ctx, api_key, api_key_file, api_key_stdin)
+    resolved_api_key = _resolve_api_key(
+        ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
+    )
 
     segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
@@ -522,7 +525,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
     stability: StabilityOpt = None,
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,
+    speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Synthesize and save audio to file via voxd."""
     from punt_vox.types import generate_filename
@@ -790,7 +793,7 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 # doctor
 # ---------------------------------------------------------------------------
 
-_PASS = "\u2713"
+_OK = "\u2713"
 _FAIL = "\u2717"
 _OPTIONAL = "\u25cb"
 _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
@@ -799,7 +802,7 @@ _WARN = "\u26a0"  # ⚠ — non-fatal diagnostic, exit code unchanged
 # distinguish warnings from hard failures.  The existing ``passed`` bool
 # is kept for back-compat; ``status_kind`` is the richer replacement.
 _STATUS_KIND: dict[str, str] = {
-    _PASS: "pass",
+    _OK: "pass",
     _FAIL: "fail",
     _OPTIONAL: "skip",
     _WARN: "warn",
@@ -934,7 +937,7 @@ def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor() -> None:  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     """Check system health for vox."""
     passed = 0
     failed = 0
@@ -951,10 +954,10 @@ def doctor() -> None:
                 "status_kind": _STATUS_KIND.get(symbol, "fail"),
                 "message": message,
                 "required": required,
-                "passed": symbol == _PASS,
+                "passed": symbol == _OK,
             }
         )
-        if symbol == _PASS:
+        if symbol == _OK:
             passed += 1
         elif symbol == _FAIL and required:
             failed += 1
@@ -964,7 +967,7 @@ def doctor() -> None:
     # Python version
     v = sys.version_info
     if v >= (3, 13):
-        _check(_PASS, f"Python {v.major}.{v.minor}.{v.micro}")
+        _check(_OK, f"Python {v.major}.{v.minor}.{v.micro}")
     else:
         _check(
             _FAIL,
@@ -975,7 +978,7 @@ def doctor() -> None:
     # ffmpeg
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
-        _check(_PASS, f"ffmpeg: {ffmpeg}")
+        _check(_OK, f"ffmpeg: {ffmpeg}")
     else:
         hint = {
             "Darwin": "brew install ffmpeg",
@@ -991,7 +994,7 @@ def doctor() -> None:
         espeak = shutil.which("espeak-ng") or shutil.which("espeak")
         if espeak:
             espeak_name = Path(espeak).name
-            _check(_PASS, f"{espeak_name}: {espeak} (offline fallback)")
+            _check(_OK, f"{espeak_name}: {espeak} (offline fallback)")
         else:
             _check(
                 _FAIL,
@@ -1021,7 +1024,7 @@ def doctor() -> None:
         else:
             version_note = f", version {running_version}" if running_version else ""
             _check(
-                _PASS,
+                _OK,
                 f"Daemon: running on port {port}"
                 f" (provider: {provider_name}{version_note})",
             )
@@ -1044,7 +1047,7 @@ def doctor() -> None:
             display = "***" if env_name == "VOXD_TOKEN" else env_val
             overrides.append(f"{env_name}={display}")
     if overrides:
-        _check(_PASS, f"Remote config: {', '.join(overrides)}")
+        _check(_OK, f"Remote config: {', '.join(overrides)}")
 
     # Legacy ~/vox-output/ directory (vox-4jk migration)
     legacy_output = Path.home() / "vox-output"
@@ -1143,15 +1146,15 @@ def doctor() -> None:
             )
         else:
             _check(
-                _PASS,
+                _OK,
                 f"Legacy user unit: {legacy_unit} references current"
                 f" 'vox {referenced}' subcommand",
             )
 
-    # uvx (optional)
+    # Check for uvx — optional dependency for plugin management
     uvx = shutil.which("uvx")
     if uvx:
-        _check(_PASS, f"uvx: {uvx}", required=False)
+        _check(_OK, f"uvx: {uvx}", required=False)
     else:
         _check(
             _OPTIONAL,
@@ -1162,14 +1165,14 @@ def doctor() -> None:
     # Claude Desktop config (optional)
     config_path = _claude_desktop_config_path()
     if config_path.exists():
-        _check(_PASS, f"Claude Desktop config: {config_path}", required=False)
+        _check(_OK, f"Claude Desktop config: {config_path}", required=False)
 
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             servers = data.get("mcpServers", {})
             if "tts" in servers:
                 _check(
-                    _PASS,
+                    _OK,
                     "Claude Desktop MCP: registered",
                     required=False,
                 )
@@ -1201,7 +1204,7 @@ def doctor() -> None:
             test_file = out_dir / ".doctor_test"
             test_file.write_text("ok")
             test_file.unlink()
-            _check(_PASS, f"Output directory: {out_dir}")
+            _check(_OK, f"Output directory: {out_dir}")
         except OSError as e:
             _check(
                 _FAIL,
@@ -1239,8 +1242,8 @@ def doctor() -> None:
 
 
 @app.command("migrate-audio")
-def migrate_audio_cmd(
-    execute: Annotated[
+def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+    execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
         bool, typer.Option("--execute", help="Actually move files.")
     ] = False,
     source: Annotated[
@@ -1385,15 +1388,15 @@ def install() -> None:
     typer.echo("  \u2713 plugin installed")
 
     # Step 2: daemon service (best-effort — not available in CI/containers)
-    # Catch BaseException because service.detect_platform() raises
-    # SystemExit on unsupported platforms (not a subclass of Exception).
+    # SystemExit: service.detect_platform() raises on unsupported platforms.
+    # OSError/CalledProcessError: subprocess and filesystem failures during install.
     typer.echo("[2/2] Registering vox daemon...")
     try:
         from punt_vox.service import install as svc_install
 
         msg = svc_install()
         typer.echo(f"  \u2713 {msg}")
-    except (Exception, SystemExit) as exc:
+    except (SystemExit, OSError, subprocess.CalledProcessError) as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 
@@ -1963,8 +1966,11 @@ def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
     try:
         url = f"http://127.0.0.1:{port}/health"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        if not url.startswith("http://"):  # S310: validate scheme before urlopen
+            msg = f"unexpected URL scheme: {url}"
+            raise ValueError(msg)
+        req = urllib.request.Request(url, method="GET")  # noqa: S310 -- scheme validated above
+        with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310 -- scheme validated above
             data = json.loads(resp.read())
         uptime = data.get("uptime_seconds", "?")
         sessions = data.get("active_sessions", "?")

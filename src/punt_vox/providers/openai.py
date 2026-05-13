@@ -13,7 +13,7 @@ import openai
 
 from punt_vox.core import split_text
 from punt_vox.normalize import strip_vibe_tags
-from punt_vox.output import resolve_output_path
+from punt_vox.output import OutputResolver
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -72,7 +72,7 @@ class OpenAIProvider:
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
-        output_path = resolve_output_path(request)
+        output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
     def generate_audios(
@@ -109,7 +109,7 @@ class OpenAIProvider:
             metadata=request.metadata,
         )
 
-    def resolve_voice(self, name: str, language: str | None = None) -> str:
+    def resolve_voice(self, name: str, language: str | None = None) -> str:  # noqa: ARG002 -- protocol requires language param
         """Validate and resolve a voice name to its canonical form.
 
         Language is accepted but not validated — OpenAI voices are multilingual.
@@ -166,14 +166,14 @@ class OpenAIProvider:
 
         return checks
 
-    def get_default_voice(self, language: str) -> str:
+    def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default OpenAI voice for a language.
 
         OpenAI voices are multilingual; always returns 'nova'.
         """
         return self.default_voice
 
-    def list_voices(self, language: str | None = None) -> list[str]:
+    def list_voices(self, language: str | None = None) -> list[str]:  # noqa: ARG002 -- protocol requires language param
         """List available voices.
 
         OpenAI voices are multilingual; language filter is accepted but
@@ -181,7 +181,7 @@ class OpenAIProvider:
         """
         return sorted(VOICES)
 
-    def infer_language_from_voice(self, voice: str) -> str | None:
+    def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
 
         OpenAI voices are multilingual; always returns None.

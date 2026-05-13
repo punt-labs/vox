@@ -55,7 +55,7 @@ class SynthesizeResult:
 
 
 # ---------------------------------------------------------------------------
-# Timeouts (seconds)
+# Timeouts — values in seconds
 # ---------------------------------------------------------------------------
 
 _TIMEOUT_SYNTHESIS = 30.0
@@ -211,7 +211,7 @@ class VoxClient:
             try:
                 await ws.ping()
                 return ws
-            except Exception:
+            except (OSError, websockets.exceptions.WebSocketException):
                 # Connection is dead; fall through to reconnect.
                 self._ws = None
 
@@ -221,7 +221,9 @@ class VoxClient:
         await self.connect()
         # connect() sets self._ws or raises VoxdConnectionError.
         ws = self._ws
-        assert ws is not None
+        if ws is None:
+            msg = "connect() succeeded but self._ws is None"
+            raise VoxdConnectionError(msg)
         return ws
 
     # -- request helpers -----------------------------------------------------
@@ -459,8 +461,7 @@ class VoxClient:
 
     async def health(self) -> dict[str, object]:
         """Check daemon health."""
-        resp = await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
-        return resp
+        return await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
 
     async def music(
         self,
