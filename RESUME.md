@@ -17,7 +17,7 @@ Main: `2b47d7a` (PR #263 merged)
 | #260 | service decomposition + handler extraction | service/ package (5 classes), handler modules |
 | #261 | SessionConfig + DoctorCheck | server.py refactor, doctor.py extraction |
 | #262 | SynthesisSpec + ConfigStore + music package | types_synthesis.py, config.py, voxd/music/ |
-| #263 | server dedup + playback/synthesis cleanup | _process_segments, SessionConfig encapsulation, play_audio decomposition, _api_key_context |
+| #263 | server dedup + playback/synthesis cleanup | `_process_segments`, SessionConfig encapsulation, `play_audio` decomposition, `_api_key_context` |
 
 ### PR #264 (Open, Not Yet Merged)
 
@@ -26,10 +26,10 @@ Contains everything from Phase E/F/G plus dead code removal:
 - **Coupling fixes**: VOX_DATA_DIR moved to paths.py, watcher routes
   through VoxClientSync, doctor circular dep broken
 - **Phase E**: OutputFormatter, ApiKeyResolver, AudioMigration,
-  DaemonRestarter extracted from __main__.py and wired
+  DaemonRestarter extracted from `__main__.py` and wired
 - **Phase F**: Provider voice caches moved to instance attributes
   (elevenlabs, polly, say, espeak)
-- **Phase G**: client.py __new__ conversion, chime.py wired into watcher
+- **Phase G**: client.py `__new__` conversion, chime.py wired into watcher
 - **Dead code**: 22 service shims, generate_audios protocol method,
   dead keys/dirs/paths functions, voxd re-exports pruned
 - **Other agent's work included**: VoiceResolver, chunked synthesis,
@@ -83,7 +83,7 @@ No dependencies between steps. Can run in parallel.
 |------|-------|-------|--------|
 | 1 | CacheKey | cache.py, synthesis.py | NOT STARTED |
 | 2 | PlaybackResult | playback.py, health.py, daemon.py, speech_handlers.py | NOT STARTED |
-| 3 | MusicTrack | music/track.py, server.py, __main__.py | NOT STARTED |
+| 3 | MusicTrack | music/track.py, server.py, `__main__.py` | NOT STARTED |
 | 4 | HookPayload | hook_payload.py, hooks.py | NOT STARTED |
 
 ### Phase 2: Domain Objects (Steps 5–11)
@@ -97,9 +97,9 @@ Step 11 depends on Steps 8 and 9.
 | 6 | Vibe | vibe.py, 5+ files. Data carrier only. | NOT STARTED |
 | 7 | Voice + VoiceResolver | voice.py, voices.py, resolve.py, server.py | NOT STARTED |
 | 8 | SynthesisSpec behavior | types_synthesis.py, client.py, server.py, synthesis.py | NOT STARTED |
-| 9 | Segment | segment.py, server.py, __main__.py | NOT STARTED |
+| 9 | Segment | segment.py, server.py, `__main__.py` | NOT STARTED |
 | 10 | Notification | notification.py, hooks.py | NOT STARTED |
-| 11 | Utterance | utterance.py, client.py, server.py, __main__.py, synthesis.py, speech_handlers.py | NOT STARTED |
+| 11 | Utterance | utterance.py, client.py, server.py, `__main__.py`, synthesis.py, speech_handlers.py | NOT STARTED |
 
 ### Phase 3: Complexity Reduction (Steps 12–17)
 
@@ -109,10 +109,10 @@ Blocked on Phase 2.
 |------|------|-------|--------|
 | 12 | audio_migration CC reduction | audio_migration.py | NOT STARTED |
 | 13 | server.py CC reduction | server.py | NOT STARTED |
-| 14 | __main__.py CC reduction | __main__.py | NOT STARTED |
+| 14 | `__main__.py` CC reduction | `__main__.py` | NOT STARTED |
 | 15 | chunked synthesis helper | providers/ | DONE (other agent) |
 | 16 | delete music_handlers.py | voxd/ | DONE (already deleted) |
-| 17 | __all__ on every module | all modules | NOT STARTED |
+| 17 | `__all__` on every module | all modules | NOT STARTED |
 
 ### Worst Files (where to focus)
 
@@ -149,8 +149,8 @@ Blocked on Phase 2.
   resolve_tags (that belongs on SignalLog). See peer review in
   oo-execution-plan-v3.md.
 
-- **Utterance is the request, not the lifecycle.** Text + SynthesisSpec
-  + request_id. Does NOT own output path, playback, or result.
+- **Utterance is the request, not the lifecycle.** Text, SynthesisSpec,
+  and request_id. Does NOT own output path, playback, or result.
   See investigation results in oo-execution-plan-v3.md Step 11.
 
 - **No new packages needed.** Coupling analysis (package-restructure-
@@ -183,5 +183,5 @@ Blocked on Phase 2.
 - **Other agent (tty252)**: Works on voxd/music/ files and provider
   refactoring. Do not touch their files without biff coordination.
 - **Biff**: Always reply to messages. Use `/biff:read` to check inbox.
-- **Shared files**: voxd/__init__.py, voxd/daemon.py, pyproject.toml —
+- **Shared files**: voxd/`__init__`.py, voxd/daemon.py, pyproject.toml —
   coordinate via biff before editing.
