@@ -428,7 +428,20 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
-  "src/punt_vox/voxd.py": {
+  "src/punt_vox/voxd/__init__.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.0,
+    "max_complexity": 0.0,
+    "avg_complexity": 0.0,
+    "module_size": 102.0,
+    "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/_monolith.py": {
     "method_ratio": 0.103,
     "encapsulation_ratio": 0.24,
     "avg_params": 1.9,
@@ -439,6 +452,19 @@
     "class_to_func_ratio": 0.103,
     "init_violations": 3.0,
     "public_attr_violations": 19.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/config.py": {
+    "method_ratio": 0.778,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.39,
+    "max_complexity": 10.0,
+    "avg_complexity": 2.11,
+    "module_size": 275.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 0.333,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
   "src/punt_vox/watcher.py": {

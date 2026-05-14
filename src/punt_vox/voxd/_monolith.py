@@ -4,6 +4,8 @@ Pure audio server. Receives synthesis requests over WebSocket,
 synthesizes via configured providers, plays through speakers.
 Knows nothing about MCP, hooks, projects, sessions, or Claude Code.
 """
+# pyright: reportPrivateUsage=false
+# Internal module within the voxd package -- cross-module private access is expected.
 
 from __future__ import annotations
 
@@ -15,14 +17,11 @@ import hmac
 import importlib.resources
 import json
 import logging
-import logging.config
 import math
 import os
 import platform
 import re
-import secrets
 import shutil
-import sys
 import tempfile
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -42,21 +41,21 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
-from punt_vox.keys import PROVIDER_KEY_NAMES
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
-from punt_vox.paths import (
-    config_dir as _user_config_dir,
-    ensure_user_dirs,
-    installed_version,
-    log_dir as _user_log_dir,
-    run_dir as _user_run_dir,
-)
+from punt_vox.paths import ensure_user_dirs, installed_version
 from punt_vox.providers import auto_detect_provider, get_provider
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
     DirectPlayProvider,
     TTSProvider,
+)
+from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
+    DaemonConfig,
+    _config_dir,
+    _install_token_redact_filter,
+    _log_dir,
+    _run_dir,
 )
 
 if TYPE_CHECKING:
@@ -66,35 +65,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
-
-_TOKEN_RE = re.compile(r"\?token=[^\s\"']+")
-
-
-class _TokenRedactFilter(logging.Filter):
-    """Strip auth tokens from access log messages."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(getattr(record, "msg", None), str):
-            record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
-        if record.args and isinstance(record.args, tuple):
-            record.args = tuple(
-                _TOKEN_RE.sub("?token=REDACTED", a) if isinstance(a, str) else a
-                for a in record.args
-            )
-        return True
-
-
-def _install_token_redact_filter() -> None:
-    """Apply token redaction to uvicorn's access logger.
-
-    Uvicorn sets the access logger level to match log_level (WARNING),
-    but access entries are logged at INFO. Override to INFO so access
-    logs actually fire, with the redact filter stripping tokens.
-    """
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_access.setLevel(logging.INFO)
-    uvicorn_access.addFilter(_TokenRedactFilter())
-
 
 # Audio deduplication window: skip identical audio within this many seconds.
 _DEDUP_WINDOW_SECONDS = 5.0
@@ -109,262 +79,24 @@ _playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
-# Per-user state paths
-#
-# These are thin wrappers over ``punt_vox.paths`` so tests can monkey-patch
-# them without reaching across modules. The source of truth is
-# ``punt_vox.paths``; every path resolves to a subdirectory of
-# ``~/.punt-labs/vox/`` — same on macOS and Linux.
+# Free-standing convenience wrappers -- delegate to DaemonConfig classmethods
 # ---------------------------------------------------------------------------
 
 
-def _config_dir() -> Path:
-    """Directory holding ``keys.env``.
-
-    Pure path resolution — no ``mkdir``, no ``chmod``. ``main()``
-    calls :func:`punt_vox.paths.ensure_user_dirs` at startup, which
-    creates every per-user subdirectory with mode 0700 (and tightens
-    pre-existing dirs that were created under a looser umask).
-    Callers rely on that contract — this helper is a pure view of the
-    path, nothing more.
-    """
-    return _user_config_dir()
-
-
-def _log_dir() -> Path:
-    """Directory holding ``voxd.log`` and rotated logs.
-
-    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
-    guaranteed by the ``ensure_user_dirs`` call at the top of
-    ``main()``; this helper does not create or chmod anything.
-    """
-    return _user_log_dir()
-
-
-def _run_dir() -> Path:
-    """Directory holding ``serve.port`` and ``serve.token``.
-
-    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
-    guaranteed by the ``ensure_user_dirs`` call at the top of
-    ``main()``.
-    """
-    return _user_run_dir()
-
-
-# ---------------------------------------------------------------------------
-# Logging (inline -- not importing logging_config.py)
-# ---------------------------------------------------------------------------
-
-_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_LOG_MAX_BYTES = 5_242_880  # 5 MB
-_LOG_BACKUP_COUNT = 5
-
-
-_STARTUP_ENV_KEYS: tuple[str, ...] = (
-    "PATH",
-    "XDG_RUNTIME_DIR",
-    "PULSE_SERVER",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "DISPLAY",
-    "WAYLAND_DISPLAY",
-    "HOME",
-    "USER",
-    "LANG",
-)
-
-
-def _log_voxd_environment() -> None:
-    """Log voxd's process identity and audio env vars at startup.
-
-    Single greppable INFO line so operators can verify systemd env
-    injection without poking at ``/proc`` (Linux-specific; macOS has no ``/proc``).
-    """
-    env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
-    # os.getuid/getgid are POSIX-only; fall back gracefully on Windows.
-    getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
-    getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
-    uid: int | str = getuid() if getuid is not None else "<n/a>"
-    gid: int | str = getgid() if getgid is not None else "<n/a>"
-    logger.info(
-        "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
-        "voxd_binary=%s voxd_module=%s env=%s",
-        os.getpid(),
-        uid,
-        gid,
-        Path.cwd(),
-        sys.executable,
-        __file__,
-        env,
-    )
-
-
-def _configure_logging(log_dir: Path) -> None:
-    """Configure logging with rotating file and stderr handlers.
-
-    The log directory is expected to already exist at mode 0700 —
-    :func:`punt_vox.paths.ensure_user_dirs` runs at the top of
-    :func:`main` and creates (or tightens) every per-user subdirectory
-    before the first log handler is attached. This function is pure
-    logging configuration.
-    """
-    log_file = log_dir / "voxd.log"
-
-    logging.config.dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "standard": {
-                    "format": _LOG_FORMAT,
-                    "datefmt": _LOG_DATE_FORMAT,
-                },
-            },
-            "handlers": {
-                "file": {
-                    "class": "logging.handlers.RotatingFileHandler",
-                    "filename": str(log_file),
-                    "maxBytes": _LOG_MAX_BYTES,
-                    "backupCount": _LOG_BACKUP_COUNT,
-                    "encoding": "utf-8",
-                    "formatter": "standard",
-                    "level": "INFO",
-                },
-                "stderr": {
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stderr",
-                    "formatter": "standard",
-                    "level": "INFO",
-                },
-            },
-            "root": {
-                "level": "INFO",
-                "handlers": ["file", "stderr"],
-            },
-            "loggers": {
-                "boto3": {"level": "WARNING"},
-                "botocore": {"level": "WARNING"},
-                "urllib3": {"level": "WARNING"},
-                "s3transfer": {"level": "WARNING"},
-                "httpx": {"level": "WARNING"},
-            },
-        }
-    )
-
-
-# ---------------------------------------------------------------------------
-# Key loading
-# ---------------------------------------------------------------------------
-
-
-def _load_keys(config_dir: Path) -> frozenset[str]:
-    """Load keys.env from config dir into os.environ.
-
-    Returns the names of variables that were loaded.
-    """
-    keys_file = config_dir / "keys.env"
-    if not keys_file.exists():
-        return frozenset()
-    try:
-        text = keys_file.read_text()
-    except OSError as exc:
-        logger.warning(
-            "Could not read %s: %s -- daemon will use system TTS only",
-            keys_file,
-            exc,
-        )
-        return frozenset()
-    loaded: set[str] = set()
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, _, value = stripped.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if key in PROVIDER_KEY_NAMES and value and key not in os.environ:
-            os.environ[key] = value
-            loaded.add(key)
-    return frozenset(loaded)
-
-
-# ---------------------------------------------------------------------------
-# Auth token management
-# ---------------------------------------------------------------------------
-
-
-def _read_or_create_token(run_dir: Path) -> str:
-    """Read auth token from run dir, or generate a new one."""
-    token_file = run_dir / "serve.token"
-    if token_file.exists():
-        try:
-            token = token_file.read_text().strip()
-        except (PermissionError, OSError) as exc:
-            msg = (
-                f"Cannot read auth token from {token_file}: {exc}. "
-                "Fix file permissions or remove the file."
-            )
-            raise SystemExit(msg) from exc
-        if not token:
-            msg = f"Auth token file {token_file} is empty. Remove it to regenerate."
-            raise SystemExit(msg)
-        token_file.chmod(0o600)
-        logger.info("Loaded auth token from %s", token_file)
-        return token
-
-    token = secrets.token_urlsafe(32)
-    # The parent run dir is guaranteed to exist at mode 0700 by
-    # ``ensure_user_dirs`` at the top of ``main()``. No defensive
-    # mkdir here — it would just duplicate that contract.
-    fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, token.encode())
-    finally:
-        os.close(fd)
-    logger.info("Generated auth token at %s", token_file)
-    return token
-
-
-# ---------------------------------------------------------------------------
-# Port file helpers
-# ---------------------------------------------------------------------------
-
-
-def _write_port_file(run_dir: Path, port: int) -> None:
-    # ``run_dir`` is guaranteed to exist by the ``ensure_user_dirs``
-    # call at the top of ``main()``; no defensive mkdir here.
-    port_file = run_dir / "serve.port"
-    port_file.write_text(str(port))
-    logger.info("Wrote port file: %s (port %d)", port_file, port)
-
-
-def _remove_port_file(run_dir: Path) -> None:
-    port_file = run_dir / "serve.port"
-    try:
-        port_file.unlink(missing_ok=True)
-    except OSError:
-        logger.warning("Could not remove %s", port_file)
-    logger.info("Removed port file")
+def _load_keys(config_dir: Path) -> frozenset[str]:  # pyright: ignore[reportUnusedFunction]
+    """Load keys.env from config dir into os.environ."""
+    cfg = DaemonConfig(run_dir=_run_dir(), config_dir=config_dir, log_dir=_log_dir())
+    return cfg.load_keys()
 
 
 def read_port_file() -> int | None:
     """Read the daemon port from the port file. Returns None if missing."""
-    port_file = _run_dir() / "serve.port"
-    try:
-        return int(port_file.read_text().strip())
-    except (FileNotFoundError, ValueError, OSError):
-        return None
+    return DaemonConfig.read_port_file(_run_dir())
 
 
 def read_token_file() -> str | None:
     """Read the daemon auth token. Returns None if missing."""
-    token_file = _run_dir() / "serve.token"
-    try:
-        return token_file.read_text().strip()
-    except (FileNotFoundError, OSError):
-        return None
+    return DaemonConfig.read_token_file(_run_dir())
 
 
 # ---------------------------------------------------------------------------
@@ -2628,29 +2360,30 @@ def main(
     # touches the filesystem. ``ensure_user_dirs`` forces mode 0700 on
     # ``~/.punt-labs/vox`` and its ``logs``/``run``/``cache``
     # subdirectories, including pre-existing dirs that were created
-    # under a looser umask in earlier versions. Every subsequent
-    # ``Path.mkdir(..., exist_ok=True)`` call in voxd inherits the
-    # already-tightened permissions because the directory is already
-    # present with mode 0700.
+    # under a looser umask in earlier versions.
     ensure_user_dirs()
 
-    run_dir = _run_dir()
-    config_dir = _config_dir()
-    log_dir = _log_dir()
+    daemon_cfg = DaemonConfig(
+        run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir()
+    )
 
     # Configure logging
-    _configure_logging(log_dir)
-    _log_voxd_environment()
+    daemon_cfg.configure_logging()
+    daemon_cfg.log_environment()
 
     # Load provider keys
-    loaded_keys = _load_keys(config_dir)
+    loaded_keys = daemon_cfg.load_keys()
     if loaded_keys:
-        logger.info("Loaded provider keys from %s: %s", config_dir, sorted(loaded_keys))
+        logger.info(
+            "Loaded provider keys from %s: %s",
+            daemon_cfg.config_dir,
+            sorted(loaded_keys),
+        )
     else:
-        logger.info("No provider keys loaded from %s", config_dir)
+        logger.info("No provider keys loaded from %s", daemon_cfg.config_dir)
 
     # Auth token
-    auth_token = _read_or_create_token(run_dir)
+    auth_token = daemon_cfg.read_or_create_token()
     ctx = DaemonContext(auth_token=auth_token, port=port)
 
     logger.info("Starting voxd on %s:%d", host, port)
@@ -2674,7 +2407,7 @@ def main(
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer_task
-            _remove_port_file(run_dir)
+            daemon_cfg.remove_port_file()
             logger.info("voxd stopped")
 
     app = build_app(ctx, lifespan=lifespan)
@@ -2706,7 +2439,7 @@ def main(
         await original_startup(sockets=sockets)
         if server.servers and server.servers[0].sockets:
             actual_port = server.servers[0].sockets[0].getsockname()[1]
-            _write_port_file(run_dir, actual_port)
+            daemon_cfg.write_port_file(actual_port)
             logger.info("voxd listening on http://%s:%d", host, actual_port)
         else:
             logger.error("Server started but no bound sockets; shutting down")
