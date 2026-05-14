@@ -1,5 +1,5 @@
 """Tests for punt_vox.voxd.playback -- PlaybackQueue and audio helpers."""
-# pyright: reportPrivateUsage=false
+# pyright: reportPrivateUsage=false, reportMissingImports=false, reportCallIssue=false, reportAttributeAccessIssue=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 
@@ -15,13 +15,9 @@ from punt_vox.voxd import (
     _PLAYBACK_TIMEOUT_DEFAULT_S,
     _music_player_command,
 )
-from punt_vox.voxd.chimes import ChimeResolver
-from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
-from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_handlers import MusicHandlers
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.router import WebSocketRouter
-from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.track_generator import TrackGenerator
 
 
@@ -393,20 +389,9 @@ class TestMusicSeparateFromPlaybackQueue:
 
     def test_music_on_does_not_enqueue(self) -> None:
         playback = PlaybackQueue()
-        music = MusicScheduler(TrackGenerator(Path("/tmp/vox-test-music")))
-        health = DaemonHealth(playback, lambda: 0, 0)
-        synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
-        router = WebSocketRouter(
-            synthesis=synthesis,
-            playback=playback,
-            music=music,
-            chime_dedup=ChimeDedup(),
-            once_dedup=OnceDedup(),
-            chimes=ChimeResolver(),
-            health=health,
-            auth_token=None,
-            track_generator=TrackGenerator(Path("/tmp/vox-test-music")),
-        )
+        tg = TrackGenerator(Path("/tmp/vox-test-music"))
+        music = MusicScheduler(tg)
+        music_handlers = MusicHandlers(music=music, track_generator=tg)
 
         ws = MagicMock()
         ws.send_json = AsyncMock()
@@ -416,6 +401,6 @@ class TestMusicSeparateFromPlaybackQueue:
             "vibe": "focused",
         }
 
-        asyncio.run(router._handle_music_on(msg, ws))
+        asyncio.run(music_handlers.handle_music_on(msg, ws))
 
         assert playback._queue.empty()

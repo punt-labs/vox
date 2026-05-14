@@ -481,31 +481,21 @@ class Ratchet:
 
     @staticmethod
     def _git_touched_files() -> list[str] | None:
-        """Return repo-relative paths changed in the latest commit or working tree."""
-        touched: set[str] = set()
-        commands = [
-            # Last commit vs parent — works in CI (clean checkout)
-            ["git", "diff", "--name-only", "HEAD~1..HEAD"],
-            # Unstaged working tree changes
-            ["git", "diff", "--name-only"],
-            # Staged changes
-            ["git", "diff", "--cached", "--name-only"],
-        ]
-        for cmd in commands:
-            try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    touched.update(
-                        line for line in result.stdout.strip().splitlines() if line
-                    )
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
-        return sorted(touched) if touched else None
+        """Return repo-relative paths changed in the latest commit."""
+        try:
+            # Compare HEAD against its parent — works in CI (clean checkout)
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD~1..HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return [line for line in result.stdout.strip().splitlines() if line]
+            # HEAD~1 may not exist (initial commit) — fall through to None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return None
 
     # ------------------------------------------------------------------
     # Metric comparison helpers
@@ -530,15 +520,9 @@ class Ratchet:
         """Return True if current is at least as good as baseline for the metric."""
         op, target = Scorer.THRESHOLDS[metric]
         if op == ">=":
-            if current >= baseline_val:
-                return True  # improved or equal
-            # Current is worse than baseline — only regress if it's below threshold
-            return current >= target
+            return current >= baseline_val
         if op == "<=":
-            if current <= baseline_val:
-                return True  # improved or equal
-            # Current is worse than baseline — only regress if it exceeds threshold
-            return current <= target
+            return current <= baseline_val
         # op == "==" — closer to target is better (or equal)
         return abs(current - target) <= abs(baseline_val - target)
 
@@ -784,6 +768,25 @@ class Ratchet:
         return 0
 
     # ------------------------------------------------------------------
+    # --rebaseline
+    # ------------------------------------------------------------------
+
+    def rebaseline(self, scorer: Scorer) -> int:
+        """Unconditionally reset the baseline to current scores."""
+        current_by_file = self._results_by_file(scorer.results)
+        self._save_baseline(current_by_file)
+        self._append_audit(
+            files_scored=len(current_by_file),
+            files_improved=0,
+            files_regressed=0,
+            verdict="rebaseline",
+            deltas={},
+        )
+        _writeln(f"\nBaseline reset: {self._baseline_path}")
+        _writeln(f"  files scored: {len(current_by_file)}")
+        return 0
+
+    # ------------------------------------------------------------------
     # Audit log
     # ------------------------------------------------------------------
 
@@ -843,7 +846,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         _writeln(
             f"Usage: {sys.argv[0]} <file_or_directory> "
-            f"[--json] [--threshold] [--check] [--update] [--log]",
+            f"[--json] [--threshold] [--check] [--update] [--rebaseline] [--log]",
         )
         sys.exit(1)
 
@@ -857,6 +860,8 @@ def main() -> None:
 
     if "--check" in sys.argv:
         sys.exit(ratchet.check(scorer))
+    elif "--rebaseline" in sys.argv:
+        sys.exit(ratchet.rebaseline(scorer))
     elif "--update" in sys.argv:
         sys.exit(ratchet.update(scorer))
     elif "--log" in sys.argv:

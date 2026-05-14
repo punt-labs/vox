@@ -31,6 +31,7 @@ from punt_vox.voxd.dedup import (
     OnceDedup,
 )
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_handlers import MusicHandlers
 from punt_vox.voxd.music_scheduler import (
     _MUSIC_MAX_RETRIES,
     MusicScheduler,
@@ -47,6 +48,7 @@ from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
     _truncate_stderr,
 )
 from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.speech_handlers import SpeechHandlers
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     _PROVIDER_API_KEY_VAR,
@@ -54,6 +56,7 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _build_audio_request,
     _run_play_directly_sync,
 )
+from punt_vox.voxd.system_handlers import SystemHandlers
 from punt_vox.voxd.track_generator import TrackGenerator
 
 __all__ = [
@@ -72,11 +75,14 @@ __all__ = [
     "DaemonConfig",
     "DaemonHealth",
     "DedupHit",
+    "MusicHandlers",
     "MusicScheduler",
     "OnceDedup",
     "PlaybackItem",
     "PlaybackQueue",
+    "SpeechHandlers",
     "SynthesisPipeline",
+    "SystemHandlers",
     "TrackGenerator",
     "VoxDaemon",
     "WebSocketRouter",
