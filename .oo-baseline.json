@@ -109,10 +109,10 @@
     "avg_params": 1.77,
     "max_complexity": 13.0,
     "avg_complexity": 2.62,
-    "module_size": 625.0,
+    "module_size": 649.0,
     "classes_per_module": 5.0,
     "class_to_func_ratio": 0.455,
-    "init_violations": 2.0,
+    "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
