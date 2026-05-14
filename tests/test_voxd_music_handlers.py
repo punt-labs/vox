@@ -7,6 +7,8 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.music_handlers import (
     MusicListHandler,
     MusicNextHandler,
@@ -15,8 +17,6 @@ from punt_vox.voxd.music_handlers import (
     MusicPlayHandler,
     MusicVibeHandler,
 )
-from punt_vox.voxd.music_scheduler import MusicScheduler
-from punt_vox.voxd.track_generator import TrackGenerator
 
 
 def _make_scheduler(

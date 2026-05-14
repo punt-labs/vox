@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.music.generator import TrackGenerator
 
 
 class TestSlugify:

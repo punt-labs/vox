@@ -33,21 +33,19 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music_handlers import (
-    MusicListHandler,
-    MusicNextHandler,
-    MusicOffHandler,
-    MusicOnHandler,
-    MusicPlayHandler,
-    MusicVibeHandler,
-)
-from punt_vox.voxd.music_scheduler import MusicScheduler
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.list_handler import MusicListHandler
+from punt_vox.voxd.music.next_handler import MusicNextHandler
+from punt_vox.voxd.music.off_handler import MusicOffHandler
+from punt_vox.voxd.music.on_handler import MusicOnHandler
+from punt_vox.voxd.music.play_handler import MusicPlayHandler
+from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
-from punt_vox.voxd.track_generator import TrackGenerator
 from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
@@ -251,18 +249,12 @@ class VoxDaemon:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=health),
-            "music_on": MusicOnHandler(
-                music=music,
-                track_generator=track_generator,
-            ),
-            "music_off": MusicOffHandler(music=music),
-            "music_play": MusicPlayHandler(
-                music=music,
-                track_generator=track_generator,
-            ),
-            "music_list": MusicListHandler(track_generator=track_generator),
-            "music_vibe": MusicVibeHandler(music=music),
-            "music_next": MusicNextHandler(music=music),
+            "music_on": MusicOnHandler(scheduler=music),
+            "music_off": MusicOffHandler(scheduler=music),
+            "music_play": MusicPlayHandler(scheduler=music),
+            "music_list": MusicListHandler(generator=track_generator),
+            "music_vibe": MusicVibeHandler(scheduler=music),
+            "music_next": MusicNextHandler(scheduler=music),
         }
 
     @staticmethod

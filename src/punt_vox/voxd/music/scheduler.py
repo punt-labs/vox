@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, cast
 
-from punt_vox.voxd.playback import _music_player_command
-from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.playback_cmd import music_player_command
+from punt_vox.voxd.music.types import MusicResponse
 
 __all__ = [
     "_MUSIC_MAX_RETRIES",
@@ -87,7 +88,10 @@ class MusicScheduler:
         self._loop_task = None
         return self
 
-    # -- Properties (writable, for DaemonContext delegation) ------------------
+    # -- Properties (writable, for existing handler delegation) ----------------
+    # NOTE: Writable setters remain for now -- existing handlers in
+    # music_handlers.py still use them. They will be removed in Step 5
+    # when handlers are rewritten to use domain methods.
 
     @property
     def mode(self) -> str:
@@ -188,18 +192,134 @@ class MusicScheduler:
     def loop_task(self, value: asyncio.Task[None] | None) -> None:
         self._loop_task = value
 
-    # -- Public methods ------------------------------------------------------
+    # -- Domain methods --------------------------------------------------------
+
+    async def turn_on(
+        self,
+        owner_id: str,
+        style: str,
+        vibe: tuple[str, str],
+        name: str,
+    ) -> MusicResponse:
+        """Start music or transfer ownership."""
+        if not owner_id:
+            msg = "owner_id is required"
+            raise ValueError(msg)
+
+        # If name provided, validate and check for existing track.
+        if name:
+            track_path = self._generator.find_track(name)
+            if track_path is None and not TrackGenerator.slugify(name, max_len=60):
+                msg = "invalid track name"
+                raise ValueError(msg)
+            if track_path is not None:
+                # Replay existing track.
+                await self._kill_proc()
+                self._mode = "on"
+                if style:
+                    self._style = style
+                self._owner = owner_id
+                self._vibe = vibe
+                self._track = track_path
+                self._track_name = TrackGenerator.slugify(name, max_len=60)
+                self._state = "playing"
+                self._replay = True
+                self._changed.set()
+                return MusicResponse(
+                    status="playing",
+                    track=str(track_path),
+                    name=self._track_name,
+                )
+
+        # New generation.
+        is_already_playing = self._mode == "on" and self._proc is not None
+        if not is_already_playing or self._owner != owner_id:
+            await self._kill_proc()
+
+        self._mode = "on"
+        if style:
+            self._style = style
+        self._owner = owner_id
+        self._vibe = vibe
+        self._track_name = TrackGenerator.slugify(name, max_len=60) if name else ""
+        self._replay = False
+        self._state = "generating"
+        self._changed.set()
+        return MusicResponse(status="generating")
+
+    async def turn_off(self) -> MusicResponse:
+        """Stop music playback."""
+        await self._kill_proc()
+        self._mode = "off"
+        self._state = "idle"
+        self._replay = False
+        self._changed.set()
+        return MusicResponse(status="stopped")
+
+    async def play_track(self, name: str, owner_id: str) -> MusicResponse:
+        """Replay a saved track by name."""
+        if not name:
+            msg = "name is required"
+            raise ValueError(msg)
+        if not owner_id:
+            msg = "owner_id is required"
+            raise ValueError(msg)
+        safe_name = TrackGenerator.slugify(name, max_len=60)
+        if not safe_name:
+            msg = "invalid track name"
+            raise ValueError(msg)
+        track_path = self._generator.find_track(name)
+        if track_path is None:
+            msg = f"track not found: {safe_name}"
+            raise ValueError(msg)
+
+        await self._kill_proc()
+        self._mode = "on"
+        self._owner = owner_id
+        self._track = track_path
+        self._track_name = safe_name
+        self._state = "playing"
+        self._replay = True
+        self._changed.set()
+        return MusicResponse(status="playing", track=str(track_path), name=safe_name)
+
+    def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
+        """Update vibe if sender is owner."""
+        if not owner_id:
+            msg = "owner_id is required"
+            raise ValueError(msg)
+        if owner_id != self._owner:
+            return MusicResponse(status="ignored")
+        if vibe == self._vibe:
+            return MusicResponse(status="ignored")
+        self._vibe = vibe
+        self._changed.set()
+        return MusicResponse(status="generating")
+
+    def skip_next(self, owner_id: str) -> MusicResponse:
+        """Skip to a new track."""
+        if not owner_id:
+            msg = "owner_id is required"
+            raise ValueError(msg)
+        if self._mode != "on":
+            return MusicResponse(status="ignored")
+        self._track_name = ""
+        self._replay = False
+        self._changed.set()
+        return MusicResponse(status="generating")
+
+    # -- Public methods --------------------------------------------------------
 
     async def kill_proc(self) -> None:
-        """Kill the current music subprocess if running."""
-        proc = self._proc
-        if proc is not None and proc.returncode is None:
-            proc.kill()
-            with contextlib.suppress(Exception):
-                await proc.wait()
-        self._proc = None
+        """Kill the current music subprocess if running.
 
-    async def loop(self) -> None:  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+        Temporary public wrapper around _kill_proc -- still called from
+        daemon.py lifespan and existing handlers. Will be removed when
+        handlers are rewritten in Step 5.
+        """
+        await self._kill_proc()
+
+    async def loop(self) -> None:
         """Background task: generate and loop music tracks.
 
         Runs for the lifetime of the daemon.  When ``mode`` is "on",
@@ -238,30 +358,11 @@ class MusicScheduler:
             try:
                 # --- Initial generation (no old track to loop) ----------------
                 if current_track is None:
-                    # Replay: a handler already placed a track in self._track.
-                    if self._replay:
-                        self._replay = False
-                        self._changed.clear()
-                        if self._track is None:
-                            msg = "music_replay set but music_track is None"
-                            raise RuntimeError(msg)
-                        current_track = self._track
-                        retry_count = 0
-                    else:
-                        self._state = "generating"
-                        self._changed.clear()
-                        current_track = await self._generate_track()
-                        self._track = current_track
-                        retry_count = 0
-
-                        # Vibe changed during initial generation -- regenerate
-                        # immediately (no old track to keep looping).
-                        if self._changed.is_set():
-                            logger.info(
-                                "Vibe changed during initial generation, regenerating",
-                            )
-                            current_track = None
-                            continue
+                    current_track = await self._run_initial_generation()
+                    retry_count = 0
+                    if current_track is None:
+                        # Vibe changed during generation -- restart cycle.
+                        continue
 
                 # --- Playback loop: loop current_track, generate in parallel --
                 # current_track is guaranteed non-None by the initial generation
@@ -270,7 +371,7 @@ class MusicScheduler:
                 gen_task = None
                 while self._mode == "on":
                     self._state = "playing" if gen_task is None else "generating"
-                    cmd = _music_player_command(current_track)
+                    cmd = music_player_command(current_track)
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
                         stdin=asyncio.subprocess.DEVNULL,
@@ -314,7 +415,7 @@ class MusicScheduler:
                     with contextlib.suppress(asyncio.CancelledError):
                         await gen_task
                     gen_task = None
-                await self.kill_proc()
+                await self._kill_proc()
                 self._state = "idle"
                 current_track = None
                 raise
@@ -329,7 +430,7 @@ class MusicScheduler:
                     with contextlib.suppress(asyncio.CancelledError):
                         await gen_task
                     gen_task = None
-                await self.kill_proc()
+                await self._kill_proc()
                 self._state = "idle"
                 current_track = None
                 retry_count += 1
@@ -344,7 +445,116 @@ class MusicScheduler:
                     # Exponential backoff: 1s, 2s, 4s...
                     await self._backoff_sleep(2 ** (retry_count - 1))
 
-    # -- Private helpers -----------------------------------------------------
+    # -- Private helpers -------------------------------------------------------
+
+    async def _run_initial_generation(self) -> Path | None:
+        """Handle first track when no old track exists.
+
+        If replay is set, use the pre-placed track.  Otherwise generate
+        a fresh track.  Returns None if a vibe change occurred during
+        generation (caller should restart the cycle).
+        """
+        if self._replay:
+            self._replay = False
+            self._changed.clear()
+            if self._track is None:
+                msg = "music_replay set but music_track is None"
+                raise RuntimeError(msg)
+            return self._track
+
+        self._state = "generating"
+        self._changed.clear()
+        track = await self._generate_track()
+        self._track = track
+
+        # Vibe changed during initial generation -- caller should
+        # restart the cycle (no old track to keep looping).
+        if self._changed.is_set():
+            logger.info(
+                "Vibe changed during initial generation, regenerating",
+            )
+            return None
+        return track
+
+    async def _handle_generation_complete(
+        self,
+        gen_task: asyncio.Task[Path],
+        retry_count: int,
+    ) -> tuple[Path | None, asyncio.Task[Path] | None, int]:
+        """Handle a completed generation task (success or failure).
+
+        Returns ``(new_track_or_none, new_gen_task_or_none, new_retry_count)``.
+        On success: kills the old proc, returns the new track.
+        On failure: retries with backoff, or disables music after max retries.
+        """
+        exc: BaseException | None = gen_task.exception()
+        if exc is None:
+            new_track: Path = gen_task.result()
+            self._track = new_track
+            await self._kill_proc()
+            return new_track, None, 0
+
+        # Generation failed -- old track keeps looping.
+        retry_count += 1
+        logger.error(
+            "Generation failed during playback (attempt %d/%d), old track continues",
+            retry_count,
+            _MUSIC_MAX_RETRIES,
+            exc_info=exc,
+        )
+        if retry_count >= _MUSIC_MAX_RETRIES:
+            logger.error(
+                "Music generation failed %d times, disabling music",
+                _MUSIC_MAX_RETRIES,
+            )
+            self._mode = "off"
+            await self._kill_proc()
+            self._state = "idle"
+            return None, None, 0
+
+        # Under max retries: start a new gen_task after backoff.
+        await self._backoff_sleep(2 ** (retry_count - 1))
+        new_gen_task = asyncio.create_task(self._generate_track())
+        self._state = "generating"
+        return None, new_gen_task, retry_count
+
+    async def _handle_vibe_change(
+        self,
+        gen_task: asyncio.Task[Path] | None,
+    ) -> tuple[asyncio.Task[Path] | None, Path | None]:
+        """Handle a vibe-changed event during playback.
+
+        Cancels any in-flight generation, handles replay, or starts new
+        generation.  Returns ``(new_gen_task_or_none, replay_track_or_none)``.
+        """
+        self._changed.clear()
+        if gen_task is not None and not gen_task.done():
+            gen_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await gen_task
+
+        # Replay: handler pre-set self._track.
+        if self._replay:
+            self._replay = False
+            if self._track is None:
+                msg = "music_replay set but music_track is None"
+                raise RuntimeError(msg)
+            replay_track: Path = self._track
+            await self._kill_proc()
+            return None, replay_track
+
+        self._state = "generating"
+        new_gen_task = asyncio.create_task(self._generate_track())
+        return new_gen_task, None
+
+    async def _kill_proc(self) -> None:
+        """Kill the current music subprocess if running."""
+        proc = self._proc
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+        self._proc = None
 
     async def _generate_track(self) -> Path:
         """Generate a music track from the current vibe and style.
@@ -409,7 +619,7 @@ class MusicScheduler:
                     with contextlib.suppress(asyncio.CancelledError):
                         await gen_task
                     gen_task = None
-                await self.kill_proc()
+                await self._kill_proc()
                 return _PlaybackWaitResult(
                     current_track=None,
                     gen_task=None,
@@ -419,89 +629,43 @@ class MusicScheduler:
 
             # --- Generation task completed: handoff ---------------
             if gen_task is not None and gen_task.done():
-                exc: BaseException | None = gen_task.exception()
-                if exc is not None:
-                    # Generation failed -- handle inline so the old track
-                    # keeps looping.  Only disable music when max retries
-                    # are exceeded.
-                    gen_task = None
-                    retry_count += 1
-                    logger.error(
-                        "Generation failed during playback "
-                        "(attempt %d/%d), old track continues",
-                        retry_count,
-                        _MUSIC_MAX_RETRIES,
-                        exc_info=exc,
+                (
+                    new_track,
+                    new_gen,
+                    retry_count,
+                ) = await self._handle_generation_complete(gen_task, retry_count)
+                gen_task = new_gen
+                if new_track is not None:
+                    # Successful handoff.
+                    return _PlaybackWaitResult(
+                        current_track=new_track,
+                        gen_task=None,
+                        retry_count=retry_count,
+                        handoff_occurred=True,
                     )
-                    if retry_count >= _MUSIC_MAX_RETRIES:
-                        logger.error(
-                            "Music generation failed %d times, disabling music",
-                            _MUSIC_MAX_RETRIES,
-                        )
-                        self._mode = "off"
-                        retry_count = 0
-                        await self.kill_proc()
-                        self._state = "idle"
-                        return _PlaybackWaitResult(
-                            current_track=None,
-                            gen_task=None,
-                            retry_count=retry_count,
-                            handoff_occurred=False,
-                        )
-                    # Under max retries: start a new gen_task after backoff.
-                    # The old track keeps looping.
-                    await self._backoff_sleep(2 ** (retry_count - 1))
-                    gen_task = asyncio.create_task(
-                        self._generate_track(),
+                if gen_task is None:
+                    # Max retries exceeded -- music disabled.
+                    return _PlaybackWaitResult(
+                        current_track=None,
+                        gen_task=None,
+                        retry_count=retry_count,
+                        handoff_occurred=False,
                     )
-                    self._state = "generating"
-                    continue
-                new_track: Path = gen_task.result()
-                gen_task = None
-                self._track = new_track
-                retry_count = 0
-                await self.kill_proc()
-                # Don't clear changed here -- a vibe change may have
-                # arrived during generation.  The next iteration's is_set()
-                # check will catch it.
-                return _PlaybackWaitResult(
-                    current_track=new_track,
-                    gen_task=None,
-                    retry_count=retry_count,
-                    handoff_occurred=True,
-                )
+                # Retry in progress -- re-enter wait loop.
+                continue
 
             # --- Vibe changed: start/restart generation -----------
             if self._changed.is_set():
-                self._changed.clear()
-                if gen_task is not None and not gen_task.done():
-                    gen_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await gen_task
-                    gen_task = None
-
-                # Replay: handler pre-set self._track.
-                if self._replay:
-                    self._replay = False
-                    if self._track is None:
-                        msg = "music_replay set but music_track is None"
-                        raise RuntimeError(msg)
-                    replay_track: Path = self._track
-                    await self.kill_proc()
+                new_gen, replay_track = await self._handle_vibe_change(gen_task)
+                gen_task = new_gen
+                if replay_track is not None:
                     return _PlaybackWaitResult(
                         current_track=replay_track,
                         gen_task=None,
                         retry_count=0,
                         handoff_occurred=False,
                     )
-
-                self._state = "generating"
-                gen_task = asyncio.create_task(
-                    self._generate_track(),
-                )
-                # Don't kill the proc -- let it keep looping.
-                # Re-enter this wait loop so we race the same proc
-                # against the new gen_task.
+                # New generation started -- re-enter wait loop.
                 continue
 
             # --- Subprocess ended naturally -----------------------

@@ -179,7 +179,7 @@ class TestUnmuteCommand:
         result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
         assert result.exit_code == 0, result.output
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] is None
+        assert "api_key" not in call_kwargs
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_no_api_key_omits_kwarg(
@@ -203,7 +203,7 @@ class TestUnmuteCommand:
 
         assert result.exit_code == 0
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] is None
+        assert "api_key" not in call_kwargs
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_preserves_vibe_tags(
@@ -637,7 +637,7 @@ class TestApiKeyInputPaths:
 
         assert result.exit_code == 0
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] is None
+        assert "api_key" not in call_kwargs
         assert "warning: --api-key on the command line" not in result.stderr
 
     # ------------------------------------------------------------------
@@ -739,7 +739,7 @@ class TestApiKeyInputPaths:
 
         assert result.exit_code == 0, result.output
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] is None
+        assert "api_key" not in call_kwargs
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_explicit_empty_argv_api_key_also_normalized(
@@ -769,7 +769,7 @@ class TestApiKeyInputPaths:
 
         assert result.exit_code == 0, result.output
         call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] is None
+        assert "api_key" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------
