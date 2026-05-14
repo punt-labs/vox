@@ -7,15 +7,10 @@ from __future__ import annotations
 from punt_vox.voxd._monolith import (
     _HANDLERS,
     _MAX_STDERR_LEN,
-    _ONCE_DEDUP_MAX_ENTRIES,
-    _ONCE_DEDUP_MAX_TTL_SECONDS,
     _PLAYBACK_TIMEOUT_DEFAULT_S,
     DEFAULT_HOST,
     DEFAULT_PORT,
-    ChimeDedup,
     DaemonContext,
-    DedupHit,
-    OnceDedup,
     PlaybackItem,
     _apply_vibe_for_synthesis,
     _auto_track_name,
@@ -48,11 +43,19 @@ from punt_vox.voxd._monolith import (
     read_port_file,
     read_token_file,
 )
+from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (
     DaemonConfig,
     _config_dir,
     _log_dir,
     _run_dir,
+)
+from punt_vox.voxd.dedup import (
+    _ONCE_DEDUP_MAX_ENTRIES,
+    _ONCE_DEDUP_MAX_TTL_SECONDS,
+    ChimeDedup,
+    DedupHit,
+    OnceDedup,
 )
 
 __all__ = [
@@ -64,6 +67,7 @@ __all__ = [
     "_ONCE_DEDUP_MAX_TTL_SECONDS",
     "_PLAYBACK_TIMEOUT_DEFAULT_S",
     "ChimeDedup",
+    "ChimeResolver",
     "DaemonConfig",
     "DaemonContext",
     "DedupHit",
