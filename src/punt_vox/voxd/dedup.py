@@ -6,6 +6,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
+from typing import Self
 
 __all__ = [
     "_DEDUP_WINDOW_SECONDS",
@@ -46,9 +47,16 @@ class ChimeDedup:
     unchanged from versions prior to vox-0e9.
     """
 
-    def __init__(self, window: float = _DEDUP_WINDOW_SECONDS) -> None:
+    __slots__ = ("_seen", "_window")
+
+    _window: float
+    _seen: dict[str, float]
+
+    def __new__(cls, window: float = _DEDUP_WINDOW_SECONDS) -> Self:
+        self = super().__new__(cls)
         self._window = window
-        self._seen: dict[str, float] = {}
+        self._seen = {}
+        return self
 
     def should_play(self, signal: str) -> bool:
         """Return True if this chime should play (not a recent duplicate)."""
@@ -119,9 +127,15 @@ class OnceDedup:
     that never happened.
     """
 
-    def __init__(self) -> None:
+    __slots__ = ("_seen",)
+
+    _seen: dict[str, tuple[float, float]]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
         # key -> (inserted_monotonic, inserted_wall_clock)
-        self._seen: dict[str, tuple[float, float]] = {}
+        self._seen = {}
+        return self
 
     def check_and_record(self, text: str, ttl_seconds: float) -> DedupHit | None:
         """Check for a recent duplicate; record this call if none found.

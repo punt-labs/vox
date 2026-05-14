@@ -47,10 +47,12 @@ from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (
     DaemonConfig,
     _config_dir,
+    _install_token_redact_filter,
     _log_dir,
     _run_dir,
 )
 from punt_vox.voxd.dedup import (
+    _DEDUP_WINDOW_SECONDS,
     _ONCE_DEDUP_MAX_ENTRIES,
     _ONCE_DEDUP_MAX_TTL_SECONDS,
     ChimeDedup,
@@ -61,6 +63,7 @@ from punt_vox.voxd.dedup import (
 __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "_DEDUP_WINDOW_SECONDS",
     "_HANDLERS",
     "_MAX_STDERR_LEN",
     "_ONCE_DEDUP_MAX_ENTRIES",
@@ -86,6 +89,7 @@ __all__ = [
     "_health_payload_full",
     "_health_payload_minimal",
     "_health_route",
+    "_install_token_redact_filter",
     "_kill_music_proc",
     "_load_keys",
     "_log_dir",

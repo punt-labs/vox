@@ -30,6 +30,8 @@ _CHIME_MAP: dict[str, str] = {
 class ChimeResolver:
     """Resolve chime signal names to bundled asset paths."""
 
+    __slots__ = ()
+
     _CHIME_MAP: ClassVar[dict[str, str]] = _CHIME_MAP
 
     def __new__(cls) -> Self:
