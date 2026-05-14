@@ -7,45 +7,117 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from punt_vox.voxd.music_handlers import MusicHandlers
+from punt_vox.voxd.music_handlers import (
+    MusicListHandler,
+    MusicNextHandler,
+    MusicOffHandler,
+    MusicOnHandler,
+    MusicPlayHandler,
+    MusicVibeHandler,
+)
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.track_generator import TrackGenerator
 
 
-def _make_music_handlers_and_scheduler(
+def _make_scheduler(
     *,
     track_generator: TrackGenerator | None = None,
-) -> tuple[MusicScheduler, MusicHandlers]:
-    """Build a MusicScheduler and MusicHandlers pair for testing."""
+) -> tuple[MusicScheduler, TrackGenerator]:
+    """Build a MusicScheduler and TrackGenerator pair for testing."""
     from punt_vox.dirs import music_output_dir
 
     tg = track_generator or TrackGenerator(music_output_dir())
     ms = MusicScheduler(tg)
-    handlers = MusicHandlers(music=ms, track_generator=tg)
-    return ms, handlers
+    return ms, tg
+
+
+def _make_music_on_handler(
+    *,
+    music: MusicScheduler | None = None,
+    track_generator: TrackGenerator | None = None,
+) -> tuple[MusicScheduler, MusicOnHandler]:
+    """Build a MusicOnHandler for testing."""
+    ms, tg = _make_scheduler(track_generator=track_generator)
+    if music is not None:
+        ms = music
+    return ms, MusicOnHandler(music=ms, track_generator=tg)
+
+
+def _make_music_off_handler(
+    *,
+    music: MusicScheduler | None = None,
+    track_generator: TrackGenerator | None = None,
+) -> tuple[MusicScheduler, MusicOffHandler]:
+    """Build a MusicOffHandler for testing."""
+    ms, _tg = _make_scheduler(track_generator=track_generator)
+    if music is not None:
+        ms = music
+    return ms, MusicOffHandler(music=ms)
+
+
+def _make_music_vibe_handler(
+    *,
+    music: MusicScheduler | None = None,
+    track_generator: TrackGenerator | None = None,
+) -> tuple[MusicScheduler, MusicVibeHandler]:
+    """Build a MusicVibeHandler for testing."""
+    ms, _tg = _make_scheduler(track_generator=track_generator)
+    if music is not None:
+        ms = music
+    return ms, MusicVibeHandler(music=ms)
+
+
+def _make_music_next_handler(
+    *,
+    music: MusicScheduler | None = None,
+    track_generator: TrackGenerator | None = None,
+) -> tuple[MusicScheduler, MusicNextHandler]:
+    """Build a MusicNextHandler for testing."""
+    ms, _tg = _make_scheduler(track_generator=track_generator)
+    if music is not None:
+        ms = music
+    return ms, MusicNextHandler(music=ms)
+
+
+def _make_music_play_handler(
+    *,
+    track_generator: TrackGenerator | None = None,
+) -> tuple[MusicScheduler, MusicPlayHandler]:
+    """Build a MusicPlayHandler for testing."""
+    ms, tg = _make_scheduler(track_generator=track_generator)
+    return ms, MusicPlayHandler(music=ms, track_generator=tg)
+
+
+def _make_music_list_handler(
+    *,
+    track_generator: TrackGenerator | None = None,
+) -> MusicListHandler:
+    """Build a MusicListHandler for testing."""
+    _ms, tg = _make_scheduler(track_generator=track_generator)
+    return MusicListHandler(track_generator=tg)
 
 
 class TestMusicHandlerRegistration:
-    """Music handler methods exist on MusicHandlers."""
+    """Music handler classes are callable."""
 
-    def test_handle_music_on_exists(self) -> None:
-        _ms, handlers = _make_music_handlers_and_scheduler()
-        assert callable(handlers.handle_music_on)
+    def test_music_on_handler_callable(self) -> None:
+        _ms, handler = _make_music_on_handler()
+        assert callable(handler)
 
-    def test_handle_music_off_exists(self) -> None:
-        _ms, handlers = _make_music_handlers_and_scheduler()
-        assert callable(handlers.handle_music_off)
+    def test_music_off_handler_callable(self) -> None:
+        _ms, handler = _make_music_off_handler()
+        assert callable(handler)
 
-    def test_handle_music_vibe_exists(self) -> None:
-        _ms, handlers = _make_music_handlers_and_scheduler()
-        assert callable(handlers.handle_music_vibe)
+    def test_music_vibe_handler_callable(self) -> None:
+        _ms, handler = _make_music_vibe_handler()
+        assert callable(handler)
 
 
 class TestHandleMusicOn:
-    """MusicHandlers.handle_music_on: ownership transfer and state mutation."""
+    """MusicOnHandler: ownership transfer and state mutation."""
 
     def test_sets_music_mode_and_owner(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {
@@ -56,7 +128,7 @@ class TestHandleMusicOn:
             "vibe_tags": "[calm]",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.mode == "on"
         assert music.owner == "session-abc"
@@ -66,7 +138,7 @@ class TestHandleMusicOn:
         assert music.changed.is_set()
 
     def test_responds_with_generating_status(self) -> None:
-        _music, handlers = _make_music_handlers_and_scheduler()
+        _music, handler = _make_music_on_handler()
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {
@@ -74,7 +146,7 @@ class TestHandleMusicOn:
             "owner_id": "session-xyz",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "music_on", "id": "req-2", "status": "generating"}
@@ -82,7 +154,7 @@ class TestHandleMusicOn:
 
     def test_ownership_transfer_kills_existing_proc(self) -> None:
         """Transferring ownership kills the previous subprocess."""
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         music.mode = "on"
         music.owner = "old-session"
 
@@ -101,14 +173,14 @@ class TestHandleMusicOn:
             "vibe_tags": "[warm]",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         fake_proc.kill.assert_called_once()
         assert music.owner == "new-session"
         assert music.proc is None
 
     def test_preserves_existing_style_when_not_provided(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         music.style = "jazz"
         ws = MagicMock()
         ws.send_json = AsyncMock()
@@ -119,42 +191,42 @@ class TestHandleMusicOn:
             "vibe": "focused",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.style == "jazz"
 
 
 class TestHandleMusicOff:
-    """MusicHandlers.handle_music_off: stops music and resets state."""
+    """MusicOffHandler: stops music and resets state."""
 
     def test_sets_mode_off_and_state_idle(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_off_handler()
         music.mode = "on"
         music.state = "playing"
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "req-off"}
 
-        asyncio.run(handlers.handle_music_off(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.mode == "off"
         assert music.state == "idle"
         assert music.changed.is_set()
 
     def test_responds_with_stopped_status(self) -> None:
-        _music, handlers = _make_music_handlers_and_scheduler()
+        _music, handler = _make_music_off_handler()
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "req-off-2"}
 
-        asyncio.run(handlers.handle_music_off(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "music_off", "id": "req-off-2", "status": "stopped"}
         )
 
     def test_kills_running_subprocess(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_off_handler()
         fake_proc = MagicMock()
         fake_proc.returncode = None
         fake_proc.kill = MagicMock()
@@ -165,17 +237,17 @@ class TestHandleMusicOff:
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "req-off-3"}
 
-        asyncio.run(handlers.handle_music_off(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         fake_proc.kill.assert_called_once()
         assert music.proc is None
 
 
 class TestHandleMusicVibe:
-    """MusicHandlers.handle_music_vibe: ownership check and vibe update."""
+    """MusicVibeHandler: ownership check and vibe update."""
 
     def test_matching_owner_updates_vibe(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_vibe_handler()
         music.mode = "on"
         music.owner = "session-abc"
         music.vibe = ("old", "[old-tags]")
@@ -188,7 +260,7 @@ class TestHandleMusicVibe:
             "vibe_tags": "[warm]",
         }
 
-        asyncio.run(handlers.handle_music_vibe(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.vibe == ("happy", "[warm]")
         assert music.changed.is_set()
@@ -197,7 +269,7 @@ class TestHandleMusicVibe:
         )
 
     def test_non_owner_rejected(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_vibe_handler()
         music.mode = "on"
         music.owner = "session-abc"
         music.vibe = ("old", "[old-tags]")
@@ -210,7 +282,7 @@ class TestHandleMusicVibe:
             "vibe_tags": "[warm]",
         }
 
-        asyncio.run(handlers.handle_music_vibe(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.vibe == ("old", "[old-tags]")
         ws.send_json.assert_called_once_with(
@@ -218,7 +290,7 @@ class TestHandleMusicVibe:
         )
 
     def test_same_vibe_ignored(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_vibe_handler()
         music.owner = "session-abc"
         music.vibe = ("happy", "[warm]")
         ws = MagicMock()
@@ -230,7 +302,7 @@ class TestHandleMusicVibe:
             "vibe_tags": "[warm]",
         }
 
-        asyncio.run(handlers.handle_music_vibe(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "music_vibe", "id": "vibe-3", "status": "ignored"}
@@ -239,11 +311,11 @@ class TestHandleMusicVibe:
 
 
 class TestHandleMusicOnWhilePlaying:
-    """MusicHandlers.handle_music_on: gapless handoff when music is already playing."""
+    """MusicOnHandler: gapless handoff when music is already playing."""
 
     def test_same_owner_skips_kill(self) -> None:
         """Re-sending music_on while playing (same owner) does not kill proc."""
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         music.mode = "on"
         music.owner = "session-abc"
 
@@ -263,7 +335,7 @@ class TestHandleMusicOnWhilePlaying:
             "vibe_tags": "[mellow]",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         fake_proc.kill.assert_not_called()
         assert music.mode == "on"
@@ -273,7 +345,7 @@ class TestHandleMusicOnWhilePlaying:
 
     def test_different_owner_kills_proc(self) -> None:
         """Ownership transfer while playing kills the existing proc."""
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         music.mode = "on"
         music.owner = "old-owner"
 
@@ -292,7 +364,7 @@ class TestHandleMusicOnWhilePlaying:
             "vibe_tags": "[energetic]",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         fake_proc.kill.assert_called_once()
         assert music.owner == "new-owner"
@@ -300,10 +372,10 @@ class TestHandleMusicOnWhilePlaying:
 
 
 class TestHandleMusicNext:
-    """MusicHandlers.handle_music_next: skip-track handler tests."""
+    """MusicNextHandler: skip-track handler tests."""
 
     def test_signals_music_changed(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_next_handler()
         music.mode = "on"
         music.owner = "session-abc"
         ws = MagicMock()
@@ -313,7 +385,7 @@ class TestHandleMusicNext:
             "owner_id": "session-abc",
         }
 
-        asyncio.run(handlers.handle_music_next(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.changed.is_set()
         ws.send_json.assert_called_once_with(
@@ -321,7 +393,7 @@ class TestHandleMusicNext:
         )
 
     def test_ignored_when_music_off(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_next_handler()
         music.mode = "off"
         ws = MagicMock()
         ws.send_json = AsyncMock()
@@ -330,7 +402,7 @@ class TestHandleMusicNext:
             "owner_id": "session-abc",
         }
 
-        asyncio.run(handlers.handle_music_next(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert not music.changed.is_set()
         ws.send_json.assert_called_once_with(
@@ -338,7 +410,7 @@ class TestHandleMusicNext:
         )
 
     def test_clears_replay_flag(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_next_handler()
         music.mode = "on"
         music.owner = "session-abc"
         music.replay = True
@@ -349,19 +421,19 @@ class TestHandleMusicNext:
             "owner_id": "session-abc",
         }
 
-        asyncio.run(handlers.handle_music_next(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.replay is False
         assert music.changed.is_set()
 
     def test_error_when_no_owner_id(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_next_handler()
         music.mode = "on"
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "next-4"}
 
-        asyncio.run(handlers.handle_music_next(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "error", "id": "next-4", "message": "owner_id is required"}
@@ -372,12 +444,12 @@ class TestEmptyOwnerIdRejection:
     """Handlers must reject empty owner_id to prevent ownership spoofing."""
 
     def test_music_on_rejects_empty_owner_id(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "empty-1", "owner_id": "", "vibe": "focused"}
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "error", "id": "empty-1", "message": "owner_id is required"}
@@ -385,12 +457,12 @@ class TestEmptyOwnerIdRejection:
         assert music.mode == "off"
 
     def test_music_on_rejects_missing_owner_id(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "empty-2", "vibe": "focused"}
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "error", "id": "empty-2", "message": "owner_id is required"}
@@ -398,7 +470,7 @@ class TestEmptyOwnerIdRejection:
         assert music.mode == "off"
 
     def test_music_vibe_rejects_empty_owner_id(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_vibe_handler()
         music.mode = "on"
         music.owner = "real-session"
         ws = MagicMock()
@@ -409,7 +481,7 @@ class TestEmptyOwnerIdRejection:
             "vibe": "happy",
         }
 
-        asyncio.run(handlers.handle_music_vibe(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "error", "id": "empty-3", "message": "owner_id is required"}
@@ -417,14 +489,14 @@ class TestEmptyOwnerIdRejection:
         assert music.vibe == ("", "")
 
     def test_music_vibe_rejects_missing_owner_id(self) -> None:
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_vibe_handler()
         music.mode = "on"
         music.owner = "real-session"
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {"id": "empty-4", "vibe": "happy"}
 
-        asyncio.run(handlers.handle_music_vibe(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         ws.send_json.assert_called_once_with(
             {"type": "error", "id": "empty-4", "message": "owner_id is required"}
@@ -467,7 +539,7 @@ class TestMusicSchedulerTrackName:
 
 
 class TestHandleMusicOnWithName:
-    """MusicHandlers.handle_music_on with name field for track naming and replay."""
+    """MusicOnHandler with name field for track naming and replay."""
 
     def test_replay_existing_track(self, tmp_path: Path) -> None:
         """When name matches an existing file, replay without generation."""
@@ -477,7 +549,7 @@ class TestHandleMusicOnWithName:
         track.write_bytes(b"fake-music")
 
         tg = TrackGenerator(music_dir)
-        music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        music, handler = _make_music_on_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {
@@ -487,7 +559,7 @@ class TestHandleMusicOnWithName:
             "name": "my focus",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.mode == "on"
         assert music.track == track
@@ -506,7 +578,7 @@ class TestHandleMusicOnWithName:
         music_dir.mkdir()
 
         tg = TrackGenerator(music_dir)
-        music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        music, handler = _make_music_on_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {
@@ -516,7 +588,7 @@ class TestHandleMusicOnWithName:
             "name": "new track",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.mode == "on"
         assert music.track_name == "new_track"
@@ -528,7 +600,7 @@ class TestHandleMusicOnWithName:
 
     def test_no_name_clears_track_name(self) -> None:
         """When no name is given, track_name is empty (auto-naming in generation)."""
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         ws = AsyncMock()
         msg: dict[str, object] = {
             "type": "music_on",
@@ -536,14 +608,14 @@ class TestHandleMusicOnWithName:
             "owner_id": "session-z",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.track_name == ""
         assert music.state == "generating"
 
     def test_empty_slugified_name_returns_error(self) -> None:
         """Name that slugifies to empty string returns error."""
-        music, handlers = _make_music_handlers_and_scheduler()
+        music, handler = _make_music_on_handler()
         ws = AsyncMock()
         msg: dict[str, object] = {
             "type": "music_on",
@@ -552,7 +624,7 @@ class TestHandleMusicOnWithName:
             "name": "---",
         }
 
-        asyncio.run(handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
@@ -561,7 +633,7 @@ class TestHandleMusicOnWithName:
 
 
 class TestHandleMusicPlay:
-    """MusicHandlers.handle_music_play: replay saved tracks by name."""
+    """MusicPlayHandler: replay saved tracks by name."""
 
     def test_play_existing_track(self, tmp_path: Path) -> None:
         music_dir = tmp_path / "music"
@@ -570,7 +642,7 @@ class TestHandleMusicPlay:
         track.write_bytes(b"fake-music")
 
         tg = TrackGenerator(music_dir)
-        music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        music, handler = _make_music_play_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {
@@ -580,7 +652,7 @@ class TestHandleMusicPlay:
             "owner_id": "session-a",
         }
 
-        asyncio.run(handlers.handle_music_play(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert music.mode == "on"
         assert music.track == track
@@ -598,7 +670,7 @@ class TestHandleMusicPlay:
         music_dir.mkdir()
 
         tg = TrackGenerator(music_dir)
-        _music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        _music, handler = _make_music_play_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {
@@ -608,14 +680,14 @@ class TestHandleMusicPlay:
             "owner_id": "session-b",
         }
 
-        asyncio.run(handlers.handle_music_play(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
         assert "not found" in resp["message"]
 
     def test_play_missing_name(self) -> None:
-        _music, handlers = _make_music_handlers_and_scheduler()
+        _music, handler = _make_music_play_handler()
         ws = AsyncMock()
         msg: dict[str, object] = {
             "type": "music_play",
@@ -623,14 +695,14 @@ class TestHandleMusicPlay:
             "owner_id": "session-c",
         }
 
-        asyncio.run(handlers.handle_music_play(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
         assert "name is required" in resp["message"]
 
     def test_play_missing_owner_id(self) -> None:
-        _music, handlers = _make_music_handlers_and_scheduler()
+        _music, handler = _make_music_play_handler()
         ws = AsyncMock()
         msg: dict[str, object] = {
             "type": "music_play",
@@ -638,7 +710,7 @@ class TestHandleMusicPlay:
             "name": "test",
         }
 
-        asyncio.run(handlers.handle_music_play(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
@@ -646,7 +718,7 @@ class TestHandleMusicPlay:
 
     def test_empty_slugified_name_returns_error(self) -> None:
         """Name that slugifies to empty string returns error."""
-        _music, handlers = _make_music_handlers_and_scheduler()
+        _music, handler = _make_music_play_handler()
         ws = AsyncMock()
         msg: dict[str, object] = {
             "type": "music_play",
@@ -655,7 +727,7 @@ class TestHandleMusicPlay:
             "owner_id": "session-q",
         }
 
-        asyncio.run(handlers.handle_music_play(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
@@ -663,19 +735,19 @@ class TestHandleMusicPlay:
 
 
 class TestHandleMusicList:
-    """MusicHandlers.handle_music_list: returns saved tracks with metadata."""
+    """MusicListHandler: returns saved tracks with metadata."""
 
     def test_list_empty_dir(self, tmp_path: Path) -> None:
         music_dir = tmp_path / "music"
         music_dir.mkdir()
 
         tg = TrackGenerator(music_dir)
-        _music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        handler = _make_music_list_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {"type": "music_list", "id": "list-1"}
 
-        asyncio.run(handlers.handle_music_list(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "music_list"
@@ -688,12 +760,12 @@ class TestHandleMusicList:
         (music_dir / "beta.mp3").write_bytes(b"b" * 2048)
 
         tg = TrackGenerator(music_dir)
-        _music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        handler = _make_music_list_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {"type": "music_list", "id": "list-2"}
 
-        asyncio.run(handlers.handle_music_list(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "music_list"
@@ -710,12 +782,12 @@ class TestHandleMusicList:
         music_dir = tmp_path / "music_missing"
 
         tg = TrackGenerator(music_dir)
-        _music, handlers = _make_music_handlers_and_scheduler(track_generator=tg)
+        handler = _make_music_list_handler(track_generator=tg)
 
         ws = AsyncMock()
         msg: dict[str, object] = {"type": "music_list", "id": "list-3"}
 
-        asyncio.run(handlers.handle_music_list(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "music_list"

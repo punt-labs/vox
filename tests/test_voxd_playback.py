@@ -15,7 +15,7 @@ from punt_vox.voxd import (
     _PLAYBACK_TIMEOUT_DEFAULT_S,
     _music_player_command,
 )
-from punt_vox.voxd.music_handlers import MusicHandlers
+from punt_vox.voxd.music_handlers import MusicOnHandler
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.track_generator import TrackGenerator
@@ -391,7 +391,7 @@ class TestMusicSeparateFromPlaybackQueue:
         playback = PlaybackQueue()
         tg = TrackGenerator(Path("/tmp/vox-test-music"))
         music = MusicScheduler(tg)
-        music_handlers = MusicHandlers(music=music, track_generator=tg)
+        handler = MusicOnHandler(music=music, track_generator=tg)
 
         ws = MagicMock()
         ws.send_json = AsyncMock()
@@ -401,6 +401,6 @@ class TestMusicSeparateFromPlaybackQueue:
             "vibe": "focused",
         }
 
-        asyncio.run(music_handlers.handle_music_on(msg, ws))
+        asyncio.run(handler(msg, ws))
 
         assert playback._queue.empty()

@@ -1245,26 +1245,26 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         runner = CliRunner()
+        _doc = "punt_vox.doctor"
         with (
-            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(
-                f"{_CLI}.installed_version",
+                f"{_doc}.installed_version",
                 return_value=installed_version,
             ),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
+            patch(f"{_doc}.claude_desktop_config_path", return_value=config_path),
             patch(
-                f"{_CLI}.default_output_dir",
+                f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
-            patch(f"{_CLI}.platform.system", return_value=system_platform),
+            patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(
-                f"{_CLI}._legacy_user_unit_path",
+                "punt_vox.service._legacy_user_unit_path",
                 return_value=resolved_legacy,
             ),
             # Isolate legacy-path doctor checks from the real filesystem.
-            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
-            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1375,27 +1375,27 @@ class TestDoctorCommand:
         (tmp_path / "Music").mkdir(exist_ok=True)
         (tmp_path / "audio").mkdir(exist_ok=True)
 
+        _doc = "punt_vox.doctor"
         with (
-            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_CLI}._claude_desktop_config_path",
+                f"{_doc}.claude_desktop_config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_CLI}.default_output_dir",
+                f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
-            patch(f"{_CLI}.platform.system", return_value="Darwin"),
-            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
-            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(f"{_doc}.platform.system", return_value="Darwin"),
+            patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
             patch(
-                f"{_CLI}._legacy_user_unit_path",
+                "punt_vox.service._legacy_user_unit_path",
                 return_value=tmp_path / "no-such-legacy-unit",
             ),
         ):
@@ -1717,27 +1717,27 @@ class TestDoctorCommand:
         (tmp_path / "Music").mkdir(exist_ok=True)
         (tmp_path / "audio").mkdir(exist_ok=True)
 
+        _doc = "punt_vox.doctor"
         with (
-            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_CLI}._claude_desktop_config_path",
+                f"{_doc}.claude_desktop_config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_CLI}.default_output_dir",
+                f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
-            patch(f"{_CLI}.platform.system", return_value="Darwin"),
-            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
-            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(f"{_doc}.platform.system", return_value="Darwin"),
+            patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
             patch(
-                f"{_CLI}._legacy_user_unit_path",
+                "punt_vox.service._legacy_user_unit_path",
                 return_value=tmp_path / "no-such-legacy-unit",
             ),
         ):
@@ -1784,27 +1784,27 @@ class TestDoctorCommand:
         (tmp_path / "Music").mkdir(exist_ok=True)
         (tmp_path / "audio").mkdir(exist_ok=True)
 
+        _doc = "punt_vox.doctor"
         with (
-            patch(f"{_CLI}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_CLI}._claude_desktop_config_path",
+                f"{_doc}.claude_desktop_config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_CLI}.default_output_dir",
+                f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
-            patch(f"{_CLI}.platform.system", return_value="Darwin"),
-            patch(f"{_CLI}.Path.cwd", return_value=tmp_path),
-            patch(f"{_CLI}.Path.home", return_value=tmp_path),
+            patch(f"{_doc}.platform.system", return_value="Darwin"),
+            patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
             patch(
-                f"{_CLI}._legacy_user_unit_path",
+                "punt_vox.service._legacy_user_unit_path",
                 return_value=tmp_path / "no-such-legacy-unit",
             ),
         ):
@@ -1842,7 +1842,7 @@ class TestValidVoxSubcommands:
         must appear in the valid set so unit files that reference
         ``vox daemon`` or ``vox cache <op>`` are recognised.
         """
-        from punt_vox.__main__ import (
+        from punt_vox.doctor import (
             _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -1857,7 +1857,7 @@ class TestValidVoxSubcommands:
         that ``app.registered_commands`` was fully populated at the
         time of the call.
         """
-        from punt_vox.__main__ import (
+        from punt_vox.doctor import (
             _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -1880,7 +1880,7 @@ class TestValidVoxSubcommands:
         """
         from typer.models import CommandInfo
 
-        from punt_vox.__main__ import (
+        from punt_vox.doctor import (
             _valid_vox_subcommands,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -1960,7 +1960,7 @@ class TestInstallDesktopCommand:
                 ),
             ),
             patch(
-                f"{_CLI}._claude_desktop_config_path",
+                "punt_vox.doctor.claude_desktop_config_path",
                 return_value=config_path,
             ),
             patch("punt_vox.providers.platform.system", return_value="Darwin"),
@@ -1996,7 +1996,9 @@ class TestInstallDesktopCommand:
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", return_value=_UVX),
-            patch(f"{_CLI}._claude_desktop_config_path", return_value=config_path),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
         ):
             result = runner.invoke(
                 app,
