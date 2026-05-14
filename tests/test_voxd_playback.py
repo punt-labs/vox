@@ -16,8 +16,8 @@ from punt_vox.voxd import (
     _music_player_command,
 )
 from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.on_handler import MusicOnHandler
 from punt_vox.voxd.music.scheduler import MusicScheduler
-from punt_vox.voxd.music_handlers import MusicOnHandler
 from punt_vox.voxd.playback import PlaybackQueue
 
 
@@ -391,7 +391,7 @@ class TestMusicSeparateFromPlaybackQueue:
         playback = PlaybackQueue()
         tg = TrackGenerator(Path("/tmp/vox-test-music"))
         music = MusicScheduler(tg)
-        handler = MusicOnHandler(music=music, track_generator=tg)
+        handler = MusicOnHandler(scheduler=music)
 
         ws = MagicMock()
         ws.send_json = AsyncMock()

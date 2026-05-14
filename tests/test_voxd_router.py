@@ -13,15 +13,13 @@ from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.list_handler import MusicListHandler
+from punt_vox.voxd.music.next_handler import MusicNextHandler
+from punt_vox.voxd.music.off_handler import MusicOffHandler
+from punt_vox.voxd.music.on_handler import MusicOnHandler
+from punt_vox.voxd.music.play_handler import MusicPlayHandler
 from punt_vox.voxd.music.scheduler import MusicScheduler
-from punt_vox.voxd.music_handlers import (
-    MusicListHandler,
-    MusicNextHandler,
-    MusicOffHandler,
-    MusicOnHandler,
-    MusicPlayHandler,
-    MusicVibeHandler,
-)
+from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
@@ -57,12 +55,12 @@ def _make_router(
         ),
         "voices": VoicesHandler(),
         "health": HealthHandler(health=hl),
-        "music_on": MusicOnHandler(music=ms, track_generator=tg),
-        "music_off": MusicOffHandler(music=ms),
-        "music_play": MusicPlayHandler(music=ms, track_generator=tg),
-        "music_list": MusicListHandler(track_generator=tg),
-        "music_vibe": MusicVibeHandler(music=ms),
-        "music_next": MusicNextHandler(music=ms),
+        "music_on": MusicOnHandler(scheduler=ms),
+        "music_off": MusicOffHandler(scheduler=ms),
+        "music_play": MusicPlayHandler(scheduler=ms),
+        "music_list": MusicListHandler(generator=tg),
+        "music_vibe": MusicVibeHandler(scheduler=ms),
+        "music_next": MusicNextHandler(scheduler=ms),
     }
     return WebSocketRouter(
         handlers=handlers,

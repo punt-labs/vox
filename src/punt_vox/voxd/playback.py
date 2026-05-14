@@ -228,39 +228,17 @@ class PlaybackQueue:
     async def play_audio(self, path: Path) -> None:
         """Play an audio file and record a rich result in ``last_result``.
 
-        Captures spawn command, audio env vars at call time, exit code, elapsed
-        wall time, file size, and full stderr. Logs ERROR on non-zero exit,
-        WARNING on suspiciously fast "success", INFO with stderr summary on
-        normal success. Stderr is never silently discarded.
+        Coordinates file validation, timeout computation, subprocess lifecycle,
+        and result logging. Each concern is handled by a focused private method.
         """
         cmd = _player_command(path)
         env_snapshot = _snapshot_env(_AUDIO_ENV_KEYS)
 
-        try:
-            size = path.stat().st_size
-        except OSError as exc:
-            logger.error("Playback aborted: cannot stat %s: %s", path, exc)
-            self._record_result(
-                path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
-            )
+        size = self._validate_file(path)
+        if size is None:
             return
 
-        if size == 0:
-            logger.error(
-                "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
-                path,
-            )
-            self._record_result(path=path, rc=-1, elapsed=0.0, stderr="0-byte file")
-            return
-
-        duration = await _probe_duration(path)
-        if duration is not None and math.isfinite(duration) and duration > 0:
-            timeout = max(
-                duration + _PLAYBACK_TIMEOUT_PADDING_S,
-                _PLAYBACK_TIMEOUT_DEFAULT_S,
-            )
-        else:
-            timeout = _PLAYBACK_TIMEOUT_DEFAULT_S
+        timeout = await self._compute_timeout(path)
 
         logger.info(
             "Playback spawn: cmd=%s size=%d audio_env=%s timeout=%.1fs",
@@ -270,6 +248,57 @@ class PlaybackQueue:
             timeout,
         )
 
+        result = await self._spawn_and_wait(cmd, timeout, env_snapshot, path)
+        if result is None:
+            return
+
+        rc, elapsed, stderr_text = result
+        self._record_result(path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
+        self._log_result(path, rc, elapsed, size, stderr_text, cmd, env_snapshot)
+
+    def _validate_file(self, path: Path) -> int | None:
+        """Return file size in bytes, or None after recording an error."""
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            logger.error("Playback aborted: cannot stat %s: %s", path, exc)
+            self._record_result(
+                path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
+            )
+            return None
+
+        if size == 0:
+            logger.error(
+                "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
+                path,
+            )
+            self._record_result(path=path, rc=-1, elapsed=0.0, stderr="0-byte file")
+            return None
+
+        return size
+
+    async def _compute_timeout(self, path: Path) -> float:
+        """Probe audio duration and return a padded timeout in seconds."""
+        duration = await _probe_duration(path)
+        if duration is not None and math.isfinite(duration) and duration > 0:
+            return max(
+                duration + _PLAYBACK_TIMEOUT_PADDING_S,
+                _PLAYBACK_TIMEOUT_DEFAULT_S,
+            )
+        return _PLAYBACK_TIMEOUT_DEFAULT_S
+
+    async def _spawn_and_wait(
+        self,
+        cmd: list[str],
+        timeout: float,
+        env_snapshot: dict[str, str],
+        path: Path,
+    ) -> tuple[int, float, str] | None:
+        """Spawn the player subprocess and wait for completion.
+
+        Return ``(rc, elapsed, stderr)`` on normal completion, or ``None``
+        after recording an error result for spawn/timeout failures.
+        """
         start = _monotonic()
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -294,7 +323,7 @@ class PlaybackQueue:
                 elapsed=elapsed,
                 stderr=f"FileNotFoundError: {exc}",
             )
-            return
+            return None
         except OSError as exc:
             elapsed = _monotonic() - start
             logger.error(
@@ -306,7 +335,7 @@ class PlaybackQueue:
             self._record_result(
                 path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
             )
-            return
+            return None
 
         try:
             _, stderr_bytes = await asyncio.wait_for(
@@ -329,15 +358,24 @@ class PlaybackQueue:
                 elapsed=elapsed,
                 stderr=f"timeout after {timeout:.1f}s",
             )
-            return
+            return None
 
         elapsed = _monotonic() - start
         rc = proc.returncode if proc.returncode is not None else -1
         raw_stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
-        stderr_text = _truncate_stderr(raw_stderr)
+        return rc, elapsed, _truncate_stderr(raw_stderr)
 
-        self._record_result(path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
-
+    def _log_result(
+        self,
+        path: Path,
+        rc: int,
+        elapsed: float,
+        size: int,
+        stderr_text: str,
+        cmd: list[str],
+        env_snapshot: dict[str, str],
+    ) -> None:
+        """Interpret a playback result and log at the appropriate level."""
         if rc != 0:
             logger.error(
                 "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "

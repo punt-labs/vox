@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Self
 
@@ -52,6 +53,24 @@ _PROVIDER_API_KEY_VAR: dict[str, str] = {
     "elevenlabs": "ELEVENLABS_API_KEY",
     "openai": "OPENAI_API_KEY",
 }
+
+
+@contextlib.contextmanager
+def _api_key_context(api_key: str | None, provider_name: str) -> Generator[None]:
+    """Temporarily inject api_key into os.environ for the provider."""
+    env_key_name = _PROVIDER_API_KEY_VAR.get(provider_name)
+    old_key: str | None = None
+    if api_key and env_key_name:
+        old_key = os.environ.get(env_key_name)
+        os.environ[env_key_name] = api_key
+    try:
+        yield
+    finally:
+        if api_key and env_key_name:
+            if old_key is not None:
+                os.environ[env_key_name] = old_key
+            else:
+                os.environ.pop(env_key_name, None)
 
 
 # ---------------------------------------------------------------------------
@@ -101,22 +120,11 @@ def _run_play_directly_sync(
     is supplied; restoration happens on the same thread so the env-lock
     contract is preserved without holding the lock during audio playback.
     """
-    env_var = _PROVIDER_API_KEY_VAR.get(provider_name) if api_key else None
-    old_value: str | None = None
-    if env_var and api_key:
-        old_value = os.environ.get(env_var)
-        os.environ[env_var] = api_key
-    try:
+    with _api_key_context(api_key, provider_name):
         provider = provider_factory()
         if not isinstance(provider, DirectPlayProvider):
             return None
         return provider.play_directly(request)
-    finally:
-        if env_var:
-            if old_value is not None:
-                os.environ[env_var] = old_value
-            else:
-                os.environ.pop(env_var, None)
 
 
 # ---------------------------------------------------------------------------
@@ -273,18 +281,7 @@ class SynthesisPipeline:
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
-            old_key: str | None = None
-            env_key_name: str | None = None
-            if api_key:
-                if provider_name == "elevenlabs":
-                    env_key_name = "ELEVENLABS_API_KEY"
-                elif provider_name == "openai":
-                    env_key_name = "OPENAI_API_KEY"
-                if env_key_name:
-                    old_key = os.environ.get(env_key_name)
-                    os.environ[env_key_name] = api_key
-
-            try:
+            with _api_key_context(api_key, provider_name):
                 provider = get_provider(provider_name, config_dir=None, model=model)
                 request = _build_audio_request(
                     normalized,
@@ -344,12 +341,6 @@ class SynthesisPipeline:
                 if api_key is None:
                     cache_put(normalized, resolved_voice, provider_name, output_path)
                 return output_path
-            finally:
-                # Restore API key
-                if env_key_name and old_key is not None:
-                    os.environ[env_key_name] = old_key
-                elif env_key_name and api_key:
-                    os.environ.pop(env_key_name, None)
 
     async def try_direct_play(
         self,
