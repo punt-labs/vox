@@ -318,10 +318,17 @@ def _parse_optional_str(msg: dict[str, object], key: str) -> str | None:
     return raw or None
 
 
-def _get_pipeline(ctx: DaemonContext) -> SynthesisPipeline:
-    """Return the module-level SynthesisPipeline, creating one if needed."""
+def _get_pipeline(ctx: DaemonContext | None = None) -> SynthesisPipeline:
+    """Return the module-level SynthesisPipeline.
+
+    Initialized eagerly in main(). Falls back to ctx if called before main()
+    (e.g., in tests).
+    """
     global _pipeline
     if _pipeline is None:
+        if ctx is None:
+            msg = "_pipeline not initialized — call main() first"
+            raise RuntimeError(msg)
         _pipeline = SynthesisPipeline(playback_mutex=ctx._playback.mutex)
     return _pipeline
 
@@ -349,7 +356,7 @@ async def _synthesize_to_file(
     request_id: str = "",
 ) -> Path:
     """Delegate to the SynthesisPipeline instance."""
-    pipeline = _get_pipeline(DaemonContext(auth_token=None, port=0))
+    pipeline = _get_pipeline()
     return await pipeline.synthesize_to_file(
         text,
         voice,
@@ -1263,6 +1270,10 @@ def main(
     # Music scheduler owns the background loop and all music state.
     scheduler = MusicScheduler(_track_generator)
     ctx = DaemonContext(auth_token=auth_token, port=port, music=scheduler)
+
+    # Initialize synthesis pipeline eagerly with the real playback mutex.
+    global _pipeline
+    _pipeline = SynthesisPipeline(playback_mutex=ctx._playback.mutex)
 
     logger.info("Starting voxd on %s:%d", host, port)
 
