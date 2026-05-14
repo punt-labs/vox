@@ -33,10 +33,13 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_handlers import MusicHandlers
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.speech_handlers import SpeechHandlers
 from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.system_handlers import SystemHandlers
 from punt_vox.voxd.track_generator import TrackGenerator
 
 logger = logging.getLogger(__name__)
@@ -238,16 +241,19 @@ class VoxDaemon:
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
-            router = WebSocketRouter(
-                synthesis=syn,
-                playback=pb,
-                music=mus,
-                chime_dedup=ChimeDedup(),
-                once_dedup=OnceDedup(),
+            speech = SpeechHandlers(synthesis=syn, playback=pb, once_dedup=OnceDedup())
+            music_h = MusicHandlers(music=mus, track_generator=tg)
+            system = SystemHandlers(
                 chimes=ChimeResolver(),
+                chime_dedup=ChimeDedup(),
+                playback=pb,
                 health=hlth,
+            )
+            router = WebSocketRouter(
+                speech_handlers=speech,
+                music_handlers=music_h,
+                system_handlers=system,
                 auth_token=auth_token,
-                track_generator=tg,
             )
 
         return VoxDaemon._starlette(health=hlth, router=router)
@@ -305,16 +311,21 @@ def main(
     # Use a lambda to defer the lookup.
     health = DaemonHealth(playback, lambda: ws_router.client_count, port)
 
-    ws_router = WebSocketRouter(
-        synthesis=synthesis,
-        playback=playback,
-        music=scheduler,
-        chime_dedup=ChimeDedup(),
-        once_dedup=OnceDedup(),
+    speech = SpeechHandlers(
+        synthesis=synthesis, playback=playback, once_dedup=OnceDedup()
+    )
+    music_h = MusicHandlers(music=scheduler, track_generator=tg)
+    system = SystemHandlers(
         chimes=ChimeResolver(),
+        chime_dedup=ChimeDedup(),
+        playback=playback,
         health=health,
+    )
+    ws_router = WebSocketRouter(
+        speech_handlers=speech,
+        music_handlers=music_h,
+        system_handlers=system,
         auth_token=auth_token,
-        track_generator=tg,
     )
 
     daemon = VoxDaemon(

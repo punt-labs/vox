@@ -1,0 +1,188 @@
+"""Tests for punt_vox.voxd.speech_handlers -- synthesize and record handlers."""
+# pyright: reportPrivateUsage=false
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from punt_vox.voxd.dedup import OnceDedup
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.speech_handlers import SpeechHandlers
+from punt_vox.voxd.synthesis import SynthesisPipeline
+
+
+def _make_speech_handlers(
+    *,
+    synthesis: SynthesisPipeline | None = None,
+    playback: PlaybackQueue | None = None,
+    once_dedup: OnceDedup | None = None,
+) -> SpeechHandlers:
+    """Build a SpeechHandlers for testing."""
+    pb = playback or PlaybackQueue()
+    syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
+    od = once_dedup or OnceDedup()
+    return SpeechHandlers(synthesis=syn, playback=pb, once_dedup=od)
+
+
+class TestHandleSynthesizeShortCircuit:
+    """SpeechHandlers.handle_synthesize skips try_direct_play for cloud providers."""
+
+    def test_cloud_provider_skips_direct_play(self) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.try_direct_play = AsyncMock(return_value=None)
+        mock_synth.synthesize_to_file = AsyncMock(side_effect=RuntimeError("stop here"))
+        handlers = _make_speech_handlers(synthesis=mock_synth)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "elevenlabs",
+        }
+
+        asyncio.run(handlers.handle_synthesize(msg, websocket))
+
+        mock_synth.try_direct_play.assert_not_called()
+
+    def test_local_provider_calls_direct_play(self) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.try_direct_play = AsyncMock(return_value=0)
+        handlers = _make_speech_handlers(synthesis=mock_synth)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "2",
+            "text": "hello",
+            "provider": "espeak",
+        }
+
+        asyncio.run(handlers.handle_synthesize(msg, websocket))
+
+        mock_synth.try_direct_play.assert_called_once()
+        call_kwargs = mock_synth.try_direct_play.call_args.kwargs
+        assert call_kwargs["provider_name"] == "espeak"
+
+
+class TestHandleSynthesizeOnceFlag:
+    """Integration tests for handle_synthesize with the once flag."""
+
+    @staticmethod
+    def _make_stubbed_handlers(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[SpeechHandlers, list[str]]:
+        """Build handlers with fake synthesis and instant playback."""
+        synthesis_calls: list[str] = []
+
+        async def fake_synthesize(*args: object, **_kwargs: object) -> Path:
+            synthesis_calls.append(str(args[0]))
+            return Path("/tmp/fake.mp3")
+
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = fake_synthesize
+
+        monkeypatch.setattr(
+            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.speech_handlers.auto_detect_provider", lambda: "elevenlabs"
+        )
+
+        handlers = _make_speech_handlers(synthesis=mock_synth)
+
+        class _InstantPlaybackQueue:
+            async def put(self, item: PlaybackItem) -> None:
+                item.notify.set()
+
+        handlers._playback._queue = _InstantPlaybackQueue()  # type: ignore[assignment]
+        return handlers, synthesis_calls
+
+    @pytest.mark.asyncio
+    async def test_once_null_does_not_dedupe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without once, identical requests both proceed (regression)."""
+        handlers, synthesis_calls = self._make_stubbed_handlers(monkeypatch)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "synthesize",
+            "id": "a",
+            "text": "hello",
+        }
+        await handlers.handle_synthesize(msg, ws)
+        msg2: dict[str, object] = {
+            "type": "synthesize",
+            "id": "b",
+            "text": "hello",
+        }
+        await handlers.handle_synthesize(msg2, ws)
+
+        assert len(synthesis_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_once_set_dedups_identical_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With once=600, the second identical request returns deduped."""
+        handlers, synthesis_calls = self._make_stubbed_handlers(monkeypatch)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "synthesize",
+            "id": "a",
+            "text": "wall msg",
+            "once": 600,
+        }
+        await handlers.handle_synthesize(msg, ws)
+        msg2: dict[str, object] = {
+            "type": "synthesize",
+            "id": "b",
+            "text": "wall msg",
+            "once": 600,
+        }
+        await handlers.handle_synthesize(msg2, ws)
+
+        assert len(synthesis_calls) == 1
+
+        all_calls = ws.send_json.call_args_list
+        sent_msgs = [c[0][0] for c in all_calls]
+        deduped_msgs = [m for m in sent_msgs if m.get("deduped") is True]
+        assert len(deduped_msgs) == 1
+        deduped = deduped_msgs[0]
+        assert deduped["id"] == "b"
+        assert deduped["type"] == "done"
+        assert "original_played_at" in deduped
+        assert "ttl_seconds_remaining" in deduped
+        assert deduped["ttl_seconds_remaining"] > 0
+
+    @pytest.mark.asyncio
+    async def test_once_zero_does_not_dedupe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """once=0 is treated as null per the spec -- must not dedupe."""
+        handlers, synthesis_calls = self._make_stubbed_handlers(monkeypatch)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        msg: dict[str, object] = {
+            "type": "synthesize",
+            "id": "a",
+            "text": "hello",
+            "once": 0,
+        }
+        await handlers.handle_synthesize(msg, ws)
+        msg2: dict[str, object] = {
+            "type": "synthesize",
+            "id": "b",
+            "text": "hello",
+            "once": 0,
+        }
+        await handlers.handle_synthesize(msg2, ws)
+
+        assert len(synthesis_calls) == 2

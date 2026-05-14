@@ -2269,8 +2269,7 @@ class TestDaemonRestartCommand:
 
         def fake_run(
             argv: list[str],
-            *,
-            check: bool = False,
+            **kwargs: object,
         ) -> MagicMock:
             subprocess_calls.append(tuple(argv))
             return MagicMock(returncode=0)
@@ -2280,28 +2279,23 @@ class TestDaemonRestartCommand:
         # of short-circuiting on a missing unit file.
         fake_unit = MagicMock()
         fake_unit.exists.return_value = True
-        monkeypatch.setattr("punt_vox.service._SYSTEMD_UNIT", fake_unit)
-
-        def no_port_file() -> None:
-            return None
-
-        def no_stale() -> bool:
-            return False
-
-        def no_pids(_port: int) -> list[int]:
-            return []
+        monkeypatch.setattr("punt_vox.service.systemd._SYSTEMD_UNIT", fake_unit)
 
         # No daemon on the host port, nothing to kill — exercises the
         # "empty kill path" branch of ``_ensure_port_free`` without
         # the test depending on whatever happens to bind 8421 on CI.
-        monkeypatch.setattr("punt_vox.service.read_port_file", no_port_file)
-        monkeypatch.setattr("punt_vox.service._kill_stale_daemon", no_stale)
-        monkeypatch.setattr("punt_vox.service._find_pid_on_port", no_pids)
-        # subprocess.run is called from BOTH the service module (for
-        # ``_systemd_stop``) and __main__ (for the start step). Both
-        # funnel through ``subprocess.run`` — patch both to capture
-        # the complete argv history.
-        monkeypatch.setattr("punt_vox.service.subprocess.run", fake_run)
+        # Patch at the ProcessManager class level since the shims
+        # delegate to the singleton instance.
+        from punt_vox.service.process import ProcessManager
+
+        monkeypatch.setattr(ProcessManager, "read_port_file", lambda self: None)  # pyright: ignore[reportUnknownLambdaType]
+        monkeypatch.setattr(ProcessManager, "kill_stale_daemon", lambda self: False)  # pyright: ignore[reportUnknownLambdaType]
+        monkeypatch.setattr(ProcessManager, "find_pid_on_port", lambda self, port: [])  # pyright: ignore[reportUnknownLambdaType]
+        # subprocess.run is called from BOTH the service submodules
+        # (for ``_systemd_stop``) and __main__ (for the start step).
+        # Patch the systemd submodule's subprocess.run to capture the
+        # complete argv history.
+        monkeypatch.setattr("punt_vox.service.systemd.subprocess.run", fake_run)
 
         with (
             patch(f"{_CLI}.os.geteuid", return_value=1000),
