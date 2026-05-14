@@ -355,7 +355,8 @@ class TestSayProviderCheckHealth:
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
             provider = SayProvider()
-        provider._voices._cache["samantha"] = SayVoiceConfig(name="Samantha", locale="en_US")  # pyright: ignore[reportPrivateUsage]
+        voice = SayVoiceConfig(name="Samantha", locale="en_US")
+        provider._voices._cache["samantha"] = voice  # pyright: ignore[reportPrivateUsage]
         provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
         checks = provider.check_health()
         assert len(checks) == 2
