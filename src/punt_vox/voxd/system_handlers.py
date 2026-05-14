@@ -17,25 +17,24 @@ from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.types import MessageHandler
 
-__all__ = ["SystemHandlers"]
+__all__ = ["ChimeHandler", "HealthHandler", "VoicesHandler"]
 
 logger = logging.getLogger(__name__)
 
 
-class SystemHandlers:
-    """Handle chime, voices, and health WebSocket messages."""
+class ChimeHandler(MessageHandler):
+    """Handle 'chime' messages: play a bundled chime sound."""
 
     __slots__ = (
         "_chime_dedup",
         "_chimes",
-        "_health",
         "_playback",
     )
 
     _chime_dedup: ChimeDedup
     _chimes: ChimeResolver
-    _health: DaemonHealth
     _playback: PlaybackQueue
 
     def __new__(
@@ -44,21 +43,19 @@ class SystemHandlers:
         chimes: ChimeResolver,
         chime_dedup: ChimeDedup,
         playback: PlaybackQueue,
-        health: DaemonHealth,
     ) -> Self:
         self = super().__new__(cls)
         self._chimes = chimes
         self._chime_dedup = chime_dedup
         self._playback = playback
-        self._health = health
         return self
 
-    async def handle_chime(
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'chime' message: play a bundled chime sound."""
+        """Play a bundled chime sound."""
         signal = str(msg.get("signal", "done"))
         path = self._chimes.resolve(signal)
         if path is None:
@@ -83,12 +80,21 @@ class SystemHandlers:
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):
             await websocket.send_json({"type": "done", "id": f"chime:{signal}"})
 
-    async def handle_voices(
+
+class VoicesHandler(MessageHandler):
+    """Handle 'voices' messages: list available voices."""
+
+    __slots__ = ()
+
+    def __new__(cls) -> Self:
+        return super().__new__(cls)
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'voices' message: list available voices."""
+        """List available voices for the requested provider."""
         provider_name = parse_optional_str(msg, "provider") or auto_detect_provider()
 
         try:
@@ -109,12 +115,29 @@ class SystemHandlers:
             {"type": "voices", "provider": provider_name, "voices": voice_list}
         )
 
-    async def handle_health(
+
+class HealthHandler(MessageHandler):
+    """Handle 'health' messages over the authenticated WebSocket."""
+
+    __slots__ = ("_health",)
+
+    _health: DaemonHealth
+
+    def __new__(
+        cls,
+        *,
+        health: DaemonHealth,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._health = health
+        return self
+
+    async def __call__(
         self,
-        _msg: dict[str, object],
+        msg: dict[str, object],  # noqa: ARG002
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'health' message over the authenticated WebSocket."""
+        """Return full health payload."""
         payload = self._health.full_payload()
         payload["type"] = "health"
         await websocket.send_json(payload)

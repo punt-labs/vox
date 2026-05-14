@@ -7,14 +7,11 @@ from __future__ import annotations
 import hmac
 import json
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
-from punt_vox.voxd.music_handlers import MusicHandlers
-from punt_vox.voxd.speech_handlers import SpeechHandlers
-from punt_vox.voxd.system_handlers import SystemHandlers
+from punt_vox.voxd.types import MessageHandler
 
 __all__ = ["WebSocketRouter"]
 
@@ -22,51 +19,28 @@ logger = logging.getLogger(__name__)
 
 
 class WebSocketRouter:
-    """Route WebSocket messages to handler methods for voxd."""
+    """Route WebSocket messages to handler callables for voxd."""
 
     __slots__ = (
         "_auth_token",
         "_client_count",
         "_handlers",
-        "_music_handlers",
-        "_speech_handlers",
-        "_system_handlers",
     )
 
     _auth_token: str | None
     _client_count: int
-    _handlers: dict[str, Callable[[dict[str, object], WebSocket], Awaitable[None]]]
-    _music_handlers: MusicHandlers
-    _speech_handlers: SpeechHandlers
-    _system_handlers: SystemHandlers
+    _handlers: dict[str, MessageHandler]
 
     def __new__(
         cls,
         *,
-        speech_handlers: SpeechHandlers,
-        music_handlers: MusicHandlers,
-        system_handlers: SystemHandlers,
+        handlers: dict[str, MessageHandler],
         auth_token: str | None,
     ) -> Self:
         self = super().__new__(cls)
-        self._speech_handlers = speech_handlers
-        self._music_handlers = music_handlers
-        self._system_handlers = system_handlers
+        self._handlers = handlers
         self._auth_token = auth_token
         self._client_count = 0
-        self._handlers = {
-            "synthesize": speech_handlers.handle_synthesize,
-            "record": speech_handlers.handle_record,
-            "chime": system_handlers.handle_chime,
-            "voices": system_handlers.handle_voices,
-            "health": system_handlers.handle_health,
-            "music_on": music_handlers.handle_music_on,
-            "music_off": music_handlers.handle_music_off,
-            "music_play": music_handlers.handle_music_play,
-            "music_list": music_handlers.handle_music_list,
-            "music_vibe": music_handlers.handle_music_vibe,
-            "music_next": music_handlers.handle_music_next,
-        }
         return self
 
     # -- Properties ------------------------------------------------------------
@@ -77,9 +51,7 @@ class WebSocketRouter:
         return self._client_count
 
     @property
-    def handlers(
-        self,
-    ) -> dict[str, Callable[[dict[str, object], WebSocket], Awaitable[None]]]:
+    def handlers(self) -> dict[str, MessageHandler]:
         """Return the handler dispatch table."""
         return self._handlers
 

@@ -12,14 +12,22 @@ import pytest
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music_handlers import MusicHandlers
+from punt_vox.voxd.music_handlers import (
+    MusicListHandler,
+    MusicNextHandler,
+    MusicOffHandler,
+    MusicOnHandler,
+    MusicPlayHandler,
+    MusicVibeHandler,
+)
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
-from punt_vox.voxd.speech_handlers import SpeechHandlers
+from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
-from punt_vox.voxd.system_handlers import SystemHandlers
+from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.types import MessageHandler
 
 
 def _make_router(
@@ -35,18 +43,29 @@ def _make_router(
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)
 
-    speech = SpeechHandlers(synthesis=syn, playback=pb, once_dedup=OnceDedup())
-    music = MusicHandlers(music=ms, track_generator=tg)
-    system = SystemHandlers(
-        chimes=ChimeResolver(),
-        chime_dedup=ChimeDedup(),
-        playback=pb,
-        health=hl,
-    )
+    handlers: dict[str, MessageHandler] = {
+        "synthesize": SynthesizeHandler(
+            synthesis=syn,
+            playback=pb,
+            once_dedup=OnceDedup(),
+        ),
+        "record": RecordHandler(synthesis=syn),
+        "chime": ChimeHandler(
+            chimes=ChimeResolver(),
+            chime_dedup=ChimeDedup(),
+            playback=pb,
+        ),
+        "voices": VoicesHandler(),
+        "health": HealthHandler(health=hl),
+        "music_on": MusicOnHandler(music=ms, track_generator=tg),
+        "music_off": MusicOffHandler(music=ms),
+        "music_play": MusicPlayHandler(music=ms, track_generator=tg),
+        "music_list": MusicListHandler(track_generator=tg),
+        "music_vibe": MusicVibeHandler(music=ms),
+        "music_next": MusicNextHandler(music=ms),
+    }
     return WebSocketRouter(
-        speech_handlers=speech,
-        music_handlers=music,
-        system_handlers=system,
+        handlers=handlers,
         auth_token=auth_token,
     )
 

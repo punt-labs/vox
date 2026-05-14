@@ -11,9 +11,9 @@ Z spec mapping:
     SpeakMode:   sUnset = None (field absent),  sChime = "n",  sVoice = "y"
     voice:       empty = None,  {v} = present
 
-State is the in-memory SessionState dataclass.
-sUnset is represented by speak="n" with _speak_explicit=False (fresh session).
-sChime is represented by speak="n" with _speak_explicit=True.
+State is the in-memory SessionConfig dataclass.
+sUnset is represented by speak="n" with speak_explicit=False (fresh session).
+sChime is represented by speak="n" with speak_explicit=True.
 sVoice is represented by speak="y".
 """
 
@@ -23,20 +23,19 @@ import json
 
 import pytest
 
-from punt_vox.server import SessionState, notify, speak
+from punt_vox.server import SessionConfig, notify, speak
 
 
 @pytest.fixture(autouse=True)
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Reset server session state before every test.
+    """Reset server session config before every test.
 
-    Stubs _find_config_dir to return None so _refresh_state_from_config
+    Stubs _find_config_dir to return None so refresh_from_config
     is a no-op -- partition tests control state via _set_state only.
     """
     import punt_vox.server as srv
 
-    monkeypatch.setattr(srv, "_state", SessionState())
-    monkeypatch.setattr(srv, "_speak_explicit", False)
+    monkeypatch.setattr(srv, "_session", SessionConfig())
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
 
@@ -49,20 +48,20 @@ def _set_state(
 ) -> None:
     """Set session pre-state.
 
-    When speak_mode is None, speak defaults to "n" and _speak_explicit
-    stays False (sUnset). When speak_mode is given, _speak_explicit is
+    When speak_mode is None, speak defaults to "n" and speak_explicit
+    stays False (sUnset). When speak_mode is given, speak_explicit is
     set to True (the user has made an explicit choice) unless
     speak_explicit is explicitly passed as False.
     """
     import punt_vox.server as srv
 
     if notify_mode is not None:
-        srv._state.notify = notify_mode
+        srv._session.notify = notify_mode
     if speak_mode is not None:
-        srv._state.speak = speak_mode
-    srv._speak_explicit = speak_explicit
+        srv._session.speak = speak_mode
+    srv._session.speak_explicit = speak_explicit
     if voice is not None:
-        srv._state.voice = voice
+        srv._session.voice = voice
 
 
 def _read_state() -> dict[str, str | None | bool]:
@@ -70,10 +69,10 @@ def _read_state() -> dict[str, str | None | bool]:
     import punt_vox.server as srv
 
     return {
-        "notify": srv._state.notify,
-        "speak": srv._state.speak,
-        "voice": srv._state.voice,
-        "speak_explicit": srv._speak_explicit,
+        "notify": srv._session.notify,
+        "speak": srv._session.speak,
+        "voice": srv._session.voice,
+        "speak_explicit": srv._session.speak_explicit,
     }
 
 
@@ -88,7 +87,7 @@ class TestVoxOn:
 
     def test_partition_1_init_sunset_from_noff(self) -> None:
         """P1: nOff/sUnset/empty -> nOn/sVoice/empty -- first enable inits."""
-        # Fresh session = sUnset (speak="n", _speak_explicit=False)
+        # Fresh session = sUnset (speak="n", speak_explicit=False)
         result = json.loads(notify(mode="y"))
         assert result["notify"]["notify"] == "y"
         assert result["notify"]["speak"] == "y"
@@ -100,7 +99,7 @@ class TestVoxOn:
     def test_partition_2_init_sunset_voice_preserved(self) -> None:
         """P2: nOff/sUnset/{v1} -> nOn/sVoice/{v1} -- voice preserved through init."""
         _set_state(notify_mode="n", voice="matilda")
-        # speak absent = sUnset (_speak_explicit=False)
+        # speak absent = sUnset (speak_explicit=False)
         result = json.loads(notify(mode="y"))
         assert result["notify"]["speak"] == "y"
         state = _read_state()
@@ -177,7 +176,7 @@ class TestVoxOff:
         notify(mode="n")
         state = _read_state()
         assert state["notify"] == "n"
-        # sUnset: speak is at default "n" with _speak_explicit False
+        # sUnset: speak is at default "n" with speak_explicit False
         assert state["speak"] == "n"
         assert state["speak_explicit"] is False
 
@@ -403,7 +402,7 @@ class TestStopObservations:
 
         Note: sUnset with nOn is unreachable in practice (VoxOn initializes
         speak), but verifies the observation guard logic is correct.
-        In-memory state: speak="n" with _speak_explicit=False. The notify
+        In-memory state: speak="n" with speak_explicit=False. The notify
         function would have initialized speak to "y", but we manually
         construct this state to test the guard.
         """

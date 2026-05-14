@@ -51,8 +51,8 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
-class SessionState:
-    """In-memory session state. Seeded from vox.md + vox.local.md."""
+class SessionConfig:
+    """In-memory session config. Seeded from vox.md + vox.local.md."""
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     notify: str = "n"
@@ -65,10 +65,69 @@ class SessionState:
     vibe_tags: str | None = None
     vibe_signals: str = ""
     music_mode: str = "off"
+    speak_explicit: bool = False
+
+    @classmethod
+    def from_config(cls, config_dir: Path | None) -> SessionConfig:
+        """Read per-repo config once and return a SessionConfig."""
+        if config_dir is None:
+            return cls()
+
+        from punt_vox.config import read_config
+
+        cfg = read_config(config_dir=config_dir)
+        return cls(
+            notify=cfg.notify,
+            speak=cfg.speak,
+            voice=cfg.voice,
+            provider=cfg.provider,
+            model=cfg.model,
+            vibe_mode=cfg.vibe_mode,
+            vibe=cfg.vibe,
+            vibe_tags=cfg.vibe_tags,
+            vibe_signals=cfg.vibe_signals or "",
+        )
+
+    def refresh_from_config(self) -> None:
+        """Re-read config files and update self with current values.
+
+        Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags,
+        vibe_signals) always take the config value -- the config file is
+        the source of truth since CLI and hooks write there directly.
+
+        For voice, provider, and model the MCP tool may have set a value
+        that was not persisted to config (e.g. an in-tool override).  Only
+        overwrite self when config has a non-None value so those
+        overrides survive.
+        """
+        config_dir = _find_config_dir()
+        if config_dir is None:
+            return
+
+        from punt_vox.config import read_config, read_field
+
+        cfg = read_config(config_dir=config_dir)
+
+        self.vibe = cfg.vibe
+        self.vibe_tags = cfg.vibe_tags
+        self.vibe_signals = cfg.vibe_signals or ""
+        self.vibe_mode = cfg.vibe_mode
+        self.notify = cfg.notify
+        self.speak = cfg.speak
+
+        if read_field("speak", config_dir) is not None:
+            self.speak_explicit = True
+
+        if cfg.voice is not None:
+            self.voice = cfg.voice
+        if cfg.provider is not None:
+            self.provider = cfg.provider
+        if cfg.model is not None:
+            self.model = cfg.model
 
 
 # Module-level singleton; initialized in run_server().
-_state: SessionState = SessionState()
+_session: SessionConfig = SessionConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -81,66 +140,6 @@ def _find_config_dir() -> Path | None:
     from punt_vox.dirs import find_config_dir
 
     return find_config_dir()
-
-
-def _seed_state_from_config(config_dir: Path | None) -> SessionState:
-    """Read per-repo config once and return a SessionState."""
-    if config_dir is None:
-        return SessionState()
-
-    from punt_vox.config import read_config
-
-    cfg = read_config(config_dir=config_dir)
-    return SessionState(
-        notify=cfg.notify,
-        speak=cfg.speak,
-        voice=cfg.voice,
-        provider=cfg.provider,
-        model=cfg.model,
-        vibe_mode=cfg.vibe_mode,
-        vibe=cfg.vibe,
-        vibe_tags=cfg.vibe_tags,
-        vibe_signals=cfg.vibe_signals or "",
-    )
-
-
-def _refresh_state_from_config() -> None:
-    """Re-read config files and update _state with current values.
-
-    Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags,
-    vibe_signals) always take the config value — the config file is
-    the source of truth since CLI and hooks write there directly.
-
-    For voice, provider, and model the MCP tool may have set a value
-    that was not persisted to config (e.g. an in-tool override).  Only
-    overwrite _state when config has a non-None value so those
-    overrides survive.
-    """
-    global _speak_explicit
-    config_dir = _find_config_dir()
-    if config_dir is None:
-        return
-
-    from punt_vox.config import read_config, read_field
-
-    cfg = read_config(config_dir=config_dir)
-
-    _state.vibe = cfg.vibe
-    _state.vibe_tags = cfg.vibe_tags
-    _state.vibe_signals = cfg.vibe_signals or ""
-    _state.vibe_mode = cfg.vibe_mode
-    _state.notify = cfg.notify
-    _state.speak = cfg.speak
-
-    if read_field("speak", config_dir) is not None:
-        _speak_explicit = True
-
-    if cfg.voice is not None:
-        _state.voice = cfg.voice
-    if cfg.provider is not None:
-        _state.provider = cfg.provider
-    if cfg.model is not None:
-        _state.model = cfg.model
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +240,7 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     Returns:
         JSON string with synthesis results.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     _validate_voice_settings(stability, similarity, style)
 
     # ephemeral is accepted for callers (architecture spec) but voxd
@@ -250,12 +249,12 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
 
     # Update in-memory state for persistent fields.
     if provider is not None:
-        _state.provider = provider
+        _session.provider = provider
     if model is not None:
-        _state.model = model
+        _session.model = model
     if vibe_tags is not None:
-        _state.vibe_tags = vibe_tags
-        _state.vibe_signals = ""
+        _session.vibe_tags = vibe_tags
+        _session.vibe_signals = ""
 
     # Normalize input: text -> single segment.
     if segments is None:
@@ -272,13 +271,13 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    # Resolve effective voice: explicit param > session state.
-    effective_voice = voice or _state.voice
-    effective_provider = provider or _state.provider
-    effective_model = model or _state.model
+    # Resolve effective voice: explicit param > session config.
+    effective_voice = voice or _session.voice
+    effective_provider = provider or _session.provider
+    effective_model = model or _session.model
 
-    # Resolve vibe_tags: explicit param > session state.
-    effective_vibe_tags = vibe_tags or _state.vibe_tags
+    # Resolve vibe_tags: explicit param > session config.
+    effective_vibe_tags = vibe_tags or _session.vibe_tags
 
     client = _voxd_client()
     results: list[dict[str, Any]] = []
@@ -381,7 +380,7 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     Returns:
         JSON string with synthesis results including file path.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     _validate_voice_settings(stability, similarity, style)
 
     # Normalize input: text -> single segment.
@@ -390,10 +389,10 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    effective_voice = voice or _state.voice
-    effective_provider = _state.provider
-    effective_model = _state.model
-    effective_vibe_tags = _state.vibe_tags
+    effective_voice = voice or _session.voice
+    effective_provider = _session.provider
+    effective_model = _session.model
+    effective_vibe_tags = _session.vibe_tags
 
     if output_path and len(segments) > 1:
         return _error("output_path only supported for single-segment calls")
@@ -495,21 +494,21 @@ def vibe(
     Returns:
         JSON string with the updated vibe state.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     updates: dict[str, str] = {}
     if mood is not None:
         updates["vibe"] = mood
-        _state.vibe = mood
+        _session.vibe = mood
     if tags is not None:
         updates["vibe_tags"] = tags
         updates["vibe_signals"] = ""
-        _state.vibe_tags = tags
-        _state.vibe_signals = ""
+        _session.vibe_tags = tags
+        _session.vibe_signals = ""
     if mode is not None:
         if mode not in ("auto", "manual", "off"):
             return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
         updates["vibe_mode"] = mode
-        _state.vibe_mode = mode
+        _session.vibe_mode = mode
 
     if not updates:
         return _error("Provide at least one of: mood, tags, mode.")
@@ -520,20 +519,20 @@ def vibe(
     write_fields(updates, _find_config_dir())
 
     # Propagate vibe change to music loop if this session owns music.
-    if _state.music_mode == "on":
+    if _session.music_mode == "on":
         client = _voxd_client()
         try:
             client.music_vibe(
-                vibe=_state.vibe or "",
-                vibe_tags=_state.vibe_tags or "",
-                owner_id=_state.session_id,
+                vibe=_session.vibe or "",
+                vibe_tags=_session.vibe_tags or "",
+                owner_id=_session.session_id,
             )
         except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
             logger.warning(
                 "voxd error during vibe propagation; music off",
                 exc_info=True,
             )
-            _state.music_mode = "off"
+            _session.music_mode = "off"
 
     return json.dumps({"vibe": updates})
 
@@ -576,7 +575,7 @@ def music(
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
 
@@ -585,14 +584,14 @@ def music(
         resp = client.music(
             mode=mode,
             style=style or "",
-            vibe=_state.vibe or "",
-            vibe_tags=_state.vibe_tags or "",
-            owner_id=_state.session_id,
+            vibe=_session.vibe or "",
+            vibe_tags=_session.vibe_tags or "",
+            owner_id=_session.session_id,
             name=name,
         )
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music tool; music off", exc_info=True)
-        _state.music_mode = "off"
+        _session.music_mode = "off"
         return json.dumps(
             {
                 "message": "\u266a Daemon unreachable \u2014 music off.",
@@ -601,7 +600,7 @@ def music(
         )
     except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
-        _state.music_mode = "off"
+        _session.music_mode = "off"
         return json.dumps(
             {
                 "message": f"\u266a Music error: {exc}",
@@ -609,13 +608,13 @@ def music(
             }
         )
 
-    _state.music_mode = mode
+    _session.music_mode = mode
 
     # Replay of existing track — status is "playing", not "generating".
     if resp.get("status") == "playing" and name:
         message = f"\u266a Playing saved track: {name}"
     elif mode == "on":
-        message = _music_on_message(style, _state.vibe)
+        message = _music_on_message(style, _session.vibe)
     else:
         message = "\u266a Music off."
     return json.dumps({"message": message, **resp})
@@ -628,7 +627,7 @@ def music_play(name: str) -> str:
     Finds the track in the music library and starts looping it.
     No generation, no credits used.
 
-    .. note:: Calls ``_refresh_state_from_config()`` for consistency.
+    .. note:: Calls ``_session.refresh_from_config()`` for consistency.
 
     Args:
         name: Track name (as shown by music_list).
@@ -637,10 +636,10 @@ def music_play(name: str) -> str:
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     client = _voxd_client()
     try:
-        resp = client.music_play(name, owner_id=_state.session_id)
+        resp = client.music_play(name, owner_id=_session.session_id)
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music_play", exc_info=True)
         return json.dumps(
@@ -658,7 +657,7 @@ def music_play(name: str) -> str:
             }
         )
 
-    _state.music_mode = "on"
+    _session.music_mode = "on"
     track_name = resp.get("name", name)
     message = f"\u266a Now playing: {track_name}"
     return json.dumps({"message": message, **resp})
@@ -672,7 +671,7 @@ def music_list() -> str:
         JSON string with a human-readable ``message`` field and
         the track list from voxd.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     client = _voxd_client()
     try:
         resp = client.music_list()
@@ -721,10 +720,10 @@ def music_next() -> str:
         JSON string with a human-readable ``message`` field and
         the raw voxd response fields.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     client = _voxd_client()
     try:
-        resp = client.music_next(owner_id=_state.session_id)
+        resp = client.music_next(owner_id=_session.session_id)
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music_next", exc_info=True)
         return json.dumps(
@@ -759,11 +758,11 @@ def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for fut
         JSON string with provider, current voice, featured voices,
         and full voice list.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     client = _voxd_client()
 
     try:
-        all_voices = client.voices(provider=_state.provider)
+        all_voices = client.voices(provider=_session.provider)
     except VoxdConnectionError as exc:
         return _error(str(exc))
     except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
@@ -771,7 +770,7 @@ def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for fut
         return _error(str(exc))
 
     # Determine effective provider name for blurb lookup.
-    provider_name = _state.provider or "elevenlabs"
+    provider_name = _session.provider or "elevenlabs"
 
     featured = [
         {"name": name, "blurb": blurb}
@@ -784,7 +783,7 @@ def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for fut
     return json.dumps(
         {
             "provider": provider_name,
-            "current": _state.voice,
+            "current": _session.voice,
             "featured": featured,
             "all": all_voices,
         }
@@ -815,23 +814,23 @@ def notify(
     Returns:
         JSON string with the updated config fields.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     if mode not in ("y", "n", "c"):
         return _error(f"Invalid mode '{mode}'. Use y/n/c.")
 
     updates: dict[str, str] = {"notify": mode}
-    _state.notify = mode
+    _session.notify = mode
 
     # Initialize speak to "y" if not explicitly set yet.
     # "n" is the default sentinel; if it's still at default and we're
     # enabling notifications, default to voice mode.
-    if mode in ("y", "c") and _state.speak == "n" and not _speak_was_explicitly_set():
+    if mode in ("y", "c") and _session.speak == "n" and not _session.speak_explicit:
         updates["speak"] = "y"
-        _state.speak = "y"
+        _session.speak = "y"
 
     if voice is not None:
         updates["voice"] = voice
-        _state.voice = voice
+        _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
     from punt_vox.config import write_fields
@@ -839,15 +838,6 @@ def notify(
     write_fields(updates, _find_config_dir())
 
     return json.dumps({"notify": updates})
-
-
-# Track whether speak was explicitly set by the user.
-_speak_explicit: bool = False
-
-
-def _speak_was_explicitly_set() -> bool:
-    """Check if speak was explicitly set (via config file or tool call)."""
-    return _speak_explicit
 
 
 @mcp.tool()
@@ -864,19 +854,18 @@ def speak(
     Returns:
         JSON string with the updated fields.
     """
-    global _speak_explicit
-    _refresh_state_from_config()
+    _session.refresh_from_config()
 
     if mode not in ("y", "n"):
         return _error(f"Invalid mode '{mode}'. Use y/n.")
 
     updates: dict[str, str] = {"speak": mode}
-    _state.speak = mode
-    _speak_explicit = True
+    _session.speak = mode
+    _session.speak_explicit = True
 
     if voice is not None:
         updates["voice"] = voice
-        _state.voice = voice
+        _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
     from punt_vox.config import write_fields
@@ -894,18 +883,18 @@ def status() -> str:
         JSON string with provider, voice, notify mode, speak mode,
         vibe mode, and current vibe.
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     return json.dumps(
         {
-            "provider": _state.provider,
-            "voice": _state.voice,
-            "notify": _state.notify,
-            "speak": _state.speak,
-            "vibe_mode": _state.vibe_mode,
-            "vibe": _state.vibe,
-            "vibe_tags": _state.vibe_tags,
-            "vibe_signals": _state.vibe_signals,
-            "music_mode": _state.music_mode,
+            "provider": _session.provider,
+            "voice": _session.voice,
+            "notify": _session.notify,
+            "speak": _session.speak,
+            "vibe_mode": _session.vibe_mode,
+            "vibe": _session.vibe,
+            "vibe_tags": _session.vibe_tags,
+            "vibe_signals": _session.vibe_signals,
+            "music_mode": _session.music_mode,
         }
     )
 
@@ -921,30 +910,30 @@ def show_vox() -> str:
     Returns:
         JSON string with status ("ok" or "error" with message).
     """
-    _refresh_state_from_config()
+    _session.refresh_from_config()
     from punt_vox.applet import show_applet
     from punt_vox.config import VoxConfig
 
     cfg = VoxConfig(
-        notify=_state.notify,
-        speak=_state.speak,
-        vibe_mode=_state.vibe_mode,
-        voice=_state.voice,
-        provider=_state.provider,
-        model=_state.model,
-        vibe=_state.vibe,
-        vibe_tags=_state.vibe_tags,
-        vibe_signals=_state.vibe_signals,
+        notify=_session.notify,
+        speak=_session.speak,
+        vibe_mode=_session.vibe_mode,
+        voice=_session.voice,
+        provider=_session.provider,
+        model=_session.model,
+        vibe=_session.vibe,
+        vibe_tags=_session.vibe_tags,
+        vibe_signals=_session.vibe_signals,
     )
 
     # Get voice roster from voxd.
     try:
         client = _voxd_client()
-        voice_roster = client.voices(provider=_state.provider)
+        voice_roster = client.voices(provider=_session.provider)
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
         voice_roster = []
 
-    provider_name = _state.provider or "elevenlabs"
+    provider_name = _session.provider or "elevenlabs"
     return json.dumps(show_applet(cfg, provider_name, voice_roster))
 
 
@@ -955,29 +944,29 @@ def show_vox() -> str:
 
 def run_server() -> None:
     """Run the MCP server with stdio transport."""
-    global _state, _speak_explicit
+    global _session
 
     configure_logging(stderr_level="INFO")
     logger.info("Starting vox MCP server (mic)")
 
-    # Seed session state from per-repo config if it exists.
+    # Seed session config from per-repo config if it exists.
     config_dir = _find_config_dir()
-    _state = _seed_state_from_config(config_dir)
+    _session = SessionConfig.from_config(config_dir)
 
     # Mark speak as explicitly set if the config file had it.
     if config_dir is not None:
         from punt_vox.config import read_field
 
         if read_field("speak", config_dir) is not None:
-            _speak_explicit = True
+            _session.speak_explicit = True
 
     logger.info(
-        "Session state: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",
-        _state.notify,
-        _state.speak,
-        _state.voice,
-        _state.provider,
-        _state.vibe_mode,
+        "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",
+        _session.notify,
+        _session.speak,
+        _session.voice,
+        _session.provider,
+        _session.vibe_mode,
     )
 
     mcp.run(transport="stdio")

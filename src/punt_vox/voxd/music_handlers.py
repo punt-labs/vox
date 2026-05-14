@@ -12,14 +12,22 @@ if TYPE_CHECKING:
 
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.types import MessageHandler
 
-__all__ = ["MusicHandlers"]
+__all__ = [
+    "MusicListHandler",
+    "MusicNextHandler",
+    "MusicOffHandler",
+    "MusicOnHandler",
+    "MusicPlayHandler",
+    "MusicVibeHandler",
+]
 
 logger = logging.getLogger(__name__)
 
 
-class MusicHandlers:
-    """Handle music WebSocket messages (on/off/play/list/vibe/next)."""
+class MusicOnHandler(MessageHandler):
+    """Handle 'music_on' messages: start or transfer music ownership."""
 
     __slots__ = (
         "_music",
@@ -40,12 +48,12 @@ class MusicHandlers:
         self._track_generator = track_generator
         return self
 
-    async def handle_music_on(
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_on' message: start or transfer music ownership."""
+        """Start or transfer music ownership."""
         request_id = str(msg.get("id", ""))
         owner_id = str(msg.get("owner_id", ""))
         style = str(msg.get("style", ""))
@@ -127,12 +135,29 @@ class MusicHandlers:
             {"type": "music_on", "id": request_id, "status": "generating"}
         )
 
-    async def handle_music_off(
+
+class MusicOffHandler(MessageHandler):
+    """Handle 'music_off' messages: stop music playback."""
+
+    __slots__ = ("_music",)
+
+    _music: MusicScheduler
+
+    def __new__(
+        cls,
+        *,
+        music: MusicScheduler,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._music = music
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_off' message: stop music playback."""
+        """Stop music playback."""
         request_id = str(msg.get("id", ""))
 
         await self._music.kill_proc()
@@ -146,12 +171,35 @@ class MusicHandlers:
             {"type": "music_off", "id": request_id, "status": "stopped"}
         )
 
-    async def handle_music_play(
+
+class MusicPlayHandler(MessageHandler):
+    """Handle 'music_play' messages: replay a saved track by name."""
+
+    __slots__ = (
+        "_music",
+        "_track_generator",
+    )
+
+    _music: MusicScheduler
+    _track_generator: TrackGenerator
+
+    def __new__(
+        cls,
+        *,
+        music: MusicScheduler,
+        track_generator: TrackGenerator,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._music = music
+        self._track_generator = track_generator
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_play' message: replay a saved track by name."""
+        """Replay a saved track by name."""
         request_id = str(msg.get("id", ""))
         name = str(msg.get("name", ""))
         owner_id = str(msg.get("owner_id", ""))
@@ -212,12 +260,29 @@ class MusicHandlers:
             }
         )
 
-    async def handle_music_list(
+
+class MusicListHandler(MessageHandler):
+    """Handle 'music_list' messages: return saved tracks with metadata."""
+
+    __slots__ = ("_track_generator",)
+
+    _track_generator: TrackGenerator
+
+    def __new__(
+        cls,
+        *,
+        track_generator: TrackGenerator,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._track_generator = track_generator
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_list' message: return saved tracks with metadata."""
+        """Return saved tracks with metadata."""
         request_id = str(msg.get("id", ""))
         tracks = self._track_generator.list_tracks()
 
@@ -229,12 +294,29 @@ class MusicHandlers:
             }
         )
 
-    async def handle_music_vibe(
+
+class MusicVibeHandler(MessageHandler):
+    """Handle 'music_vibe' messages: update vibe if sender is owner."""
+
+    __slots__ = ("_music",)
+
+    _music: MusicScheduler
+
+    def __new__(
+        cls,
+        *,
+        music: MusicScheduler,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._music = music
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_vibe' message: update vibe if sender is owner."""
+        """Update vibe if sender is owner."""
         request_id = str(msg.get("id", ""))
         owner_id = str(msg.get("owner_id", ""))
         vibe = str(msg.get("vibe", ""))
@@ -267,12 +349,29 @@ class MusicHandlers:
             {"type": "music_vibe", "id": request_id, "status": "generating"}
         )
 
-    async def handle_music_next(
+
+class MusicNextHandler(MessageHandler):
+    """Handle 'music_next' messages: skip to a new track."""
+
+    __slots__ = ("_music",)
+
+    _music: MusicScheduler
+
+    def __new__(
+        cls,
+        *,
+        music: MusicScheduler,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._music = music
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'music_next' message: skip to a new track."""
+        """Skip to a new track."""
         request_id = str(msg.get("id", ""))
         owner_id = str(msg.get("owner_id", ""))
 

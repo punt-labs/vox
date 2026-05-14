@@ -27,14 +27,15 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,
 )
+from punt_vox.voxd.types import MessageHandler
 
-__all__ = ["SpeechHandlers"]
+__all__ = ["RecordHandler", "SynthesizeHandler"]
 
 logger = logging.getLogger(__name__)
 
 
-class SpeechHandlers:
-    """Handle synthesize and record WebSocket messages."""
+class SynthesizeHandler(MessageHandler):
+    """Handle 'synthesize' WebSocket messages: TTS + enqueue playback."""
 
     __slots__ = (
         "_once_dedup",
@@ -59,12 +60,12 @@ class SpeechHandlers:
         self._once_dedup = once_dedup
         return self
 
-    async def handle_synthesize(
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'synthesize' message: TTS + enqueue playback."""
+        """Synthesize speech and enqueue for playback."""
         request_id = str(msg.get("id", ""))
         text = str(msg.get("text", ""))
         if not text:
@@ -204,12 +205,50 @@ class SpeechHandlers:
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):
             await websocket.send_json({"type": "done", "id": request_id})
 
-    async def handle_record(
+    # -- Private helpers -------------------------------------------------------
+
+    def _record_playback_result(
+        self,
+        *,
+        path: Path,
+        rc: int,
+        elapsed: float,
+        stderr: str,
+    ) -> None:
+        """Update the playback queue's last_result with a freshly-observed result."""
+        self._playback.set_last_result(
+            {
+                "file": str(path),
+                "rc": rc,
+                "elapsed_s": round(elapsed, 4),
+                "stderr": stderr,
+                "ts": time.time(),
+            }
+        )
+
+
+class RecordHandler(MessageHandler):
+    """Handle 'record' WebSocket messages: TTS without playback."""
+
+    __slots__ = ("_synthesis",)
+
+    _synthesis: SynthesisPipeline
+
+    def __new__(
+        cls,
+        *,
+        synthesis: SynthesisPipeline,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._synthesis = synthesis
+        return self
+
+    async def __call__(
         self,
         msg: dict[str, object],
         websocket: WebSocket,
     ) -> None:
-        """Handle a 'record' message: TTS without playback, return audio bytes."""
+        """Synthesize speech and return audio bytes without playback."""
         request_id = str(msg.get("id", ""))
         text = str(msg.get("text", ""))
         if not text:
@@ -270,24 +309,3 @@ class SpeechHandlers:
             output_path.unlink(missing_ok=True)
         encoded = base64.b64encode(audio_data).decode("ascii")
         await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
-
-    # -- Private helpers -------------------------------------------------------
-
-    def _record_playback_result(
-        self,
-        *,
-        path: Path,
-        rc: int,
-        elapsed: float,
-        stderr: str,
-    ) -> None:
-        """Update the playback queue's last_result with a freshly-observed result."""
-        self._playback.set_last_result(
-            {
-                "file": str(path),
-                "rc": rc,
-                "elapsed_s": round(elapsed, 4),
-                "stderr": stderr,
-                "ts": time.time(),
-            }
-        )

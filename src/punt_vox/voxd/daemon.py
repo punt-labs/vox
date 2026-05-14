@@ -33,14 +33,22 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music_handlers import MusicHandlers
+from punt_vox.voxd.music_handlers import (
+    MusicListHandler,
+    MusicNextHandler,
+    MusicOffHandler,
+    MusicOnHandler,
+    MusicPlayHandler,
+    MusicVibeHandler,
+)
 from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
-from punt_vox.voxd.speech_handlers import SpeechHandlers
+from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
-from punt_vox.voxd.system_handlers import SystemHandlers
+from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +228,44 @@ class VoxDaemon:
         cli()
 
     @staticmethod
+    def _build_handler_dict(
+        *,
+        synthesis: SynthesisPipeline,
+        playback: PlaybackQueue,
+        music: MusicScheduler,
+        track_generator: TrackGenerator,
+        health: DaemonHealth,
+    ) -> dict[str, MessageHandler]:
+        """Build the canonical handler dispatch dict."""
+        return {
+            "synthesize": SynthesizeHandler(
+                synthesis=synthesis,
+                playback=playback,
+                once_dedup=OnceDedup(),
+            ),
+            "record": RecordHandler(synthesis=synthesis),
+            "chime": ChimeHandler(
+                chimes=ChimeResolver(),
+                chime_dedup=ChimeDedup(),
+                playback=playback,
+            ),
+            "voices": VoicesHandler(),
+            "health": HealthHandler(health=health),
+            "music_on": MusicOnHandler(
+                music=music,
+                track_generator=track_generator,
+            ),
+            "music_off": MusicOffHandler(music=music),
+            "music_play": MusicPlayHandler(
+                music=music,
+                track_generator=track_generator,
+            ),
+            "music_list": MusicListHandler(track_generator=track_generator),
+            "music_vibe": MusicVibeHandler(music=music),
+            "music_next": MusicNextHandler(music=music),
+        }
+
+    @staticmethod
     def create_app(
         *,
         playback: PlaybackQueue | None = None,
@@ -241,18 +287,15 @@ class VoxDaemon:
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
-            speech = SpeechHandlers(synthesis=syn, playback=pb, once_dedup=OnceDedup())
-            music_h = MusicHandlers(music=mus, track_generator=tg)
-            system = SystemHandlers(
-                chimes=ChimeResolver(),
-                chime_dedup=ChimeDedup(),
+            handlers = VoxDaemon._build_handler_dict(
+                synthesis=syn,
                 playback=pb,
+                music=mus,
+                track_generator=tg,
                 health=hlth,
             )
             router = WebSocketRouter(
-                speech_handlers=speech,
-                music_handlers=music_h,
-                system_handlers=system,
+                handlers=handlers,
                 auth_token=auth_token,
             )
 
@@ -311,20 +354,15 @@ def main(
     # Use a lambda to defer the lookup.
     health = DaemonHealth(playback, lambda: ws_router.client_count, port)
 
-    speech = SpeechHandlers(
-        synthesis=synthesis, playback=playback, once_dedup=OnceDedup()
-    )
-    music_h = MusicHandlers(music=scheduler, track_generator=tg)
-    system = SystemHandlers(
-        chimes=ChimeResolver(),
-        chime_dedup=ChimeDedup(),
+    handlers = VoxDaemon._build_handler_dict(
+        synthesis=synthesis,
         playback=playback,
+        music=scheduler,
+        track_generator=tg,
         health=health,
     )
     ws_router = WebSocketRouter(
-        speech_handlers=speech,
-        music_handlers=music_h,
-        system_handlers=system,
+        handlers=handlers,
         auth_token=auth_token,
     )
 
