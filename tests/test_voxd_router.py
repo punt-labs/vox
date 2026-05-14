@@ -14,7 +14,6 @@ import pytest
 from punt_vox.voxd import (
     PlaybackItem,
     WebSocketRouter,
-    _auto_track_name,
 )
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
@@ -55,7 +54,7 @@ def _make_router(
     )
 
 
-# Also provide a DaemonContext-like interface for tests that need ctx properties.
+# Build a MusicScheduler + WebSocketRouter pair for tests that inspect music state.
 def _make_ctx_and_router() -> tuple[MusicScheduler, WebSocketRouter]:
     """Build a MusicScheduler and router pair for tests that inspect music state."""
     from punt_vox.dirs import music_output_dir
@@ -743,53 +742,37 @@ class TestEmptyOwnerIdRejection:
 
 
 class TestAutoTrackName:
-    """_auto_track_name derives vibe-style-YYYYMMDD-HHMM patterns."""
+    """TrackGenerator.auto_track_name derives vibe-style-YYYYMMDD-HHMM patterns."""
+
+    def _tg(self) -> TrackGenerator:
+        return TrackGenerator(Path("/tmp/vox-test-music"))
 
     def test_with_vibe_and_style(self) -> None:
-        from punt_vox.voxd import DaemonContext
-
-        ctx = DaemonContext(auth_token=None, port=0)
-        ctx.music_vibe = ("happy", "[warm]")
-        ctx.music_style = "techno"
-        name = _auto_track_name(ctx)
+        name = self._tg().auto_track_name("happy", "techno")
         assert name.startswith("happy-techno-")
         parts = name.split("-")
         assert len(parts[-2]) == 8  # YYYYMMDD
         assert len(parts[-1]) == 4  # HHMM
 
     def test_no_vibe_uses_ambient(self) -> None:
-        from punt_vox.voxd import DaemonContext
-
-        ctx = DaemonContext(auth_token=None, port=0)
-        ctx.music_vibe = ("", "")
-        ctx.music_style = ""
-        name = _auto_track_name(ctx)
+        name = self._tg().auto_track_name("", "")
         assert name.startswith("ambient-mix-")
 
     def test_no_style_uses_mix(self) -> None:
-        from punt_vox.voxd import DaemonContext
-
-        ctx = DaemonContext(auth_token=None, port=0)
-        ctx.music_vibe = ("chill", "")
-        ctx.music_style = ""
-        name = _auto_track_name(ctx)
+        name = self._tg().auto_track_name("chill", "")
         assert name.startswith("chill-mix-")
 
 
-class TestDaemonContextTrackName:
-    """DaemonContext.music_track_name defaults to empty string."""
+class TestMusicSchedulerTrackName:
+    """MusicScheduler.track_name defaults to empty string."""
 
     def test_default(self) -> None:
-        from punt_vox.voxd import DaemonContext
-
-        ctx = DaemonContext(auth_token=None, port=0)
-        assert ctx.music_track_name == ""
+        scheduler = MusicScheduler(TrackGenerator(Path("/tmp/vox-test-music")))
+        assert scheduler.track_name == ""
 
     def test_music_replay_default(self) -> None:
-        from punt_vox.voxd import DaemonContext
-
-        ctx = DaemonContext(auth_token=None, port=0)
-        assert ctx.music_replay is False
+        scheduler = MusicScheduler(TrackGenerator(Path("/tmp/vox-test-music")))
+        assert scheduler.replay is False
 
 
 class TestHandleMusicOnWithName:

@@ -3,12 +3,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 
-from punt_vox.voxd import DaemonHealth, PlaybackQueue, _health_route
+from punt_vox.voxd import DaemonHealth, PlaybackQueue
 
 if TYPE_CHECKING:
     import pytest
@@ -156,38 +154,45 @@ class TestHealthPayloadMinimal:
         """The HTTP /health response body must not carry daemon_version."""
         import json
 
-        from punt_vox.voxd import DaemonContext
+        from starlette.testclient import TestClient
 
-        ctx = DaemonContext(auth_token=None, port=0)
-        ctx.daemon_version = "1.2.3-fingerprint-sentinel"
-        request = MagicMock()
-        request.app.state.ctx = ctx
+        from punt_vox.voxd import build_app
 
-        response = asyncio.run(_health_route(request))
-        body = json.loads(bytes(response.body))
+        health = _make_health()
+        health.set_daemon_version("1.2.3-fingerprint-sentinel")
+        app = build_app(health=health)
 
+        with TestClient(app) as client:
+            response = client.get("/health")
+
+        body = json.loads(response.content)
         assert "daemon_version" not in body
 
     def test_http_health_route_returns_minimal_payload(self) -> None:
         import json
 
-        from punt_vox.voxd import DaemonContext
+        from starlette.testclient import TestClient
 
-        ctx = DaemonContext(auth_token=None, port=0)
-        ctx.last_playback = {
-            "file": "/tmp/x.mp3",
-            "rc": 0,
-            "elapsed_s": 0.5,
-            "stderr": "secret stderr",
-            "ts": 0.0,
-        }
-        request = MagicMock()
-        request.app.state.ctx = ctx
+        from punt_vox.voxd import build_app
 
-        response = asyncio.run(_health_route(request))
-        raw = bytes(response.body)
-        body = json.loads(raw)
+        playback = PlaybackQueue()
+        playback.set_last_result(
+            {
+                "file": "/tmp/x.mp3",
+                "rc": 0,
+                "elapsed_s": 0.5,
+                "stderr": "secret stderr",
+                "ts": 0.0,
+            }
+        )
+        health = DaemonHealth(playback, lambda: 0, 0)
+        app = build_app(playback=playback, health=health)
+
+        with TestClient(app) as client:
+            response = client.get("/health")
+
+        body = json.loads(response.content)
 
         assert "audio_env" not in body
         assert "last_playback" not in body
-        assert "secret stderr" not in raw.decode()
+        assert "secret stderr" not in response.text

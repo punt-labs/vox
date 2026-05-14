@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from punt_vox.paths import ensure_user_dirs
-from punt_vox.voxd import _load_keys
 from punt_vox.voxd.config import (
+    DaemonConfig,
     _config_dir,
     _log_dir,
     _run_dir,
@@ -16,6 +16,12 @@ from punt_vox.voxd.config import (
 
 if TYPE_CHECKING:
     import pytest
+
+
+def _load_keys(config_dir: Path) -> frozenset[str]:
+    """Build a DaemonConfig and load keys -- replaces the deleted wrapper."""
+    cfg = DaemonConfig(run_dir=_run_dir(), config_dir=config_dir, log_dir=_log_dir())
+    return cfg.load_keys()
 
 
 class TestVoxdPaths:
@@ -41,7 +47,7 @@ class TestVoxdPaths:
 
 
 class TestLoadKeys:
-    """_load_keys must read from the per-user state dir."""
+    """DaemonConfig.load_keys must read from the per-user state dir."""
 
     def test_loads_keys_from_config_dir(
         self,

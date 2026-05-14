@@ -6,32 +6,58 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
-from punt_vox.voxd import (
-    DaemonContext,
-    _apply_vibe_for_synthesis,
-    _model_supports_expressive_tags,
-    _try_direct_play,
-)
+from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.synthesis import SynthesisPipeline
 
 
-def _make_ctx() -> DaemonContext:
-    """Build a DaemonContext without touching real files or auth."""
-    return DaemonContext(auth_token=None, port=0)
+def _make_pipeline() -> SynthesisPipeline:
+    """Build a SynthesisPipeline with a fresh PlaybackQueue mutex."""
+    return SynthesisPipeline(playback_mutex=PlaybackQueue().mutex)
+
+
+def _record_result(results: list[dict[str, object]]) -> Callable[..., None]:
+    """Return a record_result callback that appends to results."""
+    import time
+
+    def _record(
+        *,
+        path: Path,
+        rc: int,
+        elapsed: float,
+        stderr: str,
+    ) -> None:
+        results.append(
+            {
+                "file": str(path),
+                "rc": rc,
+                "elapsed_s": round(elapsed, 4),
+                "stderr": stderr,
+                "ts": time.time(),
+            }
+        )
+
+    return _record
 
 
 class TestTryDirectPlay:
     """Voxd dispatches to provider.play_directly for local providers."""
 
-    def _run(self, provider: MagicMock, ctx: DaemonContext) -> int | None | Exception:
+    def _run(
+        self,
+        provider: MagicMock,
+        pipeline: SynthesisPipeline,
+        results: list[dict[str, object]],
+    ) -> int | None | Exception:
         with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
             return asyncio.run(
-                _try_direct_play(
+                pipeline.try_direct_play(
                     text="hello",
                     voice=None,
                     provider_name="espeak",
@@ -44,52 +70,54 @@ class TestTryDirectPlay:
                     style=None,
                     speaker_boost=None,
                     api_key=None,
-                    ctx=ctx,
+                    record_result=_record_result(results),
                 )
             )
 
     def test_returns_provider_rc_on_success(self) -> None:
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
         provider = MagicMock()
         provider.play_directly = MagicMock(return_value=0)
 
-        rc = self._run(provider, ctx)
+        rc = self._run(provider, pipeline, results)
 
         assert rc == 0
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == 0
+        assert len(results) == 1
+        assert results[0]["rc"] == 0
         provider.play_directly.assert_called_once()
 
     def test_returns_none_for_cloud_provider(self) -> None:
         """A provider lacking play_directly opts out of the direct-play path."""
-        ctx = _make_ctx()
-        # spec= without play_directly means hasattr/isinstance both fail.
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
         provider = MagicMock(spec=["name", "synthesize"])
 
-        rc = self._run(provider, ctx)
+        rc = self._run(provider, pipeline, results)
 
         assert rc is None
-        # No playback attempted -- last_playback stays None.
-        assert ctx.last_playback is None
+        assert len(results) == 0
 
     def test_nonzero_rc_logs_error(self, caplog: pytest.LogCaptureFixture) -> None:
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
         provider = MagicMock()
         provider.play_directly = MagicMock(return_value=2)
 
         with caplog.at_level(logging.ERROR, logger="punt_vox.voxd"):
-            rc = self._run(provider, ctx)
+            rc = self._run(provider, pipeline, results)
 
         assert rc == 2
         assert "Direct-play FAILED" in caplog.text
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == 2
+        assert len(results) == 1
+        assert results[0]["rc"] == 2
 
     def test_get_provider_exception_returned(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Provider construction failure surfaces as an Exception, not a crash."""
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
 
         with (
             caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
@@ -99,7 +127,7 @@ class TestTryDirectPlay:
             ),
         ):
             result = asyncio.run(
-                _try_direct_play(
+                pipeline.try_direct_play(
                     text="hello",
                     voice=None,
                     provider_name="espeak",
@@ -112,7 +140,7 @@ class TestTryDirectPlay:
                     style=None,
                     speaker_boost=None,
                     api_key=None,
-                    ctx=ctx,
+                    record_result=_record_result(results),
                 )
             )
 
@@ -122,25 +150,21 @@ class TestTryDirectPlay:
 
     def test_no_api_key_skips_env_lock(self) -> None:
         """Local providers without an API key must not block on _env_lock."""
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
         provider = MagicMock()
         provider.play_directly = MagicMock(return_value=0)
 
-        # Replace _env_lock on the pipeline with one that records every acquire.
         sentinel_lock = MagicMock(wraps=asyncio.Lock())
         sentinel_lock.__aenter__ = AsyncMock()
         sentinel_lock.__aexit__ = AsyncMock(return_value=None)
 
         with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
-            # Get or create the pipeline, then patch its _env_lock.
-            from punt_vox.voxd._monolith import _get_pipeline
-
-            pipeline = _get_pipeline(ctx)
             old_lock = pipeline._env_lock
             pipeline._env_lock = sentinel_lock
             try:
                 asyncio.run(
-                    _try_direct_play(
+                    pipeline.try_direct_play(
                         text="hello",
                         voice=None,
                         provider_name="espeak",
@@ -153,7 +177,7 @@ class TestTryDirectPlay:
                         style=None,
                         speaker_boost=None,
                         api_key=None,
-                        ctx=ctx,
+                        record_result=_record_result(results),
                     )
                 )
             finally:
@@ -163,7 +187,8 @@ class TestTryDirectPlay:
 
     def test_api_key_acquires_env_lock_for_cloud_provider(self) -> None:
         """API-key path must serialize via _env_lock to protect os.environ."""
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
         provider = MagicMock()
         provider.play_directly = MagicMock(return_value=0)
 
@@ -172,14 +197,11 @@ class TestTryDirectPlay:
         sentinel_lock.__aexit__ = AsyncMock(return_value=None)
 
         with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
-            from punt_vox.voxd._monolith import _get_pipeline
-
-            pipeline = _get_pipeline(ctx)
             old_lock = pipeline._env_lock
             pipeline._env_lock = sentinel_lock
             try:
                 asyncio.run(
-                    _try_direct_play(
+                    pipeline.try_direct_play(
                         text="hello",
                         voice=None,
                         provider_name="elevenlabs",
@@ -192,7 +214,7 @@ class TestTryDirectPlay:
                         style=None,
                         speaker_boost=None,
                         api_key="secret",
-                        ctx=ctx,
+                        record_result=_record_result(results),
                     )
                 )
             finally:
@@ -247,7 +269,8 @@ class TestDirectPlaySerialization:
         """Two concurrent direct-play calls must not run in parallel."""
         import time as time_module
 
-        ctx = _make_ctx()
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
 
         starts: list[float] = []
         ends: list[float] = []
@@ -264,7 +287,7 @@ class TestDirectPlaySerialization:
         async def _drive() -> None:
             with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
                 await asyncio.gather(
-                    _try_direct_play(
+                    pipeline.try_direct_play(
                         text="one",
                         voice=None,
                         provider_name="espeak",
@@ -277,9 +300,9 @@ class TestDirectPlaySerialization:
                         style=None,
                         speaker_boost=None,
                         api_key=None,
-                        ctx=ctx,
+                        record_result=_record_result(results),
                     ),
-                    _try_direct_play(
+                    pipeline.try_direct_play(
                         text="two",
                         voice=None,
                         provider_name="espeak",
@@ -292,7 +315,7 @@ class TestDirectPlaySerialization:
                         style=None,
                         speaker_boost=None,
                         api_key=None,
-                        ctx=ctx,
+                        record_result=_record_result(results),
                     ),
                 )
 
@@ -300,7 +323,6 @@ class TestDirectPlaySerialization:
 
         assert len(starts) == 2
         assert len(ends) == 2
-        # The second call must start AFTER the first call ends.
         first_end = min(ends)
         second_start = max(starts)
         assert second_start >= first_end, (
@@ -410,8 +432,7 @@ class TestApiKeyPassthroughIntegration:
         monkeypatch.setattr("punt_vox.voxd.synthesis.cache_get", _cache_miss)
         monkeypatch.setattr("punt_vox.voxd.synthesis.cache_put", _cache_noop)
 
-        ctx = DaemonContext(auth_token=None, port=0)
-        app = build_app(ctx)
+        app = build_app()
 
         msg: dict[str, object] = {
             "type": "record",
@@ -565,8 +586,7 @@ class TestCacheApiKeyBypass:
 
         monkeypatch.setattr("punt_vox.voxd.synthesis.get_provider", fake_get_provider)
 
-        ctx = DaemonContext(auth_token=None, port=0)
-        app = build_app(ctx)
+        app = build_app()
 
         msg: dict[str, object] = {
             "type": "record",
@@ -711,7 +731,7 @@ class TestSynthesizeFailFast:
     """0-byte synthesis must raise and skip cache_put to avoid poisoning."""
 
     def test_zero_byte_output_raises_and_skips_cache(self, tmp_path: Path) -> None:
-        from punt_vox.voxd import _synthesize_to_file
+        pipeline = _make_pipeline()
 
         captured_temp: dict[str, Path] = {}
 
@@ -734,7 +754,7 @@ class TestSynthesizeFailFast:
 
             with pytest.raises(RuntimeError, match="missing or empty"):
                 asyncio.run(
-                    _synthesize_to_file(
+                    pipeline.synthesize_to_file(
                         text="hello",
                         voice=None,
                         provider_name="espeak",
@@ -756,77 +776,89 @@ class TestSynthesizeFailFast:
 
 
 class TestModelSupportsExpressiveTags:
-    """``_model_supports_expressive_tags`` lookup for vibe-tag gating."""
+    """model_supports_expressive_tags lookup for vibe-tag gating."""
 
     def test_elevenlabs_v3_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert _model_supports_expressive_tags("elevenlabs", "eleven_v3") is True
+        assert (
+            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", "eleven_v3")
+            is True
+        )
 
     def test_elevenlabs_flash_does_not_support(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert (
-            _model_supports_expressive_tags("elevenlabs", "eleven_flash_v2_5") is False
+            SynthesisPipeline.model_supports_expressive_tags(
+                "elevenlabs", "eleven_flash_v2_5"
+            )
+            is False
         )
 
     def test_elevenlabs_default_supported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert _model_supports_expressive_tags("elevenlabs", None) is True
+        assert (
+            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", None) is True
+        )
 
     def test_polly_never_supports(self) -> None:
-        assert _model_supports_expressive_tags("polly", None) is False
-        assert _model_supports_expressive_tags("polly", "neural") is False
+        assert SynthesisPipeline.model_supports_expressive_tags("polly", None) is False
+        assert (
+            SynthesisPipeline.model_supports_expressive_tags("polly", "neural") is False
+        )
 
     def test_openai_never_supports(self) -> None:
-        assert _model_supports_expressive_tags("openai", None) is False
-        assert _model_supports_expressive_tags("openai", "tts-1-hd") is False
+        assert SynthesisPipeline.model_supports_expressive_tags("openai", None) is False
+        assert (
+            SynthesisPipeline.model_supports_expressive_tags("openai", "tts-1-hd")
+            is False
+        )
 
     def test_say_never_supports(self) -> None:
-        assert _model_supports_expressive_tags("say", None) is False
+        assert SynthesisPipeline.model_supports_expressive_tags("say", None) is False
 
     def test_espeak_never_supports(self) -> None:
-        assert _model_supports_expressive_tags("espeak", None) is False
+        assert SynthesisPipeline.model_supports_expressive_tags("espeak", None) is False
 
     def test_unknown_provider_never_supports(self) -> None:
-        assert _model_supports_expressive_tags("future_provider", "any") is False
+        assert (
+            SynthesisPipeline.model_supports_expressive_tags("future_provider", "any")
+            is False
+        )
 
 
 class TestApplyVibeForSynthesis:
-    """``_apply_vibe_for_synthesis`` gates vibe-tag handling on capability."""
+    """apply_vibe_for_synthesis gates vibe-tag handling on capability."""
+
+    _apply = staticmethod(SynthesisPipeline.apply_vibe_for_synthesis)
 
     def test_v3_preserves_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
-            "Hello world", "[excited]", "elevenlabs", "eleven_v3"
-        )
+        result = self._apply("Hello world", "[excited]", "elevenlabs", "eleven_v3")
         assert result == "[excited] Hello world"
 
     def test_expressive_model_passthrough_when_no_vibe_tags(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
-            "Hello world", None, "elevenlabs", "eleven_v3"
-        )
+        result = self._apply("Hello world", None, "elevenlabs", "eleven_v3")
         assert result == "Hello world"
 
     def test_v3_preserves_user_tags_in_text(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
-            "[whisper] Quiet message", None, "elevenlabs", "eleven_v3"
-        )
+        result = self._apply("[whisper] Quiet message", None, "elevenlabs", "eleven_v3")
         assert result == "[whisper] Quiet message"
 
     def test_non_expressive_model_drops_vibe_tags(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
+        result = self._apply(
             "Hello world", "[serious]", "elevenlabs", "eleven_flash_v2_5"
         )
         assert result == "Hello world"
@@ -837,7 +869,7 @@ class TestApplyVibeForSynthesis:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
+        result = self._apply(
             "[serious] Hello world", None, "elevenlabs", "eleven_flash_v2_5"
         )
         assert result == "Hello world"
@@ -847,7 +879,7 @@ class TestApplyVibeForSynthesis:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
+        result = self._apply(
             "[whisper] Quiet message",
             "[excited]",
             "elevenlabs",
@@ -858,23 +890,19 @@ class TestApplyVibeForSynthesis:
         assert "excited" not in result
 
     def test_polly_strips_user_tags(self) -> None:
-        result = _apply_vibe_for_synthesis(
-            "[serious] Important", "[calm]", "polly", None
-        )
+        result = self._apply("[serious] Important", "[calm]", "polly", None)
         assert result == "Important"
 
     def test_openai_strips_user_tags(self) -> None:
-        result = _apply_vibe_for_synthesis("[whisper] Hello", None, "openai", "tts-1")
+        result = self._apply("[whisper] Hello", None, "openai", "tts-1")
         assert result == "Hello"
 
     def test_say_strips_user_tags(self) -> None:
-        result = _apply_vibe_for_synthesis(
-            "[excited] Greetings", "[happy]", "say", None
-        )
+        result = self._apply("[excited] Greetings", "[happy]", "say", None)
         assert result == "Greetings"
 
     def test_espeak_strips_user_tags(self) -> None:
-        result = _apply_vibe_for_synthesis("[serious] Notice", None, "espeak", None)
+        result = self._apply("[serious] Notice", None, "espeak", None)
         assert result == "Notice"
 
     def test_degenerate_text_only_tags_non_expressive_returns_empty(
@@ -882,9 +910,7 @@ class TestApplyVibeForSynthesis:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
-            "[serious]", None, "elevenlabs", "eleven_flash_v2_5"
-        )
+        result = self._apply("[serious]", None, "elevenlabs", "eleven_flash_v2_5")
         assert result == ""
 
     def test_degenerate_text_only_tags_v3_preserves(
@@ -892,7 +918,7 @@ class TestApplyVibeForSynthesis:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis("[sighs]", None, "elevenlabs", "eleven_v3")
+        result = self._apply("[sighs]", None, "elevenlabs", "eleven_v3")
         assert result == "[sighs]"
 
     def test_normalizes_body_through_production_call_path(
@@ -900,9 +926,7 @@ class TestApplyVibeForSynthesis:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
-            "[serious] my_function works", None, "polly", None
-        )
+        result = self._apply("[serious] my_function works", None, "polly", None)
         assert result == "my function works"
         assert "serious" not in result
         assert "[" not in result
@@ -913,26 +937,24 @@ class TestApplyVibeForSynthesis:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = _apply_vibe_for_synthesis(
+        result = self._apply(
             "[whisper] my_function works", None, "elevenlabs", "eleven_v3"
         )
         assert result == "[whisper] my function works"
 
     def test_trailing_tags_stripped_non_expressive(self) -> None:
-        result = _apply_vibe_for_synthesis(
-            "hello [alert] [serious]", None, "polly", None
-        )
+        result = self._apply("hello [alert] [serious]", None, "polly", None)
         assert result == "hello"
         assert "alert" not in result
         assert "serious" not in result
 
     def test_inline_tags_stripped_non_expressive(self) -> None:
-        result = _apply_vibe_for_synthesis("hello [serious] world", None, "polly", None)
+        result = self._apply("hello [serious] world", None, "polly", None)
         assert result == "hello world"
         assert "serious" not in result
 
     def test_leading_tags_still_stripped_non_expressive(self) -> None:
-        result = _apply_vibe_for_synthesis("[serious] hello", None, "polly", None)
+        result = self._apply("[serious] hello", None, "polly", None)
         assert result == "hello"
         assert "serious" not in result
 
@@ -951,9 +973,7 @@ class TestApplyVibeForSynthesis:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._patch_expressive(monkeypatch)
-        result = _apply_vibe_for_synthesis(
-            "hello [serious]", None, "elevenlabs", "eleven_v3"
-        )
+        result = self._apply("hello [serious]", None, "elevenlabs", "eleven_v3")
         assert "[serious]" in result
         assert "hello" in result
 
@@ -961,9 +981,7 @@ class TestApplyVibeForSynthesis:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._patch_expressive(monkeypatch)
-        result = _apply_vibe_for_synthesis(
-            "hello [serious] world", None, "elevenlabs", "eleven_v3"
-        )
+        result = self._apply("hello [serious] world", None, "elevenlabs", "eleven_v3")
         assert "[serious]" in result
         assert "hello" in result
         assert "world" in result
@@ -972,5 +990,5 @@ class TestApplyVibeForSynthesis:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._patch_expressive(monkeypatch)
-        result = _apply_vibe_for_synthesis("hello", "[warm]", "elevenlabs", "eleven_v3")
+        result = self._apply("hello", "[warm]", "elevenlabs", "eleven_v3")
         assert result == "[warm] hello"
