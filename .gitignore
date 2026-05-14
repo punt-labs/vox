@@ -61,3 +61,4 @@ docs/*.toc
 uv.toml
 .envrc.local
 MagicMock/
+.idea/
