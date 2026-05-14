@@ -88,6 +88,19 @@ def _ensure_port_free() -> None:
     _process_mgr.ensure_port_free()
 
 
+def ensure_port_free() -> None:
+    """Public API: ensure no daemon is using the default port."""
+    _process_mgr.ensure_port_free()
+
+
+def stop_daemon(plat: str) -> None:
+    """Public API: stop the voxd daemon for the given platform."""
+    if plat == "macos":
+        _launchd.stop()
+    else:
+        _systemd.stop()
+
+
 def _remove_port_file() -> None:
     _process_mgr.remove_port_file()
 
@@ -196,8 +209,10 @@ __all__ = [
     "_voxd_exec_args",
     "_write_keys_env",
     "detect_platform",
+    "ensure_port_free",
     "install",
     "is_running",
     "read_port_file",
+    "stop_daemon",
     "uninstall",
 ]

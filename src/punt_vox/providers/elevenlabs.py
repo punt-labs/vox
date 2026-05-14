@@ -49,17 +49,6 @@ _DEFAULT_CHAR_LIMIT = 10_000
 # ElevenLabs voice IDs are 20-char alphanumeric strings.
 _VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 
-# Cache of resolved voices, keyed by lowercase name → voice_id.
-VOICES: dict[str, str] = {}
-
-# Monotonic timestamp of the last successful voice fetch (0.0 = never).
-_voices_loaded_at: float = 0.0
-
-# Monotonic timestamp of the last *forced* refresh (0.0 = never).
-# Separate from _voices_loaded_at so a TTL-triggered load doesn't
-# block the first forced refresh on a cache miss.
-_voices_force_fetched_at: float = 0.0
-
 # Minimum interval between forced refreshes (cache-miss path).
 # Prevents typos or unknown voice names from hammering the API.
 _VOICE_FORCE_COOLDOWN_S: int = 60
@@ -67,62 +56,6 @@ _VOICE_FORCE_COOLDOWN_S: int = 60
 # Voices are re-fetched after this many seconds so newly added voices
 # appear without a daemon restart.
 _VOICE_CACHE_TTL_S: int = 1800
-
-
-def _load_voices_from_api(client: Any, *, force: bool = False) -> None:  # pyright: ignore[reportExplicitAny]
-    """Fetch all voices from the ElevenLabs API and populate the cache.
-
-    Args:
-        force: Bypass the TTL check on cache miss so newly added voices
-            are found without waiting 30 minutes. Rate-limited by
-            ``_VOICE_FORCE_COOLDOWN_S`` (60s) to prevent typos from
-            hammering the API.
-    """
-    global _voices_loaded_at, _voices_force_fetched_at
-    now = time.monotonic()
-    cache_fresh = (
-        _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S
-    )
-    if force:
-        # Rate-limit forced refreshes — don't re-fetch if we just
-        # did a forced fetch recently. Uses a separate timestamp so
-        # a normal TTL-triggered load doesn't block the first force.
-        recently_loaded = (
-            _voices_force_fetched_at > 0.0
-            and (now - _voices_force_fetched_at) < _VOICE_FORCE_COOLDOWN_S
-        )
-        if recently_loaded:
-            return
-    elif cache_fresh:
-        return
-
-    # Fetch into a new dict, then swap atomically on success. If the
-    # API call raises, the old cache stays intact — no empty-cache
-    # window. The dict reference swap is atomic in CPython (GIL).
-    fresh: dict[str, str] = {}
-
-    response: Any = client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-        # Store full name (e.g. "adam - dominant, firm").
-        if full_name not in fresh:
-            fresh[full_name] = vid
-
-        # Also store short name (before " - ") for convenient lookup.
-        short_name = full_name.split(" - ", 1)[0]
-        if short_name != full_name and short_name not in fresh:
-            fresh[short_name] = vid
-
-    # Atomic swap: replace the cache contents in-place so existing
-    # references to the VOICES dict see the new data.
-    VOICES.clear()
-    VOICES.update(fresh)
-    _voices_loaded_at = now
-    if force:
-        _voices_force_fetched_at = now
-    logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
 
 
 def _extract_api_error_message(exc: ApiError) -> str:
@@ -161,6 +94,15 @@ class ElevenLabsProvider:
             from elevenlabs import ElevenLabs  # pyright: ignore[reportMissingTypeStubs]
 
             self._client = ElevenLabs()  # pyright: ignore[reportUnknownMemberType]
+
+        # Per-instance voice cache: lowercase name -> voice_id.
+        self._voices: dict[str, str] = {}
+        # Monotonic timestamp of the last successful voice fetch (0.0 = never).
+        self._voices_loaded_at: float = 0.0
+        # Monotonic timestamp of the last *forced* refresh (0.0 = never).
+        # Separate from _voices_loaded_at so a TTL-triggered load doesn't
+        # block the first forced refresh on a cache miss.
+        self._voices_force_fetched_at: float = 0.0
 
     @property
     def name(self) -> str:
@@ -324,8 +266,8 @@ class ElevenLabsProvider:
         but all voices are returned regardless. Only short names (without
         descriptions) are included.
         """
-        _load_voices_from_api(self._client)
-        return sorted(k for k in VOICES if " - " not in k)
+        self._load_voices()
+        return sorted(k for k in self._voices if " - " not in k)
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -336,6 +278,61 @@ class ElevenLabsProvider:
 
     # -- Private helpers --------------------------------------------------
 
+    def _load_voices(self, *, force: bool = False) -> None:
+        """Fetch all voices from the ElevenLabs API and populate the cache.
+
+        Args:
+            force: Bypass the TTL check on cache miss so newly added voices
+                are found without waiting 30 minutes. Rate-limited by
+                ``_VOICE_FORCE_COOLDOWN_S`` (60s) to prevent typos from
+                hammering the API.
+        """
+        now = time.monotonic()
+        cache_fresh = (
+            self._voices_loaded_at > 0.0
+            and (now - self._voices_loaded_at) < _VOICE_CACHE_TTL_S
+        )
+        if force:
+            # Rate-limit forced refreshes — don't re-fetch if we just
+            # did a forced fetch recently. Uses a separate timestamp so
+            # a normal TTL-triggered load doesn't block the first force.
+            recently_loaded = (
+                self._voices_force_fetched_at > 0.0
+                and (now - self._voices_force_fetched_at) < _VOICE_FORCE_COOLDOWN_S
+            )
+            if recently_loaded:
+                return
+        elif cache_fresh:
+            return
+
+        # Fetch into a new dict, then swap on success. If the API call
+        # raises, the old cache stays intact — no empty-cache window.
+        fresh: dict[str, str] = {}
+
+        response: Any = self._client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+            # Store full name (e.g. "adam - dominant, firm").
+            if full_name not in fresh:
+                fresh[full_name] = vid
+
+            # Also store short name (before " - ") for convenient lookup.
+            short_name = full_name.split(" - ", 1)[0]
+            if short_name != full_name and short_name not in fresh:
+                fresh[short_name] = vid
+
+        self._voices.clear()
+        self._voices.update(fresh)
+        self._voices_loaded_at = now
+        if force:
+            self._voices_force_fetched_at = now
+        logger.debug(
+            "Loaded %d voice entries from ElevenLabs API",
+            len(self._voices),
+        )
+
     def _resolve_voice_id(self, name: str) -> str:
         """Resolve a voice name or ID to a voice_id string."""
         # Accept raw voice_id (20 alphanumeric chars) directly.
@@ -343,17 +340,17 @@ class ElevenLabsProvider:
             return name
 
         key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
         # Cache miss — force a re-fetch regardless of TTL. If the user
         # just added a voice, waiting 30 minutes is unacceptable.
-        _load_voices_from_api(self._client, force=True)
+        self._load_voices(force=True)
 
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        short_names = sorted(k for k in VOICES if " - " not in k)
+        short_names = sorted(k for k in self._voices if " - " not in k)
         raise VoiceNotFoundError(name, short_names)
 
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]

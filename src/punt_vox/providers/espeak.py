@@ -29,7 +29,7 @@ __all__ = ["EspeakProvider"]
 # espeak-ng default is 175 WPM, same as macOS say.
 _DEFAULT_WPM = 175
 
-# Default voice per language (ISO 639-1 → espeak-ng voice name).
+# Default voice per language (ISO 639-1 -> espeak-ng voice name).
 _DEFAULT_VOICES: dict[str, str] = {
     "de": "de",
     "en": "en",
@@ -56,13 +56,6 @@ class EspeakVoiceConfig:
     language: str
 
 
-# Cache of discovered voices, keyed by lowercase name.
-VOICES: dict[str, EspeakVoiceConfig] = {}
-
-# Whether voices have been loaded from the system.
-_voices_loaded: bool = False
-
-
 def _find_espeak_binary() -> str | None:
     """Find the espeak-ng or espeak binary on PATH."""
     for name in ("espeak-ng", "espeak"):
@@ -70,84 +63,6 @@ def _find_espeak_binary() -> str | None:
         if path is not None:
             return path
     return None
-
-
-def _load_voices_from_system() -> None:
-    """Parse ``espeak-ng --voices`` output and populate the voice cache.
-
-    Output format (fixed-width columns)::
-
-        Pty  Language  Age/Gender  VoiceName   File   Other Languages
-         5     en             M  english      default
-         5     en-gb          M  english      other/en-gb
-         5     de             M  german       other/de
-    """
-    global _voices_loaded
-    if _voices_loaded:
-        return
-
-    binary = _find_espeak_binary()
-    if binary is None:
-        _voices_loaded = True
-        return
-
-    try:
-        result = subprocess.run(
-            [binary, "--voices"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-    except (
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-    ):
-        _voices_loaded = True
-        return
-
-    lines = result.stdout.splitlines()
-    if not lines:
-        _voices_loaded = True
-        return
-
-    # Parse column positions from header to handle variable-width
-    # Age/Gender field (may contain "M" or "40 M" with MBROLA voices).
-    header = lines[0]
-    lang_col = header.find("Language")
-    voice_col = header.find("VoiceName")
-    if lang_col < 0 or voice_col < 0:
-        _voices_loaded = True
-        return
-
-    for line in lines[1:]:
-        if len(line) <= voice_col:
-            continue
-        lang_part = line[lang_col:voice_col].split()
-        voice_part = line[voice_col:].split()
-        if not lang_part or not voice_part:
-            continue
-        lang = lang_part[0]
-        voice_name = voice_part[0]
-        key = voice_name.lower()
-        # Extract ISO 639-1 from language code (e.g. "en-gb" -> "en")
-        iso = lang.split("-")[0]
-        if len(iso) == 2 and key not in VOICES:
-            VOICES[key] = EspeakVoiceConfig(name=lang, language=iso)
-        # Also register by language code for convenience
-        lang_key = lang.lower()
-        if lang_key not in VOICES:
-            VOICES[lang_key] = EspeakVoiceConfig(name=lang, language=iso)
-
-        # Register bare ISO 639-1 prefix for fallback (e.g. "en" from "en-us").
-        # A truly bare entry (lang == iso, e.g. "en") always wins over a
-        # qualified variant that was parsed first (e.g. "en-us").
-        if len(iso) == 2 and (lang == iso or iso not in VOICES):
-            VOICES[iso] = EspeakVoiceConfig(name=lang, language=iso)
-
-    _voices_loaded = True
-    logger.debug("Loaded %d voices from espeak-ng", len(VOICES))
 
 
 def _rate_to_wpm(rate: int) -> int:
@@ -179,6 +94,11 @@ class EspeakProvider:
             raise ValueError(msg)
         self._binary: str = binary
 
+        # Per-instance voice cache: lowercase name -> EspeakVoiceConfig.
+        self._voices: dict[str, EspeakVoiceConfig] = {}
+        # Whether voices have been loaded from the system.
+        self._voices_loaded: bool = False
+
     @property
     def name(self) -> str:
         return "espeak"
@@ -186,17 +106,17 @@ class EspeakProvider:
     @property
     def default_voice(self) -> str:
         """Discover the best available English voice from the system."""
-        _load_voices_from_system()
+        self._load_voices()
         for candidate in ("en", "en-us", "en-gb"):
-            if candidate in VOICES:
+            if candidate in self._voices:
                 return candidate
         # First en-* variant found
-        for key in VOICES:
+        for key in self._voices:
             if key.startswith("en-"):
                 return key
         # Absolute fallback: first voice, or "en" if nothing is installed
-        if VOICES:
-            return next(iter(VOICES))
+        if self._voices:
+            return next(iter(self._voices))
         return "en"
 
     @property
@@ -351,14 +271,16 @@ class EspeakProvider:
         binary = _find_espeak_binary()
         if binary:
             binary_name = Path(binary).name
-            checks.append(HealthCheck(passed=True, message=f"{binary_name}: {binary}"))
+            checks.append(
+                HealthCheck(passed=True, message=f"{binary_name}: {binary}"),
+            )
             voice = self.default_voice
             try:
                 cfg = self._resolve_voice_config(voice)
                 checks.append(
                     HealthCheck(
                         passed=True,
-                        message=f"default voice: {cfg.name} ({cfg.language})",
+                        message=(f"default voice: {cfg.name} ({cfg.language})"),
                     )
                 )
             except VoiceNotFoundError:
@@ -393,25 +315,108 @@ class EspeakProvider:
 
     def list_voices(self, language: str | None = None) -> list[str]:
         """List available espeak-ng voices."""
-        _load_voices_from_system()
+        self._load_voices()
         if language is None:
-            return sorted(VOICES)
-        return sorted(name for name, cfg in VOICES.items() if cfg.language == language)
+            return sorted(self._voices)
+        return sorted(
+            name for name, cfg in self._voices.items() if cfg.language == language
+        )
 
     def infer_language_from_voice(self, voice: str) -> str | None:
         """Infer ISO 639-1 language from an espeak-ng voice name."""
         cfg = self._resolve_voice_config(voice)
         return cfg.language
 
+    def _load_voices(self) -> None:
+        """Parse ``espeak-ng --voices`` output and populate the cache."""
+        if self._voices_loaded:
+            return
+
+        binary = _find_espeak_binary()
+        if binary is None:
+            self._voices_loaded = True
+            return
+
+        try:
+            result = subprocess.run(
+                [binary, "--voices"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            self._voices_loaded = True
+            return
+
+        lines = result.stdout.splitlines()
+        if not lines:
+            self._voices_loaded = True
+            return
+
+        # Parse column positions from header to handle variable-width
+        # Age/Gender field (may contain "M" or "40 M" with MBROLA).
+        header = lines[0]
+        lang_col = header.find("Language")
+        voice_col = header.find("VoiceName")
+        if lang_col < 0 or voice_col < 0:
+            self._voices_loaded = True
+            return
+
+        for line in lines[1:]:
+            if len(line) <= voice_col:
+                continue
+            lang_part = line[lang_col:voice_col].split()
+            voice_part = line[voice_col:].split()
+            if not lang_part or not voice_part:
+                continue
+            lang = lang_part[0]
+            voice_name = voice_part[0]
+            key = voice_name.lower()
+            # Extract ISO 639-1 from language code (e.g. "en-gb" -> "en")
+            iso = lang.split("-")[0]
+            if len(iso) == 2 and key not in self._voices:
+                self._voices[key] = EspeakVoiceConfig(
+                    name=lang,
+                    language=iso,
+                )
+            # Also register by language code for convenience
+            lang_key = lang.lower()
+            if lang_key not in self._voices:
+                self._voices[lang_key] = EspeakVoiceConfig(
+                    name=lang,
+                    language=iso,
+                )
+
+            # Register bare ISO 639-1 prefix for fallback
+            # (e.g. "en" from "en-us"). A truly bare entry
+            # (lang == iso, e.g. "en") always wins over a
+            # qualified variant parsed first (e.g. "en-us").
+            if len(iso) == 2 and (lang == iso or iso not in self._voices):
+                self._voices[iso] = EspeakVoiceConfig(
+                    name=lang,
+                    language=iso,
+                )
+
+        self._voices_loaded = True
+        logger.debug(
+            "Loaded %d voices from espeak-ng",
+            len(self._voices),
+        )
+
     def _resolve_voice_config(self, name: str) -> EspeakVoiceConfig:
         """Resolve a voice name to its EspeakVoiceConfig."""
         key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        _load_voices_from_system()
+        self._load_voices()
 
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        raise VoiceNotFoundError(name, sorted(VOICES))
+        raise VoiceNotFoundError(name, sorted(self._voices))

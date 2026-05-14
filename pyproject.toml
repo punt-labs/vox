@@ -106,7 +106,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S108", "S603", "S607", "T20", "SLF001", "ARG", "FBT", "PLC0415"]
 "scripts/*" = ["T20", "S108", "S603", "S607", "PLC0415"]
-"tools/*" = ["T20", "S603", "S607", "C901", "PERF403"]
+"tools/*" = ["T20", "S603", "S607", "C901", "PERF403", "SIM102", "N806", "C420", "E501", "F841"]
 "typings/*" = ["A002"]
 "src/punt_vox/__main__.py" = ["T20", "PLC0415", "S603", "S607"]
 "src/punt_vox/doctor.py" = ["PLC0415"]

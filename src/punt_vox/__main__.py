@@ -10,7 +10,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -29,7 +28,7 @@ from punt_vox.config import (
 )
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
-from punt_vox.paths import installed_version, log_dir
+from punt_vox.output_formatter import OutputFormatter
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
 
@@ -69,15 +68,7 @@ _PROVIDER_DISPLAY = {
 # Global state
 # ---------------------------------------------------------------------------
 
-_json_output = False
-_quiet_output = False
-
-
-def _emit(payload: object, text: str) -> None:
-    if _json_output:
-        typer.echo(json.dumps(payload))
-    elif not _quiet_output:
-        typer.echo(text)
+_formatter = OutputFormatter()
 
 
 def _configure_logging(*, verbose: bool) -> None:
@@ -426,9 +417,8 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     """Text-to-speech CLI."""
     if verbose and quiet:
         raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
-    global _json_output, _quiet_output
-    _json_output = json_output
-    _quiet_output = quiet
+    _formatter.set_json(value=json_output)
+    _formatter.set_quiet(value=quiet)
     _configure_logging(verbose=verbose)
 
 
@@ -522,7 +512,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                     payload["original_played_at"] = result.original_played_at
                 if result.ttl_seconds_remaining is not None:
                     payload["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-            _emit(payload, seg_text)
+            _formatter.emit(payload, seg_text)
         except VoxdConnectionError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -596,7 +586,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(mp3_bytes)
-        _emit({"path": str(out_path)}, str(out_path))
+        _formatter.emit({"path": str(out_path)}, str(out_path))
 
 
 # ---------------------------------------------------------------------------
@@ -664,15 +654,15 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     cd = find_config_dir() or DEFAULT_CONFIG_DIR
     if mood == "auto":
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_dir=cd)
-        _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
+        _formatter.emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_dir=cd)
-        _emit({"vibe_mode": "off"}, "Vibe mode: off")
+        _formatter.emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
         write_fields(
             {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_dir=cd
         )
-        _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+        _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +702,7 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         "n": "Notifications disabled.",
         "c": "Continuous mode on.",
     }
-    _emit(updates, labels[mode])
+    _formatter.emit(updates, labels[mode])
 
 
 # ---------------------------------------------------------------------------
@@ -734,7 +724,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
 
     write_field("speak", mode, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
-    _emit({"speak": mode}, label)
+    _formatter.emit({"speak": mode}, label)
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +738,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Set the session voice."""
     write_field("voice", name, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
-    _emit({"voice": name}, f"{name}'s here.")
+    _formatter.emit({"voice": name}, f"{name}'s here.")
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +749,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
 @app.command("version")
 def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Print version."""
-    _emit({"version": __version__}, f"vox {__version__}")
+    _formatter.emit({"version": __version__}, f"vox {__version__}")
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +801,7 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         text_lines.append(f"Tags:      {cfg.vibe_tags}")
     if cfg.vibe_signals:
         text_lines.append(f"Signals:   {cfg.vibe_signals}")
-    _emit(info, "\n".join(text_lines))
+    _formatter.emit(info, "\n".join(text_lines))
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +817,7 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
     check = DoctorCheck(client=VoxClientSync())
     results = check.run_all()
     payload, text = format_results(results)
-    _emit(payload, text)
+    _formatter.emit(payload, text)
 
     if payload.get("failed", 0):
         raise typer.Exit(code=1)
@@ -998,7 +988,7 @@ def install() -> None:
         typer.echo("    Daemon registration is optional — vox works without it.")
 
     typer.echo()
-    _emit(
+    _formatter.emit(
         {"installed": True},
         "Installed. Restart Claude Code to activate.",
     )
@@ -1019,7 +1009,7 @@ def uninstall() -> None:
     if result.returncode != 0:
         typer.echo("Error: plugin uninstall failed", err=True)
         raise typer.Exit(code=1)
-    _emit({"uninstalled": True}, "Uninstalled.")
+    _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
 
 # ---------------------------------------------------------------------------
@@ -1176,7 +1166,7 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         "path": str(info.path),
     }
     text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
-    _emit(payload, text)
+    _formatter.emit(payload, text)
 
 
 @cache_app.command("clear")
@@ -1189,7 +1179,7 @@ def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     except OSError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    _emit({"cleared": count}, f"Cleared {count} cached files.")
+    _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
 
 
 # ---------------------------------------------------------------------------
@@ -1249,7 +1239,7 @@ def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
             text = f"Playing saved track: {name}"
         elif style_str:
             text += f" — style: {style_str}"
-        _emit(payload, text)
+        _formatter.emit(payload, text)
     except VoxdConnectionError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -1265,7 +1255,7 @@ def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music("off")
         status = result.get("status", "stopped")
-        _emit({"music": "off", "status": status}, f"Music off ({status})")
+        _formatter.emit({"music": "off", "status": status}, f"Music off ({status})")
     except VoxdConnectionError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -1286,7 +1276,7 @@ def music_play_cmd(  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music_play(name)
         track_name = result.get("name", name)
-        _emit(
+        _formatter.emit(
             {"music": "play", "name": track_name, "status": "playing"},
             f"Playing: {track_name}",
         )
@@ -1306,7 +1296,7 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         result = client.music_list()
         tracks: list[dict[str, object]] = result.get("tracks", [])
         if not tracks:
-            _emit({"tracks": []}, "No saved tracks.")
+            _formatter.emit({"tracks": []}, "No saved tracks.")
             return
         lines: list[str] = []
         for t in tracks:
@@ -1317,7 +1307,7 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
                 float(str(raw_mtime)),
             ).strftime("%Y-%m-%d %H:%M")
             lines.append(f"  {t['name']} ({size_kb} KB, {date_str})")
-        _emit(
+        _formatter.emit(
             {"tracks": tracks},
             f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
         )
@@ -1336,7 +1326,7 @@ def music_next_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music_next()
         status = result.get("status", "unknown")
-        _emit(
+        _formatter.emit(
             {"music": "next", "status": status},
             f"Music next ({status})",
         )
@@ -1400,157 +1390,10 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     itself. Running under sudo yourself would corrupt the sudo state
     the service manager uses.
     """
-    from punt_vox.service import (
-        _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
-        _launchd_stop,  # pyright: ignore[reportPrivateUsage]
-        _systemd_stop,  # pyright: ignore[reportPrivateUsage]
-        detect_platform,
-    )
+    from punt_vox.daemon_restarter import DaemonRestarter
 
-    # Refuse Windows before touching ``os.geteuid``. ``geteuid`` is
-    # POSIX-only and raises ``AttributeError`` on Windows, which would
-    # surface as a confusing crash for anyone experimenting with vox on
-    # an unsupported platform (or a Windows-based test harness). vox
-    # daemon restart has the same OS matrix as ``vox daemon install``
-    # (macOS + Linux), so match the CLI's other platform-refusal
-    # messages: explain the scope and stop cleanly. Cursor Bugbot on
-    # PR #175.
-    if sys.platform == "win32":
-        raise typer.BadParameter(
-            "vox daemon restart is only supported on macOS and Linux; "
-            "Windows does not have a comparable system service manager."
-        )
-    if os.geteuid() == 0:
-        raise typer.BadParameter(
-            "vox daemon restart must be run as your normal user, not root "
-            "or sudo. vox will prompt for your sudo password when it drives "
-            "systemctl/launchctl. Re-run without sudo:\n\n"
-            "    vox daemon restart\n"
-        )
-
-    plat = detect_platform()
-
-    logger.info("Stopping voxd via service manager...")
-    if plat == "macos":
-        _launchd_stop()
-    else:
-        _systemd_stop()
-
-    logger.info("Waiting for port to free...")
-    # ``_ensure_port_free`` raises ``SystemExit(msg)`` on port contention
-    # that survives the stop + kill attempt. Typer's runner swallows
-    # ``SystemExit`` without printing the message argument, so the user
-    # would otherwise see a silent exit-1 with no indication of why the
-    # restart aborted. Translate the raised message into a typer error
-    # with the same code path and log hint as the other failure modes.
-    try:
-        _ensure_port_free()
-    except SystemExit as exc:
-        reason = str(exc) if exc.code not in (0, None) else ""
-        detail = f": {reason}" if reason else ""
-        typer.echo(
-            f"Error: port still occupied after service manager stop{detail}\n"
-            f"Check the logs at {log_dir() / 'voxd.log'}",
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-
-    logger.info("Starting voxd via service manager...")
-    try:
-        if plat == "macos":
-            subprocess.run(
-                [
-                    "sudo",
-                    "launchctl",
-                    "load",
-                    "-w",
-                    "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
-                ],
-                check=True,
-            )
-            subprocess.run(
-                ["sudo", "launchctl", "kickstart", "-k", "system/com.punt-labs.voxd"],
-                check=True,
-            )
-        else:
-            subprocess.run(
-                ["sudo", "systemctl", "start", "voxd"],
-                check=True,
-            )
-    except subprocess.CalledProcessError as exc:
-        log_path = log_dir() / "voxd.log"
-        typer.echo(
-            f"Error: service manager failed to start voxd: {exc}\n"
-            f"Check the logs at {log_path}",
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-
-    logger.info("Waiting for voxd to come back up...")
-    deadline = time.monotonic() + 5.0
-    last_exc: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            health = VoxClientSync().health()
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            last_exc = exc
-            time.sleep(0.2)
-            continue
-        pid = health.get("pid", "?")
-        port = health.get("port", "?")
-
-        # Load-bearing verification for vox-nmb: a silent stop failure
-        # (systemctl lost the unit, dbus quirk, _is_vox_daemon_process
-        # returning False, etc.) can leave the OLD daemon alive, and
-        # ``systemctl start voxd`` exits 0 as a no-op when the unit is
-        # already active. Without this version check, the restart
-        # command would print success while the stale daemon continues
-        # to answer — which is exactly the bug vox-nmb exists to prevent.
-        running_version = str(health.get("daemon_version", ""))
-        wheel_version = installed_version()
-        log_path = log_dir() / "voxd.log"
-        if not running_version:
-            # Pre-cef3e8a daemons do not self-report a version. Fail
-            # closed: we cannot prove the restart picked up new code,
-            # and the symptom we're trying to detect (stale daemon)
-            # would look exactly like this.
-            typer.echo(
-                "Error: restarted daemon did not report a version. Expected "
-                f"{wheel_version}. Check {log_path} — the daemon may be "
-                "running pre-feat/install-verify-hardening code that cannot "
-                "self-report its version.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        if running_version != wheel_version:
-            typer.echo(
-                f"Error: daemon reports version {running_version} but wheel is "
-                f"{wheel_version}. The restart did not pick up the new code. "
-                f"Check {log_path}.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
-        _emit(
-            {
-                "restarted": True,
-                "pid": pid,
-                "port": port,
-                "daemon_version": running_version,
-            },
-            f"voxd restarted (pid={pid}, listening on port {port}, "
-            f"version {running_version})",
-        )
-        return
-
-    log_path = log_dir() / "voxd.log"
-    reason = f": {last_exc}" if last_exc is not None else ""
-    typer.echo(
-        f"Error: voxd did not come back up within 5s{reason}\n"
-        f"Check the logs at {log_path}",
-        err=True,
-    )
-    raise typer.Exit(code=1)
+    restarter = DaemonRestarter(_formatter)
+    restarter.run()
 
 
 @daemon_app.command("status")

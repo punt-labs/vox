@@ -311,13 +311,55 @@ class MusicScheduler:
     # -- Public methods --------------------------------------------------------
 
     async def kill_proc(self) -> None:
-        """Kill the current music subprocess if running.
-
-        Temporary public wrapper around _kill_proc -- still called from
-        daemon.py lifespan and existing handlers. Will be removed when
-        handlers are rewritten in Step 5.
-        """
+        """Kill the current music subprocess if running."""
         await self._kill_proc()
+
+    # -- Intent methods (used by MusicLoop) ------------------------------------
+
+    def begin_generation(self) -> None:
+        """Loop is starting a generation pass."""
+        self._state = "generating"
+
+    def complete_generation(self, track: Path) -> None:
+        """Loop finished generating; record the track."""
+        self._track = track
+        self._track_name = track.stem
+
+    def begin_playback(self, proc: asyncio.subprocess.Process) -> None:
+        """Loop started a playback subprocess."""
+        self._proc = proc
+        self._state = "playing"
+
+    def disable(self) -> None:
+        """Loop exhausted retries; disable music."""
+        self._mode = "off"
+        self._state = "idle"
+
+    def consume_replay(self) -> Path:
+        """Loop consuming a replay directive. Clears flag, returns track."""
+        self._replay = False
+        if self._track is None:
+            msg = "music_replay set but music_track is None"
+            raise RuntimeError(msg)
+        return self._track
+
+    async def shutdown(self) -> None:
+        """Daemon lifespan cleanup. Kills proc, resets state."""
+        await self._kill_proc()
+        self._state = "idle"
+
+    async def generate_track(self) -> Path:
+        """Generate a music track from the current vibe and style.
+
+        Facade over scheduler state — the loop calls this without knowing
+        about _vibe, _style, or _track_name. Single-producer/single-consumer:
+        only MusicLoop calls this method.
+        """
+        track_path, resolved_name = await self._generator.generate(
+            self._vibe, self._style, self._track_name
+        )
+        self._track_name = resolved_name
+        return track_path
 
     async def loop(self) -> None:
         """Background task: generate and loop music tracks.

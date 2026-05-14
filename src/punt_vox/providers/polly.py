@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PollyProvider"]
 
-# ISO 639-1 → Polly BCP 47 language code mapping.
+# ISO 639-1 -> Polly BCP 47 language code mapping.
 _LANGUAGE_MAP: dict[str, str] = {
     "ar": "arb",
     "ca": "ca-ES",
@@ -64,10 +64,10 @@ _LANGUAGE_MAP: dict[str, str] = {
     "zh": "cmn-CN",
 }
 
-# Reverse map: BCP 47 prefix → ISO 639-1.
+# Reverse map: BCP 47 prefix -> ISO 639-1.
 _BCP47_TO_ISO: dict[str, str] = {v: k for k, v in _LANGUAGE_MAP.items()}
 
-# Default voice per language (ISO 639-1 → lowercase Polly voice name).
+# Default voice per language (ISO 639-1 -> lowercase Polly voice name).
 _DEFAULT_VOICES: dict[str, str] = {
     "ar": "zeina",
     "da": "naja",
@@ -129,14 +129,6 @@ class VoiceConfig:
     engine: EngineType
 
 
-# Cache of resolved voices, keyed by lowercase name.
-# Pre-populated entries act as aliases and are never overwritten.
-VOICES: dict[str, VoiceConfig] = {}
-
-# Whether the full voice list has been fetched from the API.
-_voices_loaded: bool = False
-
-
 def _best_engine(supported: list[str]) -> EngineType:
     """Pick the best engine from a list of supported engines."""
     if not supported:
@@ -146,41 +138,6 @@ def _best_engine(supported: list[str]) -> EngineType:
         if engine in supported:
             return engine  # type: ignore[return-value]
     return supported[0]  # type: ignore[return-value]
-
-
-def _load_voices_from_api(client: Any) -> None:  # pyright: ignore[reportExplicitAny]
-    """Fetch all voices from the Polly API and populate the cache.
-
-    Paginates through all pages of the describe_voices response.
-    """
-    global _voices_loaded
-    if _voices_loaded:
-        return
-
-    next_token: str | None = None
-
-    while True:
-        kwargs: dict[str, str] = {}
-        if next_token is not None:
-            kwargs["NextToken"] = next_token
-
-        resp: dict[str, Any] = client.describe_voices(**kwargs)
-
-        for voice in resp["Voices"]:
-            key = voice["Id"].lower()
-            if key not in VOICES:
-                VOICES[key] = VoiceConfig(
-                    voice_id=voice["Id"],
-                    language_code=voice["LanguageCode"],
-                    engine=_best_engine(voice["SupportedEngines"]),
-                )
-
-        next_token = resp.get("NextToken")
-        if not next_token:
-            break
-
-    _voices_loaded = True
-    logger.debug("Loaded %d voices from Polly API", len(VOICES))
 
 
 class PollyProvider:
@@ -198,6 +155,11 @@ class PollyProvider:
             self._client = boto_client
         else:
             self._client = cast("PollyClientType", boto3.client("polly"))  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
+
+        # Per-instance voice cache: lowercase name -> VoiceConfig.
+        self._voices: dict[str, VoiceConfig] = {}
+        # Whether the full voice list has been fetched from the API.
+        self._voices_loaded: bool = False
 
     @property
     def name(self) -> str:
@@ -339,12 +301,12 @@ class PollyProvider:
 
     def list_voices(self, language: str | None = None) -> list[str]:
         """List available voices, optionally filtered by language."""
-        _load_voices_from_api(self._client)
+        self._load_voices()
         if language is None:
-            return sorted(VOICES)
+            return sorted(self._voices)
         return sorted(
             name
-            for name, cfg in VOICES.items()
+            for name, cfg in self._voices.items()
             if _bcp47_matches_iso(cfg.language_code, language)
         )
 
@@ -353,18 +315,51 @@ class PollyProvider:
         cfg = self._resolve_voice_config(voice)
         return _infer_iso_from_bcp47(cfg.language_code)
 
+    def _load_voices(self) -> None:
+        """Fetch all voices from the Polly API and populate the cache.
+
+        Paginates through all pages of the describe_voices response.
+        """
+        if self._voices_loaded:
+            return
+
+        next_token: str | None = None
+
+        while True:
+            kw: dict[str, Any] = {}  # pyright: ignore[reportExplicitAny]
+            if next_token is not None:
+                kw["NextToken"] = next_token
+
+            resp: dict[str, Any] = self._client.describe_voices(**kw)  # type: ignore[assignment]
+
+            for voice in resp["Voices"]:
+                key = voice["Id"].lower()
+                if key not in self._voices:
+                    self._voices[key] = VoiceConfig(
+                        voice_id=voice["Id"],
+                        language_code=voice["LanguageCode"],
+                        engine=_best_engine(voice["SupportedEngines"]),
+                    )
+
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+
+        self._voices_loaded = True
+        logger.debug("Loaded %d voices from Polly API", len(self._voices))
+
     def _resolve_voice_config(self, name: str) -> VoiceConfig:
         """Resolve a voice name to its full VoiceConfig.
 
         Checks the local cache first, then queries the Polly API.
         """
         key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        _load_voices_from_api(self._client)
+        self._load_voices()
 
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        raise VoiceNotFoundError(name, sorted(VOICES))
+        raise VoiceNotFoundError(name, sorted(self._voices))

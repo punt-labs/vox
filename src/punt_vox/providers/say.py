@@ -34,7 +34,7 @@ _DEFAULT_WPM = 175
 # Each line looks like: Fred                en_US    # Hello! My name is Fred.
 _VOICE_LINE_RE = re.compile(r"^(.+?)\s{2,}(\w{2}_\w{2})\s+#")
 
-# Default voice per language (ISO 639-1 → lowercase macOS voice name).
+# Default voice per language (ISO 639-1 -> lowercase macOS voice name).
 _DEFAULT_VOICES: dict[str, str] = {
     "de": "anna",
     "en": "samantha",
@@ -60,48 +60,6 @@ class SayVoiceConfig:
 def _locale_to_iso(locale: str) -> str:
     """Convert locale like 'en_US' to ISO 639-1 code 'en'."""
     return locale[:2].lower()
-
-
-# Cache of discovered voices, keyed by lowercase name.
-VOICES: dict[str, SayVoiceConfig] = {}
-
-# Whether voices have been loaded from the system.
-_voices_loaded: bool = False
-
-
-def _load_voices_from_system() -> None:
-    """Parse ``say -v '?'`` output and populate the voice cache."""
-    global _voices_loaded
-    if _voices_loaded:
-        return
-
-    try:
-        result = subprocess.run(
-            ["say", "-v", "?"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-    except (
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-    ):
-        _voices_loaded = True
-        return
-
-    for line in result.stdout.splitlines():
-        match = _VOICE_LINE_RE.match(line)
-        if match:
-            name = match.group(1).strip()
-            locale = match.group(2)
-            key = name.lower()
-            if key not in VOICES:
-                VOICES[key] = SayVoiceConfig(name=name, locale=locale)
-
-    _voices_loaded = True
-    logger.debug("Loaded %d voices from macOS say", len(VOICES))
 
 
 def _rate_to_wpm(rate: int) -> int:
@@ -134,6 +92,11 @@ class SayProvider:
             msg = "say command not found on PATH"
             raise ValueError(msg)
 
+        # Per-instance voice cache: lowercase name -> SayVoiceConfig.
+        self._voices: dict[str, SayVoiceConfig] = {}
+        # Whether voices have been loaded from the system.
+        self._voices_loaded: bool = False
+
     @property
     def name(self) -> str:
         return "say"
@@ -141,18 +104,18 @@ class SayProvider:
     @property
     def default_voice(self) -> str:
         """Discover the best available voice, preferring Samantha."""
-        _load_voices_from_system()
-        if "samantha" in VOICES:
+        self._load_voices()
+        if "samantha" in self._voices:
             return "samantha"
-        if "alex" in VOICES:
+        if "alex" in self._voices:
             return "alex"
         # First English voice found
-        for key, cfg in VOICES.items():
+        for key, cfg in self._voices.items():
             if _locale_to_iso(cfg.locale) == "en":
                 return key
         # Absolute fallback: first voice, or "samantha" if nothing loaded
-        if VOICES:
-            return next(iter(VOICES))
+        if self._voices:
+            return next(iter(self._voices))
         return "samantha"
 
     @property
@@ -360,12 +323,12 @@ class SayProvider:
 
     def list_voices(self, language: str | None = None) -> list[str]:
         """List available macOS say voices."""
-        _load_voices_from_system()
+        self._load_voices()
         if language is None:
-            return sorted(VOICES)
+            return sorted(self._voices)
         return sorted(
             name
-            for name, cfg in VOICES.items()
+            for name, cfg in self._voices.items()
             if _locale_to_iso(cfg.locale) == language
         )
 
@@ -374,15 +337,51 @@ class SayProvider:
         cfg = self._resolve_voice_config(voice)
         return _locale_to_iso(cfg.locale)
 
+    def _load_voices(self) -> None:
+        """Parse ``say -v '?'`` output and populate the voice cache."""
+        if self._voices_loaded:
+            return
+
+        try:
+            result = subprocess.run(
+                ["say", "-v", "?"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            self._voices_loaded = True
+            return
+
+        for line in result.stdout.splitlines():
+            match = _VOICE_LINE_RE.match(line)
+            if match:
+                vname = match.group(1).strip()
+                locale = match.group(2)
+                key = vname.lower()
+                if key not in self._voices:
+                    self._voices[key] = SayVoiceConfig(
+                        name=vname,
+                        locale=locale,
+                    )
+
+        self._voices_loaded = True
+        logger.debug("Loaded %d voices from macOS say", len(self._voices))
+
     def _resolve_voice_config(self, name: str) -> SayVoiceConfig:
         """Resolve a voice name to its SayVoiceConfig."""
         key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        _load_voices_from_system()
+        self._load_voices()
 
-        if key in VOICES:
-            return VOICES[key]
+        if key in self._voices:
+            return self._voices[key]
 
-        raise VoiceNotFoundError(name, sorted(VOICES))
+        raise VoiceNotFoundError(name, sorted(self._voices))
