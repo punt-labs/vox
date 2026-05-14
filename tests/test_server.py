@@ -485,7 +485,7 @@ class TestUnmute:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session.vibe_signals = "tests-pass@14:00"
+        srv._session._vibe_signals = "tests-pass@14:00"
 
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="req789")
@@ -493,8 +493,8 @@ class TestUnmute:
 
         unmute(text="Done.", vibe_tags="[warm] [satisfied]")
 
-        assert srv._session.vibe_tags == "[warm] [satisfied]"
-        assert srv._session.vibe_signals == ""
+        assert srv._session._vibe_tags == "[warm] [satisfied]"
+        assert srv._session._vibe_signals == ""
 
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -639,22 +639,22 @@ class TestVibeTool:
 
         result = json.loads(vibe(mood="excited"))
         assert result["vibe"]["vibe"] == "excited"
-        assert srv._session.vibe == "excited"
+        assert srv._session._vibe == "excited"
 
     def test_set_tags(self) -> None:
         import punt_vox.server as srv
 
         result = json.loads(vibe(tags="[warm] [calm]"))
         assert result["vibe"]["vibe_tags"] == "[warm] [calm]"
-        assert srv._session.vibe_tags == "[warm] [calm]"
-        assert srv._session.vibe_signals == ""
+        assert srv._session._vibe_tags == "[warm] [calm]"
+        assert srv._session._vibe_signals == ""
 
     def test_set_mode(self) -> None:
         import punt_vox.server as srv
 
         result = json.loads(vibe(mode="manual"))
         assert result["vibe"]["vibe_mode"] == "manual"
-        assert srv._session.vibe_mode == "manual"
+        assert srv._session._vibe_mode == "manual"
 
     def test_invalid_mode(self) -> None:
         result = json.loads(vibe(mode="invalid"))
@@ -808,14 +808,14 @@ class TestNotifyTool:
 
         result = json.loads(notify(mode="y"))
         assert result["notify"]["notify"] == "y"
-        assert srv._session.notify == "y"
+        assert srv._session._notify == "y"
 
     def test_set_mode_n(self) -> None:
         import punt_vox.server as srv
 
         result = json.loads(notify(mode="n"))
         assert result["notify"]["notify"] == "n"
-        assert srv._session.notify == "n"
+        assert srv._session._notify == "n"
 
     def test_speak_unset_c_inits_voice(self) -> None:
         """speak not yet set — mode=c should initialize it to y."""
@@ -824,7 +824,7 @@ class TestNotifyTool:
         result = json.loads(notify(mode="c"))
         assert result["notify"]["notify"] == "c"
         assert result["notify"]["speak"] == "y"
-        assert srv._session.speak == "y"
+        assert srv._session._speak == "y"
 
     def test_speak_unset_y_inits_voice(self) -> None:
         """speak not yet set — mode=y should also initialize it."""
@@ -841,24 +841,24 @@ class TestNotifyTool:
         import punt_vox.server as srv
 
         # Simulate explicit mute.
-        srv._session.speak = "n"
-        srv._session.speak_explicit = True
+        srv._session._speak = "n"
+        srv._session._speak_explicit = True
 
         result = json.loads(notify(mode="c"))
         assert result["notify"]["notify"] == "c"
         assert "speak" not in result["notify"]
-        assert srv._session.speak == "n"
+        assert srv._session._speak == "n"
 
     def test_speak_set_preserved_by_y(self) -> None:
         """User explicitly muted — mode=y should not re-enable voice."""
         import punt_vox.server as srv
 
-        srv._session.speak = "n"
-        srv._session.speak_explicit = True
+        srv._session._speak = "n"
+        srv._session._speak_explicit = True
 
         result = json.loads(notify(mode="y"))
         assert "speak" not in result["notify"]
-        assert srv._session.speak == "n"
+        assert srv._session._speak == "n"
 
     def test_set_voice(self) -> None:
         import punt_vox.server as srv
@@ -885,14 +885,14 @@ class TestSpeakTool:
 
         result = json.loads(speak(mode="y"))
         assert result["speak"] == "y"
-        assert srv._session.speak == "y"
+        assert srv._session._speak == "y"
 
     def test_set_speak_n(self) -> None:
         import punt_vox.server as srv
 
         result = json.loads(speak(mode="n"))
         assert result["speak"] == "n"
-        assert srv._session.speak == "n"
+        assert srv._session._speak == "n"
 
     def test_set_voice(self) -> None:
         import punt_vox.server as srv
@@ -909,9 +909,9 @@ class TestSpeakTool:
     def test_marks_speak_explicit(self) -> None:
         import punt_vox.server as srv
 
-        assert not srv._session.speak_explicit
+        assert not srv._session._speak_explicit
         speak(mode="n")
-        assert srv._session.speak_explicit
+        assert srv._session._speak_explicit
 
 
 # ---------------------------------------------------------------------------
@@ -925,13 +925,13 @@ class TestStatusTool:
     def test_returns_state_fields(self) -> None:
         import punt_vox.server as srv
 
-        srv._session.notify = "c"
-        srv._session.speak = "y"
+        srv._session._notify = "c"
+        srv._session._speak = "y"
         srv._session.voice = "sarah"
         srv._session.provider = "elevenlabs"
-        srv._session.vibe_mode = "auto"
-        srv._session.vibe_tags = "[excited]"
-        srv._session.vibe_signals = "tests-pass@12:00"
+        srv._session._vibe_mode = "auto"
+        srv._session._vibe_tags = "[excited]"
+        srv._session._vibe_signals = "tests-pass@12:00"
 
         result = json.loads(status())
         assert result["provider"] == "elevenlabs"
@@ -994,8 +994,8 @@ class TestMusicTool:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session.vibe = "focused"
-        srv._session.vibe_tags = "[calm]"
+        srv._session._vibe = "focused"
+        srv._session._vibe_tags = "[calm]"
 
         mock_client = MagicMock()
         mock_client.music.return_value = {
@@ -1041,7 +1041,7 @@ class TestMusicTool:
         """Vibe present, no style."""
         import punt_vox.server as srv
 
-        srv._session.vibe = "chill"
+        srv._session._vibe = "chill"
 
         mock_client = MagicMock()
         mock_client.music.return_value = {
@@ -1184,8 +1184,8 @@ class TestVibeToolMusicPropagation:
         import punt_vox.server as srv
 
         srv._session.music_mode = "on"
-        srv._session.vibe = "old"
-        srv._session.vibe_tags = "[old]"
+        srv._session._vibe = "old"
+        srv._session._vibe_tags = "[old]"
 
         mock_client = MagicMock()
         mock_client.music_vibe.return_value = {
@@ -1523,9 +1523,9 @@ class TestRefreshFromConfig:
         """Vibe/tags/signals written externally are picked up on refresh."""
         import punt_vox.server as srv
 
-        srv._session.vibe = "old-mood"
-        srv._session.vibe_tags = "[old]"
-        srv._session.vibe_signals = "old-signal"
+        srv._session._vibe = "old-mood"
+        srv._session._vibe_tags = "[old]"
+        srv._session._vibe_signals = "old-signal"
 
         (_refresh_config / "vox.local.md").write_text(
             "---\n"
@@ -1537,9 +1537,9 @@ class TestRefreshFromConfig:
 
         srv._session.refresh_from_config()
 
-        assert srv._session.vibe == "happy"
-        assert srv._session.vibe_tags == "[warm]"
-        assert srv._session.vibe_signals == "tests-pass@10:00"
+        assert srv._session._vibe == "happy"
+        assert srv._session._vibe_tags == "[warm]"
+        assert srv._session._vibe_signals == "tests-pass@10:00"
 
     def test_ephemeral_cleared_when_config_empty(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1547,9 +1547,9 @@ class TestRefreshFromConfig:
         """When config has no vibe fields, in-memory vibe is cleared."""
         import punt_vox.server as srv
 
-        srv._session.vibe = "stale-mood"
-        srv._session.vibe_tags = "[stale]"
-        srv._session.vibe_signals = "stale-signal"
+        srv._session._vibe = "stale-mood"
+        srv._session._vibe_tags = "[stale]"
+        srv._session._vibe_signals = "stale-signal"
 
         # Config exists but has no vibe fields
         (_refresh_config / "vox.local.md").write_text("---\n---\n")
@@ -1557,9 +1557,9 @@ class TestRefreshFromConfig:
 
         srv._session.refresh_from_config()
 
-        assert srv._session.vibe is None
-        assert srv._session.vibe_tags is None  # type: ignore[unreachable]
-        assert srv._session.vibe_signals == ""
+        assert srv._session._vibe is None
+        assert srv._session._vibe_tags is None  # type: ignore[unreachable]
+        assert srv._session._vibe_signals == ""
 
     def test_durable_fields_updated_from_config(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1567,9 +1567,9 @@ class TestRefreshFromConfig:
         """notify, speak, vibe_mode always take config value."""
         import punt_vox.server as srv
 
-        srv._session.notify = "n"
-        srv._session.speak = "n"
-        srv._session.vibe_mode = "off"
+        srv._session._notify = "n"
+        srv._session._speak = "n"
+        srv._session._vibe_mode = "off"
 
         (_refresh_config / "vox.md").write_text(
             '---\nnotify: "c"\nspeak: "y"\nvibe_mode: "auto"\n---\n'
@@ -1577,9 +1577,9 @@ class TestRefreshFromConfig:
 
         srv._session.refresh_from_config()
 
-        assert srv._session.notify == "c"
-        assert srv._session.speak == "y"
-        assert srv._session.vibe_mode == "auto"
+        assert srv._session._notify == "c"
+        assert srv._session._speak == "y"
+        assert srv._session._vibe_mode == "auto"
 
     def test_voice_only_overwritten_when_config_has_value(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1643,11 +1643,11 @@ class TestRefreshFromConfig:
         import punt_vox.server as srv
 
         monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
-        srv._session.vibe = "should-survive"
+        srv._session._vibe = "should-survive"
 
         srv._session.refresh_from_config()
 
-        assert srv._session.vibe == "should-survive"
+        assert srv._session._vibe == "should-survive"
 
 
 class TestRefreshIntegrationWithTools:
@@ -1659,8 +1659,8 @@ class TestRefreshIntegrationWithTools:
         """CLI writes vibe to config; status tool reads the new value."""
         import punt_vox.server as srv
 
-        srv._session.vibe = "sad"
-        srv._session.vibe_tags = "[gloomy]"
+        srv._session._vibe = "sad"
+        srv._session._vibe_tags = "[gloomy]"
 
         # Simulate CLI writing new vibe to config
         write_fields(
@@ -1679,7 +1679,7 @@ class TestRefreshIntegrationWithTools:
         """External notify write is reflected in status."""
         import punt_vox.server as srv
 
-        srv._session.notify = "n"
+        srv._session._notify = "n"
 
         write_field("notify", "c", _refresh_config)
 
@@ -1693,8 +1693,8 @@ class TestRefreshIntegrationWithTools:
         """music tool reads fresh vibe from config, not stale in-memory."""
         import punt_vox.server as srv
 
-        srv._session.vibe = "old-mood"
-        srv._session.vibe_tags = "[old]"
+        srv._session._vibe = "old-mood"
+        srv._session._vibe_tags = "[old]"
 
         # External write clears vibe (e.g. `vox vibe auto`)
         write_fields({"vibe": "", "vibe_tags": ""}, _refresh_config)

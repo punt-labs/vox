@@ -12,10 +12,10 @@ import json
 import logging
 import random
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -45,6 +45,10 @@ mcp = FastMCP(
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
+_VALID_NOTIFY_MODES = frozenset({"y", "n", "c"})
+_VALID_SPEAK_MODES = frozenset({"y", "n"})
+_VALID_VIBE_MODES = frozenset({"auto", "manual", "off"})
+
 
 # ---------------------------------------------------------------------------
 # Session state
@@ -55,18 +59,136 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 class SessionConfig:
     """In-memory session config. Seeded from vox.md + vox.local.md."""
 
-    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    notify: str = "n"
-    speak: str = "n"
-    voice: str | None = None
-    provider: str | None = None
-    model: str | None = None
-    vibe_mode: str = "off"
-    vibe: str | None = None
-    vibe_tags: str | None = None
-    vibe_signals: str = ""
-    music_mode: str = "off"
-    speak_explicit: bool = False
+    _session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    _notify: str = "n"
+    _speak: str = "n"
+    _voice: str | None = None
+    _provider: str | None = None
+    _model: str | None = None
+    _vibe_mode: str = "off"
+    _vibe: str | None = None
+    _vibe_tags: str | None = None
+    _vibe_signals: str = ""
+    _music_mode: str = "off"
+    _speak_explicit: bool = False
+
+    # -- Properties (read access) ------------------------------------------
+
+    @property
+    def session_id(self) -> str:
+        """Return the unique session identifier."""
+        return self._session_id
+
+    @property
+    def notify(self) -> str:
+        """Return the notification mode ('y', 'n', or 'c')."""
+        return self._notify
+
+    @property
+    def speak(self) -> str:
+        """Return the speak mode ('y' or 'n')."""
+        return self._speak
+
+    @property
+    def voice(self) -> str | None:
+        """Return the current voice name, or None for provider default."""
+        return self._voice
+
+    @voice.setter
+    def voice(self, value: str | None) -> None:
+        self._voice = value
+
+    @property
+    def provider(self) -> str | None:
+        """Return the current TTS provider name."""
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: str | None) -> None:
+        self._provider = value
+
+    @property
+    def model(self) -> str | None:
+        """Return the current TTS model name."""
+        return self._model
+
+    @model.setter
+    def model(self, value: str | None) -> None:
+        self._model = value
+
+    @property
+    def vibe_mode(self) -> str:
+        """Return the vibe detection mode ('auto', 'manual', or 'off')."""
+        return self._vibe_mode
+
+    @property
+    def vibe(self) -> str | None:
+        """Return the current vibe/mood description."""
+        return self._vibe
+
+    @property
+    def vibe_tags(self) -> str | None:
+        """Return the current ElevenLabs expressive tags."""
+        return self._vibe_tags
+
+    @property
+    def vibe_signals(self) -> str:
+        """Return the accumulated vibe signals string."""
+        return self._vibe_signals
+
+    @property
+    def music_mode(self) -> str:
+        """Return the music mode ('on' or 'off')."""
+        return self._music_mode
+
+    @music_mode.setter
+    def music_mode(self, value: str) -> None:
+        self._music_mode = value
+
+    @property
+    def speak_explicit(self) -> bool:
+        """Return whether the user has explicitly set speak mode."""
+        return self._speak_explicit
+
+    # -- Validated setters -------------------------------------------------
+
+    def set_notify(self, mode: str) -> None:
+        """Set notification mode with validation."""
+        if mode not in _VALID_NOTIFY_MODES:
+            msg = f"invalid notify mode: {mode!r}"
+            raise ValueError(msg)
+        self._notify = mode
+
+    def set_speak(self, mode: str, *, explicit: bool = True) -> None:
+        """Set speak mode with validation.
+
+        When *explicit* is True (the default), marks the choice as
+        user-initiated so future notify-enable calls preserve it.
+        """
+        if mode not in _VALID_SPEAK_MODES:
+            msg = f"invalid speak mode: {mode!r}"
+            raise ValueError(msg)
+        self._speak = mode
+        if explicit:
+            self._speak_explicit = True
+
+    def set_vibe(self, mood: str | None = None, tags: str | None = None) -> None:
+        """Set vibe mood and/or tags together.
+
+        Setting tags clears vibe_signals (tags are the resolved form).
+        """
+        if mood is not None:
+            self._vibe = mood
+        if tags is not None:
+            self._vibe_tags = tags
+            self._vibe_signals = ""
+
+    def set_vibe_mode(self, mode: str) -> None:
+        """Set vibe detection mode with validation."""
+        if mode not in _VALID_VIBE_MODES:
+            msg = f"invalid vibe mode: {mode!r}"
+            raise ValueError(msg)
+        self._vibe_mode = mode
 
     @classmethod
     def from_config(cls, config_dir: Path | None) -> SessionConfig:
@@ -78,15 +200,15 @@ class SessionConfig:
 
         cfg = read_config(config_dir=config_dir)
         return cls(
-            notify=cfg.notify,
-            speak=cfg.speak,
-            voice=cfg.voice,
-            provider=cfg.provider,
-            model=cfg.model,
-            vibe_mode=cfg.vibe_mode,
-            vibe=cfg.vibe,
-            vibe_tags=cfg.vibe_tags,
-            vibe_signals=cfg.vibe_signals or "",
+            _notify=cfg.notify,
+            _speak=cfg.speak,
+            _voice=cfg.voice,
+            _provider=cfg.provider,
+            _model=cfg.model,
+            _vibe_mode=cfg.vibe_mode,
+            _vibe=cfg.vibe,
+            _vibe_tags=cfg.vibe_tags,
+            _vibe_signals=cfg.vibe_signals or "",
         )
 
     def refresh_from_config(self) -> None:
@@ -109,22 +231,22 @@ class SessionConfig:
 
         cfg = read_config(config_dir=config_dir)
 
-        self.vibe = cfg.vibe
-        self.vibe_tags = cfg.vibe_tags
-        self.vibe_signals = cfg.vibe_signals or ""
-        self.vibe_mode = cfg.vibe_mode
-        self.notify = cfg.notify
-        self.speak = cfg.speak
+        self._vibe = cfg.vibe
+        self._vibe_tags = cfg.vibe_tags
+        self._vibe_signals = cfg.vibe_signals or ""
+        self._vibe_mode = cfg.vibe_mode
+        self._notify = cfg.notify
+        self._speak = cfg.speak
 
         if read_field("speak", config_dir) is not None:
-            self.speak_explicit = True
+            self._speak_explicit = True
 
         if cfg.voice is not None:
-            self.voice = cfg.voice
+            self._voice = cfg.voice
         if cfg.provider is not None:
-            self.provider = cfg.provider
+            self._provider = cfg.provider
         if cfg.model is not None:
-            self.model = cfg.model
+            self._model = cfg.model
 
 
 # Module-level singleton; initialized in run_server().
@@ -165,13 +287,66 @@ def _error(message: str) -> str:
     return json.dumps({"error": message})
 
 
+def _process_segments(
+    segments: list[dict[str, str]],
+    *,
+    language: str | None,
+    effective_voice: str | None,
+    effective_provider: str | None,
+    effective_model: str | None,
+    effective_vibe_tags: str | None,
+    rate: int,
+    stability: float | None,
+    similarity: float | None,
+    style: float | None,
+    speaker_boost: bool | None,
+    handler: Callable[[str, SynthesisSpec], dict[str, object]],
+    error_label: str,
+) -> str:
+    """Iterate segments, build a SynthesisSpec per segment, and delegate to *handler*.
+
+    Returns a JSON string: either a list of result dicts or an error dict.
+    The *handler* receives (seg_text, seg_spec) and returns one result dict.
+    """
+    results: list[dict[str, object]] = []
+    try:
+        for seg in segments:
+            seg_text = seg.get("text", "")
+            if not seg_text:
+                continue
+            seg_voice = seg.get("voice") or effective_voice
+            seg_language = seg.get("language") or language
+            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
+
+            seg_spec = SynthesisSpec(
+                voice=seg_voice,
+                language=seg_language,
+                rate=rate,
+                provider=effective_provider,
+                model=effective_model,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
+            )
+            results.append(handler(seg_text, seg_spec))
+    except VoxdConnectionError as exc:
+        return _error(str(exc))
+    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
+        logger.exception("%s failed", error_label)
+        return _error(str(exc))
+
+    return json.dumps(results if results else [])
+
+
 # ---------------------------------------------------------------------------
 # MCP tools
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+def unmute(
     text: str | None = None,
     voice: str | None = None,
     language: str | None = None,
@@ -228,12 +403,7 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     _session.refresh_from_config()
 
     # Validate voice settings via SynthesisSpec (single validation path).
-    base_spec = SynthesisSpec(
-        stability=stability,
-        similarity=similarity,
-        style=style,
-    )
-    base_spec.validate()
+    SynthesisSpec(stability=stability, similarity=similarity, style=style).validate()
 
     # ephemeral is accepted for callers (architecture spec) but voxd
     # handles ephemeral cleanup internally today.  Silence linters.
@@ -245,8 +415,7 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
     if model is not None:
         _session.model = model
     if vibe_tags is not None:
-        _session.vibe_tags = vibe_tags
-        _session.vibe_signals = ""
+        _session.set_vibe(tags=vibe_tags)
 
     # Normalize input: text -> single segment.
     if segments is None:
@@ -263,62 +432,40 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    # Resolve effective voice: explicit param > session config.
-    effective_voice = voice or _session.voice
     effective_provider = provider or _session.provider
-    effective_model = model or _session.model
-
-    # Resolve vibe_tags: explicit param > session config.
-    effective_vibe_tags = vibe_tags or _session.vibe_tags
-
     client = _voxd_client()
-    results: list[dict[str, Any]] = []
 
-    try:
-        for seg in segments:
-            seg_text = seg.get("text", "")
-            if not seg_text:
-                continue
-            seg_voice = seg.get("voice") or effective_voice
-            seg_language = seg.get("language") or language
-            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
+    def _synth_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
+        result = client.synthesize(seg_text, **seg_spec.to_client_kwargs())
+        entry: dict[str, object] = {
+            "id": result.request_id,
+            "text": seg_text,
+            "voice": seg_spec.voice,
+            "provider": effective_provider,
+        }
+        if result.deduped:
+            entry["deduped"] = True
+            if result.original_played_at is not None:
+                entry["original_played_at"] = result.original_played_at
+            if result.ttl_seconds_remaining is not None:
+                entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+        return entry
 
-            seg_spec = SynthesisSpec(
-                voice=seg_voice,
-                language=seg_language,
-                rate=rate,
-                provider=effective_provider,
-                model=effective_model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
-            )
-
-            result = client.synthesize(seg_text, **seg_spec.to_client_kwargs())
-            entry: dict[str, object] = {
-                "id": result.request_id,
-                "text": seg_text,
-                "voice": seg_voice,
-                "provider": effective_provider,
-            }
-            if result.deduped:
-                entry["deduped"] = True
-                if result.original_played_at is not None:
-                    entry["original_played_at"] = result.original_played_at
-                if result.ttl_seconds_remaining is not None:
-                    entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-            results.append(entry)
-    except VoxdConnectionError as exc:
-        return _error(str(exc))
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.exception("Synthesis failed")
-        return _error(str(exc))
-
-    if not results:
-        return json.dumps([])
-    return json.dumps(results)
+    return _process_segments(
+        segments,
+        language=language,
+        effective_voice=voice or _session.voice,
+        effective_provider=effective_provider,
+        effective_model=model or _session.model,
+        effective_vibe_tags=vibe_tags or _session.vibe_tags,
+        rate=rate,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        handler=_synth_handler,
+        error_label="Synthesis",
+    )
 
 
 @mcp.tool()
@@ -366,23 +513,13 @@ def record(
     _session.refresh_from_config()
 
     # Validate voice settings via SynthesisSpec (single validation path).
-    base_spec = SynthesisSpec(
-        stability=stability,
-        similarity=similarity,
-        style=style,
-    )
-    base_spec.validate()
+    SynthesisSpec(stability=stability, similarity=similarity, style=style).validate()
 
     # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
             return _error("Provide text or segments.")
         segments = [{"text": text}]
-
-    effective_voice = voice or _session.voice
-    effective_provider = _session.provider
-    effective_model = _session.model
-    effective_vibe_tags = _session.vibe_tags
 
     if output_path and len(segments) > 1:
         return _error("output_path only supported for single-segment calls")
@@ -391,65 +528,48 @@ def record(
     dir_path = Path(output_dir) if output_dir else _default_output_dir()
     dir_path.mkdir(parents=True, exist_ok=True)
 
+    effective_provider = _session.provider
     client = _voxd_client()
-    results: list[dict[str, Any]] = []
 
-    try:
-        for seg in segments:
-            seg_text = seg.get("text", "")
-            if not seg_text:
-                continue
-            seg_voice = seg.get("voice") or effective_voice
-            seg_language = seg.get("language") or language
-            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
+    def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
+        mp3_bytes = client.record(seg_text, **seg_spec.to_client_kwargs())
 
-            seg_spec = SynthesisSpec(
-                voice=seg_voice,
-                language=seg_language,
-                rate=rate,
-                provider=effective_provider,
-                model=effective_model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
-            )
+        # Determine output file path.
+        if output_path and len(segments) == 1:
+            file_path = Path(output_path)
+        else:
+            text_hash = hashlib.md5(
+                seg_text.encode(),
+                usedforsecurity=False,
+            ).hexdigest()[:10]
+            file_path = dir_path / f"{text_hash}.mp3"
 
-            mp3_bytes = client.record(seg_text, **seg_spec.to_client_kwargs())
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(mp3_bytes)
 
-            # Determine output file path.
-            if output_path and len(segments) == 1:
-                file_path = Path(output_path)
-            else:
-                text_hash = hashlib.md5(
-                    seg_text.encode(),
-                    usedforsecurity=False,
-                ).hexdigest()[:10]
-                filename = f"{text_hash}.mp3"
-                file_path = dir_path / filename
+        return {
+            "path": str(file_path),
+            "text": seg_text,
+            "voice": seg_spec.voice,
+            "provider": effective_provider,
+            "bytes": len(mp3_bytes),
+        }
 
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_bytes(mp3_bytes)
-
-            results.append(
-                {
-                    "path": str(file_path),
-                    "text": seg_text,
-                    "voice": seg_voice,
-                    "provider": effective_provider,
-                    "bytes": len(mp3_bytes),
-                }
-            )
-    except VoxdConnectionError as exc:
-        return _error(str(exc))
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.exception("Record failed")
-        return _error(str(exc))
-
-    if not results:
-        return json.dumps([])
-    return json.dumps(results)
+    return _process_segments(
+        segments,
+        language=language,
+        effective_voice=voice or _session.voice,
+        effective_provider=effective_provider,
+        effective_model=_session.model,
+        effective_vibe_tags=_session.vibe_tags,
+        rate=rate,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        handler=_record_handler,
+        error_label="Record",
+    )
 
 
 @mcp.tool()
@@ -479,17 +599,15 @@ def vibe(
     updates: dict[str, str] = {}
     if mood is not None:
         updates["vibe"] = mood
-        _session.vibe = mood
     if tags is not None:
         updates["vibe_tags"] = tags
         updates["vibe_signals"] = ""
-        _session.vibe_tags = tags
-        _session.vibe_signals = ""
+    _session.set_vibe(mood=mood, tags=tags)
     if mode is not None:
-        if mode not in ("auto", "manual", "off"):
+        if mode not in _VALID_VIBE_MODES:
             return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
         updates["vibe_mode"] = mode
-        _session.vibe_mode = mode
+        _session.set_vibe_mode(mode)
 
     if not updates:
         return _error("Provide at least one of: mood, tags, mode.")
@@ -796,18 +914,18 @@ def notify(
         JSON string with the updated config fields.
     """
     _session.refresh_from_config()
-    if mode not in ("y", "n", "c"):
+    if mode not in _VALID_NOTIFY_MODES:
         return _error(f"Invalid mode '{mode}'. Use y/n/c.")
 
     updates: dict[str, str] = {"notify": mode}
-    _session.notify = mode
+    _session.set_notify(mode)
 
     # Initialize speak to "y" if not explicitly set yet.
     # "n" is the default sentinel; if it's still at default and we're
     # enabling notifications, default to voice mode.
     if mode in ("y", "c") and _session.speak == "n" and not _session.speak_explicit:
         updates["speak"] = "y"
-        _session.speak = "y"
+        _session.set_speak("y", explicit=False)
 
     if voice is not None:
         updates["voice"] = voice
@@ -837,12 +955,11 @@ def speak(
     """
     _session.refresh_from_config()
 
-    if mode not in ("y", "n"):
+    if mode not in _VALID_SPEAK_MODES:
         return _error(f"Invalid mode '{mode}'. Use y/n.")
 
     updates: dict[str, str] = {"speak": mode}
-    _session.speak = mode
-    _session.speak_explicit = True
+    _session.set_speak(mode)
 
     if voice is not None:
         updates["voice"] = voice
@@ -939,7 +1056,7 @@ def run_server() -> None:
         from punt_vox.config import read_field
 
         if read_field("speak", config_dir) is not None:
-            _session.speak_explicit = True
+            _session.set_speak(_session.speak)
 
     logger.info(
         "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",

@@ -56,10 +56,10 @@ def _set_state(
     import punt_vox.server as srv
 
     if notify_mode is not None:
-        srv._session.notify = notify_mode
+        srv._session._notify = notify_mode
     if speak_mode is not None:
-        srv._session.speak = speak_mode
-    srv._session.speak_explicit = speak_explicit
+        srv._session._speak = speak_mode
+    srv._session._speak_explicit = speak_explicit
     if voice is not None:
         srv._session.voice = voice
 
@@ -72,7 +72,7 @@ def _read_state() -> dict[str, str | None | bool]:
         "notify": srv._session.notify,
         "speak": srv._session.speak,
         "voice": srv._session.voice,
-        "speak_explicit": srv._session.speak_explicit,
+        "speak_explicit": srv._session._speak_explicit,
     }
 
 
