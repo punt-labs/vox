@@ -135,6 +135,8 @@ ignore = [
 "src/punt_vox/providers/polly.py" = ["PLC0415"]
 "src/punt_vox/providers/say.py" = ["S603", "S607"]
 "src/punt_vox/providers/espeak.py" = ["S603", "S607"]
+"src/punt_vox/providers/convert.py" = ["S603", "S607"]
+"src/punt_vox/providers/local_play.py" = ["S603", "S607"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15

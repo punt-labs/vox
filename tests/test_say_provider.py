@@ -9,11 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.providers.convert import rate_to_wpm
+from punt_vox.providers.local_play import SayDirectPlayer
 from punt_vox.providers.say import (
     SayProvider,
     SayVoiceConfig,
     _locale_to_iso,  # pyright: ignore[reportPrivateUsage]
-    _rate_to_wpm,  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.types import AudioProviderId, SynthesisRequest, VoiceNotFoundError
 
@@ -38,19 +39,19 @@ class TestLocaleToIso:
 
 class TestRateToWpm:
     def test_normal(self) -> None:
-        assert _rate_to_wpm(100) == 175
+        assert rate_to_wpm(100) == 175
 
     def test_slow(self) -> None:
-        assert _rate_to_wpm(90) == 157
+        assert rate_to_wpm(90) == 157
 
     def test_half(self) -> None:
-        assert _rate_to_wpm(50) == 87
+        assert rate_to_wpm(50) == 87
 
     def test_zero_clamps_to_one(self) -> None:
-        assert _rate_to_wpm(0) == 1
+        assert rate_to_wpm(0) == 1
 
     def test_fast(self) -> None:
-        assert _rate_to_wpm(200) == 350
+        assert rate_to_wpm(200) == 350
 
 
 class TestSayProviderPlatformGuard:
@@ -94,37 +95,37 @@ class TestSayDefaultVoiceDynamic:
         assert say_provider.default_voice == "samantha"
 
     def test_falls_back_to_alex(self, say_provider: SayProvider) -> None:
-        voices = say_provider._voices  # pyright: ignore[reportPrivateUsage]
-        voices.clear()
-        voices["alex"] = SayVoiceConfig(name="Alex", locale="en_US")
-        voices["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+        cache = say_provider._voices._cache  # pyright: ignore[reportPrivateUsage]
+        cache.clear()
+        cache["alex"] = SayVoiceConfig(name="Alex", locale="en_US")
+        cache["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
         assert say_provider.default_voice == "alex"
 
     def test_falls_back_to_first_english(
         self,
         say_provider: SayProvider,
     ) -> None:
-        voices = say_provider._voices  # pyright: ignore[reportPrivateUsage]
-        voices.clear()
-        voices["karen"] = SayVoiceConfig(name="Karen", locale="en_AU")
-        voices["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+        cache = say_provider._voices._cache  # pyright: ignore[reportPrivateUsage]
+        cache.clear()
+        cache["karen"] = SayVoiceConfig(name="Karen", locale="en_AU")
+        cache["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
         assert say_provider.default_voice == "karen"
 
     def test_falls_back_to_first_voice(
         self,
         say_provider: SayProvider,
     ) -> None:
-        voices = say_provider._voices  # pyright: ignore[reportPrivateUsage]
-        voices.clear()
-        voices["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
+        cache = say_provider._voices._cache  # pyright: ignore[reportPrivateUsage]
+        cache.clear()
+        cache["anna"] = SayVoiceConfig(name="Anna", locale="de_DE")
         assert say_provider.default_voice == "anna"
 
     def test_empty_voices_returns_samantha(
         self,
         say_provider: SayProvider,
     ) -> None:
-        voices = say_provider._voices  # pyright: ignore[reportPrivateUsage]
-        voices.clear()
+        cache = say_provider._voices._cache  # pyright: ignore[reportPrivateUsage]
+        cache.clear()
         assert say_provider.default_voice == "samantha"
 
 
@@ -139,8 +140,9 @@ class TestSayProviderResolveVoice:
         assert say_provider.resolve_voice("anna") == "Anna"
 
     def test_unknown_voice_raises(self, say_provider: SayProvider) -> None:
-        say_provider._voices.clear()  # pyright: ignore[reportPrivateUsage]
-        say_provider._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+        say_provider._voices._cache.clear()  # pyright: ignore[reportPrivateUsage]
+        # Prevent reload from system
+        say_provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
         with pytest.raises(VoiceNotFoundError) as exc_info:
             say_provider.resolve_voice("nonexistent")
         assert exc_info.value.voice_name == "nonexistent"
@@ -226,7 +228,7 @@ class TestSayProviderSynthesize:
         assert say_args[say_args.index("-v") + 1] == "Fred"
         assert say_args[say_args.index("-r") + 1] == "157"
 
-    def test_synthesize_ffmpeg_args(
+    def test_synthesize_ffmpeg_via_convert(
         self,
         say_provider: SayProvider,
         tmp_output_dir: Path,
@@ -304,13 +306,14 @@ class TestSayProviderSynthesize:
         assert result.language == "en"
 
 
-class TestSayProviderPlayDirectly:
+class TestSayDirectPlayerPlayDirectly:
     def test_spawns_without_o_flag(self, say_provider: SayProvider) -> None:
+        player = SayDirectPlayer(voices=say_provider._voices)  # pyright: ignore[reportPrivateUsage]
         mock = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         )
-        with patch("punt_vox.providers.say.subprocess.run", mock):
-            rc = say_provider.play_directly(
+        with patch("punt_vox.providers.local_play.subprocess.run", mock):
+            rc = player.play_directly(
                 SynthesisRequest(text="hello", voice="fred"),
             )
         assert rc == 0
@@ -319,21 +322,23 @@ class TestSayProviderPlayDirectly:
         assert "-o" not in args
 
     def test_nonzero_rc_returned(self, say_provider: SayProvider) -> None:
+        player = SayDirectPlayer(voices=say_provider._voices)  # pyright: ignore[reportPrivateUsage]
         mock = MagicMock(
             return_value=subprocess.CompletedProcess([], 5, b"", b"oops"),
         )
-        with patch("punt_vox.providers.say.subprocess.run", mock):
-            rc = say_provider.play_directly(
+        with patch("punt_vox.providers.local_play.subprocess.run", mock):
+            rc = player.play_directly(
                 SynthesisRequest(text="hello", voice="fred"),
             )
         assert rc == 5
 
     def test_strips_vibe_tags(self, say_provider: SayProvider) -> None:
+        player = SayDirectPlayer(voices=say_provider._voices)  # pyright: ignore[reportPrivateUsage]
         mock = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         )
-        with patch("punt_vox.providers.say.subprocess.run", mock):
-            say_provider.play_directly(
+        with patch("punt_vox.providers.local_play.subprocess.run", mock):
+            player.play_directly(
                 SynthesisRequest(text="[serious] Hello world", voice="fred"),
             )
         args = mock.call_args[0][0]
@@ -365,8 +370,10 @@ class TestSayProviderCheckHealth:
             mock_platform.system.return_value = "Darwin"
             mock_shutil.which.return_value = "/usr/bin/say"
             provider = SayProvider()
-        provider._voices.clear()  # pyright: ignore[reportPrivateUsage]
-        provider._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+        # Replace the loader so _ensure_loaded returns empty results
+        provider._voices._loader = dict  # pyright: ignore[reportPrivateUsage]
+        provider._voices._cache.clear()  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
         with (
             patch("punt_vox.providers.say.platform") as mock_platform,
             patch("punt_vox.providers.say.shutil") as mock_shutil,

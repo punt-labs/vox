@@ -13,17 +13,19 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     import pytest
 
-from punt_vox.watcher import (
+from punt_vox.chime import (
     _SIGNAL_CHIMES,  # pyright: ignore[reportPrivateUsage]
+    _resolve_assets_dir,  # pyright: ignore[reportPrivateUsage]
+    resolve_chime_path,
+)
+from punt_vox.watcher import (
     SessionEvent,
     SessionWatcher,
     _extract_tool_result_text,  # pyright: ignore[reportPrivateUsage]
     _find_session_jsonl,  # pyright: ignore[reportPrivateUsage]
-    _resolve_assets_dir,  # pyright: ignore[reportPrivateUsage]
     classify_output,
     derive_session_dir,
     make_notification_consumer,
-    resolve_chime_path,
 )
 
 del TYPE_CHECKING  # unused after removing pytest guard
@@ -371,7 +373,7 @@ class TestResolveChimePath:
     ) -> None:
         monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
         fake = tmp_path / "src" / "punt_vox" / "fake.py"
-        monkeypatch.setattr("punt_vox.watcher.__file__", str(fake))
+        monkeypatch.setattr("punt_vox.chime.__file__", str(fake))
         assert resolve_chime_path() is None
         assert resolve_chime_path("tests-pass") is None
 

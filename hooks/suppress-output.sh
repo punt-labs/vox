@@ -204,11 +204,6 @@ if [[ "$TOOL_NAME" == "music_list" ]]; then
   exit 0
 fi
 
-if [[ "$TOOL_NAME" == "show_vox" ]]; then
-  emit "♪ vox display updated" "$RESULT"
-  exit 0
-fi
-
 # Generic message fallback: if the result has a "message" field, use it.
 # Safety net for any tool that returns human-readable text but doesn't
 # have a dedicated formatter above.

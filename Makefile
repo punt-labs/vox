@@ -1,4 +1,4 @@
-.PHONY: help test lint type docs check check-oo update-oo report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
+.PHONY: help test lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -19,13 +19,25 @@ type: ## Type check with mypy and pyright
 docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
-check: lint type docs test check-oo ## Run all quality gates
+check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
 	uv run python tools/oo_score.py src/punt_vox/ --check
 
 update-oo: ## Update OO baseline after improvements (stage .oo-baseline.json and .oo-audit.jsonl)
 	uv run python tools/oo_score.py src/punt_vox/ --update
+
+check-coupling: ## Coupling analysis — informational
+	uv run python tools/oo_coupling.py src/punt_vox/ --check
+
+update-coupling: ## Update coupling baseline
+	uv run python tools/oo_coupling.py src/punt_vox/ --update
+
+check-suppressions: ## Suppression ratchet — count must not increase
+	uv run python tools/suppression_ratchet.py src/punt_vox/ --check
+
+update-suppressions: ## Update suppression baseline
+	uv run python tools/suppression_ratchet.py src/punt_vox/ --update
 
 report: ## Full diagnostics (OO score + all checks, no fail-fast)
 	-uv run python tools/oo_score.py src/punt_vox/ --threshold

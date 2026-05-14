@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -75,7 +74,8 @@ def mock_boto_client() -> MagicMock:
 def polly_provider(mock_boto_client: MagicMock) -> PollyProvider:
     """Create a PollyProvider with a mocked boto3 backend."""
     provider = PollyProvider(boto_client=mock_boto_client)
-    provider._voices.update(  # pyright: ignore[reportPrivateUsage]
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
         {
             "joanna": JOANNA,
             "hans": HANS,
@@ -83,7 +83,7 @@ def polly_provider(mock_boto_client: MagicMock) -> PollyProvider:
             "seoyeon": SEOYEON,
         }
     )
-    provider._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
     return provider
 
 
@@ -156,14 +156,17 @@ def mock_elevenlabs_client() -> MagicMock:
 def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
     """Create an ElevenLabsProvider with a mocked client."""
     provider = ElevenLabsProvider(client=mock_elevenlabs_client)
-    provider._voices.update(  # pyright: ignore[reportPrivateUsage]
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
         {
             "matilda": "XrExE9yKIg1WjnnlVkGX",
             "drew": "29vD33N1CtxCmqQRPOHJ",
         }
     )
-    # Set a recent timestamp so the cache appears fresh.
-    provider._voices_loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
+    # Mark cache as loaded so TTL checks work.
+    import time
+
+    provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
     return provider
 
 
@@ -187,14 +190,15 @@ def say_provider() -> SayProvider:
         mock_shutil.which.return_value = "/usr/bin/say"
         provider = SayProvider()
 
-    provider._voices.update(  # pyright: ignore[reportPrivateUsage]
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
         {
             "fred": FRED,
             "samantha": SAMANTHA,
             "anna": ANNA_SAY,
         }
     )
-    provider._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
     return provider
 
 
@@ -216,7 +220,8 @@ def espeak_provider() -> EspeakProvider:
     ):
         provider = EspeakProvider()
 
-    provider._voices.update(  # pyright: ignore[reportPrivateUsage]
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
         {
             "english": ENGLISH_ESPEAK,
             "en": ENGLISH_ESPEAK,
@@ -226,5 +231,5 @@ def espeak_provider() -> EspeakProvider:
             "fr": FRENCH_ESPEAK,
         }
     )
-    provider._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
     return provider

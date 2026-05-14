@@ -304,11 +304,12 @@ class TestElevenLabsProviderCharLimits:
     def test_v3_chunks_above_5k(self) -> None:
         """eleven_v3 should chunk text exceeding 5,000 chars."""
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
-        provider._voices["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
+        provider._voices._cache["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
         text = "a" * 5_001
         request = SynthesisRequest(text=text, voice="matilda")
         with (
-            patch.object(provider, "_chunked_synthesize") as mock_chunked,
+            patch("punt_vox.providers.elevenlabs.chunked_synthesize") as mock_chunked,
             patch.object(provider, "_single_synthesize"),
         ):
             provider.synthesize(request, Path("/tmp/out.mp3"))
@@ -317,12 +318,13 @@ class TestElevenLabsProviderCharLimits:
     def test_flash_single_call_under_40k(self) -> None:
         """eleven_flash_v2_5 should use single call for text under 40k."""
         provider = ElevenLabsProvider(model="eleven_flash_v2_5", client=MagicMock())
-        provider._voices["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
+        provider._voices._cache["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
         text = "a" * 10_000
         request = SynthesisRequest(text=text, voice="matilda")
         with (
             patch.object(provider, "_single_synthesize") as mock_single,
-            patch.object(provider, "_chunked_synthesize"),
+            patch("punt_vox.providers.elevenlabs.chunked_synthesize"),
         ):
             provider.synthesize(request, Path("/tmp/out.mp3"))
             mock_single.assert_called_once()
@@ -415,7 +417,7 @@ class TestElevenLabsVoiceCacheTTL:
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
         provider.list_voices()
         assert mock_elevenlabs_client.voices.get_all.call_count == 1
-        provider._voices_loaded_at = (  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
             time.monotonic() - _VOICE_CACHE_TTL_S - 1
         )
         provider.list_voices()
@@ -441,10 +443,10 @@ class TestElevenLabsVoiceCacheTTL:
         updated_response.voices = [*list(old_voices), voice_aria]
         mock_elevenlabs_client.voices.get_all.return_value = updated_response
 
-        provider._voices_loaded_at = (  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
             time.monotonic() - _VOICE_CACHE_TTL_S - 1
         )
-        provider._voices_force_fetched_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        provider._voices._force_refreshed_at = 0.0  # pyright: ignore[reportPrivateUsage]
 
         result = provider.resolve_voice("aria")
         assert result == "aria"
@@ -465,7 +467,7 @@ class TestElevenLabsVoiceCacheTTL:
         updated_response.voices = [voice_matilda]
         mock_elevenlabs_client.voices.get_all.return_value = updated_response
 
-        provider._voices_loaded_at = (  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
             time.monotonic() - _VOICE_CACHE_TTL_S - 1
         )
         voices_after = provider.list_voices()

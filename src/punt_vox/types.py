@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -53,10 +52,6 @@ class AudioProvider(Protocol):
     """Provider that synthesizes audio from text."""
 
     def generate_audio(self, request: AudioRequest) -> AudioResult: ...
-
-    def generate_audios(
-        self, requests: Sequence[AudioRequest]
-    ) -> list[AudioResult]: ...
 
 
 # ISO 639-1 codes for common language-learning languages.

@@ -230,7 +230,8 @@ class TestDirectPlayProtocol:
             provider = ElevenLabsProvider()
         assert not isinstance(provider, DirectPlayProvider)
 
-    def test_espeak_is_direct_play(self) -> None:
+    def test_espeak_provider_is_not_direct_play(self) -> None:
+        """EspeakProvider is not a DirectPlayProvider."""
         from punt_vox.providers.espeak import EspeakProvider
         from punt_vox.types import DirectPlayProvider
 
@@ -239,7 +240,38 @@ class TestDirectPlayProtocol:
             return_value="/usr/bin/espeak-ng",
         ):
             provider = EspeakProvider()
-        assert isinstance(provider, DirectPlayProvider)
+        assert not isinstance(provider, DirectPlayProvider)
+
+    def test_espeak_direct_player_is_direct_play(self) -> None:
+        from punt_vox.providers.espeak import EspeakProvider
+        from punt_vox.providers.local_play import EspeakDirectPlayer
+        from punt_vox.types import DirectPlayProvider
+
+        with patch(
+            "punt_vox.providers.espeak._find_espeak_binary",
+            return_value="/usr/bin/espeak-ng",
+        ):
+            provider = EspeakProvider()
+        player = EspeakDirectPlayer(
+            binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
+            voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
+        )
+        assert isinstance(player, DirectPlayProvider)
+
+    def test_say_direct_player_is_direct_play(self) -> None:
+        from punt_vox.providers.local_play import SayDirectPlayer
+        from punt_vox.providers.say import SayProvider
+        from punt_vox.types import DirectPlayProvider
+
+        with (
+            patch("punt_vox.providers.say.platform") as mock_platform,
+            patch("punt_vox.providers.say.shutil") as mock_shutil,
+        ):
+            mock_platform.system.return_value = "Darwin"
+            mock_shutil.which.return_value = "/usr/bin/say"
+            provider = SayProvider()
+        player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(player, DirectPlayProvider)
 
 
 class TestDirectPlaySerialization:
@@ -325,9 +357,6 @@ class TestApiKeyPassthroughIntegration:
                 )
 
             def generate_audio(self, request: AudioRequest) -> AudioResult:
-                raise NotImplementedError
-
-            def generate_audios(self, requests: object) -> list[AudioResult]:
                 raise NotImplementedError
 
             def resolve_voice(self, name: str, language: str | None = None) -> str:
@@ -498,9 +527,6 @@ class TestCacheApiKeyBypass:
                 )
 
             def generate_audio(self, request: AudioRequest) -> AudioResult:
-                raise NotImplementedError
-
-            def generate_audios(self, requests: object) -> list[AudioResult]:
                 raise NotImplementedError
 
             def resolve_voice(self, name: str, language: str | None = None) -> str:

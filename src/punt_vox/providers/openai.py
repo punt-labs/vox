@@ -4,21 +4,20 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import openai
 
-from punt_vox.core import split_text
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    TTSProvider,
     VoiceNotFoundError,
 )
 
@@ -43,21 +42,26 @@ VOICES: dict[str, str] = {
 }
 
 
-class OpenAIProvider:
+class OpenAIProvider(TTSProvider):
     """OpenAI TTS provider.
 
     Implements the TTSProvider protocol using the OpenAI audio API.
     Supports tts-1 and tts-1-hd models with 9 built-in voices.
     """
 
-    def __init__(
-        self,
+    _model: str
+    _client: openai.OpenAI
+
+    def __new__(
+        cls,
         *,
         model: str | None = None,
         client: openai.OpenAI | None = None,
-    ) -> None:
+    ) -> Self:
+        self = super().__new__(cls)
         self._model = model or os.environ.get("TTS_MODEL") or "tts-1"
         self._client = client or openai.OpenAI()
+        return self
 
     @property
     def name(self) -> str:
@@ -75,11 +79,6 @@ class OpenAIProvider:
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
-    def generate_audios(
-        self, requests: Sequence[SynthesisRequest]
-    ) -> list[SynthesisResult]:
-        return [self.generate_audio(request) for request in requests]
-
     def synthesize(
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
@@ -92,10 +91,14 @@ class OpenAIProvider:
         speed = self._rate_to_speed(rate)
 
         if len(text) > _MAX_CHARS:
-            from dataclasses import replace as _replace
-
-            stripped_request = _replace(request, text=text)
-            self._chunked_synthesize(stripped_request, output_path, voice, speed)
+            chunked_synthesize(
+                text=text,
+                char_limit=_MAX_CHARS,
+                synthesize_chunk=lambda chunk, path: self._single_synthesize(
+                    chunk, path, voice, speed
+                ),
+                output_path=output_path,
+            )
         else:
             self._single_synthesize(text, output_path, voice, speed)
 
@@ -228,27 +231,3 @@ class OpenAIProvider:
             len(text),
         )
         output_path.write_bytes(response.content)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-
-    def _chunked_synthesize(
-        self,
-        request: SynthesisRequest,
-        output_path: Path,
-        voice: str,
-        speed: float,
-    ) -> None:
-        """Split text into chunks, synthesize each, then stitch."""
-        from punt_vox.core import stitch_audio
-
-        chunks = split_text(request.text, _MAX_CHARS)
-        logger.debug("Chunked %d chars into %d parts", len(request.text), len(chunks))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            paths: list[Path] = []
-
-            for i, chunk in enumerate(chunks):
-                chunk_path = tmp_dir / f"chunk_{i:04d}.mp3"
-                self._single_synthesize(chunk, chunk_path, voice, speed)
-                paths.append(chunk_path)
-
-            stitch_audio(paths, output_path, pause_ms=0)

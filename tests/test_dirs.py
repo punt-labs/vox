@@ -10,7 +10,6 @@ from punt_vox.dirs import (
     _parse_xdg_user_dir,  # pyright: ignore[reportPrivateUsage]
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
-    ephemeral_dir,
     find_config_dir,
     music_output_dir,
 )
@@ -69,23 +68,6 @@ class TestFindConfigDir:
         child.mkdir(parents=True)
         result = find_config_dir(child)
         assert result == config_dir
-
-
-# ---------------------------------------------------------------------------
-# ephemeral_dir
-# ---------------------------------------------------------------------------
-
-
-class TestEphemeralDir:
-    def test_creates_directory(self, tmp_path: Path) -> None:
-        result = ephemeral_dir(tmp_path)
-        assert result == tmp_path / ".punt-labs" / "vox" / "ephemeral"
-        assert result.is_dir()
-
-    def test_idempotent(self, tmp_path: Path) -> None:
-        ephemeral_dir(tmp_path)
-        result = ephemeral_dir(tmp_path)
-        assert result.is_dir()
 
 
 # ---------------------------------------------------------------------------

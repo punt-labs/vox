@@ -88,10 +88,7 @@ class MusicScheduler:
         self._loop_task = None
         return self
 
-    # -- Properties (writable, for existing handler delegation) ----------------
-    # NOTE: Writable setters remain for now -- existing handlers in
-    # music_handlers.py still use them. They will be removed in Step 5
-    # when handlers are rewritten to use domain methods.
+    # -- Read-only properties for external inspection --------------------------
 
     @property
     def mode(self) -> str:

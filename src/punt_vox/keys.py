@@ -9,8 +9,6 @@ environment and loaded at daemon startup before any provider is instantiated.
 from __future__ import annotations
 
 import logging
-import os
-from collections.abc import Mapping
 from pathlib import Path
 
 from punt_vox.logging_config import VOX_DATA_DIR
@@ -64,62 +62,3 @@ def format_keys_env(keys: dict[str, str]) -> str:
     )
     lines = [f"{k}={v}" for k, v in sorted(keys.items()) if v]
     return header + "\n".join(lines) + "\n"
-
-
-def write_keys_env(env: Mapping[str, str]) -> Path:
-    """Write keys.env from *env*, merging with existing file.  chmod 0600."""
-    path = keys_file_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    existing: dict[str, str] = {}
-    if path.exists():
-        try:
-            existing = parse_keys_env(path.read_text())
-        except OSError as exc:
-            logger.warning("Could not read existing %s: %s — will overwrite", path, exc)
-
-    merged = dict(existing)
-    for k in PROVIDER_KEY_NAMES:
-        if k in env:
-            if env[k]:  # non-empty: set it
-                merged[k] = env[k]
-            else:  # empty string: remove it
-                merged.pop(k, None)
-        # k not in env: preserve existing value
-
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, format_keys_env(merged).encode())
-    finally:
-        os.close(fd)
-    # Belt-and-suspenders: enforce 0600 even if file already existed with
-    # different permissions (os.open mode only applies at creation).
-    path.chmod(0o600)
-    return path
-
-
-def load_keys_env() -> frozenset[str]:
-    """Load keys.env into ``os.environ`` for keys not already set.
-
-    Returns the names of variables that were loaded.
-    """
-    path = keys_file_path()
-    if not path.exists():
-        return frozenset()
-    try:
-        text = path.read_text()
-    except OSError as exc:
-        logger.warning(
-            "Could not read %s: %s — daemon will use system TTS only",
-            path,
-            exc,
-        )
-        return frozenset()
-    parsed = parse_keys_env(text)
-    loaded: set[str] = set()
-    for k in PROVIDER_KEY_NAMES:
-        v = parsed.get(k)
-        if v and k not in os.environ:
-            os.environ[k] = v
-            loaded.add(k)
-    return frozenset(loaded)

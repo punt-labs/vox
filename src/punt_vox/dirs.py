@@ -27,17 +27,6 @@ def find_config_dir(start: Path | None = None) -> Path | None:
     return None
 
 
-def ephemeral_dir(repo_root: Path | None = None) -> Path:
-    """Return the ephemeral audio directory for the repo.
-
-    Creates the directory if it does not exist.
-    """
-    root = repo_root or Path.cwd()
-    d = root / _REPO_SUBDIR / "ephemeral"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def _parse_xdg_user_dir(key: str) -> Path | None:
     """Parse a single key from ~/.config/user-dirs.dirs.
 
