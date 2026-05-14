@@ -15,11 +15,8 @@ import contextlib
 import hmac
 import json
 import logging
-import math
 import os
-import platform
 import re
-import shutil
 import tempfile
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -57,6 +54,15 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     _run_dir,
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
+    _AUDIO_ENV_KEYS,
+    PlaybackItem,
+    PlaybackQueue,
+    _monotonic,
+    _music_player_command,
+    _player_binary_path,
+)
+from punt_vox.voxd.track_generator import TrackGenerator
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -68,11 +74,6 @@ DEFAULT_HOST = "127.0.0.1"
 
 # Lock to serialize os.environ mutation during synthesis with per-request API keys.
 _env_lock = asyncio.Lock()
-
-# Mutex held by anything that produces audible sound. The playback queue
-# consumer and the direct-play path both acquire it so that two clients
-# (e.g. simultaneous hooks from two Claude sessions) can never overlap.
-_playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -97,109 +98,8 @@ def read_token_file() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Playback item and queue
+# Playback -- delegated to punt_vox.voxd.playback
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class PlaybackItem:
-    """An item in the playback queue."""
-
-    path: Path
-    request_id: str
-    notify: asyncio.Event
-
-
-# Audio environment variables we capture for every playback. These determine
-# whether ffplay can reach PulseAudio/PipeWire and dbus at the moment of the
-# call, which is exactly the failure mode we saw on Linux in v4.0.3.
-_AUDIO_ENV_KEYS: tuple[str, ...] = (
-    "XDG_RUNTIME_DIR",
-    "PULSE_SERVER",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "DISPLAY",
-    "WAYLAND_DISPLAY",
-    "HOME",
-    "USER",
-)
-
-# Playback under 50ms is a "success" that almost certainly played nothing.
-_SUSPICIOUS_ELAPSED_S = 0.05
-
-_PLAYBACK_TIMEOUT_DEFAULT_S = 120.0
-_PLAYBACK_TIMEOUT_PADDING_S = 10.0
-_PROBE_TIMEOUT_S = 5.0
-
-# Cap on the stderr blob we keep per playback. ffplay without -loglevel
-# quiet can emit kilobytes of progress lines; we want enough for triage
-# without unbounded growth in memory or log files.
-_MAX_STDERR_LEN = 2000
-
-
-def _truncate_stderr(text: str) -> str:
-    """Return ``text`` clipped to ``_MAX_STDERR_LEN`` with head + tail kept."""
-    if len(text) <= _MAX_STDERR_LEN:
-        return text
-    half = _MAX_STDERR_LEN // 2
-    dropped = len(text) - _MAX_STDERR_LEN
-    return f"{text[:half]}\n... [truncated {dropped} bytes] ...\n{text[-half:]}"
-
-
-def _monotonic() -> float:
-    """Indirection for ``time.monotonic`` so tests can stub playback timing.
-
-    Patching ``time.monotonic`` directly would also affect asyncio internals.
-    """
-    return time.monotonic()
-
-
-def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str]:
-    """Return a dict of env var values, using <unset> for missing keys."""
-    return {k: os.environ.get(k, "<unset>") for k in keys}
-
-
-def _is_darwin() -> bool:
-    """Return True on macOS.
-
-    Wrapped in a function so mypy doesn't narrow ``sys.platform`` to a
-    single value at the call site, which would mark the non-matching
-    branch as unreachable for cross-platform development.
-    """
-    return platform.system() == "Darwin"
-
-
-def _player_binary_name() -> str:
-    """Return the platform player binary name."""
-    return "afplay" if _is_darwin() else "ffplay"
-
-
-def _player_binary_path() -> str | None:
-    """Return the resolved path to the platform player binary, or None."""
-    return shutil.which(_player_binary_name())
-
-
-def _player_command(path: Path) -> list[str]:
-    """Return the argv for playing ``path`` on this platform.
-
-    No ``-loglevel quiet`` on ffplay -- we want its stream summary and errors.
-    """
-    if _is_darwin():
-        return ["afplay", str(path)]
-    return ["ffplay", "-nodisp", "-autoexit", str(path)]
-
-
-_MUSIC_VOLUME = 30
-
-
-def _music_player_command(path: Path) -> list[str]:
-    """Return the argv for playing a music track at reduced volume.
-
-    Music plays at ``-volume 30`` so speech and chimes overlay on top
-    at full volume without runtime volume manipulation.
-    """
-    if _is_darwin():
-        return ["afplay", "--volume", "0.3", str(path)]
-    return ["ffplay", "-nodisp", "-autoexit", "-volume", str(_MUSIC_VOLUME), str(path)]
 
 
 def _music_output_dir() -> Path:
@@ -207,6 +107,18 @@ def _music_output_dir() -> Path:
     from punt_vox.dirs import music_output_dir
 
     return music_output_dir()
+
+
+def _get_track_generator() -> TrackGenerator:
+    """Return the module-level TrackGenerator (created in main)."""
+    if _track_generator is None:
+        # Fallback for tests and handlers called before main().
+        return TrackGenerator(_music_output_dir())
+    return _track_generator
+
+
+# Module-level TrackGenerator, set by main() at daemon startup.
+_track_generator: TrackGenerator | None = None
 
 
 def _record_playback_result(
@@ -217,7 +129,12 @@ def _record_playback_result(
     elapsed: float,
     stderr: str,
 ) -> None:
-    """Update ctx.last_playback with a freshly-observed playback result."""
+    """Update ctx.last_playback with a freshly-observed playback result.
+
+    Thin wrapper that delegates to the PlaybackQueue owned by ctx.
+    Kept as a module-level function so _try_direct_play can call it
+    without knowing about PlaybackQueue internals.
+    """
     ctx.last_playback = {
         "file": str(path),
         "rc": rc,
@@ -225,226 +142,6 @@ def _record_playback_result(
         "stderr": stderr,
         "ts": time.time(),
     }
-
-
-async def _probe_duration(path: Path) -> float | None:
-    """Return the duration in seconds of an audio file, or None on failure.
-
-    Uses ffprobe with a 5-second timeout. Returns None if ffprobe is not
-    installed, the file is unreadable, or the output is not a valid float.
-    """
-    cmd = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "csv=p=0",
-        str(path),
-    ]
-    proc: asyncio.subprocess.Process | None = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout_bytes, _ = await asyncio.wait_for(
-            proc.communicate(), timeout=_PROBE_TIMEOUT_S
-        )
-    except TimeoutError:
-        if proc is not None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            with contextlib.suppress(Exception):
-                await proc.wait()
-        return None
-    except (FileNotFoundError, OSError):
-        return None
-    try:
-        duration = float((stdout_bytes or b"").strip())
-    except ValueError:
-        return None
-    logger.debug("Probed duration for %s: %.3fs", path.name, duration)
-    return duration
-
-
-async def _play_audio(path: Path, ctx: DaemonContext) -> None:
-    """Play an audio file and record a rich result in ``ctx.last_playback``.
-
-    Captures spawn command, audio env vars at call time, exit code, elapsed
-    wall time, file size, and full stderr. Logs ERROR on non-zero exit,
-    WARNING on suspiciously fast "success", INFO with stderr summary on
-    normal success. Stderr is never silently discarded.
-    """
-    cmd = _player_command(path)
-    env_snapshot = _snapshot_env(_AUDIO_ENV_KEYS)
-
-    try:
-        size = path.stat().st_size
-    except OSError as exc:
-        logger.error("Playback aborted: cannot stat %s: %s", path, exc)
-        _record_playback_result(
-            ctx, path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
-        )
-        return
-
-    if size == 0:
-        logger.error(
-            "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
-            path,
-        )
-        _record_playback_result(
-            ctx, path=path, rc=-1, elapsed=0.0, stderr="0-byte file"
-        )
-        return
-
-    duration = await _probe_duration(path)
-    if duration is not None and math.isfinite(duration) and duration > 0:
-        timeout = max(
-            duration + _PLAYBACK_TIMEOUT_PADDING_S,
-            _PLAYBACK_TIMEOUT_DEFAULT_S,
-        )
-    else:
-        timeout = _PLAYBACK_TIMEOUT_DEFAULT_S
-
-    logger.info(
-        "Playback spawn: cmd=%s size=%d audio_env=%s timeout=%.1fs",
-        cmd,
-        size,
-        env_snapshot,
-        timeout,
-    )
-
-    start = _monotonic()
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        elapsed = _monotonic() - start
-        logger.error(
-            "Playback FAILED: binary not found: %s (%s) cmd=%s audio_env=%s",
-            cmd[0],
-            exc,
-            cmd,
-            env_snapshot,
-        )
-        _record_playback_result(
-            ctx,
-            path=path,
-            rc=-1,
-            elapsed=elapsed,
-            stderr=f"FileNotFoundError: {exc}",
-        )
-        return
-    except OSError as exc:
-        elapsed = _monotonic() - start
-        logger.error(
-            "Playback FAILED: OSError spawning %s: %s audio_env=%s",
-            cmd[0],
-            exc,
-            env_snapshot,
-        )
-        _record_playback_result(
-            ctx, path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
-        )
-        return
-
-    try:
-        _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        elapsed = _monotonic() - start
-        logger.error(
-            "Playback FAILED: timed out after %.1fs for %s audio_env=%s",
-            timeout,
-            path.name,
-            env_snapshot,
-        )
-        proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
-        _record_playback_result(
-            ctx,
-            path=path,
-            rc=-1,
-            elapsed=elapsed,
-            stderr=f"timeout after {timeout:.1f}s",
-        )
-        return
-
-    elapsed = _monotonic() - start
-    rc = proc.returncode if proc.returncode is not None else -1
-    raw_stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
-    stderr_text = _truncate_stderr(raw_stderr)
-
-    _record_playback_result(ctx, path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
-
-    if rc != 0:
-        logger.error(
-            "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
-            "cmd=%s audio_env=%s stderr=%r",
-            rc,
-            elapsed,
-            path.name,
-            size,
-            cmd,
-            env_snapshot,
-            stderr_text,
-        )
-        return
-
-    if elapsed < _SUSPICIOUS_ELAPSED_S:
-        logger.warning(
-            "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
-            "size=%d audio_env=%s stderr=%r -- probably played nothing",
-            elapsed,
-            _SUSPICIOUS_ELAPSED_S,
-            path.name,
-            size,
-            env_snapshot,
-            stderr_text,
-        )
-        return
-
-    if stderr_text:
-        logger.info(
-            "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
-            elapsed,
-            path.name,
-            size,
-            stderr_text,
-        )
-    else:
-        logger.info(
-            "Playback ok: elapsed=%.3fs file=%s size=%d",
-            elapsed,
-            path.name,
-            size,
-        )
-
-
-async def _playback_consumer(ctx: DaemonContext) -> None:
-    """Single consumer: plays audio sequentially.
-
-    Holds ``_playback_mutex`` for the duration of each item so the
-    direct-play path can't produce overlapping audio from another
-    coroutine.
-    """
-    while True:
-        item = await ctx.playback_queue.get()
-        logger.info("Playback start: %s", item.path.name)
-        async with _playback_mutex:
-            await _play_audio(item.path, ctx)
-        logger.info("Playback done: %s", item.path.name)
-        item.notify.set()
-        ctx.playback_queue.task_done()
 
 
 # ---------------------------------------------------------------------------
@@ -460,15 +157,15 @@ class DaemonContext:
         *,
         auth_token: str | None = None,
         port: int = DEFAULT_PORT,
+        playback: PlaybackQueue | None = None,
     ) -> None:
+        self._playback: PlaybackQueue = playback or PlaybackQueue()
         self.start_time: float = time.monotonic()
         self.auth_token: str | None = auth_token
         self.port: int = port
         self.chime_dedup = ChimeDedup()
         self.once_dedup = OnceDedup()
         self.client_count: int = 0
-        self.playback_queue: asyncio.Queue[PlaybackItem] = asyncio.Queue()
-        self.last_playback: dict[str, object] | None = None
         # Cached once at startup so /health does not hit importlib.metadata
         # on every request. See ``punt_vox.paths.installed_version`` for
         # fallback semantics when running from an uninstalled source tree.
@@ -484,6 +181,22 @@ class DaemonContext:
         self.music_state: str = "idle"  # "idle" | "generating" | "playing"
         self.music_changed: asyncio.Event = asyncio.Event()
         self.music_replay: bool = False
+
+    # -- Delegation properties for backward compatibility --------------------
+
+    @property
+    def playback_queue(self) -> asyncio.Queue[PlaybackItem]:
+        """Return the underlying asyncio.Queue from PlaybackQueue."""
+        return self._playback._queue
+
+    @property
+    def last_playback(self) -> dict[str, object] | None:
+        """Return the most recent playback result dict."""
+        return self._playback.last_result
+
+    @last_playback.setter
+    def last_playback(self, value: dict[str, object] | None) -> None:
+        self._playback.set_last_result(value)
 
 
 _chime_resolver = ChimeResolver()
@@ -864,11 +577,11 @@ async def _try_direct_play(
 
     start = _monotonic()
     try:
-        # _playback_mutex serializes audible output across all paths --
+        # ctx._playback.mutex serializes audible output across all paths --
         # the queue consumer holds it too. Without this, two hooks firing
         # at once would overlap because direct-play bypasses the queue.
         if api_key and provider_name in _PROVIDER_API_KEY_VAR:
-            async with _env_lock, _playback_mutex:
+            async with _env_lock, ctx._playback.mutex:
                 rc = await asyncio.to_thread(
                     _run_play_directly_sync,
                     provider_name,
@@ -877,7 +590,7 @@ async def _try_direct_play(
                     request,
                 )
         else:
-            async with _playback_mutex:
+            async with ctx._playback.mutex:
                 rc = await asyncio.to_thread(
                     _run_play_directly_sync,
                     provider_name,
@@ -1470,11 +1183,8 @@ async def _music_backoff_sleep(seconds: float, ctx: DaemonContext) -> None:
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
-    """Slugify a string for use in filenames."""
-    import re
-
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
-    return slug[:max_len]
+    """Slugify a string for use in filenames. Delegates to TrackGenerator."""
+    return TrackGenerator.slugify(text, max_len)
 
 
 async def _kill_music_proc(ctx: DaemonContext) -> None:
@@ -1487,54 +1197,25 @@ async def _kill_music_proc(ctx: DaemonContext) -> None:
     ctx.music_proc = None
 
 
-def _auto_track_name(ctx: DaemonContext) -> str:
+def _auto_track_name(ctx: DaemonContext) -> str:  # pyright: ignore[reportUnusedFunction]
     """Derive a short auto-name from vibe + style + YYYYMMDD-HHMM."""
     vibe, _ = ctx.music_vibe
     style = ctx.music_style
-    stamp = time.strftime("%Y%m%d-%H%M")
-    vibe_part = _slugify(vibe, max_len=20) or "ambient"
-    style_part = _slugify(style, max_len=20) or "mix"
-    return f"{vibe_part}-{style_part}-{stamp}"
+    return _get_track_generator().auto_track_name(vibe, style)
 
 
 async def _generate_music_track(ctx: DaemonContext) -> Path:
     """Generate a music track from the current vibe and style.
 
-    Extracted so the generation phase can run as an ``asyncio.Task``
-    concurrently with the playback loop.
-
-    When ``ctx.music_track_name`` is set, the track is saved under
-    that name in ``~/vox-output/music/``. Otherwise an auto-derived
-    name from vibe + style + YYYYMMDD-HHMM is used. The name is stored back
-    into ``ctx.music_track_name`` for status reporting.
+    Thin wrapper around TrackGenerator.generate that reads from and
+    writes back to DaemonContext fields.
     """
-    vibe, vibe_tags = ctx.music_vibe
-    style = ctx.music_style
-
-    from punt_vox.music import vibe_to_prompt
-
-    hour = time.localtime().tm_hour
-    # TODO(vox-0qi): pass session signals for work-intensity layer
-    prompt = vibe_to_prompt(
-        vibe or None, vibe_tags or None, style or None, hour, signals=[]
+    generator = _get_track_generator()
+    track_path, resolved_name = await generator.generate(
+        ctx.music_vibe, ctx.music_style, ctx.music_track_name
     )
-
-    output_dir = _music_output_dir()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Use explicit name if set, otherwise auto-derive.
-    track_name = ctx.music_track_name or _auto_track_name(ctx)
-    safe_name = _slugify(track_name, max_len=60)
-    filename = f"{safe_name}.mp3"
-    output_path = output_dir / filename
-
-    # Store the resolved name back for status reporting.
-    ctx.music_track_name = safe_name
-
-    from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
-
-    provider = ElevenLabsMusicProvider()
-    return await provider.generate_track(prompt, _MUSIC_DURATION_MS, output_path)
+    ctx.music_track_name = resolved_name
+    return track_path
 
 
 async def _music_loop(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
@@ -1881,21 +1562,7 @@ async def _handle_music_list(
 ) -> None:
     """Handle a 'music_list' message: return saved tracks with metadata."""
     request_id = str(msg.get("id", ""))
-
-    output_dir = _music_output_dir()
-    tracks: list[dict[str, object]] = []
-
-    if output_dir.exists():
-        for mp3 in sorted(output_dir.glob("*.mp3")):
-            stat = mp3.stat()
-            tracks.append(
-                {
-                    "name": mp3.stem,
-                    "size_bytes": stat.st_size,
-                    "modified": stat.st_mtime,
-                    "path": str(mp3),
-                }
-            )
+    tracks = _get_track_generator().list_tracks()
 
     await websocket.send_json(
         {
@@ -2163,12 +1830,16 @@ def main(
     auth_token = daemon_cfg.read_or_create_token()
     ctx = DaemonContext(auth_token=auth_token, port=port)
 
+    # Track generator for music -- set module-level for handler access.
+    global _track_generator
+    _track_generator = TrackGenerator(_music_output_dir())
+
     logger.info("Starting voxd on %s:%d", host, port)
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # Start playback consumer
-        consumer_task = asyncio.create_task(_playback_consumer(ctx))
+        consumer_task = asyncio.create_task(ctx._playback.consumer())
         logger.info("Playback consumer started")
         # Start music loop
         music_task = asyncio.create_task(_music_loop(ctx))

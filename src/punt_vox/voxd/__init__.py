@@ -6,12 +6,9 @@ from __future__ import annotations
 
 from punt_vox.voxd._monolith import (
     _HANDLERS,
-    _MAX_STDERR_LEN,
-    _PLAYBACK_TIMEOUT_DEFAULT_S,
     DEFAULT_HOST,
     DEFAULT_PORT,
     DaemonContext,
-    PlaybackItem,
     _apply_vibe_for_synthesis,
     _auto_track_name,
     _handle_music_list,
@@ -27,13 +24,8 @@ from punt_vox.voxd._monolith import (
     _kill_music_proc,
     _load_keys,
     _model_supports_expressive_tags,
-    _monotonic,
     _music_loop,
-    _music_player_command,
-    _play_audio,
-    _probe_duration,
     _synthesize_to_file,
-    _truncate_stderr,
     _try_direct_play,
     _ws_route,
     build_app,
@@ -59,6 +51,17 @@ from punt_vox.voxd.dedup import (
     DedupHit,
     OnceDedup,
 )
+from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
+    _MAX_STDERR_LEN,
+    _PLAYBACK_TIMEOUT_DEFAULT_S,
+    PlaybackItem,
+    PlaybackQueue,
+    _monotonic,
+    _music_player_command,
+    _probe_duration,
+    _truncate_stderr,
+)
+from punt_vox.voxd.track_generator import TrackGenerator
 
 __all__ = [
     "DEFAULT_HOST",
@@ -76,6 +79,8 @@ __all__ = [
     "DedupHit",
     "OnceDedup",
     "PlaybackItem",
+    "PlaybackQueue",
+    "TrackGenerator",
     "_apply_vibe_for_synthesis",
     "_auto_track_name",
     "_config_dir",
@@ -97,7 +102,6 @@ __all__ = [
     "_monotonic",
     "_music_loop",
     "_music_player_command",
-    "_play_audio",
     "_probe_duration",
     "_run_dir",
     "_synthesize_to_file",

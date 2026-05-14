@@ -15,7 +15,6 @@ import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.voxd import (
-    _PLAYBACK_TIMEOUT_DEFAULT_S,
     DaemonContext,
     PlaybackItem,
     _apply_vibe_for_synthesis,
@@ -33,9 +32,6 @@ from punt_vox.voxd import (
     _kill_music_proc,
     _model_supports_expressive_tags,
     _music_loop,
-    _music_player_command,
-    _play_audio,
-    _probe_duration,
     _try_direct_play,
 )
 
@@ -43,287 +39,6 @@ from punt_vox.voxd import (
 def _make_ctx() -> DaemonContext:
     """Build a DaemonContext without touching real files or auth."""
     return DaemonContext(auth_token=None, port=0)
-
-
-def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
-    """Build a fake asyncio subprocess returning (rc, stderr)."""
-    proc = MagicMock()
-    proc.returncode = rc
-    proc.communicate = AsyncMock(return_value=(b"", stderr))
-    proc.wait = AsyncMock(return_value=rc)
-    proc.kill = MagicMock()
-    return proc
-
-
-class TestPlayAudioObservability:
-    """``_play_audio`` must never silently discard playback failures."""
-
-    def test_nonzero_exit_logs_error_and_records(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=1, stderr=b"some stderr")
-
-        with (
-            caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert "FAILED" in caplog.text
-        assert "some stderr" in caplog.text
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == 1
-        assert ctx.last_playback["stderr"] == "some stderr"
-
-    def test_suspiciously_fast_success_logs_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=0, stderr=b"")
-
-        ticks = iter([100.0, 100.001])
-
-        with (
-            caplog.at_level(logging.WARNING, logger="punt_vox.voxd"),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-            patch(
-                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
-            ),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert "SUSPICIOUS" in caplog.text
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == 0
-
-    def test_binary_missing_logs_error(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-
-        with (
-            caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(side_effect=FileNotFoundError("no binary")),
-            ),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert "FAILED" in caplog.text
-        assert "not found" in caplog.text
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == -1
-        stderr_value = cast("str", ctx.last_playback["stderr"])
-        assert "FileNotFoundError" in stderr_value
-
-    def test_zero_byte_file_logs_error(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        audio = tmp_path / "empty.mp3"
-        audio.write_bytes(b"")
-        ctx = _make_ctx()
-
-        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd"):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert "0-byte" in caplog.text
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == -1
-
-    def test_last_playback_updated_on_success(self, tmp_path: Path) -> None:
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=0, stderr=b"Stream #0:0 mp3, 44100 Hz")
-
-        ticks = iter([100.0, 100.5])
-
-        with (
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-            patch(
-                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
-            ),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert ctx.last_playback is not None
-        assert ctx.last_playback["rc"] == 0
-        assert ctx.last_playback["elapsed_s"] == 0.5
-        assert ctx.last_playback["file"] == str(audio)
-
-
-class TestProbeDuration:
-    """``_probe_duration`` extracts audio duration via ffprobe."""
-
-    def test_returns_duration_for_valid_audio(self, tmp_path: Path) -> None:
-        audio = tmp_path / "silence.mp3"
-        audio.write_bytes(_get_valid_mp3_bytes())
-        duration = asyncio.run(_probe_duration(audio))
-        assert duration is not None
-        assert duration > 0.0
-
-    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        missing = tmp_path / "nonexistent.mp3"
-        duration = asyncio.run(_probe_duration(missing))
-        assert duration is None
-
-    def test_returns_none_for_bad_format(self, tmp_path: Path) -> None:
-        bad = tmp_path / "garbage.mp3"
-        bad.write_bytes(b"not audio data at all")
-        duration = asyncio.run(_probe_duration(bad))
-        # ffprobe may return None or an error; either way, no crash
-        assert duration is None or isinstance(duration, float)
-
-    def test_returns_none_when_ffprobe_missing(self, tmp_path: Path) -> None:
-        audio = tmp_path / "silence.mp3"
-        audio.write_bytes(_get_valid_mp3_bytes())
-        with patch(
-            "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-            AsyncMock(side_effect=FileNotFoundError("ffprobe")),
-        ):
-            duration = asyncio.run(_probe_duration(audio))
-        assert duration is None
-
-    def test_returns_none_on_timeout(self, tmp_path: Path) -> None:
-        audio = tmp_path / "silence.mp3"
-        audio.write_bytes(_get_valid_mp3_bytes())
-        proc = MagicMock()
-        proc.communicate = AsyncMock(side_effect=TimeoutError)
-        with patch(
-            "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-            AsyncMock(return_value=proc),
-        ):
-            duration = asyncio.run(_probe_duration(audio))
-        assert duration is None
-
-    def test_logs_duration_at_debug(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        audio = tmp_path / "silence.mp3"
-        audio.write_bytes(_get_valid_mp3_bytes())
-        with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd"):
-            duration = asyncio.run(_probe_duration(audio))
-        if duration is not None:
-            assert "Probed duration" in caplog.text
-
-
-class TestPlayAudioProportionalTimeout:
-    """``_play_audio`` uses probed duration for its timeout."""
-
-    def test_uses_probed_duration_for_timeout(self, tmp_path: Path) -> None:
-        """A 150s file gets timeout = max(150+10, 120) = 160s."""
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=0, stderr=b"")
-        ticks = iter([100.0, 100.5])
-
-        captured_timeout: list[float] = []
-        original_wait_for = asyncio.wait_for
-
-        async def spy_wait_for(coro: object, *, timeout: float) -> object:
-            captured_timeout.append(timeout)
-            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
-
-        with (
-            patch(
-                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=150.0)
-            ),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-            patch(
-                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
-            ),
-            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert len(captured_timeout) == 1
-        assert captured_timeout[0] == pytest.approx(160.0, abs=0.1)  # pyright: ignore[reportUnknownMemberType]
-
-    def test_falls_back_to_default_when_probe_fails(self, tmp_path: Path) -> None:
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=0, stderr=b"")
-        ticks = iter([100.0, 100.5])
-
-        captured_timeout: list[float] = []
-        original_wait_for = asyncio.wait_for
-
-        async def spy_wait_for(coro: object, *, timeout: float) -> object:
-            captured_timeout.append(timeout)
-            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
-
-        with (
-            patch(
-                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=None)
-            ),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-            patch(
-                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
-            ),
-            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert len(captured_timeout) == 1
-        assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
-
-    def test_short_duration_uses_default_minimum(self, tmp_path: Path) -> None:
-        """A 5s file gets timeout = max(5+10, 120) = 120s (default wins)."""
-        audio = tmp_path / "out.mp3"
-        audio.write_bytes(b"\xff\xfbfake mp3 body")
-        ctx = _make_ctx()
-        proc = _fake_proc(rc=0, stderr=b"")
-        ticks = iter([100.0, 100.5])
-
-        captured_timeout: list[float] = []
-        original_wait_for = asyncio.wait_for
-
-        async def spy_wait_for(coro: object, *, timeout: float) -> object:
-            captured_timeout.append(timeout)
-            return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
-
-        with (
-            patch(
-                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=5.0)
-            ),
-            patch(
-                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
-                AsyncMock(return_value=proc),
-            ),
-            patch(
-                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
-            ),
-            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
-        ):
-            asyncio.run(_play_audio(audio, ctx))
-
-        assert len(captured_timeout) == 1
-        assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
 
 
 class TestHealthPayloadFull:
@@ -730,28 +445,6 @@ class TestDirectPlayProtocol:
         ):
             provider = EspeakProvider()
         assert isinstance(provider, DirectPlayProvider)
-
-
-class TestStderrTruncation:
-    """ffplay stderr can be unbounded; the truncator caps it but keeps both ends."""
-
-    def test_short_text_passes_through(self) -> None:
-        from punt_vox.voxd import _truncate_stderr
-
-        assert _truncate_stderr("hello") == "hello"
-
-    def test_long_text_truncated_with_marker(self) -> None:
-        from punt_vox.voxd import _MAX_STDERR_LEN, _truncate_stderr
-
-        text = "A" * 5000 + "B" * 5000
-        out = _truncate_stderr(text)
-
-        assert len(out) < len(text)
-        assert "truncated" in out
-        assert out.startswith("A")
-        assert out.endswith("B")
-        # Marker reports the dropped byte count.
-        assert str(len(text) - _MAX_STDERR_LEN) in out
 
 
 class TestApiKeyPassthroughIntegration:
@@ -1757,7 +1450,7 @@ class TestHandleSynthesizeOnceFlag:
                 # Mark the item's done event so the handler's wait() returns.
                 item.notify.set()
 
-        ctx.playback_queue = _InstantPlaybackQueue()  # type: ignore[assignment]
+        ctx._playback._queue = _InstantPlaybackQueue()  # type: ignore[assignment]
         return synthesis_calls
 
     @pytest.mark.asyncio
@@ -2409,27 +2102,6 @@ class TestHandleMusicNext:
         assert _HANDLERS["music_next"] is _handle_music_next
 
 
-class TestMusicPlayerCommand:
-    """_music_player_command produces the right argv at reduced volume."""
-
-    def test_linux_ffplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd._monolith._is_darwin", return_value=False):
-            cmd = _music_player_command(Path("/tmp/track.mp3"))
-        assert cmd == [
-            "ffplay",
-            "-nodisp",
-            "-autoexit",
-            "-volume",
-            "30",
-            "/tmp/track.mp3",
-        ]
-
-    def test_darwin_afplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd._monolith._is_darwin", return_value=True):
-            cmd = _music_player_command(Path("/tmp/track.mp3"))
-        assert cmd == ["afplay", "--volume", "0.3", "/tmp/track.mp3"]
-
-
 class TestMusicLoopStateTransitions:
     """_music_loop: generation, playback, vibe changes, crash recovery."""
 
@@ -2850,30 +2522,6 @@ class TestKillMusicProc:
 
         proc.kill.assert_not_called()
         assert ctx.music_proc is None
-
-
-class TestMusicSeparateFromPlaybackQueue:
-    """Music subprocess must NOT use the existing _playback_consumer queue.
-
-    The spec explicitly requires music to run its own subprocess at
-    reduced volume, independent of the chime/TTS playback queue. This
-    test verifies the separation by checking that _handle_music_on does
-    not enqueue anything on ctx.playback_queue.
-    """
-
-    def test_music_on_does_not_enqueue(self) -> None:
-        ctx = _make_ctx()
-        ws = MagicMock()
-        ws.send_json = AsyncMock()
-        msg: dict[str, object] = {
-            "id": "sep-1",
-            "owner_id": "session-1",
-            "vibe": "focused",
-        }
-
-        asyncio.run(_handle_music_on(msg, ws, ctx))
-
-        assert ctx.playback_queue.empty()
 
 
 class TestEmptyOwnerIdRejection:
