@@ -4,25 +4,22 @@ Pure audio server. Receives synthesis requests over WebSocket,
 synthesizes via configured providers, plays through speakers.
 Knows nothing about MCP, hooks, projects, sessions, or Claude Code.
 """
+# pyright: reportPrivateUsage=false
+# Internal module within the voxd package -- cross-module private access is expected.
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import contextlib
-import hashlib
 import hmac
-import importlib.resources
 import json
 import logging
-import logging.config
 import math
 import os
 import platform
 import re
-import secrets
 import shutil
-import sys
 import tempfile
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -43,13 +40,7 @@ from punt_vox import cache as _cache_module
 from punt_vox.cache import cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
-from punt_vox.paths import (
-    config_dir as _user_config_dir,
-    ensure_user_dirs,
-    installed_version,
-    log_dir as _user_log_dir,
-    run_dir as _user_run_dir,
-)
+from punt_vox.paths import ensure_user_dirs, installed_version
 from punt_vox.providers import auto_detect_provider, get_provider
 from punt_vox.types import (
     AudioProviderId,
@@ -57,6 +48,15 @@ from punt_vox.types import (
     DirectPlayProvider,
     TTSProvider,
 )
+from punt_vox.voxd.chimes import ChimeResolver
+from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
+    DaemonConfig,
+    _config_dir,
+    _install_token_redact_filter,
+    _log_dir,
+    _run_dir,
+)
+from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -65,38 +65,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
-
-_TOKEN_RE = re.compile(r"\?token=[^\s\"']+")
-
-
-class _TokenRedactFilter(logging.Filter):
-    """Strip auth tokens from access log messages."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(getattr(record, "msg", None), str):
-            record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
-        if record.args and isinstance(record.args, tuple):
-            record.args = tuple(
-                _TOKEN_RE.sub("?token=REDACTED", a) if isinstance(a, str) else a
-                for a in record.args
-            )
-        return True
-
-
-def _install_token_redact_filter() -> None:
-    """Apply token redaction to uvicorn's access logger.
-
-    Uvicorn sets the access logger level to match log_level (WARNING),
-    but access entries are logged at INFO. Override to INFO so access
-    logs actually fire, with the redact filter stripping tokens.
-    """
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_access.setLevel(logging.INFO)
-    uvicorn_access.addFilter(_TokenRedactFilter())
-
-
-# Audio deduplication window: skip identical audio within this many seconds.
-_DEDUP_WINDOW_SECONDS = 5.0
 
 # Lock to serialize os.environ mutation during synthesis with per-request API keys.
 _env_lock = asyncio.Lock()
@@ -108,276 +76,24 @@ _playback_mutex = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
-# Per-user state paths
-#
-# These are thin wrappers over ``punt_vox.paths`` so tests can monkey-patch
-# them without reaching across modules. The source of truth is
-# ``punt_vox.paths``; every path resolves to a subdirectory of
-# ``~/.punt-labs/vox/`` — same on macOS and Linux.
+# Free-standing convenience wrappers -- delegate to DaemonConfig classmethods
 # ---------------------------------------------------------------------------
 
 
-def _config_dir() -> Path:
-    """Directory holding ``keys.env``.
-
-    Pure path resolution — no ``mkdir``, no ``chmod``. ``main()``
-    calls :func:`punt_vox.paths.ensure_user_dirs` at startup, which
-    creates every per-user subdirectory with mode 0700 (and tightens
-    pre-existing dirs that were created under a looser umask).
-    Callers rely on that contract — this helper is a pure view of the
-    path, nothing more.
-    """
-    return _user_config_dir()
-
-
-def _log_dir() -> Path:
-    """Directory holding ``voxd.log`` and rotated logs.
-
-    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
-    guaranteed by the ``ensure_user_dirs`` call at the top of
-    ``main()``; this helper does not create or chmod anything.
-    """
-    return _user_log_dir()
-
-
-def _run_dir() -> Path:
-    """Directory holding ``serve.port`` and ``serve.token``.
-
-    Pure path resolution — see :func:`_config_dir`. Mode 0700 is
-    guaranteed by the ``ensure_user_dirs`` call at the top of
-    ``main()``.
-    """
-    return _user_run_dir()
-
-
-# ---------------------------------------------------------------------------
-# Logging (inline -- not importing logging_config.py)
-# ---------------------------------------------------------------------------
-
-_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_LOG_MAX_BYTES = 5_242_880  # 5 MB
-_LOG_BACKUP_COUNT = 5
-
-
-_STARTUP_ENV_KEYS: tuple[str, ...] = (
-    "PATH",
-    "XDG_RUNTIME_DIR",
-    "PULSE_SERVER",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "DISPLAY",
-    "WAYLAND_DISPLAY",
-    "HOME",
-    "USER",
-    "LANG",
-)
-
-
-def _log_voxd_environment() -> None:
-    """Log voxd's process identity and audio env vars at startup.
-
-    Single greppable INFO line so operators can verify systemd env
-    injection without poking at ``/proc`` (Linux-specific; macOS has no ``/proc``).
-    """
-    env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
-    # os.getuid/getgid are POSIX-only; fall back gracefully on Windows.
-    getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
-    getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
-    uid: int | str = getuid() if getuid is not None else "<n/a>"
-    gid: int | str = getgid() if getgid is not None else "<n/a>"
-    logger.info(
-        "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
-        "voxd_binary=%s voxd_module=%s env=%s",
-        os.getpid(),
-        uid,
-        gid,
-        Path.cwd(),
-        sys.executable,
-        __file__,
-        env,
-    )
-
-
-def _configure_logging(log_dir: Path) -> None:
-    """Configure logging with rotating file and stderr handlers.
-
-    The log directory is expected to already exist at mode 0700 —
-    :func:`punt_vox.paths.ensure_user_dirs` runs at the top of
-    :func:`main` and creates (or tightens) every per-user subdirectory
-    before the first log handler is attached. This function is pure
-    logging configuration.
-    """
-    log_file = log_dir / "voxd.log"
-
-    logging.config.dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "standard": {
-                    "format": _LOG_FORMAT,
-                    "datefmt": _LOG_DATE_FORMAT,
-                },
-            },
-            "handlers": {
-                "file": {
-                    "class": "logging.handlers.RotatingFileHandler",
-                    "filename": str(log_file),
-                    "maxBytes": _LOG_MAX_BYTES,
-                    "backupCount": _LOG_BACKUP_COUNT,
-                    "encoding": "utf-8",
-                    "formatter": "standard",
-                    "level": "INFO",
-                },
-                "stderr": {
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stderr",
-                    "formatter": "standard",
-                    "level": "INFO",
-                },
-            },
-            "root": {
-                "level": "INFO",
-                "handlers": ["file", "stderr"],
-            },
-            "loggers": {
-                "boto3": {"level": "WARNING"},
-                "botocore": {"level": "WARNING"},
-                "urllib3": {"level": "WARNING"},
-                "s3transfer": {"level": "WARNING"},
-                "httpx": {"level": "WARNING"},
-            },
-        }
-    )
-
-
-# ---------------------------------------------------------------------------
-# Key loading (inline -- not importing keys.py)
-# ---------------------------------------------------------------------------
-
-_PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
-    {
-        "ELEVENLABS_API_KEY",
-        "OPENAI_API_KEY",
-        "AWS_PROFILE",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_DEFAULT_REGION",
-        "TTS_PROVIDER",
-        "TTS_MODEL",
-    }
-)
-
-
-def _load_keys(config_dir: Path) -> frozenset[str]:
-    """Load keys.env from config dir into os.environ.
-
-    Returns the names of variables that were loaded.
-    """
-    keys_file = config_dir / "keys.env"
-    if not keys_file.exists():
-        return frozenset()
-    try:
-        text = keys_file.read_text()
-    except OSError as exc:
-        logger.warning(
-            "Could not read %s: %s -- daemon will use system TTS only",
-            keys_file,
-            exc,
-        )
-        return frozenset()
-    loaded: set[str] = set()
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, _, value = stripped.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if key in _PROVIDER_KEY_NAMES and value and key not in os.environ:
-            os.environ[key] = value
-            loaded.add(key)
-    return frozenset(loaded)
-
-
-# ---------------------------------------------------------------------------
-# Auth token management
-# ---------------------------------------------------------------------------
-
-
-def _read_or_create_token(run_dir: Path) -> str:
-    """Read auth token from run dir, or generate a new one."""
-    token_file = run_dir / "serve.token"
-    if token_file.exists():
-        try:
-            token = token_file.read_text().strip()
-        except (PermissionError, OSError) as exc:
-            msg = (
-                f"Cannot read auth token from {token_file}: {exc}. "
-                "Fix file permissions or remove the file."
-            )
-            raise SystemExit(msg) from exc
-        if not token:
-            msg = f"Auth token file {token_file} is empty. Remove it to regenerate."
-            raise SystemExit(msg)
-        token_file.chmod(0o600)
-        logger.info("Loaded auth token from %s", token_file)
-        return token
-
-    token = secrets.token_urlsafe(32)
-    # The parent run dir is guaranteed to exist at mode 0700 by
-    # ``ensure_user_dirs`` at the top of ``main()``. No defensive
-    # mkdir here — it would just duplicate that contract.
-    fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, token.encode())
-    finally:
-        os.close(fd)
-    logger.info("Generated auth token at %s", token_file)
-    return token
-
-
-# ---------------------------------------------------------------------------
-# Port file helpers
-# ---------------------------------------------------------------------------
-
-
-def _write_port_file(run_dir: Path, port: int) -> None:
-    # ``run_dir`` is guaranteed to exist by the ``ensure_user_dirs``
-    # call at the top of ``main()``; no defensive mkdir here.
-    port_file = run_dir / "serve.port"
-    port_file.write_text(str(port))
-    logger.info("Wrote port file: %s (port %d)", port_file, port)
-
-
-def _remove_port_file(run_dir: Path) -> None:
-    port_file = run_dir / "serve.port"
-    try:
-        port_file.unlink(missing_ok=True)
-    except OSError:
-        logger.warning("Could not remove %s", port_file)
-    logger.info("Removed port file")
+def _load_keys(config_dir: Path) -> frozenset[str]:  # pyright: ignore[reportUnusedFunction]
+    """Load keys.env from config dir into os.environ."""
+    cfg = DaemonConfig(run_dir=_run_dir(), config_dir=config_dir, log_dir=_log_dir())
+    return cfg.load_keys()
 
 
 def read_port_file() -> int | None:
     """Read the daemon port from the port file. Returns None if missing."""
-    port_file = _run_dir() / "serve.port"
-    try:
-        return int(port_file.read_text().strip())
-    except (FileNotFoundError, ValueError, OSError):
-        return None
+    return DaemonConfig.read_port_file(_run_dir())
 
 
 def read_token_file() -> str | None:
     """Read the daemon auth token. Returns None if missing."""
-    token_file = _run_dir() / "serve.token"
-    try:
-        return token_file.read_text().strip()
-    except (FileNotFoundError, OSError):
-        return None
+    return DaemonConfig.read_token_file(_run_dir())
 
 
 # ---------------------------------------------------------------------------
@@ -732,192 +448,6 @@ async def _playback_consumer(ctx: DaemonContext) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Audio deduplication
-# ---------------------------------------------------------------------------
-
-
-class ChimeDedup:
-    """Always-on in-memory dedup for chime signals.
-
-    Chimes are event markers (tests-pass, lint-fail, git-push-ok, etc)
-    and a user does not want to hear the same event chime twice in rapid
-    succession. Unlike speech, chime deduplication is always on and
-    keyed only on the signal name. The window matches the legacy
-    `AudioDedup` default so the user-visible chime behavior is
-    unchanged from versions prior to vox-0e9.
-    """
-
-    def __init__(self, window: float = _DEDUP_WINDOW_SECONDS) -> None:
-        self._window = window
-        self._seen: dict[str, float] = {}
-
-    def should_play(self, signal: str) -> bool:
-        """Return True if this chime should play (not a recent duplicate)."""
-        key = hashlib.md5(f"chime:{signal}".encode(), usedforsecurity=False).hexdigest()
-        now = time.monotonic()
-        last = self._seen.get(key)
-        if last is not None and (now - last) < self._window:
-            return False
-        self._seen[key] = now
-        cutoff = now - self._window * 2
-        self._seen = {k: v for k, v in self._seen.items() if v > cutoff}
-        return True
-
-
-@dataclass(frozen=True)
-class DedupHit:
-    """Returned when an opt-in speech dedup catches a duplicate request.
-
-    The caller made a synthesize/direct_play request with ``once=<ttl>``
-    and an identical text was already played within the TTL window. The
-    user has already heard the message — the caller should NOT treat
-    this as an error or retry. The fields support observability (logging
-    "wall skipped, already played 53s ago") and future UI surfaces.
-    """
-
-    original_played_at: float
-    """Wall-clock ``time.time()`` of the original play, in seconds since
-    the epoch. Safe to serialize, safe to compare against other wall
-    clocks. NOT ``time.monotonic()``."""
-
-    ttl_seconds_remaining: float
-    """How many more seconds this dedup key remains valid. When the
-    TTL expires, the next identical request will play fresh."""
-
-
-_ONCE_DEDUP_MAX_TTL_SECONDS: float = 3600.0
-"""Hard cap on per-call ``once`` TTL to bound memory usage. Any caller
-passing a larger value is clamped to this cap with a log warning. The
-biff wall use case targets 600 seconds; 3600 is 6x that, more than
-enough headroom without letting a stray ``once=99999999`` wedge
-``OnceDedup._seen`` with long-lived entries."""
-
-_ONCE_DEDUP_MAX_ENTRIES: int = 1024
-"""Hard cap on the number of tracked keys. Entries are evicted in
-insertion order (oldest first) when the cap is reached. Defensive
-against pathological workloads that insert thousands of unique texts
-faster than the time-based pruner can drop them."""
-
-
-class OnceDedup:
-    """Opt-in in-memory dedup for speech with per-call TTL.
-
-    Callers pass ``once=<ttl_seconds>`` on a synthesize or direct_play
-    WebSocket message (or the ``vox unmute --once <seconds>`` CLI flag)
-    to suppress duplicate plays of identical text within their chosen
-    window. Identical text spoken with different voices or providers
-    collapses — the dedup key is ``md5(text)`` only.
-
-    The motivating use case is ``biff wall``: N Claude Code sessions
-    in the same repo independently shell out to ``vox unmute`` on the
-    same broadcast text, and the user should hear the announcement
-    exactly once. See bead vox-0e9.
-
-    Unlike the legacy always-on ``AudioDedup``, this class is only
-    invoked when the caller explicitly opts in. Requests without an
-    ``once`` parameter play every time, even if identical to a recent
-    one. This preserves the property that ``vox unmute "hello"`` twice
-    in quick succession on the CLI produces two audible plays.
-
-    Per-caller TTL semantics: each caller's ``ttl_seconds`` applies to
-    THEIR query, not to the stored entry. The dedup question each
-    caller asks is "was this text played in the last ttl_seconds?" — a
-    caller passing ``once=60`` will see dedup only if the original play
-    was within 60 seconds, regardless of whether an earlier caller
-    passed ``once=600``. This matches the intuitive "dedupe within N
-    seconds" semantic.
-
-    Concurrency: ``check_and_record`` is atomic under voxd's
-    single-threaded asyncio event loop. A failed synthesis path MUST
-    call ``rollback`` to remove the zombie entry; otherwise the next
-    identical call would be incorrectly deduped against a playback
-    that never happened.
-    """
-
-    def __init__(self) -> None:
-        # key -> (inserted_monotonic, inserted_wall_clock)
-        self._seen: dict[str, tuple[float, float]] = {}
-
-    def check_and_record(self, text: str, ttl_seconds: float) -> DedupHit | None:
-        """Check for a recent duplicate; record this call if none found.
-
-        Args:
-            text: The speech text. Used as the dedup key via ``md5``.
-            ttl_seconds: Dedup window in seconds. Must be positive.
-                Values above ``_ONCE_DEDUP_MAX_TTL_SECONDS`` are
-                clamped to the cap with a log warning.
-
-        Returns:
-            ``None`` if no duplicate exists within the window — the
-            caller should proceed with synthesis + playback and call
-            ``rollback(text)`` on failure so the zombie entry is
-            removed.
-            ``DedupHit(...)`` if a duplicate was found — the caller
-            should skip the play and return the hit to its client so
-            the client can render an observable "deduped" response.
-
-        Raises:
-            ValueError: if ``ttl_seconds`` is zero or negative.
-        """
-        if ttl_seconds <= 0:
-            msg = f"ttl_seconds must be positive, got {ttl_seconds}"
-            raise ValueError(msg)
-        if ttl_seconds > _ONCE_DEDUP_MAX_TTL_SECONDS:
-            logger.warning(
-                "OnceDedup: ttl_seconds=%.1f exceeds cap %.1f, clamping",
-                ttl_seconds,
-                _ONCE_DEDUP_MAX_TTL_SECONDS,
-            )
-            ttl_seconds = _ONCE_DEDUP_MAX_TTL_SECONDS
-
-        key = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
-        now_mono = time.monotonic()
-        now_wall = time.time()
-
-        existing = self._seen.get(key)
-        if existing is not None:
-            inserted_mono, inserted_wall = existing
-            age = now_mono - inserted_mono
-            # Per-caller semantics: the dedup fires only if the age is
-            # within THIS caller's ttl_seconds, not the stored entry's.
-            if age < ttl_seconds:
-                return DedupHit(
-                    original_played_at=inserted_wall,
-                    ttl_seconds_remaining=ttl_seconds - age,
-                )
-
-        self._seen[key] = (now_mono, now_wall)
-
-        # Opportunistic time-based prune: drop entries older than the
-        # cap so we never accumulate entries beyond the cap horizon.
-        cutoff = now_mono - _ONCE_DEDUP_MAX_TTL_SECONDS
-        self._seen = {k: (m, w) for k, (m, w) in self._seen.items() if m > cutoff}
-
-        # Hard cap on dict size. If somehow the time prune left us with
-        # more than _ONCE_DEDUP_MAX_ENTRIES, evict oldest-first. This is
-        # defensive against pathological inserts at a rate faster than
-        # the time pruner can keep up.
-        if len(self._seen) > _ONCE_DEDUP_MAX_ENTRIES:
-            sorted_items = sorted(self._seen.items(), key=lambda kv: kv[1][0])
-            keep = sorted_items[-_ONCE_DEDUP_MAX_ENTRIES:]
-            self._seen = dict(keep)
-
-        return None
-
-    def rollback(self, text: str) -> None:
-        """Remove a recorded entry for *text*, if present.
-
-        Used when synthesis or playback fails after
-        ``check_and_record`` returned None: without a rollback, the
-        zombie entry would incorrectly dedup subsequent retries
-        against a playback that never happened. Idempotent — safe
-        to call when no entry exists.
-        """
-        key = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
-        self._seen.pop(key, None)
-
-
-# ---------------------------------------------------------------------------
 # Daemon context
 # ---------------------------------------------------------------------------
 
@@ -956,41 +486,7 @@ class DaemonContext:
         self.music_replay: bool = False
 
 
-# ---------------------------------------------------------------------------
-# Chime asset resolution
-# ---------------------------------------------------------------------------
-
-_CHIME_MAP: dict[str, str] = {
-    "done": "chime_done.mp3",
-    "prompt": "chime_prompt.mp3",
-    "acknowledge": "chime_done.mp3",
-    "compact": "chime_done.mp3",
-    "subagent": "chime_done.mp3",
-    "farewell": "chime_done.mp3",
-    "tests-pass": "chime_tests_pass.mp3",
-    "tests-fail": "chime_tests_fail.mp3",
-    "lint-pass": "chime_lint_pass.mp3",
-    "lint-fail": "chime_lint_fail.mp3",
-    "git-push-ok": "chime_git_push_ok.mp3",
-    "merge-conflict": "chime_merge_conflict.mp3",
-}
-
-
-def _resolve_chime(signal: str) -> Path | None:
-    """Resolve a chime signal name to a bundled asset path."""
-    filename = _CHIME_MAP.get(signal)
-    if filename is None:
-        return None
-    try:
-        ref = importlib.resources.files("punt_vox.assets").joinpath(filename)
-        # as_file returns a context manager; we need the actual path.
-        # For installed packages the file is already on disk.
-        path = Path(str(ref))
-        if path.exists():
-            return path
-    except (TypeError, FileNotFoundError):
-        pass
-    return None
+_chime_resolver = ChimeResolver()
 
 
 # ---------------------------------------------------------------------------
@@ -1663,7 +1159,7 @@ async def _handle_chime(
 ) -> None:
     """Handle a 'chime' message: play a bundled chime sound."""
     signal = str(msg.get("signal", "done"))
-    path = _resolve_chime(signal)
+    path = _chime_resolver.resolve(signal)
     if path is None:
         logger.warning("Unknown chime signal: %s", signal)
         await websocket.send_json(
@@ -2641,29 +2137,30 @@ def main(
     # touches the filesystem. ``ensure_user_dirs`` forces mode 0700 on
     # ``~/.punt-labs/vox`` and its ``logs``/``run``/``cache``
     # subdirectories, including pre-existing dirs that were created
-    # under a looser umask in earlier versions. Every subsequent
-    # ``Path.mkdir(..., exist_ok=True)`` call in voxd inherits the
-    # already-tightened permissions because the directory is already
-    # present with mode 0700.
+    # under a looser umask in earlier versions.
     ensure_user_dirs()
 
-    run_dir = _run_dir()
-    config_dir = _config_dir()
-    log_dir = _log_dir()
+    daemon_cfg = DaemonConfig(
+        run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir()
+    )
 
     # Configure logging
-    _configure_logging(log_dir)
-    _log_voxd_environment()
+    daemon_cfg.configure_logging()
+    daemon_cfg.log_environment()
 
     # Load provider keys
-    loaded_keys = _load_keys(config_dir)
+    loaded_keys = daemon_cfg.load_keys()
     if loaded_keys:
-        logger.info("Loaded provider keys from %s: %s", config_dir, sorted(loaded_keys))
+        logger.info(
+            "Loaded provider keys from %s: %s",
+            daemon_cfg.config_dir,
+            sorted(loaded_keys),
+        )
     else:
-        logger.info("No provider keys loaded from %s", config_dir)
+        logger.info("No provider keys loaded from %s", daemon_cfg.config_dir)
 
     # Auth token
-    auth_token = _read_or_create_token(run_dir)
+    auth_token = daemon_cfg.read_or_create_token()
     ctx = DaemonContext(auth_token=auth_token, port=port)
 
     logger.info("Starting voxd on %s:%d", host, port)
@@ -2687,7 +2184,7 @@ def main(
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer_task
-            _remove_port_file(run_dir)
+            daemon_cfg.remove_port_file()
             logger.info("voxd stopped")
 
     app = build_app(ctx, lifespan=lifespan)
@@ -2719,7 +2216,7 @@ def main(
         await original_startup(sockets=sockets)
         if server.servers and server.servers[0].sockets:
             actual_port = server.servers[0].sockets[0].getsockname()[1]
-            _write_port_file(run_dir, actual_port)
+            daemon_cfg.write_port_file(actual_port)
             logger.info("voxd listening on http://%s:%d", host, actual_port)
         else:
             logger.error("Server started but no bound sockets; shutting down")

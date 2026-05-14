@@ -14,17 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
-from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd import (
     _PLAYBACK_TIMEOUT_DEFAULT_S,
-    ChimeDedup,
     DaemonContext,
-    DedupHit,
-    OnceDedup,
     PlaybackItem,
     _apply_vibe_for_synthesis,
     _auto_track_name,
-    _config_dir,
     _handle_music_list,
     _handle_music_next,
     _handle_music_off,
@@ -36,14 +31,11 @@ from punt_vox.voxd import (
     _health_payload_minimal,
     _health_route,
     _kill_music_proc,
-    _load_keys,
-    _log_dir,
     _model_supports_expressive_tags,
     _music_loop,
     _music_player_command,
     _play_audio,
     _probe_duration,
-    _run_dir,
     _try_direct_play,
 )
 
@@ -77,7 +69,7 @@ class TestPlayAudioObservability:
         with (
             caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
         ):
@@ -102,10 +94,12 @@ class TestPlayAudioObservability:
         with (
             caplog.at_level(logging.WARNING, logger="punt_vox.voxd"),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
-            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
+            patch(
+                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
+            ),
         ):
             asyncio.run(_play_audio(audio, ctx))
 
@@ -123,7 +117,7 @@ class TestPlayAudioObservability:
         with (
             caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(side_effect=FileNotFoundError("no binary")),
             ),
         ):
@@ -160,10 +154,12 @@ class TestPlayAudioObservability:
 
         with (
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
-            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
+            patch(
+                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
+            ),
         ):
             asyncio.run(_play_audio(audio, ctx))
 
@@ -199,7 +195,7 @@ class TestProbeDuration:
         audio = tmp_path / "silence.mp3"
         audio.write_bytes(_get_valid_mp3_bytes())
         with patch(
-            "punt_vox.voxd.asyncio.create_subprocess_exec",
+            "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
             AsyncMock(side_effect=FileNotFoundError("ffprobe")),
         ):
             duration = asyncio.run(_probe_duration(audio))
@@ -211,7 +207,7 @@ class TestProbeDuration:
         proc = MagicMock()
         proc.communicate = AsyncMock(side_effect=TimeoutError)
         with patch(
-            "punt_vox.voxd.asyncio.create_subprocess_exec",
+            "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
             AsyncMock(return_value=proc),
         ):
             duration = asyncio.run(_probe_duration(audio))
@@ -247,13 +243,17 @@ class TestPlayAudioProportionalTimeout:
             return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
 
         with (
-            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=150.0)),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=150.0)
+            ),
+            patch(
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
-            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
-            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+            patch(
+                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
+            ),
+            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
         ):
             asyncio.run(_play_audio(audio, ctx))
 
@@ -275,13 +275,17 @@ class TestPlayAudioProportionalTimeout:
             return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
 
         with (
-            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=None)),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=None)
+            ),
+            patch(
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
-            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
-            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+            patch(
+                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
+            ),
+            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
         ):
             asyncio.run(_play_audio(audio, ctx))
 
@@ -304,13 +308,17 @@ class TestPlayAudioProportionalTimeout:
             return await original_wait_for(coro, timeout=timeout)  # type: ignore[arg-type]
 
         with (
-            patch("punt_vox.voxd._probe_duration", AsyncMock(return_value=5.0)),
             patch(
-                "punt_vox.voxd.asyncio.create_subprocess_exec",
+                "punt_vox.voxd._monolith._probe_duration", AsyncMock(return_value=5.0)
+            ),
+            patch(
+                "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=proc),
             ),
-            patch("punt_vox.voxd._monotonic", side_effect=lambda: next(ticks)),
-            patch("punt_vox.voxd.asyncio.wait_for", side_effect=spy_wait_for),
+            patch(
+                "punt_vox.voxd._monolith._monotonic", side_effect=lambda: next(ticks)
+            ),
+            patch("punt_vox.voxd._monolith.asyncio.wait_for", side_effect=spy_wait_for),
         ):
             asyncio.run(_play_audio(audio, ctx))
 
@@ -478,7 +486,7 @@ class TestTryDirectPlay:
     """Voxd dispatches to provider.play_directly for local providers."""
 
     def _run(self, provider: MagicMock, ctx: DaemonContext) -> int | None | Exception:
-        with patch("punt_vox.voxd.get_provider", return_value=provider):
+        with patch("punt_vox.voxd._monolith.get_provider", return_value=provider):
             return asyncio.run(
                 _try_direct_play(
                     text="hello",
@@ -543,7 +551,7 @@ class TestTryDirectPlay:
         with (
             caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
             patch(
-                "punt_vox.voxd.get_provider",
+                "punt_vox.voxd._monolith.get_provider",
                 side_effect=ValueError("unknown provider"),
             ),
         ):
@@ -581,8 +589,8 @@ class TestTryDirectPlay:
         sentinel_lock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("punt_vox.voxd.get_provider", return_value=provider),
-            patch("punt_vox.voxd._env_lock", sentinel_lock),
+            patch("punt_vox.voxd._monolith.get_provider", return_value=provider),
+            patch("punt_vox.voxd._monolith._env_lock", sentinel_lock),
         ):
             asyncio.run(
                 _try_direct_play(
@@ -615,8 +623,8 @@ class TestTryDirectPlay:
         sentinel_lock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("punt_vox.voxd.get_provider", return_value=provider),
-            patch("punt_vox.voxd._env_lock", sentinel_lock),
+            patch("punt_vox.voxd._monolith.get_provider", return_value=provider),
+            patch("punt_vox.voxd._monolith._env_lock", sentinel_lock),
         ):
             asyncio.run(
                 _try_direct_play(
@@ -656,11 +664,11 @@ class TestHandleSynthesizeShortCircuit:
         # error branch -- we only care that direct-play was never invoked.
         with (
             patch(
-                "punt_vox.voxd._try_direct_play",
+                "punt_vox.voxd._monolith._try_direct_play",
                 AsyncMock(return_value=None),
             ) as mock_direct,
             patch(
-                "punt_vox.voxd._synthesize_to_file",
+                "punt_vox.voxd._monolith._synthesize_to_file",
                 AsyncMock(side_effect=RuntimeError("stop here")),
             ),
         ):
@@ -675,7 +683,7 @@ class TestHandleSynthesizeShortCircuit:
         msg: dict[str, object] = {"id": "2", "text": "hello", "provider": "espeak"}
 
         with patch(
-            "punt_vox.voxd._try_direct_play",
+            "punt_vox.voxd._monolith._try_direct_play",
             AsyncMock(return_value=0),
         ) as mock_direct:
             asyncio.run(_handle_synthesize(msg, websocket, ctx))
@@ -843,7 +851,7 @@ class TestApiKeyPassthroughIntegration:
             assert name == "elevenlabs"
             return stub_provider_cls()
 
-        monkeypatch.setattr("punt_vox.voxd.get_provider", fake_get_provider)
+        monkeypatch.setattr("punt_vox.voxd._monolith.get_provider", fake_get_provider)
 
         # Disable the cache so every call reaches the stub factory.
         def _cache_miss(
@@ -863,8 +871,8 @@ class TestApiKeyPassthroughIntegration:
         ) -> None:
             return None
 
-        monkeypatch.setattr("punt_vox.voxd.cache_get", _cache_miss)
-        monkeypatch.setattr("punt_vox.voxd.cache_put", _cache_noop)
+        monkeypatch.setattr("punt_vox.voxd._monolith.cache_get", _cache_miss)
+        monkeypatch.setattr("punt_vox.voxd._monolith.cache_put", _cache_noop)
 
         ctx = DaemonContext(auth_token=None, port=0)
         app = build_app(ctx)
@@ -1084,7 +1092,7 @@ class TestCacheApiKeyBypass:
             assert name == "elevenlabs"
             return provider_cls()
 
-        monkeypatch.setattr("punt_vox.voxd.get_provider", fake_get_provider)
+        monkeypatch.setattr("punt_vox.voxd._monolith.get_provider", fake_get_provider)
 
         ctx = DaemonContext(auth_token=None, port=0)
         app = build_app(ctx)
@@ -1148,8 +1156,8 @@ class TestCacheApiKeyBypass:
             assert isinstance(source, Path)
             return source
 
-        monkeypatch.setattr("punt_vox.voxd.cache_get", spy_cache_get)
-        monkeypatch.setattr("punt_vox.voxd.cache_put", spy_cache_put)
+        monkeypatch.setattr("punt_vox.voxd._monolith.cache_get", spy_cache_get)
+        monkeypatch.setattr("punt_vox.voxd._monolith.cache_put", spy_cache_put)
 
         calls: list[str | None] = []
 
@@ -1328,10 +1336,10 @@ class TestSynthesizeFailFast:
         provider.name = "espeak"
 
         with (
-            patch("punt_vox.voxd.get_provider", return_value=provider),
-            patch("punt_vox.voxd.cache_get", return_value=None),
-            patch("punt_vox.voxd.cache_put") as mock_cache_put,
-            patch("punt_vox.voxd.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd._monolith.get_provider", return_value=provider),
+            patch("punt_vox.voxd._monolith.cache_get", return_value=None),
+            patch("punt_vox.voxd._monolith.cache_put") as mock_cache_put,
+            patch("punt_vox.voxd._monolith.TTSClient") as mock_client_cls,
         ):
             mock_client = MagicMock()
             mock_client.synthesize = fake_synth
@@ -1383,7 +1391,7 @@ class TestDirectPlaySerialization:
         provider.play_directly = slow_play
 
         async def _drive() -> None:
-            with patch("punt_vox.voxd.get_provider", return_value=provider):
+            with patch("punt_vox.voxd._monolith.get_provider", return_value=provider):
                 await asyncio.gather(
                     _try_direct_play(
                         text="one",
@@ -1433,243 +1441,6 @@ class TestDirectPlaySerialization:
 # ---------------------------------------------------------------------------
 # voxd path helpers — per-user state, not /etc or /var
 # ---------------------------------------------------------------------------
-
-
-class TestVoxdPaths:
-    """voxd must read/write state under ~/.punt-labs/vox/, not FHS paths."""
-
-    def test_config_dir_is_user_state(self) -> None:
-        assert _config_dir() == Path.home() / ".punt-labs" / "vox"
-
-    def test_log_dir_is_user_state_logs(self) -> None:
-        assert _log_dir() == Path.home() / ".punt-labs" / "vox" / "logs"
-
-    def test_run_dir_is_user_state_run(self) -> None:
-        assert _run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
-
-    def test_paths_do_not_leak_fhs_dirs(self) -> None:
-        forbidden = ("/etc/vox", "/var/log/vox", "/var/run/vox", "/var/cache/vox")
-        for helper in (_config_dir, _log_dir, _run_dir):
-            resolved = str(helper())
-            for bad in forbidden:
-                assert bad not in resolved, (
-                    f"{helper.__name__} returned forbidden FHS path {resolved}"
-                )
-
-
-# ---------------------------------------------------------------------------
-# _load_keys — reads ~/.punt-labs/vox/keys.env
-# ---------------------------------------------------------------------------
-
-
-class TestLoadKeys:
-    """_load_keys must read from the per-user state dir."""
-
-    def test_loads_keys_from_config_dir(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Keys in keys.env are copied into os.environ."""
-        keys_file = tmp_path / "keys.env"
-        keys_file.write_text(
-            "# header\n"
-            "ELEVENLABS_API_KEY=sk-eleven-test\n"
-            "OPENAI_API_KEY=sk-openai-test\n"
-        )
-        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-        loaded = _load_keys(tmp_path)
-
-        assert "ELEVENLABS_API_KEY" in loaded
-        assert "OPENAI_API_KEY" in loaded
-        import os as _os
-
-        assert _os.environ["ELEVENLABS_API_KEY"] == "sk-eleven-test"
-        assert _os.environ["OPENAI_API_KEY"] == "sk-openai-test"
-
-    def test_missing_keys_file_returns_empty(self, tmp_path: Path) -> None:
-        """No keys.env file means no loaded keys — not a crash."""
-        loaded = _load_keys(tmp_path)
-        assert loaded == frozenset()
-
-    def test_existing_env_not_overwritten(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Keys already in os.environ are preserved (env wins over file)."""
-        keys_file = tmp_path / "keys.env"
-        keys_file.write_text("ELEVENLABS_API_KEY=from-file\n")
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "from-env")
-
-        loaded = _load_keys(tmp_path)
-
-        assert "ELEVENLABS_API_KEY" not in loaded
-        import os as _os
-
-        assert _os.environ["ELEVENLABS_API_KEY"] == "from-env"
-
-    def test_ignores_unknown_keys(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Only known provider keys are loaded — random env vars are ignored."""
-        keys_file = tmp_path / "keys.env"
-        keys_file.write_text("HACKER_BACKDOOR=root\nELEVENLABS_API_KEY=sk-real\n")
-        monkeypatch.delenv("HACKER_BACKDOOR", raising=False)
-        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-
-        loaded = _load_keys(tmp_path)
-
-        assert "HACKER_BACKDOOR" not in loaded
-        assert "ELEVENLABS_API_KEY" in loaded
-        import os as _os
-
-        assert "HACKER_BACKDOOR" not in _os.environ
-
-
-class TestVoxdStartupEnforces0700:
-    """voxd.main() must tighten existing state dirs to mode 0700.
-
-    Copilot finding 3048101870 on PR #162: the existing helpers used
-    ``Path.mkdir(..., exist_ok=True)`` which respects the process
-    umask (``0022`` on most shells → directories created as ``0755``).
-    ``paths.ensure_user_dirs()`` creates-or-chmods each subdir with an
-    explicit ``0o700`` so pre-existing directories with looser
-    permissions are tightened on the next startup.
-    """
-
-    def test_ensure_user_dirs_tightens_preexisting_logs_dir(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A pre-existing 0755 logs dir is chmod'd to 0700."""
-        import stat as _stat
-
-        fake_home = tmp_path / "home" / "user"
-        state_root = fake_home / ".punt-labs" / "vox"
-        logs = state_root / "logs"
-        logs.mkdir(parents=True)
-        # Pre-create with loose umask-style permissions. This is what
-        # an older voxd left behind before the 0700 contract.
-        logs.chmod(0o755)
-        state_root.chmod(0o755)
-        assert _stat.S_IMODE(logs.stat().st_mode) == 0o755
-
-        monkeypatch.setenv("HOME", str(fake_home))
-
-        # The no-arg form resolves the current user's state dir.
-        ensure_user_dirs()
-
-        # Every subdir and the root are now 0700.
-        for target in (state_root, logs, state_root / "run", state_root / "cache"):
-            mode = _stat.S_IMODE(target.stat().st_mode)
-            assert mode == 0o700, (
-                f"{target} mode is {oct(mode)} after ensure_user_dirs(); expected 0o700"
-            )
-
-    def test_ensure_user_dirs_creates_all_subdirs_when_missing(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Fresh ``$HOME`` with no state dir: ensure_user_dirs creates it."""
-        import stat as _stat
-
-        fake_home = tmp_path / "home" / "fresh"
-        fake_home.mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(fake_home))
-
-        ensure_user_dirs()
-
-        state_root = fake_home / ".punt-labs" / "vox"
-        assert state_root.is_dir()
-        for name in ("logs", "run", "cache"):
-            d = state_root / name
-            assert d.is_dir()
-            mode = _stat.S_IMODE(d.stat().st_mode)
-            assert mode == 0o700
-
-
-class TestVoxdPathHelpersArePure:
-    """``_log_dir``, ``_run_dir``, ``_config_dir`` must be side-effect free.
-
-    Closes Copilot 3047999704 (mode 0755 leak from `_log_dir`) and
-    Cursor Bugbot 3048161272 (helper is side-effectful, inconsistent
-    with sibling pure-path helpers). Once ``voxd.main()`` calls
-    ``paths.ensure_user_dirs()`` at startup, the helpers no longer
-    need to create or chmod anything — they are pure path views.
-    """
-
-    def test_log_dir_is_pure(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """``_log_dir()`` must not create or modify the directory.
-
-        Calling it twice on a tmp HOME with no pre-existing state dir
-        must return the correct path on both calls and leave the
-        filesystem untouched.
-        """
-        fake_home = tmp_path / "home" / "user"
-        fake_home.mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(fake_home))
-
-        expected = fake_home / ".punt-labs" / "vox" / "logs"
-        assert not expected.exists()
-
-        result_1 = _log_dir()
-        result_2 = _log_dir()
-
-        assert result_1 == expected
-        assert result_2 == expected
-        # The helper must not have created the directory.
-        assert not expected.exists(), (
-            f"_log_dir() created {expected} as a side effect — "
-            "helper should be pure path resolution"
-        )
-
-    def test_run_dir_is_pure(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """``_run_dir()`` must not create or modify the directory."""
-        fake_home = tmp_path / "home" / "user"
-        fake_home.mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(fake_home))
-
-        expected = fake_home / ".punt-labs" / "vox" / "run"
-        assert not expected.exists()
-
-        result = _run_dir()
-
-        assert result == expected
-        assert not expected.exists()
-
-    def test_config_dir_is_pure(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """``_config_dir()`` must not create or modify the directory."""
-        fake_home = tmp_path / "home" / "user"
-        fake_home.mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(fake_home))
-
-        expected = fake_home / ".punt-labs" / "vox"
-        # The state root parent does not exist yet.
-        assert not expected.exists()
-
-        result = _config_dir()
-
-        assert result == expected
-        assert not expected.exists()
 
 
 class TestModelSupportsExpressiveTags:
@@ -1915,7 +1686,7 @@ class TestApplyVibeForSynthesis:
             return True
 
         monkeypatch.setattr(
-            "punt_vox.voxd._model_supports_expressive_tags",
+            "punt_vox.voxd._monolith._model_supports_expressive_tags",
             _always_expressive,
         )
 
@@ -1951,277 +1722,6 @@ class TestApplyVibeForSynthesis:
         assert result == "[warm] hello"
 
 
-# ---------------------------------------------------------------------------
-# vox-0e9: opt-in once-flag dedup for speech
-# ---------------------------------------------------------------------------
-
-
-class TestOnceDedup:
-    """Unit tests for the OnceDedup class.
-
-    Closes vox-0e9. The class deduplicates speech requests when the
-    caller passes a TTL window. Identical text spoken with different
-    voices, providers, or models all collapse — the dedup key is
-    md5(text) only. Returns DedupHit on a hit so callers can render
-    observable "deduped" responses.
-    """
-
-    def test_first_call_records_and_returns_none(self) -> None:
-        dedup = OnceDedup()
-        result = dedup.check_and_record("hello world", ttl_seconds=600)
-        assert result is None
-
-    def test_second_call_within_ttl_returns_hit(self) -> None:
-        dedup = OnceDedup()
-        first = dedup.check_and_record("hello world", ttl_seconds=600)
-        assert first is None
-        second = dedup.check_and_record("hello world", ttl_seconds=600)
-        assert second is not None
-        assert isinstance(second, DedupHit)
-        assert second.original_played_at > 0
-        assert 0 < second.ttl_seconds_remaining <= 600
-
-    def test_second_call_after_ttl_returns_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When monotonic clock advances past the TTL, the entry expires."""
-        dedup = OnceDedup()
-
-        clock = [1000.0]
-
-        def fake_monotonic() -> float:
-            return clock[0]
-
-        def fake_time() -> float:
-            return 1_700_000_000.0 + (clock[0] - 1000.0)
-
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", fake_monotonic)
-        monkeypatch.setattr("punt_vox.voxd.time.time", fake_time)
-
-        first = dedup.check_and_record("hello world", ttl_seconds=10)
-        assert first is None
-
-        # Advance the clock past the TTL.
-        clock[0] = 1011.0
-
-        second = dedup.check_and_record("hello world", ttl_seconds=10)
-        assert second is None
-
-    def test_different_text_does_not_dedupe(self) -> None:
-        dedup = OnceDedup()
-        first = dedup.check_and_record("hello", ttl_seconds=600)
-        second = dedup.check_and_record("goodbye", ttl_seconds=600)
-        assert first is None
-        assert second is None
-
-    def test_key_is_text_only_voice_irrelevant(self) -> None:
-        """Two callers with the same text collapse regardless of voice.
-
-        OnceDedup keys on md5(text) only. The voice/provider/model are
-        not part of the key per the vox-0e9 spec — biff wall fan-out
-        across N sessions may use different voice settings but the
-        user heard the SAME message and shouldn't hear it again.
-        """
-        dedup = OnceDedup()
-        # OnceDedup.check_and_record only takes text + ttl_seconds. The
-        # voice is not even an argument — confirming the key shape by
-        # the type signature itself. The test below documents the
-        # invariant for future maintainers.
-        first = dedup.check_and_record("status update", ttl_seconds=600)
-        second = dedup.check_and_record("status update", ttl_seconds=600)
-        assert first is None
-        assert second is not None
-
-    def test_dedup_hit_carries_original_played_at_wall_clock(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """original_played_at is wall clock (time.time), not monotonic."""
-        dedup = OnceDedup()
-
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: 5000.0)
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
-
-        first = dedup.check_and_record("text", ttl_seconds=100)
-        assert first is None
-
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: 5050.0)
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_050.0)
-
-        hit = dedup.check_and_record("text", ttl_seconds=100)
-        assert hit is not None
-        # original_played_at is the wall-clock time of the FIRST call,
-        # not the second. Caller-facing for "played 50s ago" rendering.
-        assert hit.original_played_at == 1_700_000_000.0
-        # ttl_seconds_remaining = original ttl - elapsed monotonic.
-        assert abs(hit.ttl_seconds_remaining - 50.0) < 0.001
-
-    def test_zero_ttl_raises(self) -> None:
-        dedup = OnceDedup()
-        with pytest.raises(ValueError, match="positive"):
-            dedup.check_and_record("text", ttl_seconds=0)
-
-    def test_negative_ttl_raises(self) -> None:
-        dedup = OnceDedup()
-        with pytest.raises(ValueError, match="positive"):
-            dedup.check_and_record("text", ttl_seconds=-1)
-
-    def test_pruning_drops_entries_older_than_max_ttl(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Opportunistic prune-on-insert drops entries older than the global cap.
-
-        The cap (``_ONCE_DEDUP_MAX_TTL_SECONDS``) bounds how long any
-        single entry can live in ``_seen``, regardless of what TTL the
-        original caller requested. This prevents pathological
-        ``once=99999999`` callers from wedging long-lived entries.
-        """
-        from punt_vox.voxd import _ONCE_DEDUP_MAX_TTL_SECONDS
-
-        dedup = OnceDedup()
-
-        clock = [1000.0]
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
-
-        dedup.check_and_record("text-a", ttl_seconds=600)
-        assert len(dedup._seen) == 1
-
-        # Advance past the global cap so the entry is prunable.
-        clock[0] = 1000.0 + _ONCE_DEDUP_MAX_TTL_SECONDS + 100.0
-
-        # Insert a different text — this triggers the prune loop.
-        dedup.check_and_record("text-b", ttl_seconds=600)
-        assert len(dedup._seen) == 1
-
-    def test_rollback_removes_entry(self) -> None:
-        """rollback(text) drops the entry so a subsequent call plays again."""
-        dedup = OnceDedup()
-        first = dedup.check_and_record("wall msg", ttl_seconds=600)
-        assert first is None
-
-        # Simulate a failed synthesis — the dedup entry was recorded
-        # but the audio never actually played. Rollback must remove it.
-        dedup.rollback("wall msg")
-
-        # A retry should NOT be deduped.
-        retry = dedup.check_and_record("wall msg", ttl_seconds=600)
-        assert retry is None
-
-    def test_rollback_is_idempotent(self) -> None:
-        """rollback on an unrecorded text is a no-op, not an error."""
-        dedup = OnceDedup()
-        # Never called check_and_record for this text.
-        dedup.rollback("unknown text")  # Must not raise.
-
-    def test_per_caller_ttl_shrinks_effective_window(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Each caller's own ttl_seconds decides if an entry is fresh enough.
-
-        Copilot reviewer 3053861452: the first caller's TTL should NOT
-        silently extend the dedup window for a later caller that asks
-        for a shorter one. Each caller answers its own question of
-        "was this played in the last N seconds?"
-        """
-        dedup = OnceDedup()
-        clock = [1000.0]
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
-
-        # First caller records with a long window.
-        first = dedup.check_and_record("text", ttl_seconds=600)
-        assert first is None
-
-        # 50 seconds later, a second caller asks with a 30s window.
-        clock[0] = 1050.0
-        second = dedup.check_and_record("text", ttl_seconds=30)
-        # age=50 > caller's ttl of 30 → NOT a hit from the second
-        # caller's perspective. Must not dedupe.
-        assert second is None
-
-        # Immediately after, a third caller asks with a 120s window.
-        third = dedup.check_and_record("text", ttl_seconds=120)
-        # age is now 0 (the second caller's record_and_record reset
-        # the entry) so third caller asks "was this played in the
-        # last 120s?" — yes, just now. DedupHit.
-        assert third is not None
-
-    def test_ttl_above_cap_gets_clamped(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Callers passing a TTL above the cap are clamped with a log warning."""
-        from punt_vox.voxd import _ONCE_DEDUP_MAX_TTL_SECONDS
-
-        dedup = OnceDedup()
-        clock = [1000.0]
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
-
-        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
-            first = dedup.check_and_record("text", ttl_seconds=99_999_999)
-        assert first is None
-        assert "clamping" in caplog.text
-
-        # Advance past the cap; entry should be prunable.
-        clock[0] = 1000.0 + _ONCE_DEDUP_MAX_TTL_SECONDS + 1.0
-        second = dedup.check_and_record("text", ttl_seconds=10)
-        assert second is None  # entry was pruned, no hit
-
-    def test_hard_cap_on_dict_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When more than _ONCE_DEDUP_MAX_ENTRIES inserted, oldest evicted."""
-        from punt_vox.voxd import _ONCE_DEDUP_MAX_ENTRIES
-
-        dedup = OnceDedup()
-        clock = [1000.0]
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
-        monkeypatch.setattr("punt_vox.voxd.time.time", lambda: 1_700_000_000.0)
-
-        # Fill the cache past the cap. Each insert advances the clock
-        # slightly so the eviction order is deterministic.
-        for i in range(_ONCE_DEDUP_MAX_ENTRIES + 50):
-            clock[0] = 1000.0 + (i * 0.001)
-            dedup.check_and_record(f"text-{i}", ttl_seconds=600)
-
-        import hashlib
-
-        def _md5(s: str) -> str:
-            return hashlib.md5(s.encode(), usedforsecurity=False).hexdigest()
-
-        # Dict size is bounded by the hard cap.
-        assert len(dedup._seen) == _ONCE_DEDUP_MAX_ENTRIES
-        # The oldest insertions were evicted; the newest remain.
-        assert _md5("text-0") not in dedup._seen
-        assert _md5(f"text-{_ONCE_DEDUP_MAX_ENTRIES + 49}") in dedup._seen
-
-
-class TestChimeDedup:
-    """ChimeDedup is the renamed AudioDedup, simplified for the chime path."""
-
-    def test_first_chime_plays(self) -> None:
-        dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
-
-    def test_duplicate_chime_within_window_dropped(self) -> None:
-        dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
-        assert dedup.should_play("tests-pass") is False
-
-    def test_different_signal_not_dropped(self) -> None:
-        dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
-        assert dedup.should_play("lint-fail") is True
-
-    def test_chime_dedup_after_window_plays_again(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        dedup = ChimeDedup(window=5.0)
-        clock = [1000.0]
-        monkeypatch.setattr("punt_vox.voxd.time.monotonic", lambda: clock[0])
-        assert dedup.should_play("tests-pass") is True
-        clock[0] = 1010.0  # past 5s window
-        assert dedup.should_play("tests-pass") is True
-
-
 class TestHandleSynthesizeOnceFlag:
     """Integration tests for _handle_synthesize with the once flag."""
 
@@ -2244,9 +1744,13 @@ class TestHandleSynthesizeOnceFlag:
             synthesis_calls.append(str(args[0]))
             return Path("/tmp/fake.mp3")
 
-        monkeypatch.setattr("punt_vox.voxd._synthesize_to_file", fake_synthesize)
-        monkeypatch.setattr("punt_vox.voxd._LOCAL_PROVIDERS", set[str]())
-        monkeypatch.setattr("punt_vox.voxd.auto_detect_provider", lambda: "elevenlabs")
+        monkeypatch.setattr(
+            "punt_vox.voxd._monolith._synthesize_to_file", fake_synthesize
+        )
+        monkeypatch.setattr("punt_vox.voxd._monolith._LOCAL_PROVIDERS", set[str]())
+        monkeypatch.setattr(
+            "punt_vox.voxd._monolith.auto_detect_provider", lambda: "elevenlabs"
+        )
 
         class _InstantPlaybackQueue:
             async def put(self, item: PlaybackItem) -> None:
@@ -2437,7 +1941,7 @@ class TestWsRoutePeerClose:
             rec
             for rec in caplog.records
             if rec.levelno == logging.ERROR
-            and rec.name == "punt_vox.voxd"
+            and rec.name == "punt_vox.voxd._monolith"
             and "WebSocket error" in rec.getMessage()
         ]
         assert ws_error_records == []
@@ -2497,7 +2001,7 @@ class TestWsRoutePeerClose:
             rec
             for rec in caplog.records
             if rec.levelno == logging.ERROR
-            and rec.name == "punt_vox.voxd"
+            and rec.name == "punt_vox.voxd._monolith"
             and "WebSocket error" in rec.getMessage()
         ]
         assert len(ws_error_records) == 1
@@ -2909,7 +2413,7 @@ class TestMusicPlayerCommand:
     """_music_player_command produces the right argv at reduced volume."""
 
     def test_linux_ffplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd._is_darwin", return_value=False):
+        with patch("punt_vox.voxd._monolith._is_darwin", return_value=False):
             cmd = _music_player_command(Path("/tmp/track.mp3"))
         assert cmd == [
             "ffplay",
@@ -2921,7 +2425,7 @@ class TestMusicPlayerCommand:
         ]
 
     def test_darwin_afplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd._is_darwin", return_value=True):
+        with patch("punt_vox.voxd._monolith._is_darwin", return_value=True):
             cmd = _music_player_command(Path("/tmp/track.mp3"))
         assert cmd == ["afplay", "--volume", "0.3", "/tmp/track.mp3"]
 
@@ -2964,11 +2468,11 @@ class TestMusicLoopStateTransitions:
                     fake_generate_track,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-music"),
                 ),
             ):
@@ -3023,10 +2527,10 @@ class TestMusicLoopStateTransitions:
                     failing_generate,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-music"),
                 ),
-                patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
+                patch("punt_vox.voxd._monolith._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
                 # Yield control so the loop can run its 3 retries.
@@ -3087,11 +2591,11 @@ class TestMusicLoopStateTransitions:
                     counting_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-music"),
                 ),
             ):
@@ -3182,11 +2686,11 @@ class TestMusicLoopGaplessHandoff:
                     slow_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-handoff"),
                 ),
             ):
@@ -3272,11 +2776,11 @@ class TestMusicLoopGaplessHandoff:
                     tracking_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-cancel"),
                 ),
             ):
@@ -3472,7 +2976,7 @@ class TestMusicLoopLostWakeup:
                     fake_generate,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=Path("/tmp/vox-test-lost-wakeup"),
                 ),
             ):
@@ -3559,7 +3063,7 @@ class TestHandleMusicOnWithName:
             "name": "my focus",
         }
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_on(msg, ws, ctx))
 
         assert ctx.music_mode == "on"
@@ -3589,7 +3093,7 @@ class TestHandleMusicOnWithName:
             "name": "new track",
         }
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_on(msg, ws, ctx))
 
         assert ctx.music_mode == "on"
@@ -3655,7 +3159,7 @@ class TestHandleMusicPlay:
             "owner_id": "session-a",
         }
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_play(msg, ws, ctx))
 
         assert ctx.music_mode == "on"
@@ -3683,7 +3187,7 @@ class TestHandleMusicPlay:
             "owner_id": "session-b",
         }
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_play(msg, ws, ctx))
 
         resp = ws.send_json.call_args[0][0]
@@ -3753,7 +3257,7 @@ class TestHandleMusicList:
 
         msg: dict[str, object] = {"type": "music_list", "id": "list-1"}
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_list(msg, ws, ctx))
 
         resp = ws.send_json.call_args[0][0]
@@ -3771,7 +3275,7 @@ class TestHandleMusicList:
 
         msg: dict[str, object] = {"type": "music_list", "id": "list-2"}
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_list(msg, ws, ctx))
 
         resp = ws.send_json.call_args[0][0]
@@ -3794,7 +3298,7 @@ class TestHandleMusicList:
 
         msg: dict[str, object] = {"type": "music_list", "id": "list-3"}
 
-        with patch("punt_vox.voxd._music_output_dir", return_value=music_dir):
+        with patch("punt_vox.voxd._monolith._music_output_dir", return_value=music_dir):
             asyncio.run(_handle_music_list(msg, ws, ctx))
 
         resp = ws.send_json.call_args[0][0]
@@ -3898,14 +3402,14 @@ class TestGenFailureKeepsOldTrack:
                     fail_then_succeed,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=tmp_path / "vox-test-gen-fail",
                 ),
-                patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
+                patch("punt_vox.voxd._monolith._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
 
@@ -4000,14 +3504,14 @@ class TestGenFailureKeepsOldTrack:
                     always_fail_after_first,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=tmp_path / "vox-test-gen-maxretry",
                 ),
-                patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
+                patch("punt_vox.voxd._monolith._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
 
@@ -4092,14 +3596,14 @@ class TestGenFailureKeepsOldTrack:
                     fail_once_per_cycle,
                 ),
                 patch(
-                    "punt_vox.voxd.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd._monolith.asyncio.create_subprocess_exec",
                     fake_subprocess_exec,
                 ),
                 patch(
-                    "punt_vox.voxd._music_output_dir",
+                    "punt_vox.voxd._monolith._music_output_dir",
                     return_value=tmp_path / "vox-test-gen-reset",
                 ),
-                patch("punt_vox.voxd._music_backoff_sleep", AsyncMock()),
+                patch("punt_vox.voxd._monolith._music_backoff_sleep", AsyncMock()),
             ):
                 task = asyncio.create_task(_music_loop(ctx))
 
