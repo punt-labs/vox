@@ -13,6 +13,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 
@@ -23,6 +24,7 @@ __all__ = [
     "DEFAULT_CONFIG_DIR",
     "DURABLE_KEYS",
     "EPHEMERAL_KEYS",
+    "ConfigStore",
     "VoxConfig",
     "find_config_dir",
     "read_config",
@@ -187,45 +189,99 @@ def _write_batch(path: Path, updates: dict[str, str]) -> None:
         logger.info("Config: set %s = %r in %s", key, value, path)
 
 
-# ── Public API ───────────────────────────────────────────────────────
+# ── Filenames ───────────────────────────────────────────────────────
+
+DURABLE_FILENAME = "vox.md"
+EPHEMERAL_FILENAME = "vox.local.md"
 
 
-def read_field(field: str, config_dir: Path | None = None) -> str | None:
-    """Read a single config field from the correct file."""
-    d = config_dir or DEFAULT_CONFIG_DIR
-    if field in EPHEMERAL_KEYS:
-        return _read_single_field(d / "vox.local.md", field)
-    return _read_single_field(d / "vox.md", field)
+# ── ConfigStore ─────────────────────────────────────────────────────
 
 
-def _derive_repo_name(config_dir: Path | None) -> str | None:
+class ConfigStore:
+    """Owns a config directory and provides read/write access to vox config."""
+
+    __slots__ = ("_dir", "_durable_path", "_ephemeral_path")
+
+    _dir: Path
+    _durable_path: Path
+    _ephemeral_path: Path
+
+    def __new__(cls, config_dir: Path | None = None) -> Self:
+        self = super().__new__(cls)
+        self._dir = config_dir or DEFAULT_CONFIG_DIR
+        self._durable_path = self._dir / DURABLE_FILENAME
+        self._ephemeral_path = self._dir / EPHEMERAL_FILENAME
+        return self
+
+    @property
+    def dir(self) -> Path:
+        """Return the config directory."""
+        return self._dir
+
+    def read(self) -> VoxConfig:
+        """Read all config fields, merging durable and ephemeral files."""
+        fields: dict[str, str] = {}
+
+        # Base layer: durable prefs
+        fields.update(_parse_frontmatter(self._durable_path))
+
+        # Overlay: ephemeral session state -- only EPHEMERAL_KEYS accepted
+        local = _parse_frontmatter(self._ephemeral_path)
+        fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
+
+        return _fields_to_config(fields, repo_name=_derive_repo_name(self._dir))
+
+    def read_field(self, field: str) -> str | None:
+        """Read a single config field from the correct file."""
+        if field in EPHEMERAL_KEYS:
+            return _read_single_field(self._ephemeral_path, field)
+        return _read_single_field(self._durable_path, field)
+
+    def write_field(self, key: str, value: str) -> None:
+        """Write a single config field to the correct file."""
+        if key not in ALLOWED_CONFIG_KEYS:
+            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+            raise ValueError(msg)
+        _validate_value(value)
+
+        if key in EPHEMERAL_KEYS:
+            _write_single(self._ephemeral_path, key, value)
+        else:
+            _write_single(self._durable_path, key, value)
+
+    def write_fields(self, updates: dict[str, str]) -> None:
+        """Write multiple config fields, routing each to the correct file."""
+        for key, value in updates.items():
+            if key not in ALLOWED_CONFIG_KEYS:
+                allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+                msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+                raise ValueError(msg)
+            _validate_value(value)
+
+        durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
+        ephemeral_updates = {k: v for k, v in updates.items() if k in EPHEMERAL_KEYS}
+        if durable_updates:
+            _write_batch(self._durable_path, durable_updates)
+        if ephemeral_updates:
+            _write_batch(self._ephemeral_path, ephemeral_updates)
+
+
+# ── Module-level helpers ────────────────────────────────────────────
+
+
+def _derive_repo_name(config_dir: Path) -> str | None:
     """Derive the repo name from config_dir.
 
     config_dir is ``<repo>/.punt-labs/vox/``, so the repo root is two
     parents up and its ``.name`` gives the repo directory name.  Returns
-    None when config_dir is None or when the path is too shallow.
+    None when the path is too shallow.
     """
-    if config_dir is None:
-        return None
     repo_root = config_dir.parent.parent
     # Guard against degenerate paths like "/" where .name is ""
     name = repo_root.name
     return name if name else None
-
-
-def read_config(config_dir: Path | None = None) -> VoxConfig:
-    """Read all config fields, merging vox.md and vox.local.md."""
-    d = config_dir or DEFAULT_CONFIG_DIR
-    fields: dict[str, str] = {}
-
-    # Base layer: durable prefs
-    fields.update(_parse_frontmatter(d / "vox.md"))
-
-    # Overlay: ephemeral session state — only EPHEMERAL_KEYS accepted
-    local = _parse_frontmatter(d / "vox.local.md")
-    fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
-
-    return _fields_to_config(fields, repo_name=_derive_repo_name(config_dir))
 
 
 def _validate_value(value: str) -> None:
@@ -235,34 +291,24 @@ def _validate_value(value: str) -> None:
         raise ValueError(msg)
 
 
+# ── Backward-compatible module-level wrappers ───────────────────────
+
+
+def read_field(field: str, config_dir: Path | None = None) -> str | None:
+    """Read a single config field from the correct file."""
+    return ConfigStore(config_dir).read_field(field)
+
+
+def read_config(config_dir: Path | None = None) -> VoxConfig:
+    """Read all config fields, merging vox.md and vox.local.md."""
+    return ConfigStore(config_dir).read()
+
+
 def write_field(key: str, value: str, config_dir: Path | None = None) -> None:
     """Write a single config field to the correct file."""
-    if key not in ALLOWED_CONFIG_KEYS:
-        allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-        msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-        raise ValueError(msg)
-    _validate_value(value)
-
-    d = config_dir or DEFAULT_CONFIG_DIR
-    if key in EPHEMERAL_KEYS:
-        _write_single(d / "vox.local.md", key, value)
-    else:
-        _write_single(d / "vox.md", key, value)
+    ConfigStore(config_dir).write_field(key, value)
 
 
 def write_fields(updates: dict[str, str], config_dir: Path | None = None) -> None:
     """Write multiple config fields, routing each to the correct file."""
-    for key, value in updates.items():
-        if key not in ALLOWED_CONFIG_KEYS:
-            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-            raise ValueError(msg)
-        _validate_value(value)
-
-    d = config_dir or DEFAULT_CONFIG_DIR
-    durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
-    ephemeral_updates = {k: v for k, v in updates.items() if k in EPHEMERAL_KEYS}
-    if durable_updates:
-        _write_batch(d / "vox.md", durable_updates)
-    if ephemeral_updates:
-        _write_batch(d / "vox.local.md", ephemeral_updates)
+    ConfigStore(config_dir).write_fields(updates)

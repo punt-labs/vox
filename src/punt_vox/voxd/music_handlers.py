@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Self
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
-from punt_vox.voxd.music_scheduler import MusicScheduler
-from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.types import MessageHandler
 
 __all__ = [

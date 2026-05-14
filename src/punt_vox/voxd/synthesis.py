@@ -23,6 +23,7 @@ from punt_vox.types import (
     DirectPlayProvider,
     TTSProvider,
 )
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.playback import _monotonic
 
 __all__ = [
@@ -226,18 +227,8 @@ class SynthesisPipeline:
     async def synthesize_to_file(
         self,
         text: str,
-        voice: str | None,
-        provider_name: str,
-        model: str | None,
-        language: str | None,
-        rate: int | None,
-        vibe_tags: str | None,
-        stability: float | None,
-        similarity: float | None,
-        style: float | None,
+        spec: SynthesisSpec,
         *,
-        speaker_boost: bool | None,
-        api_key: str | None,
         request_id: str = "",
     ) -> Path:
         """Run TTS synthesis and return the output path.
@@ -252,13 +243,17 @@ class SynthesisPipeline:
         anonymous path (``api_key is None``) uses the MD5-keyed on-disk
         cache unchanged. See ``src/punt_vox/cache.py`` for the rationale.
         """
+        voice = spec.voice
+        provider_name = spec.provider or ""
+        model = spec.model
+        api_key = spec.api_key
         resolved_voice = voice or ""
 
         # apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
         # on the body itself (after splitting leading bracket tags off, which
         # would otherwise be eaten by normalization).
         normalized = self.apply_vibe_for_synthesis(
-            text, vibe_tags, provider_name, model
+            text, spec.vibe_tags, provider_name, model
         )
 
         # Cache lookup: anonymous calls only. Per-call api_key scopes
@@ -294,12 +289,12 @@ class SynthesisPipeline:
                 request = _build_audio_request(
                     normalized,
                     voice,
-                    language,
-                    rate,
-                    stability,
-                    similarity,
-                    style,
-                    speaker_boost=speaker_boost,
+                    spec.language,
+                    spec.rate,
+                    spec.stability,
+                    spec.similarity,
+                    spec.style,
+                    speaker_boost=spec.speaker_boost,
                     provider_id=provider_name,
                 )
                 client = TTSClient(provider)
@@ -358,19 +353,9 @@ class SynthesisPipeline:
 
     async def try_direct_play(
         self,
-        *,
         text: str,
-        voice: str | None,
-        provider_name: str,
-        model: str | None,
-        language: str | None,
-        rate: int | None,
-        vibe_tags: str | None,
-        stability: float | None,
-        similarity: float | None,
-        style: float | None,
-        speaker_boost: bool | None,
-        api_key: str | None,
+        spec: SynthesisSpec,
+        *,
         record_result: Callable[..., None],
     ) -> int | None | Exception:
         """Attempt direct-to-device playback via the provider.
@@ -386,22 +371,27 @@ class SynthesisPipeline:
         injected. Local providers (espeak, say) take a fast path with no
         cross-request blocking. Audio playback never holds the lock.
         """
+        voice = spec.voice
+        provider_name = spec.provider or ""
+        model = spec.model
+        api_key = spec.api_key
+
         # apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
         # on the body itself (after splitting leading bracket tags off, which
         # would otherwise be eaten by normalization).
         normalized = self.apply_vibe_for_synthesis(
-            text, vibe_tags, provider_name, model
+            text, spec.vibe_tags, provider_name, model
         )
 
         request = _build_audio_request(
             normalized,
             voice,
-            language,
-            rate,
-            stability,
-            similarity,
-            style,
-            speaker_boost=speaker_boost,
+            spec.language,
+            spec.rate,
+            spec.stability,
+            spec.similarity,
+            spec.style,
+            speaker_boost=spec.speaker_boost,
             provider_id=provider_name,
         )
 

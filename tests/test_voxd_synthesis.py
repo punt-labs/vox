@@ -13,8 +13,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.synthesis import SynthesisPipeline
+
+
+def _default_spec(**overrides: object) -> SynthesisSpec:
+    """Build a SynthesisSpec with sensible test defaults."""
+    defaults: dict[str, object] = {
+        "voice": None,
+        "provider": "espeak",
+        "model": None,
+        "language": None,
+        "rate": None,
+        "vibe_tags": None,
+        "stability": None,
+        "similarity": None,
+        "style": None,
+        "speaker_boost": None,
+        "api_key": None,
+    }
+    defaults.update(overrides)
+    return SynthesisSpec(**defaults)  # type: ignore[arg-type]
 
 
 def _make_pipeline() -> SynthesisPipeline:
@@ -58,18 +78,8 @@ class TestTryDirectPlay:
         with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
             return asyncio.run(
                 pipeline.try_direct_play(
-                    text="hello",
-                    voice=None,
-                    provider_name="espeak",
-                    model=None,
-                    language=None,
-                    rate=None,
-                    vibe_tags=None,
-                    stability=None,
-                    similarity=None,
-                    style=None,
-                    speaker_boost=None,
-                    api_key=None,
+                    "hello",
+                    _default_spec(),
                     record_result=_record_result(results),
                 )
             )
@@ -128,18 +138,8 @@ class TestTryDirectPlay:
         ):
             result = asyncio.run(
                 pipeline.try_direct_play(
-                    text="hello",
-                    voice=None,
-                    provider_name="espeak",
-                    model=None,
-                    language=None,
-                    rate=None,
-                    vibe_tags=None,
-                    stability=None,
-                    similarity=None,
-                    style=None,
-                    speaker_boost=None,
-                    api_key=None,
+                    "hello",
+                    _default_spec(),
                     record_result=_record_result(results),
                 )
             )
@@ -165,18 +165,8 @@ class TestTryDirectPlay:
             try:
                 asyncio.run(
                     pipeline.try_direct_play(
-                        text="hello",
-                        voice=None,
-                        provider_name="espeak",
-                        model=None,
-                        language=None,
-                        rate=None,
-                        vibe_tags=None,
-                        stability=None,
-                        similarity=None,
-                        style=None,
-                        speaker_boost=None,
-                        api_key=None,
+                        "hello",
+                        _default_spec(),
                         record_result=_record_result(results),
                     )
                 )
@@ -202,18 +192,8 @@ class TestTryDirectPlay:
             try:
                 asyncio.run(
                     pipeline.try_direct_play(
-                        text="hello",
-                        voice=None,
-                        provider_name="elevenlabs",
-                        model=None,
-                        language=None,
-                        rate=None,
-                        vibe_tags=None,
-                        stability=None,
-                        similarity=None,
-                        style=None,
-                        speaker_boost=None,
-                        api_key="secret",
+                        "hello",
+                        _default_spec(provider="elevenlabs", api_key="secret"),
                         record_result=_record_result(results),
                     )
                 )
@@ -288,33 +268,13 @@ class TestDirectPlaySerialization:
             with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
                 await asyncio.gather(
                     pipeline.try_direct_play(
-                        text="one",
-                        voice=None,
-                        provider_name="espeak",
-                        model=None,
-                        language=None,
-                        rate=None,
-                        vibe_tags=None,
-                        stability=None,
-                        similarity=None,
-                        style=None,
-                        speaker_boost=None,
-                        api_key=None,
+                        "one",
+                        _default_spec(),
                         record_result=_record_result(results),
                     ),
                     pipeline.try_direct_play(
-                        text="two",
-                        voice=None,
-                        provider_name="espeak",
-                        model=None,
-                        language=None,
-                        rate=None,
-                        vibe_tags=None,
-                        stability=None,
-                        similarity=None,
-                        style=None,
-                        speaker_boost=None,
-                        api_key=None,
+                        "two",
+                        _default_spec(),
                         record_result=_record_result(results),
                     ),
                 )
@@ -755,18 +715,8 @@ class TestSynthesizeFailFast:
             with pytest.raises(RuntimeError, match="missing or empty"):
                 asyncio.run(
                     pipeline.synthesize_to_file(
-                        text="hello",
-                        voice=None,
-                        provider_name="espeak",
-                        model=None,
-                        language=None,
-                        rate=None,
-                        vibe_tags=None,
-                        stability=None,
-                        similarity=None,
-                        style=None,
-                        speaker_boost=None,
-                        api_key=None,
+                        "hello",
+                        _default_spec(),
                     )
                 )
 

@@ -23,6 +23,7 @@ from websockets.exceptions import WebSocketException
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.logging_config import configure_logging
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voices import VOICE_BLURBS
 
 logger = logging.getLogger(__name__)
@@ -147,22 +148,6 @@ def _find_config_dir() -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def _validate_voice_settings(
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-) -> None:
-    """Validate ElevenLabs voice settings are in 0.0-1.0 range."""
-    for name, value in [
-        ("stability", stability),
-        ("similarity", similarity),
-        ("style", style),
-    ]:
-        if value is not None and not 0.0 <= value <= 1.0:
-            msg = f"{name} must be between 0.0 and 1.0, got {value}"
-            raise ValueError(msg)
-
-
 def _default_output_dir() -> Path:
     """Resolve the default output directory for record tool."""
     from punt_vox.dirs import default_output_dir
@@ -241,7 +226,14 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
         JSON string with synthesis results.
     """
     _session.refresh_from_config()
-    _validate_voice_settings(stability, similarity, style)
+
+    # Validate voice settings via SynthesisSpec (single validation path).
+    base_spec = SynthesisSpec(
+        stability=stability,
+        similarity=similarity,
+        style=style,
+    )
+    base_spec.validate()
 
     # ephemeral is accepted for callers (architecture spec) but voxd
     # handles ephemeral cleanup internally today.  Silence linters.
@@ -291,29 +283,20 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             seg_language = seg.get("language") or language
             seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
 
-            kwargs: dict[str, Any] = {
-                "rate": rate,
-            }
-            if seg_voice is not None:
-                kwargs["voice"] = seg_voice
-            if effective_provider is not None:
-                kwargs["provider"] = effective_provider
-            if effective_model is not None:
-                kwargs["model"] = effective_model
-            if seg_language is not None:
-                kwargs["language"] = seg_language
-            if seg_vibe_tags is not None:
-                kwargs["vibe_tags"] = str(seg_vibe_tags)
-            if stability is not None:
-                kwargs["stability"] = stability
-            if similarity is not None:
-                kwargs["similarity"] = similarity
-            if style is not None:
-                kwargs["style"] = style
-            if speaker_boost is not None:
-                kwargs["speaker_boost"] = speaker_boost
+            seg_spec = SynthesisSpec(
+                voice=seg_voice,
+                language=seg_language,
+                rate=rate,
+                provider=effective_provider,
+                model=effective_model,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
+            )
 
-            result = client.synthesize(seg_text, **kwargs)
+            result = client.synthesize(seg_text, **seg_spec.to_client_kwargs())
             entry: dict[str, object] = {
                 "id": result.request_id,
                 "text": seg_text,
@@ -339,7 +322,7 @@ def unmute(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
 
 
 @mcp.tool()
-def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+def record(
     text: str | None = None,
     voice: str | None = None,
     language: str | None = None,
@@ -381,7 +364,14 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
         JSON string with synthesis results including file path.
     """
     _session.refresh_from_config()
-    _validate_voice_settings(stability, similarity, style)
+
+    # Validate voice settings via SynthesisSpec (single validation path).
+    base_spec = SynthesisSpec(
+        stability=stability,
+        similarity=similarity,
+        style=style,
+    )
+    base_spec.validate()
 
     # Normalize input: text -> single segment.
     if segments is None:
@@ -413,29 +403,20 @@ def record(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
             seg_language = seg.get("language") or language
             seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
 
-            kwargs: dict[str, Any] = {
-                "rate": rate,
-            }
-            if seg_voice is not None:
-                kwargs["voice"] = seg_voice
-            if effective_provider is not None:
-                kwargs["provider"] = effective_provider
-            if effective_model is not None:
-                kwargs["model"] = effective_model
-            if seg_language is not None:
-                kwargs["language"] = seg_language
-            if seg_vibe_tags is not None:
-                kwargs["vibe_tags"] = str(seg_vibe_tags)
-            if stability is not None:
-                kwargs["stability"] = stability
-            if similarity is not None:
-                kwargs["similarity"] = similarity
-            if style is not None:
-                kwargs["style"] = style
-            if speaker_boost is not None:
-                kwargs["speaker_boost"] = speaker_boost
+            seg_spec = SynthesisSpec(
+                voice=seg_voice,
+                language=seg_language,
+                rate=rate,
+                provider=effective_provider,
+                model=effective_model,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
+            )
 
-            mp3_bytes = client.record(seg_text, **kwargs)
+            mp3_bytes = client.record(seg_text, **seg_spec.to_client_kwargs())
 
             # Determine output file path.
             if output_path and len(segments) == 1:

@@ -32,6 +32,14 @@ class TrackGenerator:
         """Return the output directory for generated tracks."""
         return self._output_dir
 
+    def find_track(self, name: str) -> Path | None:
+        """Return the path to an existing track by name, or None."""
+        safe_name = self.slugify(name, max_len=60)
+        if not safe_name:
+            return None
+        path = self._output_dir / f"{safe_name}.mp3"
+        return path if path.exists() else None
+
     async def generate(
         self,
         vibe: tuple[str, str],

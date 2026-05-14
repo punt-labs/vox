@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from punt_vox.types_audio import AudioRequest, AudioResult
 from punt_vox.types_errors import VoiceNotFoundError
+from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ __all__ = [
     "MusicResult",
     "SynthesisRequest",
     "SynthesisResult",
+    "SynthesisSpec",
     "TTSProvider",
     "VoiceNotFoundError",
     "generate_filename",

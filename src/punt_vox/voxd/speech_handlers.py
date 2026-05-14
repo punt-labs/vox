@@ -16,6 +16,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox import cache as _cache_module
 from punt_vox.providers import auto_detect_provider
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
     parse_optional_int,
@@ -74,23 +75,26 @@ class SynthesizeHandler(MessageHandler):
             )
             return
 
-        voice = parse_optional_str(msg, "voice")
-        provider_name = parse_optional_str(msg, "provider") or auto_detect_provider()
-        model = parse_optional_str(msg, "model")
-        rate = parse_optional_int(msg, "rate")
-        language = parse_optional_str(msg, "language")
-        vibe_tags = parse_optional_str(msg, "vibe_tags")
-        stability = parse_optional_float(msg, "stability")
-        similarity = parse_optional_float(msg, "similarity")
-        style = parse_optional_float(msg, "style")
         speaker_boost_raw = msg.get("speaker_boost")
-        speaker_boost = (
-            bool(speaker_boost_raw) if speaker_boost_raw is not None else None
+        spec = SynthesisSpec(
+            voice=parse_optional_str(msg, "voice"),
+            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
+            model=parse_optional_str(msg, "model"),
+            rate=parse_optional_int(msg, "rate"),
+            language=parse_optional_str(msg, "language"),
+            vibe_tags=parse_optional_str(msg, "vibe_tags"),
+            stability=parse_optional_float(msg, "stability"),
+            similarity=parse_optional_float(msg, "similarity"),
+            style=parse_optional_float(msg, "style"),
+            speaker_boost=(
+                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
+            ),
+            api_key=parse_optional_str(msg, "api_key"),
         )
-        api_key = parse_optional_str(msg, "api_key")
         once = parse_optional_int(msg, "once")
 
-        resolved_voice = voice or ""
+        provider_name = spec.provider or ""
+        resolved_voice = spec.voice or ""
 
         # Opt-in dedup: only when the caller explicitly sets `once` to a
         # positive TTL. With `once` absent, null, or 0, every request plays.
@@ -133,18 +137,8 @@ class SynthesizeHandler(MessageHandler):
         # Local providers (espeak, say) play directly to the audio device.
         if provider_name in _LOCAL_PROVIDERS:
             direct_result = await self._synthesis.try_direct_play(
-                text=text,
-                voice=voice,
-                provider_name=provider_name,
-                model=model,
-                language=language,
-                rate=rate,
-                vibe_tags=vibe_tags,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                api_key=api_key,
+                text,
+                spec,
                 record_result=self._record_playback_result,
             )
             if isinstance(direct_result, Exception):
@@ -174,17 +168,7 @@ class SynthesizeHandler(MessageHandler):
         try:
             output_path = await self._synthesis.synthesize_to_file(
                 text,
-                voice,
-                provider_name,
-                model,
-                language,
-                rate,
-                vibe_tags,
-                stability,
-                similarity,
-                style,
-                speaker_boost=speaker_boost,
-                api_key=api_key,
+                spec,
                 request_id=request_id,
             )
         except Exception as exc:
@@ -257,43 +241,35 @@ class RecordHandler(MessageHandler):
             )
             return
 
-        voice = parse_optional_str(msg, "voice")
-        provider_name = parse_optional_str(msg, "provider") or auto_detect_provider()
-        model = parse_optional_str(msg, "model")
-        rate = parse_optional_int(msg, "rate")
-        language = parse_optional_str(msg, "language")
-        vibe_tags = parse_optional_str(msg, "vibe_tags")
-        stability = parse_optional_float(msg, "stability")
-        similarity = parse_optional_float(msg, "similarity")
-        style = parse_optional_float(msg, "style")
         speaker_boost_raw = msg.get("speaker_boost")
-        speaker_boost = (
-            bool(speaker_boost_raw) if speaker_boost_raw is not None else None
+        spec = SynthesisSpec(
+            voice=parse_optional_str(msg, "voice"),
+            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
+            model=parse_optional_str(msg, "model"),
+            rate=parse_optional_int(msg, "rate"),
+            language=parse_optional_str(msg, "language"),
+            vibe_tags=parse_optional_str(msg, "vibe_tags"),
+            stability=parse_optional_float(msg, "stability"),
+            similarity=parse_optional_float(msg, "similarity"),
+            style=parse_optional_float(msg, "style"),
+            speaker_boost=(
+                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
+            ),
+            api_key=parse_optional_str(msg, "api_key"),
         )
-        api_key = parse_optional_str(msg, "api_key")
 
         logger.info(
             "Record: id=%s provider=%s voice=%s chars=%d",
             request_id,
-            provider_name,
-            voice or "",
+            spec.provider or "",
+            spec.voice or "",
             len(text),
         )
 
         try:
             output_path = await self._synthesis.synthesize_to_file(
                 text,
-                voice,
-                provider_name,
-                model,
-                language,
-                rate,
-                vibe_tags,
-                stability,
-                similarity,
-                style,
-                speaker_boost=speaker_boost,
-                api_key=api_key,
+                spec,
                 request_id=request_id,
             )
         except Exception as exc:

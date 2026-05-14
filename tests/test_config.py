@@ -10,12 +10,13 @@ from punt_vox.config import (
     ALLOWED_CONFIG_KEYS,
     DURABLE_KEYS,
     EPHEMERAL_KEYS,
+    ConfigStore,
     read_config,
     read_field,
     write_field,
     write_fields,
 )
-from punt_vox.dirs import find_config_dir
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -340,3 +341,92 @@ class TestKeySetConsistency:
 
     def test_union_is_allowed(self) -> None:
         assert DURABLE_KEYS | EPHEMERAL_KEYS == ALLOWED_CONFIG_KEYS
+
+
+# -- ConfigStore class tests ----------------------------------------------
+
+
+class TestConfigStoreConstruction:
+    """ConfigStore construction and dir property."""
+
+    def test_default_dir(self) -> None:
+        store = ConfigStore()
+        assert store.dir == DEFAULT_CONFIG_DIR
+
+    def test_custom_dir(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        assert store.dir == tmp_path
+
+
+class TestConfigStoreRead:
+    """ConfigStore.read() and ConfigStore.read_field()."""
+
+    def test_read_merges_both_files(self, tmp_path: Path) -> None:
+        _write_frontmatter(tmp_path / "vox.md", {"notify": "c", "voice": "charlie"})
+        _write_frontmatter(
+            tmp_path / "vox.local.md",
+            {"vibe": "happy", "vibe_tags": "[joyful]"},
+        )
+        store = ConfigStore(tmp_path)
+        cfg = store.read()
+        assert cfg.notify == "c"
+        assert cfg.voice == "charlie"
+        assert cfg.vibe == "happy"
+        assert cfg.vibe_tags == "[joyful]"
+
+    def test_read_missing_files_returns_defaults(self, tmp_path: Path) -> None:
+        cfg = ConfigStore(tmp_path).read()
+        assert cfg.notify == "n"
+        assert cfg.speak == "y"
+        assert cfg.vibe_mode == "auto"
+        assert cfg.voice is None
+
+    def test_read_field_durable(self, tmp_path: Path) -> None:
+        _write_frontmatter(tmp_path / "vox.md", {"voice": "fin"})
+        assert ConfigStore(tmp_path).read_field("voice") == "fin"
+
+    def test_read_field_ephemeral(self, tmp_path: Path) -> None:
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe": "calm"})
+        assert ConfigStore(tmp_path).read_field("vibe") == "calm"
+
+    def test_read_field_missing_returns_none(self, tmp_path: Path) -> None:
+        assert ConfigStore(tmp_path).read_field("voice") is None
+
+
+class TestConfigStoreWrite:
+    """ConfigStore.write_field() and ConfigStore.write_fields()."""
+
+    def test_write_field_durable(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_field("voice", "charlie")
+        assert (tmp_path / "vox.md").exists()
+        assert not (tmp_path / "vox.local.md").exists()
+        assert store.read_field("voice") == "charlie"
+
+    def test_write_field_ephemeral(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_field("vibe", "happy")
+        assert (tmp_path / "vox.local.md").exists()
+        assert not (tmp_path / "vox.md").exists()
+        assert store.read_field("vibe") == "happy"
+
+    def test_write_field_rejects_unknown_key(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown config key"):
+            ConfigStore(tmp_path).write_field("bogus", "val")
+
+    def test_write_field_rejects_newline(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="must not contain newlines"):
+            ConfigStore(tmp_path).write_field("voice", "bad\nvalue")
+
+    def test_write_fields_mixed(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"notify": "y", "vibe_tags": "[calm]"})
+        assert store.read_field("notify") == "y"
+        assert store.read_field("vibe_tags") == "[calm]"
+        # Verify routing: durable in vox.md, ephemeral in vox.local.md
+        assert "notify" in (tmp_path / "vox.md").read_text()
+        assert "vibe_tags" in (tmp_path / "vox.local.md").read_text()
+
+    def test_write_fields_rejects_unknown_key(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown config key"):
+            ConfigStore(tmp_path).write_fields({"bad_key": "val"})

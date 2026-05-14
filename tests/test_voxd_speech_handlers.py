@@ -63,8 +63,10 @@ class TestHandleSynthesizeShortCircuit:
         asyncio.run(handler(msg, websocket))
 
         mock_synth.try_direct_play.assert_called_once()
-        call_kwargs = mock_synth.try_direct_play.call_args.kwargs
-        assert call_kwargs["provider_name"] == "espeak"
+        call_args = mock_synth.try_direct_play.call_args
+        # spec is the second positional argument
+        spec = call_args[0][1]
+        assert spec.provider == "espeak"
 
 
 class TestHandleSynthesizeOnceFlag:

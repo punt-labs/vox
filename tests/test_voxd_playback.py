@@ -15,10 +15,10 @@ from punt_vox.voxd import (
     _PLAYBACK_TIMEOUT_DEFAULT_S,
     _music_player_command,
 )
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.music_handlers import MusicOnHandler
-from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.track_generator import TrackGenerator
 
 
 def _make_playback_queue() -> PlaybackQueue:

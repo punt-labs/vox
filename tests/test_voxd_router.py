@@ -12,6 +12,8 @@ import pytest
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.music_handlers import (
     MusicListHandler,
     MusicNextHandler,
@@ -20,13 +22,11 @@ from punt_vox.voxd.music_handlers import (
     MusicPlayHandler,
     MusicVibeHandler,
 )
-from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
-from punt_vox.voxd.track_generator import TrackGenerator
 from punt_vox.voxd.types import MessageHandler
 
 

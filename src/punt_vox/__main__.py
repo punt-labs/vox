@@ -31,6 +31,7 @@ from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_di
 from punt_vox.hooks import hook_app
 from punt_vox.paths import installed_version, log_dir
 from punt_vox.providers import auto_detect_provider
+from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
 
@@ -85,19 +86,45 @@ def _configure_logging(*, verbose: bool) -> None:
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
 
 
-def _validate_voice_settings(
+def _build_synthesis_spec(
+    *,
+    voice: str | None,
+    language: str | None,
+    rate: int | None,
+    provider: str | None,
+    model: str | None,
     stability: float | None,
     similarity: float | None,
     style: float | None,
-) -> None:
-    for name, value in [
-        ("stability", stability),
-        ("similarity", similarity),
-        ("style", style),
-    ]:
-        if value is not None and not 0.0 <= value <= 1.0:
-            msg = f"{name} must be between 0.0 and 1.0, got {value}"
-            raise typer.BadParameter(msg)
+    speaker_boost: bool | None,
+    api_key: str | None = None,
+    vibe_tags: str | None = None,
+    once: bool = False,
+) -> SynthesisSpec:
+    """Build a SynthesisSpec and validate at the CLI boundary.
+
+    Translates ``ValueError`` from :meth:`SynthesisSpec.validate` into
+    ``typer.BadParameter`` so the CLI displays a user-friendly message.
+    """
+    spec = SynthesisSpec(
+        voice=voice,
+        language=language,
+        rate=rate,
+        provider=provider,
+        model=model,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        api_key=api_key,
+        vibe_tags=vibe_tags,
+        once=once,
+    )
+    try:
+        spec.validate()
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    return spec
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +457,6 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     api_key_stdin: ApiKeyStdinFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Synthesize and play audio via voxd."""
-    _validate_voice_settings(stability, similarity, style)
     # Negative values are a user error. Zero is accepted and treated
     # as unset (no dedup) — matches the server-side semantics so the
     # two surfaces are consistent. Scripts can safely pass
@@ -466,26 +492,29 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     )
 
-    segments = _resolve_text_segments(text, from_file)
     boost = speaker_boost if speaker_boost else None
+    spec = _build_synthesis_spec(
+        voice=voice,
+        language=language,
+        rate=rate,
+        provider=provider,
+        model=model,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=boost,
+        api_key=resolved_api_key,
+    )
+
+    segments = _resolve_text_segments(text, from_file)
     client = VoxClientSync()
+    kwargs = spec.to_client_kwargs()
+    if once is not None:
+        kwargs["once"] = once
 
     for seg_text in segments:
         try:
-            result = client.synthesize(
-                seg_text,
-                voice=voice,
-                provider=provider,
-                model=model,
-                rate=rate,
-                language=language,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=boost,
-                once=once,
-                api_key=resolved_api_key,
-            )
+            result = client.synthesize(seg_text, **kwargs)
             payload: dict[str, object] = {"id": result.request_id}
             if result.deduped:
                 payload["deduped"] = True
@@ -526,13 +555,24 @@ def record(  # pyright: ignore[reportUnusedFunction]
     """Synthesize and save audio to file via voxd."""
     from punt_vox.types import generate_filename
 
-    _validate_voice_settings(stability, similarity, style)
+    boost = speaker_boost if speaker_boost else None
+    spec = _build_synthesis_spec(
+        voice=voice,
+        language=language,
+        rate=rate,
+        provider=provider,
+        model=model,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=boost,
+    )
 
     segments = _resolve_text_segments(text, from_file)
-    boost = speaker_boost if speaker_boost else None
     out_dir = output_dir if output_dir is not None else default_output_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     client = VoxClientSync()
+    kwargs = spec.to_client_kwargs()
 
     for i, seg_text in enumerate(segments):
         # Determine output path
@@ -546,18 +586,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
             out_path = out_dir / generate_filename(seg_text)
 
         try:
-            mp3_bytes = client.record(
-                seg_text,
-                voice=voice,
-                provider=provider,
-                model=model,
-                rate=rate,
-                language=language,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=boost,
-            )
+            mp3_bytes = client.record(seg_text, **kwargs)
         except VoxdConnectionError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc

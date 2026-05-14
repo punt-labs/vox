@@ -8,8 +8,8 @@ import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from punt_vox.voxd.music_scheduler import MusicScheduler
-from punt_vox.voxd.track_generator import TrackGenerator
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.scheduler import MusicScheduler
 
 
 def _make_scheduler(tmp_path: Path | None = None) -> MusicScheduler:
@@ -114,7 +114,7 @@ class TestMusicLoopStateTransitions:
                     fake_generate_track,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
@@ -235,7 +235,7 @@ class TestMusicLoopStateTransitions:
                     counting_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
@@ -314,7 +314,7 @@ class TestMusicLoopGaplessHandoff:
                     slow_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
@@ -395,7 +395,7 @@ class TestMusicLoopGaplessHandoff:
                     tracking_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
@@ -575,7 +575,7 @@ class TestGenFailureKeepsOldTrack:
                     fail_then_succeed,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(
@@ -670,7 +670,7 @@ class TestGenFailureKeepsOldTrack:
                     always_fail_after_first,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(
@@ -757,7 +757,7 @@ class TestGenFailureKeepsOldTrack:
                     fail_once_per_cycle,
                 ),
                 patch(
-                    "punt_vox.voxd.music_scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(

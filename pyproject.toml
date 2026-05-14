@@ -114,6 +114,7 @@ ignore = [
 "src/punt_vox/voxd/daemon.py" = ["PLC0415"]
 "src/punt_vox/voxd/synthesis.py" = ["PLC0415"]
 "src/punt_vox/voxd/health.py" = ["PLC0415"]
+"src/punt_vox/voxd/music/generator.py" = ["PLC0415"]
 "src/punt_vox/voxd/track_generator.py" = ["PLC0415"]
 "src/punt_vox/applet.py" = ["PLC0415"]
 "src/punt_vox/client.py" = ["PLC0415"]
@@ -152,6 +153,7 @@ line-ending = "auto"
 python_version = "3.13"
 mypy_path = "typings"
 strict = true
+exclude = ["tests/music/"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -175,6 +177,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["test_voxd_router", "test_voxd_playback"]
 ignore_errors = true
+
 
 [tool.pyright]
 pythonVersion = "3.13"

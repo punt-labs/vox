@@ -31,19 +31,18 @@ from punt_vox.voxd.dedup import (
     OnceDedup,
 )
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music_handlers import (
-    MusicListHandler,
-    MusicNextHandler,
-    MusicOffHandler,
-    MusicOnHandler,
-    MusicPlayHandler,
-    MusicVibeHandler,
-)
-from punt_vox.voxd.music_scheduler import (
+from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.list_handler import MusicListHandler
+from punt_vox.voxd.music.next_handler import MusicNextHandler
+from punt_vox.voxd.music.off_handler import MusicOffHandler
+from punt_vox.voxd.music.on_handler import MusicOnHandler
+from punt_vox.voxd.music.play_handler import MusicPlayHandler
+from punt_vox.voxd.music.scheduler import (
     _MUSIC_MAX_RETRIES,
     MusicScheduler,
     _PlaybackWaitResult,
 )
+from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
     _MAX_STDERR_LEN,
     _PLAYBACK_TIMEOUT_DEFAULT_S,
@@ -64,7 +63,6 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _run_play_directly_sync,
 )
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
-from punt_vox.voxd.track_generator import TrackGenerator
 from punt_vox.voxd.types import MessageHandler
 
 __all__ = [
