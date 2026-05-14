@@ -16,15 +16,12 @@ import hmac
 import json
 import logging
 import os
-import re
-import tempfile
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from socket import socket
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import typer
 import uvicorn
@@ -34,17 +31,8 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from punt_vox import cache as _cache_module
-from punt_vox.cache import cache_get, cache_put
-from punt_vox.core import TTSClient
-from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.paths import ensure_user_dirs, installed_version
-from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.types import (
-    AudioProviderId,
-    AudioRequest,
-    DirectPlayProvider,
-    TTSProvider,
-)
+from punt_vox.providers import auto_detect_provider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     DaemonConfig,
@@ -54,13 +42,16 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     _run_dir,
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
     _AUDIO_ENV_KEYS,
     PlaybackItem,
     PlaybackQueue,
-    _monotonic,
-    _music_player_command,
     _player_binary_path,
+)
+from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
+    _LOCAL_PROVIDERS,
+    SynthesisPipeline,
 )
 from punt_vox.voxd.track_generator import TrackGenerator
 
@@ -72,8 +63,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
 
-# Lock to serialize os.environ mutation during synthesis with per-request API keys.
-_env_lock = asyncio.Lock()
+# Module-level SynthesisPipeline, set by _get_pipeline() on first use.
+_pipeline: SynthesisPipeline | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +149,12 @@ class DaemonContext:
         auth_token: str | None = None,
         port: int = DEFAULT_PORT,
         playback: PlaybackQueue | None = None,
+        music: MusicScheduler | None = None,
     ) -> None:
         self._playback: PlaybackQueue = playback or PlaybackQueue()
+        self._music: MusicScheduler = music or MusicScheduler(
+            TrackGenerator(_music_output_dir())
+        )
         self.start_time: float = time.monotonic()
         self.auth_token: str | None = auth_token
         self.port: int = port
@@ -170,19 +165,8 @@ class DaemonContext:
         # on every request. See ``punt_vox.paths.installed_version`` for
         # fallback semantics when running from an uninstalled source tree.
         self.daemon_version: str = installed_version()
-        # Music state — daemon-wide, one set of speakers, one loop.
-        self.music_mode: str = "off"
-        self.music_style: str = ""
-        self.music_owner: str = ""
-        self.music_vibe: tuple[str, str] = ("", "")  # (vibe, vibe_tags)
-        self.music_track: Path | None = None
-        self.music_track_name: str = ""
-        self.music_proc: asyncio.subprocess.Process | None = None
-        self.music_state: str = "idle"  # "idle" | "generating" | "playing"
-        self.music_changed: asyncio.Event = asyncio.Event()
-        self.music_replay: bool = False
 
-    # -- Delegation properties for backward compatibility --------------------
+    # -- Delegation properties for PlaybackQueue -----------------------------
 
     @property
     def playback_queue(self) -> asyncio.Queue[PlaybackItem]:
@@ -197,6 +181,98 @@ class DaemonContext:
     @last_playback.setter
     def last_playback(self, value: dict[str, object] | None) -> None:
         self._playback.set_last_result(value)
+
+    # -- Delegation properties for MusicScheduler ----------------------------
+
+    @property
+    def music_mode(self) -> str:
+        """Return the current music mode."""
+        return self._music.mode
+
+    @music_mode.setter
+    def music_mode(self, value: str) -> None:
+        self._music.mode = value
+
+    @property
+    def music_style(self) -> str:
+        """Return the current music style."""
+        return self._music.style
+
+    @music_style.setter
+    def music_style(self, value: str) -> None:
+        self._music.style = value
+
+    @property
+    def music_owner(self) -> str:
+        """Return the current music owner session ID."""
+        return self._music.owner
+
+    @music_owner.setter
+    def music_owner(self, value: str) -> None:
+        self._music.owner = value
+
+    @property
+    def music_vibe(self) -> tuple[str, str]:
+        """Return the current (vibe, vibe_tags) tuple."""
+        return self._music.vibe
+
+    @music_vibe.setter
+    def music_vibe(self, value: tuple[str, str]) -> None:
+        self._music.vibe = value
+
+    @property
+    def music_track(self) -> Path | None:
+        """Return the current track path."""
+        return self._music.track
+
+    @music_track.setter
+    def music_track(self, value: Path | None) -> None:
+        self._music.track = value
+
+    @property
+    def music_track_name(self) -> str:
+        """Return the current track name."""
+        return self._music.track_name
+
+    @music_track_name.setter
+    def music_track_name(self, value: str) -> None:
+        self._music.track_name = value
+
+    @property
+    def music_proc(self) -> asyncio.subprocess.Process | None:
+        """Return the current music subprocess."""
+        return self._music.proc
+
+    @music_proc.setter
+    def music_proc(self, value: asyncio.subprocess.Process | None) -> None:
+        self._music.proc = value
+
+    @property
+    def music_state(self) -> str:
+        """Return the current music state."""
+        return self._music.state
+
+    @music_state.setter
+    def music_state(self, value: str) -> None:
+        self._music.state = value
+
+    @property
+    def music_changed(self) -> asyncio.Event:
+        """Return the music-changed event."""
+        return self._music.changed
+
+    @music_changed.setter
+    def music_changed(self, value: asyncio.Event) -> None:
+        self._music.changed = value
+
+    @property
+    def music_replay(self) -> bool:
+        """Return whether replay mode is active."""
+        return self._music.replay
+
+    @music_replay.setter
+    def music_replay(self, value: bool) -> None:
+        self._music.replay = value
 
 
 _chime_resolver = ChimeResolver()
@@ -242,112 +318,18 @@ def _parse_optional_str(msg: dict[str, object], key: str) -> str | None:
     return raw or None
 
 
-def _build_audio_request(
-    normalized_text: str,
-    voice: str | None,
-    language: str | None,
-    rate: int | None,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    *,
-    speaker_boost: bool | None,
-    provider_id: str,
-) -> AudioRequest:
-    """Build an AudioRequest from parsed message fields."""
-    return AudioRequest(
-        text=normalized_text,
-        voice=voice,
-        language=language,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        provider=AudioProviderId(provider_id)
-        if provider_id in AudioProviderId.__members__
-        else None,
-    )
+def _get_pipeline(ctx: DaemonContext) -> SynthesisPipeline:
+    """Return the module-level SynthesisPipeline, creating one if needed."""
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = SynthesisPipeline(playback_mutex=ctx._playback.mutex)
+    return _pipeline
 
 
-def _model_supports_expressive_tags(provider_name: str, model: str | None) -> bool:
-    """Whether the given provider+model combo interprets bracket-style tags.
-
-    Pure lookup: does NOT construct the provider or touch any SDK client,
-    so it can run before voxd enters the env-mutation lock that the real
-    synthesize path needs. ElevenLabs is the only provider whose answer
-    depends on the model — all others return False unconditionally.
-
-    The ``ElevenLabsProvider`` import is deferred inside the function so
-    voxd does not eagerly load the ElevenLabs SDK at module import time
-    on systems whose users only ever run espeak/say. Mirrors the lazy
-    pattern in :mod:`punt_vox.providers`.
-    """
-    if provider_name == "elevenlabs":
-        from punt_vox.providers.elevenlabs import ElevenLabsProvider
-
-        return ElevenLabsProvider.model_supports_expressive_tags(model)
-    return False
-
-
-def _apply_vibe_for_synthesis(
-    raw_text: str,
-    vibe_tags: str | None,
-    provider_name: str,
-    model: str | None,
-) -> str:
-    """Compose the final synthesis text from raw input + vibe + capability.
-
-    Takes the user's RAW ``raw_text`` (NOT yet normalized). The order of
-    operations matters because :func:`punt_vox.normalize.normalize_for_speech`
-    discards brackets via its non-prosody-punctuation filter. If we let
-    normalization run first, ``[serious] hello`` becomes ``serious hello``
-    and the literal word survives into TTS input.
-
-    Non-expressive path:
-        Strip ALL vibe tags (any position) via ``VIBE_TAG_RE.sub(...)``,
-        collapse/trim whitespace, then normalize the cleaned text. If the
-        input contains only tags, return the empty string.
-
-    Expressive path:
-        Split text into tag / non-tag segments via ``VIBE_TAG_RE``,
-        normalize only the non-tag segments, reassemble with tags intact,
-        then prepend session ``vibe_tags``.
-    """
-    expressive = _model_supports_expressive_tags(provider_name, model)
-
-    if not expressive:
-        # Remove tags at ANY position via the regex directly — bypass
-        # strip_vibe_tags's guard (which returns original text when
-        # stripping leaves nothing). For tags-only input like "[serious]"
-        # the correct result is empty, not the bare word "serious".
-        cleaned = VIBE_TAG_RE.sub("", raw_text)
-        cleaned = re.sub(r"  +", " ", cleaned).strip()
-        return normalize_for_speech(cleaned) if cleaned else ""
-
-    # Expressive: normalize around tags so they survive at any position.
-    # VIBE_TAG_RE has one capturing group, so split() interleaves:
-    #   even indices → plain text, odd indices → tag word (no brackets).
-    segments = VIBE_TAG_RE.split(raw_text)
-    rebuilt: list[str] = []
-    for i, seg in enumerate(segments):
-        if i % 2 == 0:
-            # Plain text segment — normalize it.
-            normed = normalize_for_speech(seg)
-            if normed:
-                rebuilt.append(normed)
-        else:
-            # Captured tag word — restore brackets.
-            rebuilt.append(f"[{seg}]")
-
-    body = " ".join(rebuilt)
-
-    parts: list[str] = []
-    if vibe_tags:
-        parts.append(vibe_tags.strip())
-    if body:
-        parts.append(body)
-    return " ".join(parts)
+# Backward-compatible aliases for names that moved to synthesis.py.
+# Re-exported via __init__.py and referenced by existing tests.
+_apply_vibe_for_synthesis = SynthesisPipeline.apply_vibe_for_synthesis
+_model_supports_expressive_tags = SynthesisPipeline.model_supports_expressive_tags
 
 
 async def _synthesize_to_file(
@@ -366,164 +348,23 @@ async def _synthesize_to_file(
     api_key: str | None,
     request_id: str = "",
 ) -> Path:
-    """Run TTS synthesis and return the output path.
-
-    Handles API key injection, provider construction, and caching.
-    Raises on failure.
-
-    When ``api_key`` is set, the cache is bypassed on both the lookup
-    and the store so the per-call billing scope (vox-a3e) never reads
-    bytes that were synthesized under a different key and never leaves
-    bytes behind that a later call on a different key could reuse. The
-    anonymous path (``api_key is None``) uses the MD5-keyed on-disk
-    cache unchanged. See ``src/punt_vox/cache.py`` for the rationale.
-    """
-    resolved_voice = voice or ""
-
-    # _apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
-    # on the body itself (after splitting leading bracket tags off, which
-    # would otherwise be eaten by normalization).
-    normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
-
-    # Cache lookup: anonymous calls only. Per-call api_key scopes
-    # bypass the cache entirely so a billing-isolated call never
-    # reads bytes synthesized under a different key (or no key).
-    # CodeQL py/weak-sensitive-data-hashing also required that we
-    # never feed the api_key into any digest in cache.py.
-    if api_key is None:
-        cached = cache_get(normalized, resolved_voice, provider_name)
-        if cached is not None:
-            return cached
-    else:
-        logger.debug(
-            "Per-call api_key set; bypassing cache for this request (id=%s)",
-            request_id,
-        )
-
-    # Serialize env mutation + synthesis to avoid concurrent os.environ races.
-    async with _env_lock:
-        old_key: str | None = None
-        env_key_name: str | None = None
-        if api_key:
-            if provider_name == "elevenlabs":
-                env_key_name = "ELEVENLABS_API_KEY"
-            elif provider_name == "openai":
-                env_key_name = "OPENAI_API_KEY"
-            if env_key_name:
-                old_key = os.environ.get(env_key_name)
-                os.environ[env_key_name] = api_key
-
-        try:
-            provider = get_provider(provider_name, config_dir=None, model=model)
-            request = _build_audio_request(
-                normalized,
-                voice,
-                language,
-                rate,
-                stability,
-                similarity,
-                style,
-                speaker_boost=speaker_boost,
-                provider_id=provider_name,
-            )
-            client = TTSClient(provider)
-
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                output_path = Path(tmp.name)
-
-            await asyncio.to_thread(client.synthesize, request, output_path)
-
-            try:
-                synth_size = output_path.stat().st_size
-            except OSError:
-                synth_size = -1
-            if synth_size <= 0:
-                logger.error(
-                    "synthesize FAILED: provider=%s voice=%s file=%s "
-                    "size=%d chars_in=%d -- zero-byte or missing output",
-                    provider_name,
-                    resolved_voice,
-                    output_path,
-                    synth_size,
-                    len(text),
-                )
-                # Delete the broken temp file and fail fast. Caching it
-                # would poison every subsequent identical request.
-                output_path.unlink(missing_ok=True)
-                msg = (
-                    f"synthesis produced missing or empty output file: "
-                    f"{output_path} (provider={provider_name}, "
-                    f"voice={resolved_voice}, chars_in={len(text)})"
-                )
-                raise RuntimeError(msg)
-
-            logger.info(
-                "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
-                provider_name,
-                resolved_voice,
-                output_path,
-                synth_size,
-                len(text),
-            )
-
-            # Only cache verified-good output, and only on the
-            # anonymous path. Per-call api_key scopes skip cache_put
-            # so a billing-isolated call can never leave bytes behind
-            # that a later call on a different key could reuse.
-            if api_key is None:
-                cache_put(normalized, resolved_voice, provider_name, output_path)
-            return output_path
-        finally:
-            # Restore API key
-            if env_key_name and old_key is not None:
-                os.environ[env_key_name] = old_key
-            elif env_key_name and api_key:
-                os.environ.pop(env_key_name, None)
-
-
-# Providers that synthesize audio directly to the default device. Cloud
-# providers are skipped entirely so we don't pay for provider construction
-# only to discover they don't implement play_directly.
-_LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
-
-# Map of provider name to its expected API key env var. Used by the
-# direct-play env-injection helper.
-_PROVIDER_API_KEY_VAR: dict[str, str] = {
-    "elevenlabs": "ELEVENLABS_API_KEY",
-    "openai": "OPENAI_API_KEY",
-}
-
-
-def _run_play_directly_sync(
-    provider_name: str,
-    api_key: str | None,
-    provider_factory: Callable[[], TTSProvider],
-    request: AudioRequest,
-) -> int | None:
-    """Construct provider and call ``play_directly`` on a worker thread.
-
-    Returns ``None`` if the provider does not implement the
-    ``DirectPlayProvider`` protocol -- the caller will fall back to the
-    synthesize-and-queue path. Mutates ``os.environ`` only if an API key
-    is supplied; restoration happens on the same thread so the env-lock
-    contract is preserved without holding the lock during audio playback.
-    """
-    env_var = _PROVIDER_API_KEY_VAR.get(provider_name) if api_key else None
-    old_value: str | None = None
-    if env_var and api_key:
-        old_value = os.environ.get(env_var)
-        os.environ[env_var] = api_key
-    try:
-        provider = provider_factory()
-        if not isinstance(provider, DirectPlayProvider):
-            return None
-        return provider.play_directly(request)
-    finally:
-        if env_var:
-            if old_value is not None:
-                os.environ[env_var] = old_value
-            else:
-                os.environ.pop(env_var, None)
+    """Delegate to the SynthesisPipeline instance."""
+    pipeline = _get_pipeline(DaemonContext(auth_token=None, port=0))
+    return await pipeline.synthesize_to_file(
+        text,
+        voice,
+        provider_name,
+        model,
+        language,
+        rate,
+        vibe_tags,
+        stability,
+        similarity,
+        style,
+        speaker_boost=speaker_boost,
+        api_key=api_key,
+        request_id=request_id,
+    )
 
 
 async def _try_direct_play(
@@ -542,94 +383,33 @@ async def _try_direct_play(
     api_key: str | None,
     ctx: DaemonContext,
 ) -> int | None | Exception:
-    """Attempt direct-to-device playback via the provider.
+    """Delegate to the SynthesisPipeline instance."""
+    pipeline = _get_pipeline(ctx)
 
-    Returns one of:
-      * an ``int`` exit code (0 on success) when ``play_directly`` ran,
-      * ``None`` when the provider opts out of direct play, or
-      * an ``Exception`` instance when provider construction or playback
-        raised. The caller is responsible for translating the exception
-        into a websocket error response.
+    def _record(
+        *,
+        path: Path,
+        rc: int,
+        elapsed: float,
+        stderr: str,
+    ) -> None:
+        _record_playback_result(ctx, path=path, rc=rc, elapsed=elapsed, stderr=stderr)
 
-    The ``_env_lock`` is only acquired when an API key needs to be
-    injected. Local providers (espeak, say) take a fast path with no
-    cross-request blocking. Audio playback never holds the lock.
-    """
-    # _apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
-    # on the body itself (after splitting leading bracket tags off, which
-    # would otherwise be eaten by normalization).
-    normalized = _apply_vibe_for_synthesis(text, vibe_tags, provider_name, model)
-
-    request = _build_audio_request(
-        normalized,
-        voice,
-        language,
-        rate,
-        stability,
-        similarity,
-        style,
+    return await pipeline.try_direct_play(
+        text=text,
+        voice=voice,
+        provider_name=provider_name,
+        model=model,
+        language=language,
+        rate=rate,
+        vibe_tags=vibe_tags,
+        stability=stability,
+        similarity=similarity,
+        style=style,
         speaker_boost=speaker_boost,
-        provider_id=provider_name,
+        api_key=api_key,
+        record_result=_record,
     )
-
-    def _factory() -> TTSProvider:
-        return get_provider(provider_name, config_dir=None, model=model)
-
-    start = _monotonic()
-    try:
-        # ctx._playback.mutex serializes audible output across all paths --
-        # the queue consumer holds it too. Without this, two hooks firing
-        # at once would overlap because direct-play bypasses the queue.
-        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
-            async with _env_lock, ctx._playback.mutex:
-                rc = await asyncio.to_thread(
-                    _run_play_directly_sync,
-                    provider_name,
-                    api_key,
-                    _factory,
-                    request,
-                )
-        else:
-            async with ctx._playback.mutex:
-                rc = await asyncio.to_thread(
-                    _run_play_directly_sync,
-                    provider_name,
-                    None,
-                    _factory,
-                    request,
-                )
-    except Exception as exc:
-        logger.exception("Direct-play raised for provider=%s", provider_name)
-        return exc
-
-    if rc is None:
-        return None
-
-    elapsed = _monotonic() - start
-    _record_playback_result(
-        ctx,
-        path=Path(f"<direct:{provider_name}>"),
-        rc=rc,
-        elapsed=elapsed,
-        stderr="" if rc == 0 else f"play_directly rc={rc}",
-    )
-    if rc == 0:
-        logger.info(
-            "Direct-play ok: provider=%s voice=%s elapsed=%.3fs chars=%d",
-            provider_name,
-            voice or "",
-            elapsed,
-            len(text),
-        )
-    else:
-        logger.error(
-            "Direct-play FAILED: provider=%s voice=%s elapsed=%.3fs rc=%d",
-            provider_name,
-            voice or "",
-            elapsed,
-            rc,
-        )
-    return rc
 
 
 async def _handle_synthesize(
@@ -907,6 +687,8 @@ async def _handle_voices(
     _ctx: DaemonContext,
 ) -> None:
     """Handle a 'voices' message: list available voices."""
+    from punt_vox.providers import get_provider
+
     provider_name = _parse_optional_str(msg, "provider") or auto_detect_provider()
 
     try:
@@ -988,199 +770,6 @@ async def _handle_health(
 # Music loop and handlers
 # ---------------------------------------------------------------------------
 
-_MUSIC_DURATION_MS = 120_000
-_MUSIC_MAX_RETRIES = 3
-
-
-@dataclass(frozen=True)
-class _PlaybackWaitResult:
-    """Outcome of one iteration of the inner playback-wait loop.
-
-    Returned by :func:`_playback_wait_loop` to tell :func:`_music_loop`
-    what state transitions occurred while waiting on a subprocess.
-    """
-
-    current_track: Path | None
-    gen_task: asyncio.Task[Path] | None
-    retry_count: int
-    handoff_occurred: bool
-
-
-async def _playback_wait_loop(
-    ctx: DaemonContext,
-    proc: asyncio.subprocess.Process,
-    current_track: Path,
-    gen_task: asyncio.Task[Path] | None,
-    retry_count: int,
-) -> _PlaybackWaitResult:
-    """Wait on a music subprocess, handling events until it should stop.
-
-    Races the subprocess against ``ctx.music_changed`` and an optional
-    in-flight generation task.  Handles music-off, generation completion
-    (success and failure with retry), vibe changes, replay, and natural
-    subprocess termination.
-
-    Returns a :class:`_PlaybackWaitResult` describing the new state.
-    The caller uses this to decide whether to respawn the subprocess,
-    break out of the playback loop, or continue with a new track.
-    """
-
-    while True:
-        wait_task = asyncio.create_task(proc.wait())
-        changed_task: asyncio.Task[bool] = asyncio.create_task(
-            ctx.music_changed.wait(),
-        )
-        waitables: set[asyncio.Future[object]] = {
-            cast("asyncio.Future[object]", wait_task),
-            cast("asyncio.Future[object]", changed_task),
-        }
-        if gen_task is not None:
-            waitables.add(cast("asyncio.Future[object]", gen_task))
-
-        _done, pending = await asyncio.wait(
-            waitables,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            # Don't cancel the generation task — it may
-            # still be running and we want it to finish.
-            if t is gen_task:
-                continue
-            t.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await t
-
-        # --- /music off: kill everything immediately ----------
-        if ctx.music_mode != "on":
-            if gen_task is not None and not gen_task.done():
-                gen_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await gen_task
-                gen_task = None
-            await _kill_music_proc(ctx)
-            return _PlaybackWaitResult(
-                current_track=None,
-                gen_task=None,
-                retry_count=retry_count,
-                handoff_occurred=False,
-            )
-
-        # --- Generation task completed: handoff ---------------
-        if gen_task is not None and gen_task.done():
-            exc: BaseException | None = gen_task.exception()
-            if exc is not None:
-                # Generation failed — handle inline so the old track
-                # keeps looping.  Only disable music when max retries
-                # are exceeded.
-                gen_task = None
-                retry_count += 1
-                logger.error(
-                    "Generation failed during playback "
-                    "(attempt %d/%d), old track continues",
-                    retry_count,
-                    _MUSIC_MAX_RETRIES,
-                    exc_info=exc,
-                )
-                if retry_count >= _MUSIC_MAX_RETRIES:
-                    logger.error(
-                        "Music generation failed %d times, disabling music",
-                        _MUSIC_MAX_RETRIES,
-                    )
-                    ctx.music_mode = "off"
-                    retry_count = 0
-                    await _kill_music_proc(ctx)
-                    ctx.music_state = "idle"
-                    return _PlaybackWaitResult(
-                        current_track=None,
-                        gen_task=None,
-                        retry_count=retry_count,
-                        handoff_occurred=False,
-                    )
-                # Under max retries: start a new gen_task after backoff.
-                # The old track keeps looping.
-                await _music_backoff_sleep(2 ** (retry_count - 1), ctx)
-                gen_task = asyncio.create_task(
-                    _generate_music_track(ctx),
-                )
-                ctx.music_state = "generating"
-                continue
-            new_track: Path = gen_task.result()
-            gen_task = None
-            ctx.music_track = new_track
-            retry_count = 0
-            await _kill_music_proc(ctx)
-            # Don't clear music_changed here — a vibe change may have
-            # arrived during generation.  The next iteration's is_set()
-            # check will catch it.
-            return _PlaybackWaitResult(
-                current_track=new_track,
-                gen_task=None,
-                retry_count=retry_count,
-                handoff_occurred=True,
-            )
-
-        # --- Vibe changed: start/restart generation -----------
-        if ctx.music_changed.is_set():
-            ctx.music_changed.clear()
-            if gen_task is not None and not gen_task.done():
-                gen_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await gen_task
-                gen_task = None
-
-            # Replay: handler pre-set ctx.music_track.
-            if ctx.music_replay:
-                ctx.music_replay = False
-                if ctx.music_track is None:
-                    msg = "music_replay set but music_track is None"
-                    raise RuntimeError(msg)
-                replay_track: Path = ctx.music_track
-                await _kill_music_proc(ctx)
-                return _PlaybackWaitResult(
-                    current_track=replay_track,
-                    gen_task=None,
-                    retry_count=0,
-                    handoff_occurred=False,
-                )
-
-            ctx.music_state = "generating"
-            gen_task = asyncio.create_task(
-                _generate_music_track(ctx),
-            )
-            # Don't kill the proc — let it keep looping.
-            # Re-enter this wait loop so we race the same proc
-            # against the new gen_task.
-            continue
-
-        # --- Subprocess ended naturally -----------------------
-        # Return the same current_track so the caller respawns it.
-        return _PlaybackWaitResult(
-            current_track=current_track,
-            gen_task=gen_task,
-            retry_count=retry_count,
-            handoff_occurred=False,
-        )
-
-
-async def _music_backoff_sleep(seconds: float, ctx: DaemonContext) -> None:
-    """Sleep for backoff in the music loop, interruptible by music_changed.
-
-    Returns immediately if ``music_changed`` fires or ``music_mode``
-    becomes ``"off"`` during the wait.  This lets ``/music off`` and
-    vibe changes break out of exponential backoff without blocking
-    for the full sleep duration.
-    """
-    sleep_task = asyncio.create_task(asyncio.sleep(seconds))
-    changed_task = asyncio.create_task(ctx.music_changed.wait())
-    _done, pending = await asyncio.wait(
-        {sleep_task, changed_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for t in pending:
-        t.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await t
-
 
 def _slugify(text: str, max_len: int = 40) -> str:
     """Slugify a string for use in filenames. Delegates to TrackGenerator."""
@@ -1188,13 +777,8 @@ def _slugify(text: str, max_len: int = 40) -> str:
 
 
 async def _kill_music_proc(ctx: DaemonContext) -> None:
-    """Kill the current music subprocess if running."""
-    proc = ctx.music_proc
-    if proc is not None and proc.returncode is None:
-        proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
-    ctx.music_proc = None
+    """Kill the current music subprocess. Delegates to MusicScheduler."""
+    await ctx._music.kill_proc()
 
 
 def _auto_track_name(ctx: DaemonContext) -> str:  # pyright: ignore[reportUnusedFunction]
@@ -1204,166 +788,9 @@ def _auto_track_name(ctx: DaemonContext) -> str:  # pyright: ignore[reportUnused
     return _get_track_generator().auto_track_name(vibe, style)
 
 
-async def _generate_music_track(ctx: DaemonContext) -> Path:
-    """Generate a music track from the current vibe and style.
-
-    Thin wrapper around TrackGenerator.generate that reads from and
-    writes back to DaemonContext fields.
-    """
-    generator = _get_track_generator()
-    track_path, resolved_name = await generator.generate(
-        ctx.music_vibe, ctx.music_style, ctx.music_track_name
-    )
-    ctx.music_track_name = resolved_name
-    return track_path
-
-
-async def _music_loop(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
-    ctx: DaemonContext,
-) -> None:
-    """Background task: generate and loop music tracks.
-
-    Runs for the lifetime of the daemon.  When ``music_mode`` is "on",
-    derives a prompt from the current vibe, generates a track via
-    :class:`~punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider`,
-    and loops it via ffplay at reduced volume.
-
-    The key invariant is **gapless handoff**: the old track keeps
-    looping in its own playback subprocess while generation runs as a
-    concurrent ``asyncio.Task``.  The old subprocess is killed only
-    once the new track is ready.  If the vibe changes again during
-    generation, the in-flight generation task is cancelled and a fresh
-    one starts — the old track keeps looping throughout.
-
-    Crash recovery: generation failures during playback are handled
-    inline — the old track keeps looping while the loop retries with
-    exponential backoff (up to 3 attempts).  After 3 consecutive
-    failures, ``music_mode`` is set to "off" and the old track is
-    killed.  Initial generation failures (no old track yet) propagate
-    to the outer handler which retries the entire cycle.
-    """
-    retry_count = 0
-    current_track: Path | None = None
-    gen_task: asyncio.Task[Path] | None = None
-
-    while True:
-        # Wait until music is turned on.
-        while ctx.music_mode != "on":
-            ctx.music_changed.clear()
-            # Re-check after clear to avoid lost wakeup: a handler may
-            # have set music_mode between our check and the clear().
-            if ctx.music_mode == "on":
-                break
-            await ctx.music_changed.wait()
-
-        try:
-            # --- Initial generation (no old track to loop) ----------------
-            if current_track is None:
-                # Replay: a handler already placed a track in ctx.music_track.
-                if ctx.music_replay:
-                    ctx.music_replay = False
-                    ctx.music_changed.clear()
-                    if ctx.music_track is None:
-                        msg = "music_replay set but music_track is None"
-                        raise RuntimeError(msg)
-                    current_track = ctx.music_track
-                    retry_count = 0
-                else:
-                    ctx.music_state = "generating"
-                    ctx.music_changed.clear()
-                    current_track = await _generate_music_track(ctx)
-                    ctx.music_track = current_track
-                    retry_count = 0
-
-                    # Vibe changed during initial generation — regenerate
-                    # immediately (no old track to keep looping).
-                    if ctx.music_changed.is_set():
-                        logger.info(
-                            "Vibe changed during initial generation, regenerating",
-                        )
-                        current_track = None
-                        continue
-
-            # --- Playback loop: loop current_track, generate in parallel --
-            # current_track is guaranteed non-None by the initial generation
-            # block above — the only path that sets it to None also continues
-            # back to the top of the while loop.
-            gen_task = None
-            while ctx.music_mode == "on":
-                ctx.music_state = "playing" if gen_task is None else "generating"
-                cmd = _music_player_command(current_track)
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                ctx.music_proc = proc
-
-                result = await _playback_wait_loop(
-                    ctx,
-                    proc,
-                    current_track,
-                    gen_task,
-                    retry_count,
-                )
-                gen_task = result.gen_task
-                retry_count = result.retry_count
-
-                # Music was turned off or max retries exceeded.
-                if result.current_track is None:
-                    current_track = None
-                    break
-
-                # Handoff, replay, or natural subprocess end.
-                current_track = result.current_track
-
-                # After handoff, the old proc was killed intentionally --
-                # non-zero rc is expected, not worth warning about.
-                if not result.handoff_occurred:
-                    rc = proc.returncode
-                    if rc is not None and rc != 0:
-                        logger.warning(
-                            "Music playback ended with rc=%s for %s",
-                            rc,
-                            current_track.name,
-                        )
-
-        except asyncio.CancelledError:
-            if gen_task is not None and not gen_task.done():
-                gen_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await gen_task
-                gen_task = None
-            await _kill_music_proc(ctx)
-            ctx.music_state = "idle"
-            current_track = None
-            raise
-        except Exception:
-            logger.exception(
-                "Music loop error (attempt %d/%d)",
-                retry_count + 1,
-                _MUSIC_MAX_RETRIES,
-            )
-            if gen_task is not None and not gen_task.done():
-                gen_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await gen_task
-                gen_task = None
-            await _kill_music_proc(ctx)
-            ctx.music_state = "idle"
-            current_track = None
-            retry_count += 1
-            if retry_count >= _MUSIC_MAX_RETRIES:
-                logger.error(
-                    "Music loop failed %d times, disabling music", _MUSIC_MAX_RETRIES
-                )
-                ctx.music_mode = "off"
-                retry_count = 0
-            else:
-                # Exponential backoff: 1s, 2s, 4s...
-                await _music_backoff_sleep(2 ** (retry_count - 1), ctx)
+async def _music_loop(ctx: DaemonContext) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Background task: generate and loop music tracks. Delegates to MusicScheduler."""
+    await ctx._music.loop()
 
 
 async def _handle_music_on(
@@ -1828,11 +1255,14 @@ def main(
 
     # Auth token
     auth_token = daemon_cfg.read_or_create_token()
-    ctx = DaemonContext(auth_token=auth_token, port=port)
 
     # Track generator for music -- set module-level for handler access.
     global _track_generator
     _track_generator = TrackGenerator(_music_output_dir())
+
+    # Music scheduler owns the background loop and all music state.
+    scheduler = MusicScheduler(_track_generator)
+    ctx = DaemonContext(auth_token=auth_token, port=port, music=scheduler)
 
     logger.info("Starting voxd on %s:%d", host, port)
 
@@ -1842,7 +1272,7 @@ def main(
         consumer_task = asyncio.create_task(ctx._playback.consumer())
         logger.info("Playback consumer started")
         # Start music loop
-        music_task = asyncio.create_task(_music_loop(ctx))
+        music_task = asyncio.create_task(scheduler.loop())
         logger.info("Music loop started")
         try:
             yield
@@ -1851,7 +1281,7 @@ def main(
             with contextlib.suppress(asyncio.CancelledError):
                 await music_task
             # Kill any lingering music subprocess.
-            await _kill_music_proc(ctx)
+            await scheduler.kill_proc()
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer_task

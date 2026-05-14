@@ -51,6 +51,11 @@ from punt_vox.voxd.dedup import (
     DedupHit,
     OnceDedup,
 )
+from punt_vox.voxd.music_scheduler import (
+    _MUSIC_MAX_RETRIES,
+    MusicScheduler,
+    _PlaybackWaitResult,
+)
 from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
     _MAX_STDERR_LEN,
     _PLAYBACK_TIMEOUT_DEFAULT_S,
@@ -61,6 +66,13 @@ from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
     _probe_duration,
     _truncate_stderr,
 )
+from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
+    _LOCAL_PROVIDERS,
+    _PROVIDER_API_KEY_VAR,
+    SynthesisPipeline,
+    _build_audio_request,
+    _run_play_directly_sync,
+)
 from punt_vox.voxd.track_generator import TrackGenerator
 
 __all__ = [
@@ -68,21 +80,28 @@ __all__ = [
     "DEFAULT_PORT",
     "_DEDUP_WINDOW_SECONDS",
     "_HANDLERS",
+    "_LOCAL_PROVIDERS",
     "_MAX_STDERR_LEN",
+    "_MUSIC_MAX_RETRIES",
     "_ONCE_DEDUP_MAX_ENTRIES",
     "_ONCE_DEDUP_MAX_TTL_SECONDS",
     "_PLAYBACK_TIMEOUT_DEFAULT_S",
+    "_PROVIDER_API_KEY_VAR",
     "ChimeDedup",
     "ChimeResolver",
     "DaemonConfig",
     "DaemonContext",
     "DedupHit",
+    "MusicScheduler",
     "OnceDedup",
     "PlaybackItem",
     "PlaybackQueue",
+    "SynthesisPipeline",
     "TrackGenerator",
+    "_PlaybackWaitResult",
     "_apply_vibe_for_synthesis",
     "_auto_track_name",
+    "_build_audio_request",
     "_config_dir",
     "_handle_music_list",
     "_handle_music_next",
@@ -104,6 +123,7 @@ __all__ = [
     "_music_player_command",
     "_probe_duration",
     "_run_dir",
+    "_run_play_directly_sync",
     "_synthesize_to_file",
     "_truncate_stderr",
     "_try_direct_play",
