@@ -436,8 +436,10 @@ class TestEspeakProviderCheckHealth:
             return_value="/usr/bin/espeak-ng",
         ):
             provider = EspeakProvider()
+        provider._voices._loader = dict  # pyright: ignore[reportPrivateUsage]
         provider._voices._cache.clear()  # pyright: ignore[reportPrivateUsage]
-        provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
+        provider._voices._loaded_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        provider._voices._force_refreshed_at = 0.0  # pyright: ignore[reportPrivateUsage]
         with patch(
             "punt_vox.providers.espeak._find_espeak_binary",
             return_value="/usr/bin/espeak-ng",
