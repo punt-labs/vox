@@ -51,6 +51,7 @@ from punt_vox.voxd.dedup import (
     DedupHit,
     OnceDedup,
 )
+from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music_scheduler import (
     _MUSIC_MAX_RETRIES,
     MusicScheduler,
@@ -91,6 +92,7 @@ __all__ = [
     "ChimeResolver",
     "DaemonConfig",
     "DaemonContext",
+    "DaemonHealth",
     "DedupHit",
     "MusicScheduler",
     "OnceDedup",

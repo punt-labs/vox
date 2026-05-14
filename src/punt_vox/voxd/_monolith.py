@@ -15,7 +15,6 @@ import contextlib
 import hmac
 import json
 import logging
-import os
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -31,7 +30,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from punt_vox import cache as _cache_module
-from punt_vox.paths import ensure_user_dirs, installed_version
+from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers import auto_detect_provider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
@@ -42,13 +41,9 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     _run_dir,
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music_scheduler import MusicScheduler
-from punt_vox.voxd.playback import (  # pyright: ignore[reportPrivateUsage]
-    _AUDIO_ENV_KEYS,
-    PlaybackItem,
-    PlaybackQueue,
-    _player_binary_path,
-)
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,
@@ -150,21 +145,36 @@ class DaemonContext:
         port: int = DEFAULT_PORT,
         playback: PlaybackQueue | None = None,
         music: MusicScheduler | None = None,
+        health: DaemonHealth | None = None,
     ) -> None:
         self._playback: PlaybackQueue = playback or PlaybackQueue()
         self._music: MusicScheduler = music or MusicScheduler(
             TrackGenerator(_music_output_dir())
         )
-        self.start_time: float = time.monotonic()
         self.auth_token: str | None = auth_token
         self.port: int = port
         self.chime_dedup = ChimeDedup()
         self.once_dedup = OnceDedup()
         self.client_count: int = 0
-        # Cached once at startup so /health does not hit importlib.metadata
-        # on every request. See ``punt_vox.paths.installed_version`` for
-        # fallback semantics when running from an uninstalled source tree.
-        self.daemon_version: str = installed_version()
+        self._health: DaemonHealth = health or DaemonHealth(
+            self._playback, lambda: self.client_count, port
+        )
+
+    # -- Delegation properties for DaemonHealth ------------------------------
+
+    @property
+    def start_time(self) -> float:
+        """Return the monotonic timestamp when the daemon started."""
+        return self._health.start_time
+
+    @property
+    def daemon_version(self) -> str:
+        """Return the cached daemon version string."""
+        return self._health.daemon_version
+
+    @daemon_version.setter
+    def daemon_version(self, val: str) -> None:
+        self._health.set_daemon_version(val)
 
     # -- Delegation properties for PlaybackQueue -----------------------------
 
@@ -717,49 +727,14 @@ async def _handle_voices(
     )
 
 
-def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:
-    """Return the public health payload safe for unauthenticated callers.
-
-    Excludes ``audio_env``, ``player_binary``, and ``last_playback`` so the
-    HTTP ``/health`` route can never leak environment variables or stderr
-    contents to non-localhost listeners.
-    """
-    from punt_vox.providers import auto_detect_provider
-
-    uptime = time.monotonic() - ctx.start_time
-    return {
-        "status": "ok",
-        "uptime_seconds": round(uptime, 1),
-        "queued": ctx.playback_queue.qsize(),
-        "port": ctx.port,
-        "active_sessions": ctx.client_count,
-        "provider": auto_detect_provider(),
-    }
+def _health_payload_minimal(ctx: DaemonContext) -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]
+    """Return the public health payload safe for unauthenticated callers."""
+    return ctx._health.minimal_payload()
 
 
-def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:
-    """Return the full diagnostic health payload for authenticated callers.
-
-    Adds the audio environment snapshot, the resolved player binary, the
-    last playback result, the running process id, and the cached daemon
-    version. Used only by the WebSocket health handler, which is gated
-    by the auth token.
-
-    The ``pid`` field is used by ``vox daemon restart`` to confirm the
-    daemon has come back up as a fresh process. The ``daemon_version``
-    field is used by ``vox doctor`` to warn when the running daemon
-    does not match the wheel installed on disk (vox-nmb). Neither is
-    exposed on the unauthenticated HTTP ``/health`` route — version
-    info is a fingerprinting aid for targeted exploitation, and the
-    minimal payload stays minimal.
-    """
-    payload = _health_payload_minimal(ctx)
-    payload["audio_env"] = {k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS}
-    payload["player_binary"] = _player_binary_path()
-    payload["last_playback"] = ctx.last_playback
-    payload["pid"] = os.getpid()
-    payload["daemon_version"] = ctx.daemon_version
-    return payload
+def _health_payload_full(ctx: DaemonContext) -> dict[str, object]:  # pyright: ignore[reportUnusedFunction]
+    """Return the full diagnostic health payload for authenticated callers."""
+    return ctx._health.full_payload()
 
 
 async def _handle_health(
@@ -768,7 +743,7 @@ async def _handle_health(
     ctx: DaemonContext,
 ) -> None:
     """Handle a 'health' message over the authenticated WebSocket."""
-    payload = _health_payload_full(ctx)
+    payload = ctx._health.full_payload()
     payload["type"] = "health"
     await websocket.send_json(payload)
 
@@ -1269,7 +1244,15 @@ def main(
 
     # Music scheduler owns the background loop and all music state.
     scheduler = MusicScheduler(_track_generator)
-    ctx = DaemonContext(auth_token=auth_token, port=port, music=scheduler)
+    playback = PlaybackQueue()
+    health = DaemonHealth(playback, lambda: ctx.client_count, port)
+    ctx = DaemonContext(
+        auth_token=auth_token,
+        port=port,
+        playback=playback,
+        music=scheduler,
+        health=health,
+    )
 
     # Initialize synthesis pipeline eagerly with the real playback mutex.
     global _pipeline
