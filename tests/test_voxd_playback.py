@@ -13,21 +13,21 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.voxd import (
     _PLAYBACK_TIMEOUT_DEFAULT_S,
-    DaemonContext,
-    _handle_music_on,
     _music_player_command,
 )
+from punt_vox.voxd.chimes import ChimeResolver
+from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_scheduler import MusicScheduler
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.track_generator import TrackGenerator
 
 
 def _make_playback_queue() -> PlaybackQueue:
     """Build a fresh PlaybackQueue for testing."""
     return PlaybackQueue()
-
-
-def _make_ctx() -> DaemonContext:
-    """Build a DaemonContext without touching real files or auth."""
-    return DaemonContext(auth_token=None, port=0)
 
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
@@ -384,16 +384,30 @@ class TestStderrTruncation:
 
 
 class TestMusicSeparateFromPlaybackQueue:
-    """Music subprocess must NOT use the existing playback consumer queue.
+    """Music subprocess must NOT use the playback consumer queue.
 
-    The spec explicitly requires music to run its own subprocess at
-    reduced volume, independent of the chime/TTS playback queue. This
-    test verifies the separation by checking that _handle_music_on does
-    not enqueue anything on ctx.playback_queue.
+    The spec requires music to run its own subprocess at reduced volume,
+    independent of the chime/TTS playback queue. This test verifies the
+    separation by checking that _handle_music_on does not enqueue anything.
     """
 
     def test_music_on_does_not_enqueue(self) -> None:
-        ctx = _make_ctx()
+        playback = PlaybackQueue()
+        music = MusicScheduler(TrackGenerator(Path("/tmp/vox-test-music")))
+        health = DaemonHealth(playback, lambda: 0, 0)
+        synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
+        router = WebSocketRouter(
+            synthesis=synthesis,
+            playback=playback,
+            music=music,
+            chime_dedup=ChimeDedup(),
+            once_dedup=OnceDedup(),
+            chimes=ChimeResolver(),
+            health=health,
+            auth_token=None,
+            track_generator=TrackGenerator(Path("/tmp/vox-test-music")),
+        )
+
         ws = MagicMock()
         ws.send_json = AsyncMock()
         msg: dict[str, object] = {
@@ -402,6 +416,6 @@ class TestMusicSeparateFromPlaybackQueue:
             "vibe": "focused",
         }
 
-        asyncio.run(_handle_music_on(msg, ws, ctx))
+        asyncio.run(router._handle_music_on(msg, ws))
 
-        assert ctx.playback_queue.empty()
+        assert playback._queue.empty()
