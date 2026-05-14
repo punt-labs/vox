@@ -139,7 +139,7 @@ class VoxDaemon:
                 server.should_exit = True
 
         server.startup = _startup_with_port_file  # type: ignore[method-assign]
-        server.run()
+        await server.serve()
 
     @asynccontextmanager
     async def _lifespan(self, _app: Starlette) -> AsyncGenerator[None]:

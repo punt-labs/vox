@@ -348,7 +348,7 @@ class WebSocketRouter:
 
         # Enqueue for playback
         done_event = asyncio.Event()
-        await self._playback._queue.put(
+        await self._playback.enqueue(
             PlaybackItem(path=output_path, request_id=request_id, notify=done_event)
         )
         await websocket.send_json({"type": "playing", "id": request_id})
@@ -447,7 +447,7 @@ class WebSocketRouter:
 
         logger.info("Chime: %s", signal)
         done_event = asyncio.Event()
-        await self._playback._queue.put(
+        await self._playback.enqueue(
             PlaybackItem(path=path, request_id=f"chime:{signal}", notify=done_event)
         )
         await websocket.send_json({"type": "playing", "id": f"chime:{signal}"})
