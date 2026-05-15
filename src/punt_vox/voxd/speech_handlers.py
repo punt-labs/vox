@@ -23,7 +23,7 @@ from punt_vox.voxd._parse import (
     parse_optional_str,
 )
 from punt_vox.voxd.dedup import OnceDedup
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,
@@ -201,13 +201,13 @@ class SynthesizeHandler(MessageHandler):
     ) -> None:
         """Update the playback queue's last_result with a freshly-observed result."""
         self._playback.set_last_result(
-            {
-                "file": str(path),
-                "rc": rc,
-                "elapsed_s": round(elapsed, 4),
-                "stderr": stderr,
-                "ts": time.time(),
-            }
+            PlaybackResult(
+                path=path,
+                rc=rc,
+                elapsed_s=round(elapsed, 4),
+                stderr=stderr,
+                ts=time.time(),
+            )
         )
 
 

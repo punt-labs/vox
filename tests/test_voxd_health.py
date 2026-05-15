@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from punt_vox.voxd import DaemonHealth, PlaybackQueue
+from punt_vox.voxd.playback import PlaybackResult
 
 if TYPE_CHECKING:
     import pytest
@@ -113,10 +115,12 @@ class TestHealthPayloadFull:
         playback = PlaybackQueue()
         health = DaemonHealth(playback, lambda: 0, 0)
         playback.set_last_result(
-            {"file": "/tmp/x.mp3", "rc": 0, "elapsed_s": 1.23, "stderr": "", "ts": 0.0}
+            PlaybackResult(
+                path=Path("/tmp/x.mp3"), rc=0, elapsed_s=1.23, stderr="", ts=0.0
+            )
         )
         payload = health.full_payload()
-        assert payload["last_playback"] == playback.last_result
+        assert payload["last_playback"] == playback.last_result.to_health_dict()  # type: ignore[union-attr]
 
 
 class TestHealthPayloadMinimal:
@@ -177,13 +181,13 @@ class TestHealthPayloadMinimal:
 
         playback = PlaybackQueue()
         playback.set_last_result(
-            {
-                "file": "/tmp/x.mp3",
-                "rc": 0,
-                "elapsed_s": 0.5,
-                "stderr": "secret stderr",
-                "ts": 0.0,
-            }
+            PlaybackResult(
+                path=Path("/tmp/x.mp3"),
+                rc=0,
+                elapsed_s=0.5,
+                stderr="secret stderr",
+                ts=0.0,
+            )
         )
         health = DaemonHealth(playback, lambda: 0, 0)
         app = build_app(playback=playback, health=health)

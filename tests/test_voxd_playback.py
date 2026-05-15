@@ -59,8 +59,8 @@ class TestPlayAudioObservability:
         assert "FAILED" in caplog.text
         assert "some stderr" in caplog.text
         assert pq.last_result is not None
-        assert pq.last_result["rc"] == 1
-        assert pq.last_result["stderr"] == "some stderr"
+        assert pq.last_result.rc == 1
+        assert pq.last_result.stderr == "some stderr"
 
     def test_suspiciously_fast_success_logs_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -87,7 +87,7 @@ class TestPlayAudioObservability:
 
         assert "SUSPICIOUS" in caplog.text
         assert pq.last_result is not None
-        assert pq.last_result["rc"] == 0
+        assert pq.last_result.rc == 0
 
     def test_binary_missing_logs_error(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -108,9 +108,8 @@ class TestPlayAudioObservability:
         assert "FAILED" in caplog.text
         assert "not found" in caplog.text
         assert pq.last_result is not None
-        assert pq.last_result["rc"] == -1
-        stderr_value = str(pq.last_result["stderr"])
-        assert "FileNotFoundError" in stderr_value
+        assert pq.last_result.rc == -1
+        assert "FileNotFoundError" in pq.last_result.stderr
 
     def test_zero_byte_file_logs_error(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -124,7 +123,7 @@ class TestPlayAudioObservability:
 
         assert "0-byte" in caplog.text
         assert pq.last_result is not None
-        assert pq.last_result["rc"] == -1
+        assert pq.last_result.rc == -1
 
     def test_last_playback_updated_on_success(self, tmp_path: Path) -> None:
         audio = tmp_path / "out.mp3"
@@ -147,9 +146,9 @@ class TestPlayAudioObservability:
             asyncio.run(pq.play_audio(audio))
 
         assert pq.last_result is not None
-        assert pq.last_result["rc"] == 0
-        assert pq.last_result["elapsed_s"] == 0.5
-        assert pq.last_result["file"] == str(audio)
+        assert pq.last_result.rc == 0
+        assert pq.last_result.elapsed_s == 0.5
+        assert pq.last_result.path == audio
 
 
 class TestProbeDuration:

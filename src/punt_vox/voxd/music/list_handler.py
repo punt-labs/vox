@@ -38,6 +38,6 @@ class MusicListHandler(MessageHandler):
             {
                 "type": "music_list",
                 "id": request_id,
-                "tracks": tracks,
+                "tracks": [t.to_dict() for t in tracks],
             }
         )

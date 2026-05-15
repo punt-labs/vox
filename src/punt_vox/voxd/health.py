@@ -103,7 +103,10 @@ class DaemonHealth:
             k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS
         }
         payload["player_binary"] = _player_binary_path()
-        payload["last_playback"] = self._playback.last_result
+        if result := self._playback.last_result:
+            payload["last_playback"] = result.to_health_dict()
+        else:
+            payload["last_playback"] = None
         payload["pid"] = os.getpid()
         payload["daemon_version"] = self._daemon_version
         return payload

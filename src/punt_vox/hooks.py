@@ -19,7 +19,6 @@ Events:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -27,6 +26,7 @@ import random
 import select
 import sys
 from pathlib import Path
+from typing import cast
 
 import typer
 
@@ -38,6 +38,12 @@ from punt_vox.config import (
     write_fields,
 )
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.hook_payload import (
+    BashPayload,
+    NotificationPayload,
+    StopPayload,
+    parse_hook_payload,
+)
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
     FAREWELL_PHRASES,
@@ -222,7 +228,7 @@ def resolve_tags_from_signals(signals: str) -> str:
     return "[calm]"
 
 
-def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object] | None:
+def handle_stop(payload: StopPayload, config: VoxConfig) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
     Returns a decision-block dict if Claude should speak a summary,
@@ -234,8 +240,7 @@ def handle_stop(data: dict[str, object], config: VoxConfig) -> dict[str, object]
         return None
 
     # Already continuing from a previous Stop hook — prevent infinite loop
-    stop_active = data.get("stop_hook_active", False)
-    if stop_active is True:
+    if payload.stop_hook_active is True:
         logger.info("Stop hook: skip (stop_hook_active=True, preventing loop)")
         return None
 
@@ -313,7 +318,7 @@ def classify_signal(exit_code: int | None, stdout: str) -> str | None:
     return None
 
 
-def handle_post_bash(data: dict[str, object], config_dir: Path) -> None:
+def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
     """Accumulate vibe signals from Bash tool execution.
 
     Appends a signal token to ``vibe_signals`` in ``vox.local.md``.
@@ -322,23 +327,7 @@ def handle_post_bash(data: dict[str, object], config_dir: Path) -> None:
        don't write to config. Kept here as the one exception to preserve
        auto-vibe detection until a proper communication channel exists.
     """
-    tool_response = data.get("tool_response", {})
-    if not isinstance(tool_response, dict):
-        return
-
-    exit_code_raw = tool_response.get("exit_code")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-    exit_code: int | None = None
-    if isinstance(exit_code_raw, int):
-        exit_code = exit_code_raw
-    elif isinstance(exit_code_raw, str):
-        with contextlib.suppress(ValueError):
-            exit_code = int(exit_code_raw)
-
-    stdout = tool_response.get("stdout", "")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-    if not isinstance(stdout, str):
-        stdout = str(stdout)  # pyright: ignore[reportUnknownArgumentType]
-
-    signal = classify_signal(exit_code, stdout)
+    signal = classify_signal(payload.exit_code, payload.stdout)
     if signal is None:
         return
 
@@ -384,7 +373,7 @@ def _pick_notification_phrase(
     return text
 
 
-def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
+def handle_notification(payload: NotificationPayload, config: VoxConfig) -> None:
     """Handle permission/idle prompt notifications.
 
     In chime mode, plays a chime via voxd. In voice mode, synthesizes
@@ -395,15 +384,7 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
         logger.info("Notification hook: skip (notify=n)")
         return
 
-    notification_type = data.get("notification_type", "unknown")
-    if not isinstance(notification_type, str):
-        notification_type = "unknown"
-
-    message = data.get("message", "Needs your attention")
-    if not isinstance(message, str):
-        message = "Needs your attention"
-
-    logger.info("Notification hook: type=%s", notification_type)
+    logger.info("Notification hook: type=%s", payload.notification_type)
 
     # Chime mode
     if config.speak == "n":
@@ -413,7 +394,7 @@ def handle_notification(data: dict[str, object], config: VoxConfig) -> None:
 
     # Voice mode: synthesize via voxd
     text = _pick_notification_phrase(
-        notification_type, message, repo_name=config.repo_name
+        payload.notification_type, payload.message, repo_name=config.repo_name
     )
     _speak_via_voxd(text, config)
 
@@ -561,7 +542,8 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
     config = read_config(config_dir)
     data = _read_hook_input()
-    result = handle_stop(data, config)
+    stop_payload = cast("StopPayload", parse_hook_payload(data, "stop"))
+    result = handle_stop(stop_payload, config)
     if result is not None:
         _emit(result)
 
@@ -573,7 +555,8 @@ def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if config_dir is None:
         return
     data = _read_hook_input()
-    handle_post_bash(data, config_dir)
+    bash_payload = cast("BashPayload", parse_hook_payload(data, "post_bash"))
+    handle_post_bash(bash_payload, config_dir)
 
 
 @hook_app.command("notification")
@@ -584,7 +567,10 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
     config = read_config(config_dir)
     data = _read_hook_input()
-    handle_notification(data, config)
+    notif_payload = cast(
+        "NotificationPayload", parse_hook_payload(data, "notification")
+    )
+    handle_notification(notif_payload, config)
 
 
 @hook_app.command("pre-compact")

@@ -57,6 +57,27 @@ _MUSIC_VOLUME = 30
 
 
 @dataclass(frozen=True, slots=True)
+class PlaybackResult:
+    """Outcome of a single audio playback."""
+
+    path: Path
+    rc: int
+    elapsed_s: float
+    stderr: str
+    ts: float
+
+    def to_health_dict(self) -> dict[str, object]:
+        """Serialize for the health endpoint JSON payload."""
+        return {
+            "file": str(self.path),
+            "rc": self.rc,
+            "elapsed_s": self.elapsed_s,
+            "stderr": self.stderr,
+            "ts": self.ts,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PlaybackItem:
     """An item in the playback queue."""
 
@@ -187,7 +208,7 @@ class PlaybackQueue:
 
     __slots__ = ("_last_result", "_mutex", "_queue")
 
-    _last_result: dict[str, object] | None
+    _last_result: PlaybackResult | None
     _mutex: asyncio.Lock
     _queue: asyncio.Queue[PlaybackItem]
 
@@ -201,8 +222,8 @@ class PlaybackQueue:
     # -- Properties ----------------------------------------------------------
 
     @property
-    def last_result(self) -> dict[str, object] | None:
-        """Return the most recent playback result dict, or None."""
+    def last_result(self) -> PlaybackResult | None:
+        """Return the most recent playback result, or None."""
         return self._last_result
 
     @property
@@ -221,7 +242,7 @@ class PlaybackQueue:
         """Add an item to the playback queue."""
         await self._queue.put(item)
 
-    def set_last_result(self, value: dict[str, object] | None) -> None:
+    def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""
         self._last_result = value
 
@@ -446,10 +467,10 @@ class PlaybackQueue:
         stderr: str,
     ) -> None:
         """Update last_result with a freshly-observed playback result."""
-        self._last_result = {
-            "file": str(path),
-            "rc": rc,
-            "elapsed_s": round(elapsed, 4),
-            "stderr": stderr,
-            "ts": time.time(),
-        }
+        self._last_result = PlaybackResult(
+            path=path,
+            rc=rc,
+            elapsed_s=round(elapsed, 4),
+            stderr=stderr,
+            ts=time.time(),
+        )

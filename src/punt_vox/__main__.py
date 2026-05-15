@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +28,7 @@ from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.music.generator import MusicTrack
 
 logger = logging.getLogger(__name__)
 
@@ -1081,21 +1081,14 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     client = VoxClientSync()
     try:
         result = client.music_list()
-        tracks: list[dict[str, object]] = result.get("tracks", [])
+        raw_tracks: list[dict[str, object]] = result.get("tracks", [])
+        tracks = [MusicTrack.from_dict(t) for t in raw_tracks]
         if not tracks:
             _formatter.emit({"tracks": []}, "No saved tracks.")
             return
-        lines: list[str] = []
-        for t in tracks:
-            raw_size = t.get("size_bytes", 0)
-            size_kb = int(str(raw_size)) // 1024
-            raw_mtime = t.get("modified", 0)
-            date_str = datetime.fromtimestamp(
-                float(str(raw_mtime)),
-            ).strftime("%Y-%m-%d %H:%M")
-            lines.append(f"  {t['name']} ({size_kb} KB, {date_str})")
+        lines = [f"  {track.display_line()}" for track in tracks]
         _formatter.emit(
-            {"tracks": tracks},
+            {"tracks": raw_tracks},
             f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
         )
     except VoxdConnectionError as exc:
