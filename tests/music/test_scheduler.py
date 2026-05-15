@@ -96,14 +96,14 @@ class TestTurnOn:
 
     def test_turn_on_ownership_transfer_kills_proc(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "old-owner"
+        scheduler._mode = "on"
+        scheduler._owner = "old-owner"
 
         fake_proc = MagicMock()
         fake_proc.returncode = None
         fake_proc.kill = MagicMock()
         fake_proc.wait = AsyncMock(return_value=0)
-        scheduler.proc = fake_proc
+        scheduler._proc = fake_proc
 
         asyncio.run(
             scheduler.turn_on(
@@ -120,14 +120,14 @@ class TestTurnOn:
 
     def test_turn_on_same_owner_skips_kill(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "sess-1"
+        scheduler._mode = "on"
+        scheduler._owner = "sess-1"
 
         fake_proc = MagicMock()
         fake_proc.returncode = None
         fake_proc.kill = MagicMock()
         fake_proc.wait = AsyncMock(return_value=0)
-        scheduler.proc = fake_proc
+        scheduler._proc = fake_proc
 
         asyncio.run(
             scheduler.turn_on(
@@ -144,7 +144,7 @@ class TestTurnOn:
 
     def test_turn_on_preserves_existing_style(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.style = "jazz"
+        scheduler._style = "jazz"
 
         asyncio.run(
             scheduler.turn_on(
@@ -163,9 +163,9 @@ class TestTurnOff:
 
     def test_turn_off_resets_state(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.state = "playing"
-        scheduler.replay = True
+        scheduler._mode = "on"
+        scheduler._state = "playing"
+        scheduler._replay = True
 
         result = asyncio.run(scheduler.turn_off())
 
@@ -181,7 +181,7 @@ class TestTurnOff:
         fake_proc.returncode = None
         fake_proc.kill = MagicMock()
         fake_proc.wait = AsyncMock(return_value=0)
-        scheduler.proc = fake_proc
+        scheduler._proc = fake_proc
 
         asyncio.run(scheduler.turn_off())
 
@@ -239,8 +239,8 @@ class TestUpdateVibe:
 
     def test_update_vibe_matching_owner(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.owner = "sess-1"
-        scheduler.vibe = ("old", "[old-tags]")
+        scheduler._owner = "sess-1"
+        scheduler._vibe = ("old", "[old-tags]")
 
         result = scheduler.update_vibe(owner_id="sess-1", vibe=("happy", "[warm]"))
 
@@ -250,8 +250,8 @@ class TestUpdateVibe:
 
     def test_update_vibe_non_owner_ignored(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.owner = "sess-1"
-        scheduler.vibe = ("old", "[old-tags]")
+        scheduler._owner = "sess-1"
+        scheduler._vibe = ("old", "[old-tags]")
 
         result = scheduler.update_vibe(owner_id="other-sess", vibe=("happy", "[warm]"))
 
@@ -260,8 +260,8 @@ class TestUpdateVibe:
 
     def test_update_vibe_same_vibe_ignored(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.owner = "sess-1"
-        scheduler.vibe = ("happy", "[warm]")
+        scheduler._owner = "sess-1"
+        scheduler._vibe = ("happy", "[warm]")
 
         result = scheduler.update_vibe(owner_id="sess-1", vibe=("happy", "[warm]"))
 
@@ -279,7 +279,7 @@ class TestSkipNext:
 
     def test_skip_next_signals_changed(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
+        scheduler._mode = "on"
 
         result = scheduler.skip_next(owner_id="sess-1")
 
@@ -288,7 +288,7 @@ class TestSkipNext:
 
     def test_skip_next_when_off_ignored(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "off"
+        scheduler._mode = "off"
 
         result = scheduler.skip_next(owner_id="sess-1")
 
@@ -296,8 +296,8 @@ class TestSkipNext:
 
     def test_skip_next_clears_replay(self, tmp_path: Path) -> None:
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.replay = True
+        scheduler._mode = "on"
+        scheduler._replay = True
 
         scheduler.skip_next(owner_id="sess-1")
 

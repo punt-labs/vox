@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.scheduler import _MUSIC_MAX_RETRIES, MusicScheduler
+from punt_vox.voxd.music.loop import MusicLoop, _MUSIC_MAX_RETRIES
+from punt_vox.voxd.music.scheduler import MusicScheduler
 
 __all__: list[str] = []
 
@@ -26,9 +27,9 @@ class TestMaxRetriesDisablesMusic:
     def test_max_retries_disables_music(self, tmp_path: Path) -> None:
         """Consecutive generation failures during playback disable music."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_count = 0
@@ -79,12 +80,13 @@ class TestMaxRetriesDisablesMusic:
                     fake_subprocess,
                 ),
                 patch.object(
-                    MusicScheduler,
+                    MusicLoop,
                     "_backoff_sleep",
                     new=AsyncMock(),
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                loop = MusicLoop(scheduler)
+                task = asyncio.create_task(loop.run())
 
                 # Wait for initial generation + playback to start.
                 for _ in range(100):
@@ -93,7 +95,7 @@ class TestMaxRetriesDisablesMusic:
                         break
 
                 # Trigger vibe change to start parallel generation.
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
                 # Wait for max retries to disable music.
