@@ -323,7 +323,7 @@ class CouplingScorer:
                     if top in pkg_modules and top != own_key:
                         imported.add(top)
                     elif top == pkg_name and len(parts) > 1:
-                        # Try progressively longer paths: voxd, voxd.music, voxd.music.scheduler
+                        # Try progressively longer paths
                         inner_parts = parts[1:]
                         for i in range(len(inner_parts), 0, -1):
                             candidate = ".".join(inner_parts[:i])
@@ -834,7 +834,6 @@ class CouplingRatchet:
             return 0
 
         any_regression = False
-        any_improvement = False
         rows: list[tuple[str, str, str, str, str, str]] = []
 
         for fpath in sorted(touched):
@@ -850,7 +849,6 @@ class CouplingRatchet:
                         continue
                     val = current[metric]
                     rows.append((fpath, metric, "NEW", f"{val:.3f}", "--", "INFO"))
-                any_improvement = True
                 continue
 
             for metric in self.METRIC_KEYS:
@@ -862,7 +860,6 @@ class CouplingRatchet:
 
                 if self._is_strictly_better(metric, cur_val, base_val):
                     grade = "IMPROVED"
-                    any_improvement = True
                 elif self._is_better_or_equal(metric, cur_val, base_val):
                     grade = "PASS"
                 else:

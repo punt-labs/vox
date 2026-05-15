@@ -340,7 +340,8 @@ class Baseline:
             )
         if current_total < baseline_total:
             _writeln(
-                f"\nPASS: suppression count decreased by {baseline_total - current_total}"
+                f"\nPASS: suppression count decreased"
+                f" by {baseline_total - current_total}"
             )
         else:
             _writeln("\nPASS: suppression count unchanged")
@@ -390,7 +391,8 @@ class Baseline:
 def main() -> None:
     if len(sys.argv) < 2:
         _writeln(
-            f"Usage: {sys.argv[0]} <directory> [--json] [--check] [--update] [--threshold]",
+            f"Usage: {sys.argv[0]} <directory>"
+            " [--json] [--check] [--update] [--threshold]",
         )
         sys.exit(1)
 
