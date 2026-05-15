@@ -35,6 +35,7 @@ from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.list_handler import MusicListHandler
+from punt_vox.voxd.music.loop import MusicLoop
 from punt_vox.voxd.music.next_handler import MusicNextHandler
 from punt_vox.voxd.music.off_handler import MusicOffHandler
 from punt_vox.voxd.music.on_handler import MusicOnHandler
@@ -72,6 +73,7 @@ class VoxDaemon:
         "_config",
         "_health",
         "_music",
+        "_music_loop",
         "_playback",
         "_router",
         "_synthesis",
@@ -80,6 +82,7 @@ class VoxDaemon:
     _config: DaemonConfig
     _health: DaemonHealth
     _music: MusicScheduler
+    _music_loop: MusicLoop
     _playback: PlaybackQueue
     _router: WebSocketRouter
     _synthesis: SynthesisPipeline
@@ -90,6 +93,7 @@ class VoxDaemon:
         playback: PlaybackQueue,
         synthesis: SynthesisPipeline,
         music: MusicScheduler,
+        music_loop: MusicLoop,
         health: DaemonHealth,
         router: WebSocketRouter,
     ) -> Self:
@@ -98,6 +102,7 @@ class VoxDaemon:
         self._playback = playback
         self._synthesis = synthesis
         self._music = music
+        self._music_loop = music_loop
         self._health = health
         self._router = router
         return self
@@ -155,19 +160,21 @@ class VoxDaemon:
         """Manage background tasks for playback consumer and music loop."""
         consumer_task = asyncio.create_task(self._playback.consumer())
         logger.info("Playback consumer started")
-        music_task = asyncio.create_task(self._music.loop())
+        music_task = asyncio.create_task(self._music_loop.run())
         logger.info("Music loop started")
         try:
             yield
         finally:
             music_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(Exception):
                 await music_task
-            await self._music.kill_proc()
+            with contextlib.suppress(Exception):
+                await self._music.shutdown()
             consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(Exception):
                 await consumer_task
-            self._config.remove_port_file()
+            with contextlib.suppress(Exception):
+                self._config.remove_port_file()
             logger.info("voxd stopped")
 
     # -- Static helpers used by both the class and the test factory ----------
@@ -363,6 +370,7 @@ def main(
         playback=playback,
         synthesis=synthesis,
         music=scheduler,
+        music_loop=MusicLoop(scheduler),
         health=health,
         router=ws_router,
     )
