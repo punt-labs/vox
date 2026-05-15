@@ -26,7 +26,7 @@ class MusicTrack:
 
     @classmethod
     def from_stat(cls, mp3: Path) -> MusicTrack | None:
-        """Return a MusicTrack built from the file's stat, or None on OSError."""
+        """Return a MusicTrack from the file's stat, or None if the file disappeared."""
         try:
             stat = mp3.stat()
         except FileNotFoundError:

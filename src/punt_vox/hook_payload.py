@@ -34,11 +34,6 @@ class BashPayload:
     exit_code: int | None
     stdout: str
 
-    @property
-    def failed(self) -> bool:
-        """Return True when the command exited with a non-zero code."""
-        return self.exit_code is not None and self.exit_code != 0
-
     @classmethod
     def parse(cls, data: dict[str, object]) -> BashPayload:
         """Return a BashPayload extracted from raw hook data."""
