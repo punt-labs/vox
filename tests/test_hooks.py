@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
+from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
     _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
@@ -69,7 +70,7 @@ class TestClassifySignal:
         assert classify_signal(0, "5 passed in 1.2s") == "tests-pass"
 
     def test_tests_pass_checkmark(self) -> None:
-        assert classify_signal(0, "\u2713 3 passed") == "tests-pass"
+        assert classify_signal(0, "✓ 3 passed") == "tests-pass"
 
     def test_tests_fail(self) -> None:
         assert classify_signal(1, "FAILED tests/test_foo.py") == "tests-fail"
@@ -125,24 +126,24 @@ class TestClassifySignal:
 class TestHandleStop:
     def test_notify_disabled(self) -> None:
         config = _make_config(notify="n")
-        assert handle_stop({}, config) is None
+        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
 
     def test_stop_hook_active(self) -> None:
         config = _make_config()
-        assert handle_stop({"stop_hook_active": True}, config) is None
+        assert handle_stop(StopPayload(stop_hook_active=True), config) is None
 
     def test_no_signals(self) -> None:
         config = _make_config(vibe_signals=None)
-        assert handle_stop({}, config) is None
+        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
 
     def test_empty_signals(self) -> None:
         config = _make_config(vibe_signals="")
-        assert handle_stop({}, config) is None
+        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
 
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: object) -> None:
         config = _make_config(speak="n")
-        result = handle_stop({}, config)
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is None
 
     @patch("punt_vox.hooks.write_fields")
@@ -151,7 +152,7 @@ class TestHandleStop:
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
         config = _make_config()
-        result = handle_stop({}, config)
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         assert result["decision"] == "block"
         reason = str(result["reason"])
@@ -167,7 +168,7 @@ class TestHandleStop:
         self, mock_path: MagicMock, mock_write: MagicMock
     ) -> None:
         config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
-        handle_stop({}, config)
+        handle_stop(StopPayload(stop_hook_active=False), config)
         assert mock_write.call_count == 1
         assert mock_write.call_args == call(
             {"vibe_tags": "[satisfied]", "vibe_signals": ""},
@@ -180,7 +181,7 @@ class TestHandleStop:
         self, _mock_path: MagicMock, _mock_write: MagicMock
     ) -> None:
         config = _make_config(notify="c")
-        result = handle_stop({}, config)
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         assert result["decision"] == "block"
 
@@ -197,7 +198,7 @@ class TestHandleStop:
             vibe_signals="tests-pass@12:00",
         )
         with patch("punt_vox.hooks.write_field") as mock_write:
-            result = handle_stop({}, config)
+            result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         # Manual mode with existing tags — no write needed
         mock_write.assert_not_called()
@@ -215,7 +216,7 @@ class TestHandleStop:
             vibe_signals="tests-pass@12:00",
         )
         with patch("punt_vox.hooks.write_field") as mock_write:
-            result = handle_stop({}, config)
+            result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         assert result["decision"] == "block"
         # Vibe off — must not write tags to config
@@ -272,32 +273,62 @@ class TestHandleNotification:
         self, mock_chime: MagicMock, mock_speak: MagicMock
     ) -> None:
         config = _make_config(notify="n")
-        handle_notification({"notification_type": "permission_prompt"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="permission_prompt",
+                message="Needs your attention",
+            ),
+            config,
+        )
         mock_chime.assert_not_called()
         mock_speak.assert_not_called()
 
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode_plays_chime(self, mock_chime: MagicMock) -> None:
         config = _make_config(speak="n")
-        handle_notification({"notification_type": "permission_prompt"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="permission_prompt",
+                message="Needs your attention",
+            ),
+            config,
+        )
         mock_chime.assert_called_once_with("prompt")
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y", voice="matilda")
-        handle_notification({"notification_type": "permission_prompt"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="permission_prompt",
+                message="Needs your attention",
+            ),
+            config,
+        )
         mock_speak.assert_called_once()
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_idle_prompt_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y")
-        handle_notification({"notification_type": "idle_prompt"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="idle_prompt",
+                message="Needs your attention",
+            ),
+            config,
+        )
         mock_speak.assert_called_once()
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_unknown_type_speaks_via_voxd(self, mock_speak: MagicMock) -> None:
         config = _make_config(speak="y")
-        handle_notification({"notification_type": "unknown"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="unknown",
+                message="Needs your attention",
+            ),
+            config,
+        )
         mock_speak.assert_called_once()
 
 
@@ -314,10 +345,8 @@ class TestHandlePostBash:
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
 
-        data: dict[str, object] = {
-            "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
-        }
-        handle_post_bash(data, config_dir)
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        handle_post_bash(payload, config_dir)
 
         # vibe_signals is ephemeral — written to vox.local.md
         local_md = config_dir / "vox.local.md"
@@ -333,10 +362,8 @@ class TestHandlePostBash:
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
 
-        data: dict[str, object] = {
-            "tool_response": {"exit_code": 0, "stdout": "hello world"}
-        }
-        handle_post_bash(data, config_dir)
+        payload = BashPayload(exit_code=0, stdout="hello world")
+        handle_post_bash(payload, config_dir)
 
         # No signal matched — vox.local.md should not be created
         local_md = config_dir / "vox.local.md"
@@ -351,10 +378,8 @@ class TestHandlePostBash:
         local_md = config_dir / "vox.local.md"
         local_md.write_text('---\nvibe_signals: "lint-pass@11:00"\n---\n')
 
-        data: dict[str, object] = {
-            "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
-        }
-        handle_post_bash(data, config_dir)
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        handle_post_bash(payload, config_dir)
 
         text = local_md.read_text()
         assert "lint-pass@11:00" in text
@@ -367,8 +392,8 @@ class TestHandlePostBash:
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
 
-        data: dict[str, object] = {"tool_response": "not a dict"}
-        handle_post_bash(data, config_dir)
+        payload = BashPayload(exit_code=None, stdout="")
+        handle_post_bash(payload, config_dir)
 
         local_md = config_dir / "vox.local.md"
         assert not local_md.exists()
@@ -384,10 +409,8 @@ class TestHandlePostBash:
         existing = ",".join(f"old-{i}@00:00" for i in range(MAX_VIBE_SIGNALS))
         local_md.write_text(f'---\nvibe_signals: "{existing}"\n---\n')
 
-        data: dict[str, object] = {
-            "tool_response": {"exit_code": 0, "stdout": "5 passed in 1.2s"}
-        }
-        handle_post_bash(data, config_dir)
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        handle_post_bash(payload, config_dir)
 
         text = local_md.read_text()
         # Extract the vibe_signals value
@@ -752,7 +775,13 @@ class TestRepoNamePrefix:
     def test_handle_notification_passes_repo_name(self, mock_speak: MagicMock) -> None:
         """handle_notification threads repo_name to the spoken phrase."""
         config = _make_config(speak="y", repo_name="biff")
-        handle_notification({"notification_type": "permission_prompt"}, config)
+        handle_notification(
+            NotificationPayload(
+                notification_type="permission_prompt",
+                message="Needs your attention",
+            ),
+            config,
+        )
         text = mock_speak.call_args[0][0]
         assert text.startswith("biff. ")
 
@@ -763,7 +792,7 @@ class TestRepoNamePrefix:
     ) -> None:
         """handle_stop includes repo_name in the block reason string."""
         config = _make_config(repo_name="vox")
-        result = handle_stop({}, config)
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         reason = str(result["reason"])
         assert reason.startswith("vox. ")
@@ -775,7 +804,7 @@ class TestRepoNamePrefix:
     ) -> None:
         """handle_stop reason is a plain phrase when repo_name is None."""
         config = _make_config(repo_name=None)
-        result = handle_stop({}, config)
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
         assert result is not None
         reason = str(result["reason"])
         assert any(reason == phrase for phrase in STOP_PHRASES)

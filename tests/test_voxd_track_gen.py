@@ -75,11 +75,11 @@ class TestListTracks:
         tracks = gen.list_tracks()
 
         assert len(tracks) == 2
-        names = [t["name"] for t in tracks]
+        names = [t.name for t in tracks]
         assert names == ["alpha", "beta"]  # sorted
-        assert all("size_bytes" in t for t in tracks)
-        assert all("modified" in t for t in tracks)
-        assert all("path" in t for t in tracks)
+        assert all(t.size_bytes > 0 for t in tracks)
+        assert all(t.modified > 0 for t in tracks)
+        assert all(t.path.suffix == ".mp3" for t in tracks)
 
 
 class TestOutputDirProperty:

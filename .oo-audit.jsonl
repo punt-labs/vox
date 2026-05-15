@@ -43,3 +43,4 @@
 {"ts":"2026-05-14T21:46:43Z","commit":"96bf5df","files_scored":74,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
 {"ts":"2026-05-15T14:42:17Z","commit":"3ac0dfd","files_scored":74,"files_improved":1,"files_regressed":4,"verdict":"fail","deltas":{"src/punt_vox/voxd/music/scheduler.py":{"avg_params":[0.7,0.48],"max_complexity":[18.0,11.0],"avg_complexity":[2.41,1.88],"module_size":[638.0,256.0],"classes_per_module":[2.0,1.0]}}}
 {"ts":"2026-05-15T14:47:11Z","commit":"3ac0dfd","files_scored":74,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
+{"ts":"2026-05-15T18:42:25Z","commit":"82d8013","files_scored":75,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}

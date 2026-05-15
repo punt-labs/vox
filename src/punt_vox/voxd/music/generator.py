@@ -5,12 +5,64 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Self
 
-__all__ = ["TrackGenerator"]
+__all__ = ["MusicTrack", "TrackGenerator"]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class MusicTrack:
+    """Saved music track with display metadata."""
+
+    name: str
+    path: Path
+    size_bytes: int
+    modified: float  # Unix timestamp (st_mtime)
+
+    @classmethod
+    def from_stat(cls, mp3: Path) -> MusicTrack | None:
+        """Return a MusicTrack built from the file's stat, or None on OSError."""
+        try:
+            stat = mp3.stat()
+        except OSError:
+            return None
+        return cls(
+            name=mp3.stem,
+            path=mp3,
+            size_bytes=stat.st_size,
+            modified=stat.st_mtime,
+        )
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> MusicTrack:
+        """Construct a MusicTrack from a wire-format dict."""
+        return cls(
+            name=str(d.get("name", "")),
+            path=Path(str(d.get("path", ""))),
+            size_bytes=int(str(d.get("size_bytes", 0))),
+            modified=float(str(d.get("modified", 0))),
+        )
+
+    def display_line(self) -> str:
+        """Return a human-readable summary line for this track."""
+        size_kb = self.size_bytes // 1024
+        date_str = datetime.fromtimestamp(self.modified).strftime("%Y-%m-%d %H:%M")
+        return f"{self.name} ({size_kb} KB, {date_str})"
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize for WebSocket wire format (backward compat)."""
+        return {
+            "name": self.name,
+            "size_bytes": self.size_bytes,
+            "modified": self.modified,
+            "path": str(self.path),
+        }
+
 
 _MUSIC_DURATION_MS = 120_000
 
@@ -80,20 +132,15 @@ class TrackGenerator:
         style_part = self.slugify(style, max_len=20) or "mix"
         return f"{vibe_part}-{style_part}-{stamp}"
 
-    def list_tracks(self) -> list[dict[str, object]]:
+    def list_tracks(self) -> list[MusicTrack]:
         """Return metadata for all saved .mp3 tracks in the output directory."""
-        tracks: list[dict[str, object]] = []
-        if self._output_dir.exists():
-            for mp3 in sorted(self._output_dir.glob("*.mp3")):
-                stat = mp3.stat()
-                tracks.append(
-                    {
-                        "name": mp3.stem,
-                        "size_bytes": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "path": str(mp3),
-                    }
-                )
+        if not self._output_dir.exists():
+            return []
+        tracks: list[MusicTrack] = []
+        for mp3 in sorted(self._output_dir.glob("*.mp3")):
+            track = MusicTrack.from_stat(mp3)
+            if track is not None:
+                tracks.append(track)
         return tracks
 
     @staticmethod

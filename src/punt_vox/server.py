@@ -14,7 +14,6 @@ import random
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -25,6 +24,7 @@ from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolErro
 from punt_vox.logging_config import configure_logging
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voices import VOICE_BLURBS
+from punt_vox.voxd.music.generator import MusicTrack
 
 logger = logging.getLogger(__name__)
 
@@ -791,19 +791,13 @@ def music_list() -> str:
             }
         )
 
-    tracks: list[dict[str, object]] = resp.get("tracks", [])
+    raw_tracks: list[dict[str, object]] = resp.get("tracks", [])
+    tracks = [MusicTrack.from_dict(t) for t in raw_tracks]
     if not tracks:
         message = "\u266a No saved tracks."
     else:
         lines = [f"\u266a {len(tracks)} saved track(s):"]
-        for t in tracks:
-            raw_size = t.get("size_bytes", 0)
-            size_kb = int(str(raw_size)) // 1024
-            raw_mtime = t.get("modified", 0)
-            date_str = datetime.fromtimestamp(
-                float(str(raw_mtime)),
-            ).strftime("%Y-%m-%d %H:%M")
-            lines.append(f"  \u266a {t['name']} ({size_kb} KB, {date_str})")
+        lines.extend(f"  \u266a {track.display_line()}" for track in tracks)
         message = "\n".join(lines)
     return json.dumps({"message": message, **resp})
 

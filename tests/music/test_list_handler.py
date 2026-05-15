@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from starlette.websockets import WebSocket
 
+from punt_vox.voxd.music.generator import MusicTrack
 from punt_vox.voxd.music.list_handler import MusicListHandler
 
 __all__: list[str] = []
@@ -25,12 +27,12 @@ class TestMusicListHandler:
     def test_delegates_to_generator(self) -> None:
         generator = MagicMock()
         generator.list_tracks.return_value = [
-            {
-                "name": "alpha",
-                "size_bytes": 1024,
-                "modified": 1.0,
-                "path": "/m/alpha.mp3",
-            },
+            MusicTrack(
+                name="alpha",
+                path=Path("/m/alpha.mp3"),
+                size_bytes=1024,
+                modified=1.0,
+            ),
         ]
         handler = MusicListHandler(generator=generator)
         ws = _make_ws()
