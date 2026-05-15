@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
 import platform
 import shutil
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-import click
 import typer
 
 from punt_vox import __version__
+from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
     read_config,
@@ -143,124 +141,6 @@ def _build_synthesis_spec(
 #      both as populating the same ``api_key`` parameter; we distinguish
 #      them via ``ctx.get_parameter_source`` to decide whether to warn)
 # ---------------------------------------------------------------------------
-
-
-_API_KEY_ARGV_WARNING = (
-    "warning: --api-key on the command line is visible via 'ps' and "
-    "shell history. Prefer VOX_API_KEY env var, --api-key-file <path>, "
-    "or --api-key-stdin for real credentials."
-)
-
-
-def _read_api_key_file(path: Path) -> str:
-    """Read a per-call API key from a file.
-
-    Rejects missing paths, non-files, and empty files. Strips trailing
-    whitespace and newlines. Warns (but does not fail) when the file
-    has any group or other permission bits set, matching the advisory
-    style used by the install path for ``keys.env`` permission
-    handling.
-
-    The check is ``mode & 0o077`` (any group or other bit), not
-    ``mode & 0o004`` (the other-read bit only). On shared Unix systems
-    a file at 0640 is readable by anyone in the owning group
-    (``nobody``, ``www-data``, a shared-dev group, etc.) — the
-    narrower check let that exposure slide silently. The only safe
-    mode for a credential file is 0600. Copilot on PR #175.
-    """
-    if not path.is_file():
-        msg = f"--api-key-file: {path} is not a file"
-        raise typer.BadParameter(msg)
-    mode = path.stat().st_mode
-    if mode & 0o077:
-        typer.echo(
-            f"warning: --api-key-file: {path} is accessible to group "
-            f"or other users (mode {oct(mode & 0o777)}). Run "
-            f"'chmod 600 {path}' to tighten permissions.",
-            err=True,
-        )
-    value = path.read_text(encoding="utf-8").strip()
-    if not value:
-        msg = f"--api-key-file: {path} is empty"
-        raise typer.BadParameter(msg)
-    return value
-
-
-def _read_api_key_stdin() -> str:
-    """Read a per-call API key from stdin (one line).
-
-    Refuses to read when stdin is a tty — the user almost certainly
-    meant to pipe the key in, and blocking on an interactive prompt
-    would be a surprising default. Strips trailing whitespace and
-    rejects empty input.
-    """
-    if sys.stdin.isatty():
-        msg = "--api-key-stdin requires piped input (stdin is a tty)"
-        raise typer.BadParameter(msg)
-    line = sys.stdin.readline().strip()
-    if not line:
-        msg = "--api-key-stdin: received empty input"
-        raise typer.BadParameter(msg)
-    return line
-
-
-def _resolve_api_key(
-    ctx: typer.Context,
-    api_key: str | None,
-    api_key_file: Path | None,
-    *,
-    api_key_stdin: bool,
-) -> str | None:
-    """Resolve the per-call API key from the first configured source.
-
-    Enforces mutual exclusion between ``--api-key-file``,
-    ``--api-key-stdin``, and ``--api-key``/``VOX_API_KEY``. Fires a
-    stderr warning when ``--api-key`` was passed literally on the
-    command line (source == COMMANDLINE) because argv is visible to
-    local process introspection and shell history. The env-var path
-    (source == ENVIRONMENT) does not warn: while environment variables
-    are not secret, they are generally less exposed to casual local
-    observation than argv.
-
-    Returns None when no source is configured — the call is anonymous
-    and voxd falls back to the ambient ``keys.env`` value.
-    """
-    file_set = api_key_file is not None
-    stdin_set = api_key_stdin
-    argv_or_env_set = api_key is not None
-    sources_set = int(file_set) + int(stdin_set) + int(argv_or_env_set)
-    if sources_set > 1:
-        named: list[str] = []
-        if file_set:
-            named.append("--api-key-file")
-        if stdin_set:
-            named.append("--api-key-stdin")
-        if argv_or_env_set:
-            # Distinguish argv vs env var so the error points at the
-            # right input surface. Users piping a key via env var and
-            # then also writing --api-key-file by mistake should see
-            # "VOX_API_KEY", not "--api-key".
-            source = ctx.get_parameter_source("api_key")
-            if source is click.core.ParameterSource.ENVIRONMENT:
-                named.append("VOX_API_KEY")
-            else:
-                named.append("--api-key")
-        conflict = ", ".join(named)
-        msg = (
-            f"Specify at most one API key source; got {conflict}. "
-            "These are mutually exclusive."
-        )
-        raise typer.BadParameter(msg)
-    if api_key_file is not None:
-        return _read_api_key_file(api_key_file)
-    if api_key_stdin:
-        return _read_api_key_stdin()
-    if api_key is not None:
-        source = ctx.get_parameter_source("api_key")
-        if source is click.core.ParameterSource.COMMANDLINE:
-            typer.echo(_API_KEY_ARGV_WARNING, err=True)
-        return api_key
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -478,9 +358,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
     # ``_resolve_api_key`` for the full rationale.
-    resolved_api_key = _resolve_api_key(
+    resolved_api_key = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
-    )
+    ).resolve()
 
     boost = speaker_boost if speaker_boost else None
     spec = _build_synthesis_spec(
@@ -829,7 +709,7 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command("migrate-audio")
-def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+def migrate_audio_cmd(
     execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
         bool, typer.Option("--execute", help="Actually move files.")
     ] = False,
@@ -841,111 +721,18 @@ def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO 
     ] = None,
 ) -> None:
     """Migrate saved audio from ~/vox-output to ~/Music/vox."""
-    import shutil as _shutil
+    from punt_vox.audio_migration import AudioMigration
 
     src_dir = source or (Path.home() / "vox-output")
     dst_dir = dest or default_output_dir()
+    migration = AudioMigration(src_dir, dst_dir)
 
-    if not src_dir.exists():
-        typer.echo("Nothing to migrate: source directory does not exist.")
+    if not migration.scan():
         return
-
-    if not src_dir.is_dir():
-        typer.echo(f"Source is not a directory: {src_dir}")
-        raise typer.Exit(code=1)
-
-    # Build list of (src_path, dst_path) pairs.
-    pairs: list[tuple[Path, Path]] = []
-    conflicts: list[tuple[Path, Path]] = []
-    skipped: list[tuple[Path, str]] = []
-    total_size = 0
-
-    for src_file in sorted(src_dir.rglob("*")):
-        if not src_file.is_file():
-            continue
-        rel = src_file.relative_to(src_dir)
-        # Special case: music/ -> tracks/
-        parts = rel.parts
-        if parts and parts[0] == "music":
-            rel = Path("tracks", *parts[1:])
-        dst_file = dst_dir / rel
-        try:
-            total_size += src_file.stat().st_size
-        except OSError as e:
-            skipped.append((src_file, f"unreadable ({e})"))
-            continue
-
-        if dst_file.exists():
-            try:
-                src_stat = src_file.stat()
-                dst_stat = dst_file.stat()
-            except OSError as e:
-                skipped.append((src_file, f"unreadable ({e})"))
-                continue
-            same_size = src_stat.st_size == dst_stat.st_size
-            same_mtime = abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
-            if same_size and same_mtime:
-                skipped.append((src_file, "already migrated"))
-            else:
-                conflicts.append((src_file, dst_file))
-        else:
-            pairs.append((src_file, dst_file))
-
-    if not pairs and not conflicts and not skipped:
-        typer.echo("Nothing to migrate: source directory is empty.")
-        return
-
-    size_mb = total_size / (1024 * 1024)
-    file_count = len(pairs) + len(conflicts) + len(skipped)
-
-    if not execute:
-        typer.echo("vox migrate-audio: dry run (pass --execute to move files)\n")
-        typer.echo(f"Source:      {src_dir} ({file_count} files, {size_mb:.1f} MB)")
-        typer.echo(f"Destination: {dst_dir}\n")
-        for src_file, dst_file in pairs:
-            typer.echo(f"  {src_file} -> {dst_file}")
-        for src_file, dst_file in conflicts:
-            typer.echo(f"  {src_file} -> {dst_file} [CONFLICT]")
-        for src_file, reason in skipped:
-            typer.echo(f"  {src_file} [SKIP: {reason}]")
-        count = len(pairs)
-        typer.echo(f"\n{count} files would be moved. Run with --execute.")
-        if conflicts:
-            typer.echo(f"{len(conflicts)} conflict(s) would be skipped.")
-        return
-
-    # Execute mode: move files.
-    moved = 0
-    moved_bytes = 0
-    for src_file, dst_file in pairs:
-        dst_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _shutil.move(str(src_file), str(dst_file))
-            moved += 1
-            moved_bytes += dst_file.stat().st_size
-        except PermissionError:
-            typer.echo(f"  warning: permission denied: {src_file}", err=True)
-        except OSError as exc:
-            typer.echo(f"  warning: {exc}", err=True)
-
-    # Clean up empty source dirs.
-    removed_source = False
-    for dirpath in sorted(src_dir.rglob("*"), reverse=True):
-        if dirpath.is_dir():
-            with contextlib.suppress(OSError):
-                dirpath.rmdir()
-    try:
-        src_dir.rmdir()
-        removed_source = True
-    except OSError:
-        pass
-
-    moved_mb = moved_bytes / (1024 * 1024)
-    typer.echo(f"Moved {moved} files from {src_dir} to {dst_dir} ({moved_mb:.1f} MB)")
-    if conflicts:
-        typer.echo(f"Skipped {len(conflicts)} conflict(s).")
-    if removed_source:
-        typer.echo(f"Removed empty {src_dir} directory.")
+    if execute:
+        migration.execute()
+    else:
+        migration.preview()
 
 
 # ---------------------------------------------------------------------------

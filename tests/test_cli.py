@@ -494,16 +494,16 @@ class TestApiKeyInputPaths:
         """
         import typer
 
-        from punt_vox.__main__ import (
-            _read_api_key_stdin,  # pyright: ignore[reportPrivateUsage]
+        from punt_vox.api_key_resolver import (
+            ApiKeyResolver,
         )
 
         fake_stdin = MagicMock()
         fake_stdin.isatty.return_value = True
-        monkeypatch.setattr("punt_vox.__main__.sys.stdin", fake_stdin)
+        monkeypatch.setattr("punt_vox.api_key_resolver.sys.stdin", fake_stdin)
 
         try:
-            _read_api_key_stdin()
+            ApiKeyResolver._read_stdin()
         except typer.BadParameter as exc:
             assert "requires piped input" in str(exc)
         else:  # pragma: no cover — forces the failure path
