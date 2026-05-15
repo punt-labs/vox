@@ -401,21 +401,12 @@ class TestApiKeyPassthroughIntegration:
         monkeypatch.setattr("punt_vox.voxd.synthesis.get_provider", fake_get_provider)
 
         # Disable the cache so every call reaches the stub factory.
-        def _cache_miss(
-            _text: str,
-            _voice: str,
-            _provider: str,
-            _api_key: str | None = None,
-        ) -> Path | None:
+        from punt_vox.cache import CacheKey as _CacheKey
+
+        def _cache_miss(_key: _CacheKey) -> Path | None:
             return None
 
-        def _cache_noop(
-            _text: str,
-            _voice: str,
-            _provider: str,
-            _path: Path,
-            _api_key: str | None = None,
-        ) -> None:
+        def _cache_noop(_key: _CacheKey, _path: Path) -> None:
             return None
 
         monkeypatch.setattr("punt_vox.voxd.synthesis.cache_get", _cache_miss)
@@ -604,13 +595,14 @@ class TestCacheApiKeyBypass:
         get_calls: list[tuple[object, ...]] = []
         put_calls: list[tuple[object, ...]] = []
 
-        def spy_cache_get(*args: object) -> Path | None:
-            get_calls.append(args)
+        from punt_vox.cache import CacheKey as _CacheKey2
+
+        def spy_cache_get(_key: _CacheKey2) -> Path | None:
+            get_calls.append((_key,))
             return None
 
-        def spy_cache_put(*args: object) -> Path | None:
-            put_calls.append(args)
-            source = args[3]
+        def spy_cache_put(_key: _CacheKey2, source: Path) -> Path | None:
+            put_calls.append((_key, source))
             assert isinstance(source, Path)
             return source
 

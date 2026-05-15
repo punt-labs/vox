@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 from punt_vox.cache import (
     CacheInfo,
+    CacheKey,
     cache_clear,
     cache_get,
-    cache_key,
     cache_put,
     cache_status,
 )
@@ -24,46 +24,52 @@ def _fake_mp3(path: Path, size: int = 100) -> None:
 
 
 # ---------------------------------------------------------------------------
-# cache_key tests
+# CacheKey tests
 # ---------------------------------------------------------------------------
 
 
 class TestCacheKey:
     def test_deterministic(self) -> None:
-        k1 = cache_key("hello", "matilda", "elevenlabs")
-        k2 = cache_key("hello", "matilda", "elevenlabs")
+        k1 = CacheKey("hello", "matilda", "elevenlabs").filename
+        k2 = CacheKey("hello", "matilda", "elevenlabs").filename
         assert k1 == k2
 
     def test_ends_with_mp3(self) -> None:
-        assert cache_key("text", "voice", "provider").endswith(".mp3")
+        assert CacheKey("text", "voice", "provider").filename.endswith(".mp3")
 
     def test_hex_prefix_length(self) -> None:
-        key = cache_key("text", "voice", "provider")
+        key = CacheKey("text", "voice", "provider").filename
         stem = key.removesuffix(".mp3")
         assert len(stem) == 32
         # All hex chars
         int(stem, 16)
 
     def test_different_text_different_key(self) -> None:
-        assert cache_key("alpha", "v", "p") != cache_key("bravo", "v", "p")
+        assert (
+            CacheKey("alpha", "v", "p").filename != CacheKey("bravo", "v", "p").filename
+        )
 
     def test_different_voice_different_key(self) -> None:
-        assert cache_key("t", "matilda", "p") != cache_key("t", "roger", "p")
+        k1 = CacheKey("t", "matilda", "p").filename
+        k2 = CacheKey("t", "roger", "p").filename
+        assert k1 != k2
 
     def test_different_provider_different_key(self) -> None:
-        assert cache_key("t", "v", "elevenlabs") != cache_key("t", "v", "polly")
+        k1 = CacheKey("t", "v", "elevenlabs").filename
+        k2 = CacheKey("t", "v", "polly").filename
+        assert k1 != k2
 
     def test_none_voice_and_provider(self) -> None:
-        key = cache_key("hello", None, None)
+        key = CacheKey("hello", None, None).filename
         assert key.endswith(".mp3")
 
     def test_separator_prevents_collision(self) -> None:
         # "ab" + "c" vs "a" + "bc" must differ
-        assert cache_key("ab", "c", "p") != cache_key("a", "bc", "p")
+        assert CacheKey("ab", "c", "p").filename != CacheKey("a", "bc", "p").filename
 
     def test_backward_compat_with_pre_v421_cache(self) -> None:
         # Load-bearing backward-compat invariant: any change to
-        # ``cache_key`` that breaks the on-disk filename for anonymous
+        # ``CacheKey.filename`` that breaks the on-disk filename for anonymous
         # calls orphans every cache entry written by an earlier vox
         # version. The digest must be **byte-identical** to the
         # pre-v4.2.1 format, which was
@@ -71,17 +77,17 @@ class TestCacheKey:
         #
         # This test also proves confirmation (3) for the PR #175
         # round-4 fix: the api_key parameter has been removed from
-        # ``cache_key``, and the anonymous filename for an ordinary
-        # (text, voice, provider) call is exactly what the pre-PR code
-        # produced. Per-call api_key scopes do not reach cache.py at
-        # all — the bypass happens in voxd._synthesize_to_file.
+        # the cache key computation, and the anonymous filename for an
+        # ordinary (text, voice, provider) call is exactly what the
+        # pre-PR code produced. Per-call api_key scopes do not reach
+        # cache.py at all — the bypass happens in voxd._synthesize_to_file.
         text, voice, provider = "hello", "matilda", "elevenlabs"
         payload = f"{text}\0{voice}\0{provider}".encode()
         legacy_digest = hashlib.md5(
             payload,
             usedforsecurity=False,
         ).hexdigest()
-        assert cache_key(text, voice, provider) == f"{legacy_digest}.mp3"
+        assert CacheKey(text, voice, provider).filename == f"{legacy_digest}.mp3"
         # And for the None-voice / None-provider case the historical
         # format substituted empty strings — same invariant applies.
         text2 = "greetings"
@@ -89,7 +95,13 @@ class TestCacheKey:
             f"{text2}\0\0".encode(),
             usedforsecurity=False,
         ).hexdigest()
-        assert cache_key(text2, None, None) == f"{legacy_digest_2}.mp3"
+        assert CacheKey(text2, None, None).filename == f"{legacy_digest_2}.mp3"
+
+    def test_path_in(self, tmp_path: Path) -> None:
+        key = CacheKey("hello", "matilda", "elevenlabs")
+        result = key.path_in(tmp_path)
+        assert result == tmp_path / key.filename
+        assert result.parent == tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -100,21 +112,21 @@ class TestCacheKey:
 class TestCacheGet:
     def test_miss_returns_none(self, tmp_path: Path) -> None:
         with patch("punt_vox.cache.CACHE_DIR", tmp_path):
-            assert cache_get("nonexistent", None, None) is None
+            assert cache_get(CacheKey("nonexistent", None, None)) is None
 
     def test_hit_returns_path(self, tmp_path: Path) -> None:
         with patch("punt_vox.cache.CACHE_DIR", tmp_path):
-            key = cache_key("hello", "matilda", "elevenlabs")
-            cached = tmp_path / key
+            key = CacheKey("hello", "matilda", "elevenlabs")
+            cached = tmp_path / key.filename
             _fake_mp3(cached)
-            result = cache_get("hello", "matilda", "elevenlabs")
+            result = cache_get(key)
             assert result is not None
             assert result == cached
 
     def test_hit_updates_mtime(self, tmp_path: Path) -> None:
         with patch("punt_vox.cache.CACHE_DIR", tmp_path):
-            key = cache_key("hello", None, None)
-            cached = tmp_path / key
+            key = CacheKey("hello", None, None)
+            cached = tmp_path / key.filename
             _fake_mp3(cached)
             # Set mtime to the past
             old_time = time.time() - 3600
@@ -123,16 +135,16 @@ class TestCacheGet:
             os.utime(cached, (old_time, old_time))
             old_mtime = cached.stat().st_mtime
 
-            cache_get("hello", None, None)
+            cache_get(key)
             new_mtime = cached.stat().st_mtime
             assert new_mtime > old_mtime
 
     def test_empty_file_treated_as_miss(self, tmp_path: Path) -> None:
         with patch("punt_vox.cache.CACHE_DIR", tmp_path):
-            key = cache_key("hello", None, None)
-            cached = tmp_path / key
+            key = CacheKey("hello", None, None)
+            cached = tmp_path / key.filename
             cached.write_bytes(b"")
-            assert cache_get("hello", None, None) is None
+            assert cache_get(key) is None
             # Empty file should be deleted
             assert not cached.exists()
 
@@ -148,8 +160,9 @@ class TestCachePut:
         source = tmp_path / "source.mp3"
         _fake_mp3(source, size=200)
 
+        key = CacheKey("hello", "matilda", "elevenlabs")
         with patch("punt_vox.cache.CACHE_DIR", cache_dir):
-            result = cache_put("hello", "matilda", "elevenlabs", source)
+            result = cache_put(key, source)
 
         assert result is not None
         assert result.exists()
@@ -161,7 +174,7 @@ class TestCachePut:
         source = tmp_path / "nonexistent.mp3"
 
         with patch("punt_vox.cache.CACHE_DIR", cache_dir):
-            assert cache_put("hello", None, None, source) is None
+            assert cache_put(CacheKey("hello", None, None), source) is None
 
     def test_empty_source_returns_none(self, tmp_path: Path) -> None:
         cache_dir = tmp_path / "cache"
@@ -169,7 +182,7 @@ class TestCachePut:
         source.write_bytes(b"")
 
         with patch("punt_vox.cache.CACHE_DIR", cache_dir):
-            assert cache_put("hello", None, None, source) is None
+            assert cache_put(CacheKey("hello", None, None), source) is None
 
     def test_creates_cache_dir(self, tmp_path: Path) -> None:
         cache_dir = tmp_path / "new_cache_dir"
@@ -177,7 +190,7 @@ class TestCachePut:
         _fake_mp3(source)
 
         with patch("punt_vox.cache.CACHE_DIR", cache_dir):
-            result = cache_put("hello", None, None, source)
+            result = cache_put(CacheKey("hello", None, None), source)
 
         assert result is not None
         assert cache_dir.exists()
@@ -209,7 +222,7 @@ class TestEviction:
                 os.utime(f, (1000 + i, 1000 + i))
 
             # Adding one more should evict the oldest
-            cache_put("new_entry", None, None, source)
+            cache_put(CacheKey("new_entry", None, None), source)
 
             mp3s = list(cache_dir.glob("*.mp3"))
             assert len(mp3s) <= 3

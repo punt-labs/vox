@@ -14,7 +14,7 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Self
 
-from punt_vox.cache import cache_get, cache_put
+from punt_vox.cache import CacheKey, cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
@@ -296,8 +296,9 @@ class SynthesisPipeline:
         # reads bytes synthesized under a different key (or no key).
         # CodeQL py/weak-sensitive-data-hashing also required that we
         # never feed the api_key into any digest in cache.py.
+        key = CacheKey(normalized, resolved_voice, provider_name)
         if api_key is None:
-            cached = cache_get(normalized, resolved_voice, provider_name)
+            cached = cache_get(key)
             if cached is not None:
                 return cached
         else:
@@ -366,7 +367,7 @@ class SynthesisPipeline:
                 # so a billing-isolated call can never leave bytes behind
                 # that a later call on a different key could reuse.
                 if api_key is None:
-                    cache_put(normalized, resolved_voice, provider_name, output_path)
+                    cache_put(key, output_path)
                 return output_path
 
     async def try_direct_play(
