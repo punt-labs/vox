@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.loop import MusicLoop, _MUSIC_MAX_RETRIES
+from punt_vox.voxd.music.loop import _MUSIC_MAX_RETRIES, MusicLoop
 from punt_vox.voxd.music.scheduler import MusicScheduler
 
 __all__: list[str] = []
