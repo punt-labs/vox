@@ -45,37 +45,47 @@ CACHE_DIR = VOX_DATA_DIR / "cache"
 MAX_ENTRIES = 500
 
 
-def cache_key(text: str, voice: str | None, provider: str | None) -> str:
-    """Compute the cache filename stem for a synthesis request.
+@dataclass(frozen=True, slots=True)
+class CacheKey:
+    """Content-addressed identity for a cached synthesis.
 
-    Anonymous-call cache only. Per-call credential overrides bypass
-    the cache at the voxd call site (see the module docstring and
-    the cache guards in ``_synthesize_to_file`` in
-    ``src/punt_vox/voxd.py``) so no sensitive data ever reaches this
-    function. The MD5 digest is byte-identical to pre-v4.2.1 format
-    so existing on-disk cache entries remain reachable after
-    upgrade. Filename shape: ``<32 hex chars>.mp3``.
+    The (text, voice, provider) triple uniquely identifies an anonymous
+    synthesis request. The MD5 digest is byte-identical to pre-v4.2.1
+    format so existing on-disk cache entries remain reachable after
+    upgrade.
     """
-    payload = f"{text}\0{voice or ''}\0{provider or ''}".encode()
-    # MD5 is deliberate here: the input contains no sensitive material
-    # (text/voice/provider are non-secret), and the digest must stay
-    # byte-identical to pre-v4.2.1 so existing on-disk cache entries
-    # remain reachable after upgrade. Per-call credential overrides
-    # never reach this function — see the module docstring.
-    digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
-    return f"{digest}.mp3"
+
+    text: str
+    voice: str | None
+    provider: str | None
+
+    @property
+    def filename(self) -> str:
+        """On-disk filename: 32-char MD5 hex + .mp3."""
+        payload = f"{self.text}\0{self.voice or ''}\0{self.provider or ''}".encode()
+        # MD5 is deliberate here: the input contains no sensitive material
+        # (text/voice/provider are non-secret), and the digest must stay
+        # byte-identical to pre-v4.2.1 so existing on-disk cache entries
+        # remain reachable after upgrade. Per-call credential overrides
+        # never reach this class — see the module docstring.
+        digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        return f"{digest}.mp3"
+
+    def path_in(self, cache_dir: Path) -> Path:
+        """Absolute path for this key in the given cache directory."""
+        return cache_dir / self.filename
 
 
-def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None:
+def cache_get(key: CacheKey) -> Path | None:
     """Look up a cached MP3 file.
 
     Returns the path if the file exists and is non-empty.  Touches the
     file's mtime on hit so LRU eviction works correctly.  Returns None
     on miss. Anonymous cache only — per-call credential overrides
     bypass this layer entirely at the voxd call site so no sensitive
-    data ever reaches ``cache_key``.
+    data ever reaches this function.
     """
-    path = CACHE_DIR / cache_key(text, voice, provider)
+    path = key.path_in(CACHE_DIR)
     if not path.exists():
         return None
     if path.stat().st_size == 0:
@@ -87,25 +97,20 @@ def cache_get(text: str, voice: str | None, provider: str | None) -> Path | None
     return path
 
 
-def cache_put(
-    text: str,
-    voice: str | None,
-    provider: str | None,
-    source: Path,
-) -> Path | None:
+def cache_put(key: CacheKey, source: Path) -> Path | None:
     """Copy a synthesized MP3 into the cache.
 
     Returns the cached path on success, or None if the source file
     does not exist or is empty.  Evicts oldest entries when the cache
     exceeds ``MAX_ENTRIES``. Anonymous cache only — per-call
     credential overrides bypass this layer entirely at the voxd call
-    site so no sensitive data ever reaches ``cache_key``.
+    site so no sensitive data ever reaches this function.
     """
     if not source.exists() or source.stat().st_size == 0:
         return None
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    dest = CACHE_DIR / cache_key(text, voice, provider)
+    dest = key.path_in(CACHE_DIR)
 
     # Reject symlinks to prevent local symlink attacks
     if dest.is_symlink():
@@ -156,7 +161,7 @@ def cache_clear() -> int:
     return len(files)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CacheInfo:
     """Cache status information."""
 
