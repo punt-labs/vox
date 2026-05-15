@@ -29,7 +29,8 @@ class MusicTrack:
         """Return a MusicTrack built from the file's stat, or None on OSError."""
         try:
             stat = mp3.stat()
-        except OSError:
+        except FileNotFoundError:
+            logger.debug("Track disappeared during listing, skipping: %s", mp3)
             return None
         return cls(
             name=mp3.stem,
@@ -41,11 +42,23 @@ class MusicTrack:
     @classmethod
     def from_dict(cls, d: dict[str, object]) -> MusicTrack:
         """Construct a MusicTrack from a wire-format dict."""
+        path_str = str(d.get("path", ""))
+        if not path_str:
+            msg = "MusicTrack.from_dict: missing required 'path' field"
+            raise ValueError(msg)
+        try:
+            size_bytes = int(str(d.get("size_bytes", 0)))
+        except (ValueError, TypeError):
+            size_bytes = 0
+        try:
+            modified = float(str(d.get("modified", 0)))
+        except (ValueError, TypeError):
+            modified = 0.0
         return cls(
             name=str(d.get("name", "")),
-            path=Path(str(d.get("path", ""))),
-            size_bytes=int(str(d.get("size_bytes", 0))),
-            modified=float(str(d.get("modified", 0))),
+            path=Path(path_str),
+            size_bytes=size_bytes,
+            modified=modified,
         )
 
     def display_line(self) -> str:

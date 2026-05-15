@@ -26,6 +26,7 @@ import random
 import select
 import sys
 from pathlib import Path
+from typing import cast
 
 import typer
 
@@ -541,9 +542,7 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
     config = read_config(config_dir)
     data = _read_hook_input()
-    stop_payload = parse_hook_payload(data, "stop")
-    if not isinstance(stop_payload, StopPayload):  # pragma: no cover
-        return
+    stop_payload = cast("StopPayload", parse_hook_payload(data, "stop"))
     result = handle_stop(stop_payload, config)
     if result is not None:
         _emit(result)
@@ -556,9 +555,7 @@ def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if config_dir is None:
         return
     data = _read_hook_input()
-    bash_payload = parse_hook_payload(data, "post_bash")
-    if not isinstance(bash_payload, BashPayload):  # pragma: no cover
-        return
+    bash_payload = cast("BashPayload", parse_hook_payload(data, "post_bash"))
     handle_post_bash(bash_payload, config_dir)
 
 
@@ -570,9 +567,9 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         return
     config = read_config(config_dir)
     data = _read_hook_input()
-    notif_payload = parse_hook_payload(data, "notification")
-    if not isinstance(notif_payload, NotificationPayload):  # pragma: no cover
-        return
+    notif_payload = cast(
+        "NotificationPayload", parse_hook_payload(data, "notification")
+    )
     handle_notification(notif_payload, config)
 
 
