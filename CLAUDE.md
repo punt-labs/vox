@@ -66,6 +66,8 @@ See `docs/architecture.tex` for the full system description.
 
 **OO ratchet:** `make check-oo` (part of `make check`) compares current OO scores against `.oo-baseline.json`. It passes only if no metric regressed on touched files and at least one metric improved. It fails if any metric got worse or nothing improved.
 
+**Do not negotiate with the ratchet.** Do not edit `.oo-baseline.json` by hand except via `--rebaseline` for structural refactors. Do not suppress `check-oo`. If the ratchet fails, improve the code until it passes.
+
 Workflow:
 
 1. Write code that improves OO quality on the files you touch.
@@ -80,6 +82,36 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 - `make report` — full diagnostics including per-file OO breakdown.
 - `make metrics` — ABC complexity analysis.
 - `make coverage` — test coverage HTML report.
+- `make check-coupling` — coupling/cohesion analysis (informational, not in check chain yet).
+
+## Development Loop
+
+Two nested loops govern all code changes.
+
+### Inner loop — one mission
+
+Execute after every agent delegation that produces code changes.
+
+1. **Delegate** to the right ethos specialist. One mission = one focused task. Never batch multiple steps.
+2. **`make check`** — must pass before proceeding. Zero exceptions.
+3. **`/feature-dev:code-reviewer`** on the mission diff.
+4. **`/pr-review-toolkit:silent-failure-hunter`** on the mission diff.
+5. **Fix every finding.** Both agents must return zero findings. To dismiss one: document (a) the exact finding, (b) the specific reason it does not apply, (c) the code reference.
+6. **Re-run both agents.** Exit the fix loop only when both return zero findings.
+7. **Commit.**
+
+### Outer loop — one PR (one rollback-coherent unit)
+
+After all missions for the feature complete and each has passed its inner loop:
+
+1. **`make check`** on the full accumulated diff.
+2. **Both local review agents** on the complete diff.
+3. **Fix all findings.** Re-run until clean.
+4. **Push PR.**
+
+### PR boundaries
+
+Split by **rollback granularity**, not size. Ask: if this broke production, what reverts together? That is one PR. PRs should cover multiple steps — do not open a PR per step. Sequential steps in the same area belong in one PR.
 
 **Known type checker workarounds:**
 
@@ -112,6 +144,10 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 ## Ethos & Delegation
 
 Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses ethos missions. Every non-trivial delegation has two phases: (1) **design mission** — describes problem, constraints, and invariants but does NOT prescribe a write set; (2) **implementation mission** — uses the write set produced by the design phase. The design mission's output IS the write set — the specialist decides what to create, split, or extract. This is critical: prescribing a write set before design prevents refactoring and forces code into existing modules.
+
+**One mission = one task.** Never give an agent multiple steps in a single prompt. Agent timeouts on multi-step prompts leave partial work and cause manual cleanup. One focused task per delegation.
+
+**The COO does not write code.** Every code change, no matter how small, is delegated. There is no threshold below which a change is "too small to delegate." The only files the COO edits directly: `CHANGELOG.md`, `CLAUDE.md`, `DESIGN.md`, `README.md`, design docs, and plan files.
 
 ### Why these pairings
 
