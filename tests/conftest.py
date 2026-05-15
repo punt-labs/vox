@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -23,35 +22,6 @@ JOANNA = VoiceConfig(voice_id="Joanna", language_code="en-US", engine="neural")
 HANS = VoiceConfig(voice_id="Hans", language_code="de-DE", engine="standard")
 TATYANA = VoiceConfig(voice_id="Tatyana", language_code="ru-RU", engine="standard")
 SEOYEON = VoiceConfig(voice_id="Seoyeon", language_code="ko-KR", engine="neural")
-
-
-@pytest.fixture(autouse=True)
-def _populate_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Pre-populate the voice cache so resolve_voice() never hits the Polly API.
-
-    Tests that verify resolve_voice's API-calling behavior (test_polly_provider.py)
-    explicitly clear VOICES and reset _voices_loaded before their test logic.
-    """
-    import punt_vox.providers.polly as polly
-
-    saved_voices = dict(polly.VOICES)
-    saved_loaded = polly._voices_loaded  # pyright: ignore[reportPrivateUsage]
-
-    polly.VOICES.update(
-        {
-            "joanna": JOANNA,
-            "hans": HANS,
-            "tatyana": TATYANA,
-            "seoyeon": SEOYEON,
-        }
-    )
-    polly._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
-
-    yield
-
-    polly.VOICES.clear()
-    polly.VOICES.update(saved_voices)
-    polly._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -103,7 +73,18 @@ def mock_boto_client() -> MagicMock:
 @pytest.fixture
 def polly_provider(mock_boto_client: MagicMock) -> PollyProvider:
     """Create a PollyProvider with a mocked boto3 backend."""
-    return PollyProvider(boto_client=mock_boto_client)
+    provider = PollyProvider(boto_client=mock_boto_client)
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
+        {
+            "joanna": JOANNA,
+            "hans": HANS,
+            "tatyana": TATYANA,
+            "seoyeon": SEOYEON,
+        }
+    )
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 @pytest.fixture
@@ -149,8 +130,6 @@ def mock_elevenlabs_client() -> MagicMock:
     )
 
     # Mock voices.get_all for voice resolution.
-    # Real API returns names with descriptions
-    # (e.g. "Matilda - Knowledgable, Professional").
     voice_matilda = MagicMock()
     voice_matilda.name = "Matilda - Knowledgable, Professional"
     voice_matilda.voice_id = "XrExE9yKIg1WjnnlVkGX"
@@ -173,72 +152,31 @@ def mock_elevenlabs_client() -> MagicMock:
     return client
 
 
-@pytest.fixture(autouse=True)
-def _populate_elevenlabs_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Pre-populate the ElevenLabs voice cache so resolve_voice() never hits the API."""
-    import time
-
-    import punt_vox.providers.elevenlabs as elevenlabs
-
-    saved_voices = dict(elevenlabs.VOICES)
-    saved_loaded_at = elevenlabs._voices_loaded_at  # pyright: ignore[reportPrivateUsage]
-    saved_force_at = elevenlabs._voices_force_fetched_at  # pyright: ignore[reportPrivateUsage]
-
-    elevenlabs.VOICES.update(
+@pytest.fixture
+def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
+    """Create an ElevenLabsProvider with a mocked client."""
+    provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
         {
             "matilda": "XrExE9yKIg1WjnnlVkGX",
             "drew": "29vD33N1CtxCmqQRPOHJ",
         }
     )
-    # Set a recent timestamp so the cache appears fresh.
-    elevenlabs._voices_loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
+    # Mark cache as loaded so TTL checks work.
+    import time
 
-    yield
-
-    elevenlabs.VOICES.clear()
-    elevenlabs.VOICES.update(saved_voices)
-    elevenlabs._voices_loaded_at = saved_loaded_at  # pyright: ignore[reportPrivateUsage]
-    elevenlabs._voices_force_fetched_at = saved_force_at  # pyright: ignore[reportPrivateUsage]
-
-
-@pytest.fixture
-def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
-    """Create an ElevenLabsProvider with a mocked client."""
-    return ElevenLabsProvider(client=mock_elevenlabs_client)
+    provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 # ---------------------------------------------------------------------------
 # macOS Say provider fixtures
 # ---------------------------------------------------------------------------
 
-# Test voice configs for say provider.
 FRED = SayVoiceConfig(name="Fred", locale="en_US")
 SAMANTHA = SayVoiceConfig(name="Samantha", locale="en_US")
 ANNA_SAY = SayVoiceConfig(name="Anna", locale="de_DE")
-
-
-@pytest.fixture(autouse=True)
-def _populate_say_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Pre-populate the say voice cache so resolve_voice() never shells out."""
-    import punt_vox.providers.say as say_mod
-
-    saved_voices = dict(say_mod.VOICES)
-    saved_loaded = say_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
-
-    say_mod.VOICES.update(
-        {
-            "fred": FRED,
-            "samantha": SAMANTHA,
-            "anna": ANNA_SAY,
-        }
-    )
-    say_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
-
-    yield
-
-    say_mod.VOICES.clear()
-    say_mod.VOICES.update(saved_voices)
-    say_mod._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -250,44 +188,27 @@ def say_provider() -> SayProvider:
     ):
         mock_platform.system.return_value = "Darwin"
         mock_shutil.which.return_value = "/usr/bin/say"
-        return SayProvider()
+        provider = SayProvider()
+
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
+        {
+            "fred": FRED,
+            "samantha": SAMANTHA,
+            "anna": ANNA_SAY,
+        }
+    )
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 # ---------------------------------------------------------------------------
 # espeak-ng provider fixtures
 # ---------------------------------------------------------------------------
 
-# Test voice configs for espeak provider.
 ENGLISH_ESPEAK = EspeakVoiceConfig(name="en", language="en")
 GERMAN_ESPEAK = EspeakVoiceConfig(name="de", language="de")
 FRENCH_ESPEAK = EspeakVoiceConfig(name="fr", language="fr")
-
-
-@pytest.fixture(autouse=True)
-def _populate_espeak_voice_cache() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Pre-populate the espeak voice cache so resolve_voice() never shells out."""
-    import punt_vox.providers.espeak as espeak_mod
-
-    saved_voices = dict(espeak_mod.VOICES)
-    saved_loaded = espeak_mod._voices_loaded  # pyright: ignore[reportPrivateUsage]
-
-    espeak_mod.VOICES.update(
-        {
-            "english": ENGLISH_ESPEAK,
-            "en": ENGLISH_ESPEAK,
-            "german": GERMAN_ESPEAK,
-            "de": GERMAN_ESPEAK,
-            "french": FRENCH_ESPEAK,
-            "fr": FRENCH_ESPEAK,
-        }
-    )
-    espeak_mod._voices_loaded = True  # pyright: ignore[reportPrivateUsage]
-
-    yield
-
-    espeak_mod.VOICES.clear()
-    espeak_mod.VOICES.update(saved_voices)
-    espeak_mod._voices_loaded = saved_loaded  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -297,4 +218,18 @@ def espeak_provider() -> EspeakProvider:
         "punt_vox.providers.espeak._find_espeak_binary",
         return_value="/usr/bin/espeak-ng",
     ):
-        return EspeakProvider()
+        provider = EspeakProvider()
+
+    # Pre-populate the VoiceResolver cache for tests.
+    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
+        {
+            "english": ENGLISH_ESPEAK,
+            "en": ENGLISH_ESPEAK,
+            "german": GERMAN_ESPEAK,
+            "de": GERMAN_ESPEAK,
+            "french": FRENCH_ESPEAK,
+            "fr": FRENCH_ESPEAK,
+        }
+    )
+    provider._voices._loaded_at = 1.0  # pyright: ignore[reportPrivateUsage]
+    return provider

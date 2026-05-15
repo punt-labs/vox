@@ -16,7 +16,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import websockets
 import websockets.asyncio.client
@@ -138,19 +138,39 @@ def read_token_file() -> str | None:
 class VoxClient:
     """Async WebSocket client for voxd."""
 
-    def __init__(
-        self,
+    __slots__ = (
+        "_default_owner_id",
+        "_explicit_port",
+        "_explicit_token",
+        "_host",
+        "_port",
+        "_token",
+        "_ws",
+    )
+
+    _host: str
+    _explicit_port: int | None
+    _explicit_token: str | None
+    _port: int | None
+    _token: str | None
+    _ws: websockets.asyncio.client.ClientConnection | None
+    _default_owner_id: str
+
+    def __new__(
+        cls,
         host: str | None = None,
         port: int | None = None,
         token: str | None = None,
-    ) -> None:
+    ) -> Self:
+        self = super().__new__(cls)
         self._host = host if host is not None else _env_host()
         self._explicit_port = port
         self._explicit_token = token
         self._port = port
         self._token = token
-        self._ws: websockets.asyncio.client.ClientConnection | None = None
-        self._default_owner_id: str = uuid.uuid4().hex
+        self._ws = None
+        self._default_owner_id = uuid.uuid4().hex
+        return self
 
     # -- connection lifecycle ------------------------------------------------
 
@@ -583,15 +603,23 @@ class VoxClientSync:
     CLI commands are short-lived, so connection pooling adds no value.
     """
 
-    def __init__(
-        self,
+    __slots__ = ("_host", "_port", "_token")
+
+    _host: str
+    _port: int | None
+    _token: str | None
+
+    def __new__(
+        cls,
         host: str | None = None,
         port: int | None = None,
         token: str | None = None,
-    ) -> None:
+    ) -> Self:
+        self = super().__new__(cls)
         self._host = host if host is not None else _env_host()
         self._port = port
         self._token = token
+        return self
 
     def _make_client(self) -> VoxClient:
         return VoxClient(host=self._host, port=self._port, token=self._token)

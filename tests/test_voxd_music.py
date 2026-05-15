@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.loop import MusicLoop
 from punt_vox.voxd.music.scheduler import MusicScheduler
 
 
@@ -58,21 +59,21 @@ class TestMusicSchedulerFields:
         assert not scheduler.changed.is_set()
 
     def test_field_round_trips(self) -> None:
-        """Setting via scheduler properties reads back correctly."""
+        """Setting via private attributes reads back correctly."""
         scheduler = _make_scheduler()
-        scheduler.mode = "on"
+        scheduler._mode = "on"
         assert scheduler.mode == "on"
-        scheduler.style = "jazz"
+        scheduler._style = "jazz"
         assert scheduler.style == "jazz"
-        scheduler.owner = "sess-1"
+        scheduler._owner = "sess-1"
         assert scheduler.owner == "sess-1"
-        scheduler.vibe = ("chill", "[mellow]")
+        scheduler._vibe = ("chill", "[mellow]")
         assert scheduler.vibe == ("chill", "[mellow]")
-        scheduler.track_name = "my-track"
+        scheduler._track_name = "my-track"
         assert scheduler.track_name == "my-track"
-        scheduler.replay = True
+        scheduler._replay = True
         assert scheduler.replay is True
-        scheduler.state = "playing"
+        scheduler._state = "playing"
         assert scheduler.state == "playing"
 
 
@@ -114,22 +115,22 @@ class TestMusicLoopStateTransitions:
                     fake_generate_track,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 await asyncio.sleep(0)
 
                 # Turn music on.
-                scheduler.mode = "on"
-                scheduler.owner = "test-session"
-                scheduler.vibe = ("focused", "[calm]")
+                scheduler._mode = "on"
+                scheduler._owner = "test-session"
+                scheduler._vibe = ("focused", "[calm]")
                 scheduler.changed.set()
                 await asyncio.sleep(0.05)
 
                 # Turn music off.
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 await asyncio.sleep(0.05)
 
@@ -145,9 +146,9 @@ class TestMusicLoopStateTransitions:
     def test_crash_recovery_retries_with_backoff(self, tmp_path: Path) -> None:
         """Three failures in a row disable music mode."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "")
         scheduler.changed.set()
 
         attempt_count = 0
@@ -169,12 +170,12 @@ class TestMusicLoopStateTransitions:
                     failing_generate,
                 ),
                 patch.object(
-                    MusicScheduler,
+                    MusicLoop,
                     "_backoff_sleep",
                     new=AsyncMock(),
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 # Yield control so the loop can run its 3 retries.
                 for _ in range(20):
                     await asyncio.sleep(0)
@@ -193,9 +194,9 @@ class TestMusicLoopStateTransitions:
     ) -> None:
         """Setting music_changed during generation causes a new track."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "")
         scheduler.changed.set()
 
         generation_count = 0
@@ -210,7 +211,7 @@ class TestMusicLoopStateTransitions:
 
             # On first generation, simulate a vibe change mid-flight.
             if generation_count == 1:
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
             return output_path
@@ -235,14 +236,14 @@ class TestMusicLoopStateTransitions:
                     counting_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 await asyncio.sleep(0.15)
 
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 await asyncio.sleep(0.05)
 
@@ -261,9 +262,9 @@ class TestMusicLoopGaplessHandoff:
     def test_old_track_loops_during_generation(self, tmp_path: Path) -> None:
         """Playback subprocess stays alive the entire time generation runs."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_count = 0
@@ -314,19 +315,19 @@ class TestMusicLoopGaplessHandoff:
                     slow_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 await asyncio.sleep(0.05)
 
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
                 await asyncio.sleep(0.3)
 
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 await asyncio.sleep(0.05)
                 task.cancel()
@@ -348,9 +349,9 @@ class TestMusicLoopGaplessHandoff:
     ) -> None:
         """A second vibe change during generation cancels the first and starts fresh."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_vibes: list[str] = []
@@ -395,22 +396,22 @@ class TestMusicLoopGaplessHandoff:
                     tracking_generate,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 await asyncio.sleep(0.05)
 
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
                 await asyncio.wait_for(gen_event.wait(), timeout=1.0)
 
-                scheduler.vibe = ("energetic", "[upbeat]")
+                scheduler._vibe = ("energetic", "[upbeat]")
                 scheduler.changed.set()
                 await asyncio.sleep(0.3)
 
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 await asyncio.sleep(0.05)
                 task.cancel()
@@ -435,7 +436,7 @@ class TestKillMusicProc:
         proc.returncode = None
         proc.kill = MagicMock()
         proc.wait = AsyncMock(return_value=0)
-        scheduler.proc = proc
+        scheduler._proc = proc
 
         asyncio.run(scheduler.kill_proc())
 
@@ -444,7 +445,7 @@ class TestKillMusicProc:
 
     def test_noop_when_no_proc(self) -> None:
         scheduler = _make_scheduler()
-        scheduler.proc = None
+        scheduler._proc = None
 
         asyncio.run(scheduler.kill_proc())
 
@@ -455,7 +456,7 @@ class TestKillMusicProc:
         proc = MagicMock()
         proc.returncode = 0
         proc.kill = MagicMock()
-        scheduler.proc = proc
+        scheduler._proc = proc
 
         asyncio.run(scheduler.kill_proc())
 
@@ -469,9 +470,9 @@ class TestMusicLoopLostWakeup:
     def test_mode_on_before_wait_skips_blocking(self, tmp_path: Path) -> None:
         """If music_mode becomes 'on' between clear() and wait(), proceed."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
 
         generation_happened = False
 
@@ -482,7 +483,7 @@ class TestMusicLoopLostWakeup:
             generation_happened = True
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(b"fake")
-            scheduler.mode = "off"
+            scheduler._mode = "off"
             scheduler.changed.set()
             return output_path
 
@@ -492,7 +493,7 @@ class TestMusicLoopLostWakeup:
                 ".generate_track",
                 fake_generate,
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
                 await asyncio.sleep(0.1)
                 if not generation_happened:
                     task.cancel()
@@ -518,9 +519,9 @@ class TestGenFailureKeepsOldTrack:
     ) -> None:
         """First generation (vibe change) fails, retry succeeds."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_count = 0
@@ -575,23 +576,23 @@ class TestGenFailureKeepsOldTrack:
                     fail_then_succeed,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(
-                    MusicScheduler,
+                    MusicLoop,
                     "_backoff_sleep",
                     new=AsyncMock(),
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
 
                 for _ in range(100):
                     await asyncio.sleep(0.01)
                     if scheduler.proc is not None:
                         break
 
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
                 for _ in range(100):
@@ -599,7 +600,7 @@ class TestGenFailureKeepsOldTrack:
                     if generation_count >= 3:
                         break
 
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 for _ in range(50):
                     await asyncio.sleep(0.01)
@@ -624,9 +625,9 @@ class TestGenFailureKeepsOldTrack:
     def test_max_retries_stops_music_mode(self, tmp_path: Path) -> None:
         """After max retries during playback, music_mode becomes 'off'."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_count = 0
@@ -670,23 +671,23 @@ class TestGenFailureKeepsOldTrack:
                     always_fail_after_first,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(
-                    MusicScheduler,
+                    MusicLoop,
                     "_backoff_sleep",
                     new=AsyncMock(),
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
 
                 for _ in range(100):
                     await asyncio.sleep(0.01)
                     if scheduler.proc is not None:
                         break
 
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
                 for _ in range(100):
@@ -711,9 +712,9 @@ class TestGenFailureKeepsOldTrack:
     ) -> None:
         """A successful handoff after one failure resets the retry counter."""
         scheduler = _make_scheduler(tmp_path)
-        scheduler.mode = "on"
-        scheduler.owner = "test-session"
-        scheduler.vibe = ("focused", "[calm]")
+        scheduler._mode = "on"
+        scheduler._owner = "test-session"
+        scheduler._vibe = ("focused", "[calm]")
         scheduler.changed.set()
 
         generation_count = 0
@@ -757,23 +758,23 @@ class TestGenFailureKeepsOldTrack:
                     fail_once_per_cycle,
                 ),
                 patch(
-                    "punt_vox.voxd.music.scheduler.asyncio.create_subprocess_exec",
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
                     fake_subprocess,
                 ),
                 patch.object(
-                    MusicScheduler,
+                    MusicLoop,
                     "_backoff_sleep",
                     new=AsyncMock(),
                 ),
             ):
-                task = asyncio.create_task(scheduler.loop())
+                task = asyncio.create_task(MusicLoop(scheduler).run())
 
                 for _ in range(100):
                     await asyncio.sleep(0.01)
                     if scheduler.proc is not None:
                         break
 
-                scheduler.vibe = ("happy", "[warm]")
+                scheduler._vibe = ("happy", "[warm]")
                 scheduler.changed.set()
 
                 for _ in range(100):
@@ -783,7 +784,7 @@ class TestGenFailureKeepsOldTrack:
 
                 assert scheduler.mode == "on"
 
-                scheduler.vibe = ("energetic", "[bold]")
+                scheduler._vibe = ("energetic", "[bold]")
                 scheduler.changed.set()
 
                 for _ in range(100):
@@ -796,7 +797,7 @@ class TestGenFailureKeepsOldTrack:
                     "pushed past max retries"
                 )
 
-                scheduler.mode = "off"
+                scheduler._mode = "off"
                 scheduler.changed.set()
                 for _ in range(50):
                     await asyncio.sleep(0.01)

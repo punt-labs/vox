@@ -7,9 +7,11 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+from punt_vox.types import MusicProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ __all__ = ["ElevenLabsMusicProvider"]
 _DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
 
 
-class ElevenLabsMusicProvider:
+class ElevenLabsMusicProvider(MusicProvider):
     """ElevenLabs Music provider.
 
     Implements the MusicProvider protocol using the ElevenLabs SDK's
@@ -29,21 +31,26 @@ class ElevenLabsMusicProvider:
     never have vocals.
     """
 
-    def __init__(
-        self,
+    _output_format: str
+    _client: Any  # pyright: ignore[reportExplicitAny]
+
+    def __new__(
+        cls,
         *,
         api_key: str | None = None,
         client: Any | None = None,  # pyright: ignore[reportExplicitAny]
         output_format: str = _DEFAULT_OUTPUT_FORMAT,
-    ) -> None:
+    ) -> Self:
+        self = super().__new__(cls)
         self._output_format = output_format
         if client is not None:
-            self._client: Any = client  # pyright: ignore[reportExplicitAny]
+            self._client = client
         else:
             from elevenlabs import ElevenLabs  # pyright: ignore[reportMissingTypeStubs]
 
             key = api_key or os.environ.get("ELEVENLABS_API_KEY")
             self._client = ElevenLabs(api_key=key)  # pyright: ignore[reportUnknownMemberType]
+        return self
 
     def _generate_sync(self, prompt: str, duration_ms: int, output_path: Path) -> Path:
         """Run the synchronous SDK call and file write.

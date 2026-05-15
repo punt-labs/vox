@@ -15,7 +15,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from punt_vox.paths import (
-    cache_dir,
     config_dir,
     ensure_user_dirs,
     installed_version,
@@ -48,10 +47,6 @@ def test_run_dir_under_state() -> None:
     assert run_dir() == user_state_dir() / "run"
 
 
-def test_cache_dir_under_state() -> None:
-    assert cache_dir() == user_state_dir() / "cache"
-
-
 def test_keys_env_file_in_config_dir() -> None:
     assert keys_env_file() == config_dir() / "keys.env"
 
@@ -59,7 +54,7 @@ def test_keys_env_file_in_config_dir() -> None:
 def test_no_fhs_paths_leak_into_helpers() -> None:
     """None of the helpers may return /etc, /var, or brew prefix paths."""
     forbidden_prefixes = ("/etc/", "/var/", "/opt/homebrew/etc", "/usr/local/etc")
-    for helper in (user_state_dir, config_dir, log_dir, run_dir, cache_dir):
+    for helper in (user_state_dir, config_dir, log_dir, run_dir):
         resolved = str(helper())
         for prefix in forbidden_prefixes:
             assert not resolved.startswith(prefix), (

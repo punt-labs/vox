@@ -6,18 +6,20 @@ import logging
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.convert import ffmpeg_to_mp3, rate_to_wpm
+from punt_vox.providers.voice_resolver import VoiceResolver
 from punt_vox.types import (
     AudioProviderId,
-    AudioRequest,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    TTSProvider,
     VoiceNotFoundError,
 )
 
@@ -25,11 +27,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["EspeakProvider"]
 
-# Default speech rate for espeak-ng (words per minute).
-# espeak-ng default is 175 WPM, same as macOS say.
-_DEFAULT_WPM = 175
-
-# Default voice per language (ISO 639-1 → espeak-ng voice name).
+# Default voice per language (ISO 639-1 -> espeak-ng voice name).
 _DEFAULT_VOICES: dict[str, str] = {
     "de": "de",
     "en": "en",
@@ -56,13 +54,6 @@ class EspeakVoiceConfig:
     language: str
 
 
-# Cache of discovered voices, keyed by lowercase name.
-VOICES: dict[str, EspeakVoiceConfig] = {}
-
-# Whether voices have been loaded from the system.
-_voices_loaded: bool = False
-
-
 def _find_espeak_binary() -> str | None:
     """Find the espeak-ng or espeak binary on PATH."""
     for name in ("espeak-ng", "espeak"):
@@ -72,93 +63,30 @@ def _find_espeak_binary() -> str | None:
     return None
 
 
-def _load_voices_from_system() -> None:
-    """Parse ``espeak-ng --voices`` output and populate the voice cache.
+def _parse_voice_line(
+    line: str, lang_col: int, voice_col: int
+) -> tuple[str, str, EspeakVoiceConfig] | None:
+    """Parse a single voice line from espeak --voices output.
 
-    Output format (fixed-width columns)::
-
-        Pty  Language  Age/Gender  VoiceName   File   Other Languages
-         5     en             M  english      default
-         5     en-gb          M  english      other/en-gb
-         5     de             M  german       other/de
+    Returns ``(voice_key, iso_language, config)`` or None if the line
+    cannot be parsed.
     """
-    global _voices_loaded
-    if _voices_loaded:
-        return
-
-    binary = _find_espeak_binary()
-    if binary is None:
-        _voices_loaded = True
-        return
-
-    try:
-        result = subprocess.run(
-            [binary, "--voices"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-    except (
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-    ):
-        _voices_loaded = True
-        return
-
-    lines = result.stdout.splitlines()
-    if not lines:
-        _voices_loaded = True
-        return
-
-    # Parse column positions from header to handle variable-width
-    # Age/Gender field (may contain "M" or "40 M" with MBROLA voices).
-    header = lines[0]
-    lang_col = header.find("Language")
-    voice_col = header.find("VoiceName")
-    if lang_col < 0 or voice_col < 0:
-        _voices_loaded = True
-        return
-
-    for line in lines[1:]:
-        if len(line) <= voice_col:
-            continue
-        lang_part = line[lang_col:voice_col].split()
-        voice_part = line[voice_col:].split()
-        if not lang_part or not voice_part:
-            continue
-        lang = lang_part[0]
-        voice_name = voice_part[0]
-        key = voice_name.lower()
-        # Extract ISO 639-1 from language code (e.g. "en-gb" -> "en")
-        iso = lang.split("-")[0]
-        if len(iso) == 2 and key not in VOICES:
-            VOICES[key] = EspeakVoiceConfig(name=lang, language=iso)
-        # Also register by language code for convenience
-        lang_key = lang.lower()
-        if lang_key not in VOICES:
-            VOICES[lang_key] = EspeakVoiceConfig(name=lang, language=iso)
-
-        # Register bare ISO 639-1 prefix for fallback (e.g. "en" from "en-us").
-        # A truly bare entry (lang == iso, e.g. "en") always wins over a
-        # qualified variant that was parsed first (e.g. "en-us").
-        if len(iso) == 2 and (lang == iso or iso not in VOICES):
-            VOICES[iso] = EspeakVoiceConfig(name=lang, language=iso)
-
-    _voices_loaded = True
-    logger.debug("Loaded %d voices from espeak-ng", len(VOICES))
+    if len(line) <= voice_col:
+        return None
+    lang_part = line[lang_col:voice_col].split()
+    voice_part = line[voice_col:].split()
+    if not lang_part or not voice_part:
+        return None
+    lang = lang_part[0]
+    voice_name = voice_part[0]
+    iso = lang.split("-")[0]
+    if len(iso) != 2:
+        return None
+    cfg = EspeakVoiceConfig(name=lang, language=iso)
+    return voice_name.lower(), iso, cfg
 
 
-def _rate_to_wpm(rate: int) -> int:
-    """Convert percentage rate to words-per-minute for espeak-ng.
-
-    rate=100 -> 175 WPM (normal), rate=90 -> 157 WPM.
-    """
-    return max(1, int(_DEFAULT_WPM * rate / 100))
-
-
-class EspeakProvider:
+class EspeakProvider(TTSProvider):
     """espeak-ng TTS provider for Linux.
 
     Implements the TTSProvider protocol using the espeak-ng
@@ -169,7 +97,10 @@ class EspeakProvider:
     Works on Linux (and other platforms where espeak-ng is installed).
     """
 
-    def __init__(self) -> None:
+    _binary: str
+    _voices: VoiceResolver[EspeakVoiceConfig]
+
+    def __new__(cls) -> Self:
         binary = _find_espeak_binary()
         if binary is None:
             msg = (
@@ -177,7 +108,16 @@ class EspeakProvider:
                 "Install with: sudo apt-get install espeak-ng"
             )
             raise ValueError(msg)
-        self._binary: str = binary
+        self = super().__new__(cls)
+        self._binary = binary
+
+        self._voices = VoiceResolver(
+            self._fetch_voices,
+            default_key="en",
+            ttl_seconds=0,
+            cooldown_seconds=60,
+        )
+        return self
 
     @property
     def name(self) -> str:
@@ -186,17 +126,20 @@ class EspeakProvider:
     @property
     def default_voice(self) -> str:
         """Discover the best available English voice from the system."""
-        _load_voices_from_system()
+        cache = self._voices._cache  # pyright: ignore[reportPrivateUsage]
+        if not cache:
+            self._voices._ensure_loaded()  # pyright: ignore[reportPrivateUsage]
+            cache = self._voices._cache  # pyright: ignore[reportPrivateUsage]
         for candidate in ("en", "en-us", "en-gb"):
-            if candidate in VOICES:
+            if candidate in cache:
                 return candidate
         # First en-* variant found
-        for key in VOICES:
+        for key in cache:
             if key.startswith("en-"):
                 return key
         # Absolute fallback: first voice, or "en" if nothing is installed
-        if VOICES:
-            return next(iter(VOICES))
+        if cache:
+            return next(iter(cache))
         return "en"
 
     @property
@@ -207,63 +150,6 @@ class EspeakProvider:
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
-    def generate_audios(
-        self, requests: Sequence[SynthesisRequest]
-    ) -> list[SynthesisResult]:
-        return [self.generate_audio(request) for request in requests]
-
-    def _resolve_voice_and_rate(
-        self, request: AudioRequest
-    ) -> tuple[EspeakVoiceConfig, int]:
-        """Return the espeak voice config and resolved WPM for a request."""
-        resolved_voice = request.voice or self.default_voice
-        voice_cfg = self._resolve_voice_config(resolved_voice)
-        rate = request.rate if request.rate is not None else 100
-        return voice_cfg, _rate_to_wpm(rate)
-
-    def play_directly(self, request: AudioRequest) -> int:
-        """Play directly via espeak-ng's built-in audio output.
-
-        Spawns ``espeak-ng -v <voice> -s <wpm> <text>`` without ``-w``,
-        so espeak-ng writes to the default audio device instead of a
-        WAV file. Bypasses the WAV -> ffmpeg -> MP3 -> ffplay pipeline
-        entirely: same syscall and same audio session as a user shell.
-        """
-        voice_cfg, wpm = self._resolve_voice_and_rate(request)
-        text = strip_vibe_tags(request.text)
-        cmd = [
-            self._binary,
-            "-v",
-            voice_cfg.name,
-            "-s",
-            str(wpm),
-            text,
-        ]
-        logger.info(
-            "espeak direct-play: voice=%s wpm=%d chars=%d",
-            voice_cfg.name,
-            wpm,
-            len(text),
-        )
-        try:
-            result = subprocess.run(
-                cmd,
-                check=False,
-                capture_output=True,
-                timeout=60,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            logger.error("espeak direct-play failed: %s", exc)
-            return 1
-        if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace").strip()
-            logger.error(
-                "espeak direct-play rc=%d stderr=%r",
-                result.returncode,
-                stderr,
-            )
-        return result.returncode
-
     def synthesize(
         self, request: SynthesisRequest, output_path: Path
     ) -> SynthesisResult:
@@ -273,7 +159,10 @@ class EspeakProvider:
         """
         text = strip_vibe_tags(request.text)
 
-        voice_cfg, wpm = self._resolve_voice_and_rate(request)
+        resolved_voice = request.voice or self.default_voice
+        voice_cfg = self._voices.resolve(resolved_voice)
+        rate = request.rate if request.rate is not None else 100
+        wpm = rate_to_wpm(rate)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -302,22 +191,7 @@ class EspeakProvider:
                 len(text),
             )
 
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(wav_path),
-                    "-codec:a",
-                    "libmp3lame",
-                    "-qscale:a",
-                    "2",
-                    str(output_path),
-                ],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
+            ffmpeg_to_mp3(wav_path, output_path)
         finally:
             wav_path.unlink(missing_ok=True)
 
@@ -335,7 +209,7 @@ class EspeakProvider:
 
     def resolve_voice(self, name: str, language: str | None = None) -> str:
         """Validate and resolve a voice name to its canonical form."""
-        cfg = self._resolve_voice_config(name)
+        cfg = self._voices.resolve(name)
         if language is not None and cfg.language != language:
             msg = (
                 f"Voice '{cfg.name}' does not support language "
@@ -351,14 +225,16 @@ class EspeakProvider:
         binary = _find_espeak_binary()
         if binary:
             binary_name = Path(binary).name
-            checks.append(HealthCheck(passed=True, message=f"{binary_name}: {binary}"))
+            checks.append(
+                HealthCheck(passed=True, message=f"{binary_name}: {binary}"),
+            )
             voice = self.default_voice
             try:
-                cfg = self._resolve_voice_config(voice)
+                cfg = self._voices.resolve(voice)
                 checks.append(
                     HealthCheck(
                         passed=True,
-                        message=f"default voice: {cfg.name} ({cfg.language})",
+                        message=(f"default voice: {cfg.name} ({cfg.language})"),
                     )
                 )
             except VoiceNotFoundError:
@@ -393,25 +269,75 @@ class EspeakProvider:
 
     def list_voices(self, language: str | None = None) -> list[str]:
         """List available espeak-ng voices."""
-        _load_voices_from_system()
+        all_names = self._voices.list_all()
         if language is None:
-            return sorted(VOICES)
-        return sorted(name for name, cfg in VOICES.items() if cfg.language == language)
+            return all_names
+        return sorted(
+            name
+            for name in all_names
+            if self._voices.resolve(name).language == language
+        )
 
     def infer_language_from_voice(self, voice: str) -> str | None:
         """Infer ISO 639-1 language from an espeak-ng voice name."""
-        cfg = self._resolve_voice_config(voice)
+        cfg = self._voices.resolve(voice)
         return cfg.language
 
-    def _resolve_voice_config(self, name: str) -> EspeakVoiceConfig:
-        """Resolve a voice name to its EspeakVoiceConfig."""
-        key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
+    def _fetch_voices(self) -> dict[str, EspeakVoiceConfig]:
+        """Parse ``espeak-ng --voices`` output and return the voice dict."""
+        fresh: dict[str, EspeakVoiceConfig] = {}
 
-        _load_voices_from_system()
+        binary = _find_espeak_binary()
+        if binary is None:
+            return fresh
 
-        if key in VOICES:
-            return VOICES[key]
+        try:
+            result = subprocess.run(
+                [binary, "--voices"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            return fresh
 
-        raise VoiceNotFoundError(name, sorted(VOICES))
+        lines = result.stdout.splitlines()
+        if not lines:
+            return fresh
+
+        # Parse column positions from header to handle variable-width
+        # Age/Gender field (may contain "M" or "40 M" with MBROLA).
+        header = lines[0]
+        lang_col = header.find("Language")
+        voice_col = header.find("VoiceName")
+        if lang_col < 0 or voice_col < 0:
+            return fresh
+
+        for line in lines[1:]:
+            parsed = _parse_voice_line(line, lang_col, voice_col)
+            if parsed is None:
+                continue
+            key, iso, cfg = parsed
+
+            if key not in fresh:
+                fresh[key] = cfg
+
+            # Also register by language code for convenience
+            lang_key = cfg.name.lower()
+            if lang_key not in fresh:
+                fresh[lang_key] = cfg
+
+            # Register bare ISO 639-1 prefix for fallback
+            # (e.g. "en" from "en-us"). A truly bare entry
+            # (lang == iso, e.g. "en") always wins over a
+            # qualified variant parsed first (e.g. "en-us").
+            if cfg.name == iso or iso not in fresh:
+                fresh[iso] = cfg
+
+        logger.debug("Fetched %d voices from espeak-ng", len(fresh))
+        return fresh

@@ -52,11 +52,6 @@ def run_dir() -> Path:
     return user_state_dir() / "run"
 
 
-def cache_dir() -> Path:
-    """Synthesis cache lives under ``<state>/cache``."""
-    return user_state_dir() / "cache"
-
-
 def keys_env_file() -> Path:
     """Full path to ``keys.env`` inside the config dir."""
     return config_dir() / "keys.env"

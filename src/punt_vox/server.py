@@ -997,44 +997,6 @@ def status() -> str:
     )
 
 
-@mcp.tool()
-def show_vox() -> str:
-    """Display the Vox status widget in the Lux window.
-
-    Shows notification mode, voice/mute state, voice picker, vibe,
-    and engine in a compact display panel. Call again to refresh
-    after changing settings.
-
-    Returns:
-        JSON string with status ("ok" or "error" with message).
-    """
-    _session.refresh_from_config()
-    from punt_vox.applet import show_applet
-    from punt_vox.config import VoxConfig
-
-    cfg = VoxConfig(
-        notify=_session.notify,
-        speak=_session.speak,
-        vibe_mode=_session.vibe_mode,
-        voice=_session.voice,
-        provider=_session.provider,
-        model=_session.model,
-        vibe=_session.vibe,
-        vibe_tags=_session.vibe_tags,
-        vibe_signals=_session.vibe_signals,
-    )
-
-    # Get voice roster from voxd.
-    try:
-        client = _voxd_client()
-        voice_roster = client.voices(provider=_session.provider)
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
-        voice_roster = []
-
-    provider_name = _session.provider or "elevenlabs"
-    return json.dumps(show_applet(cfg, provider_name, voice_roster))
-
-
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------

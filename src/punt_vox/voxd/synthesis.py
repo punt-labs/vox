@@ -116,15 +116,42 @@ def _run_play_directly_sync(
 
     Returns ``None`` if the provider does not implement the
     ``DirectPlayProvider`` protocol -- the caller will fall back to the
-    synthesize-and-queue path. Mutates ``os.environ`` only if an API key
-    is supplied; restoration happens on the same thread so the env-lock
-    contract is preserved without holding the lock during audio playback.
+    synthesize-and-queue path. For local providers (say, espeak) whose
+    direct play has been extracted to ``local_play.py``, constructs the
+    appropriate direct player sharing the provider's VoiceResolver.
     """
     with _api_key_context(api_key, provider_name):
         provider = provider_factory()
-        if not isinstance(provider, DirectPlayProvider):
-            return None
-        return provider.play_directly(request)
+
+        # Local providers have extracted direct players that share
+        # the same VoiceResolver instance as the synthesis provider.
+        if provider_name == "say":
+            from punt_vox.providers.say import SayProvider
+
+            if isinstance(provider, SayProvider):
+                from punt_vox.providers.local_play import SayDirectPlayer
+
+                say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
+                return say_player.play_directly(request)
+
+        if provider_name == "espeak":
+            from punt_vox.providers.espeak import EspeakProvider
+
+            if isinstance(provider, EspeakProvider):
+                from punt_vox.providers.local_play import EspeakDirectPlayer
+
+                espeak_player = EspeakDirectPlayer(
+                    binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
+                    voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
+                )
+                return espeak_player.play_directly(request)
+
+        # Cloud providers and any other provider that implements
+        # DirectPlayProvider directly.
+        if isinstance(provider, DirectPlayProvider):
+            return provider.play_directly(request)
+
+        return None
 
 
 # ---------------------------------------------------------------------------

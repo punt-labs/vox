@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 
 _CLI = "punt_vox.__main__"
+_DR = "punt_vox.daemon_restarter"
 
 
 # ---------------------------------------------------------------------------
@@ -493,16 +494,16 @@ class TestApiKeyInputPaths:
         """
         import typer
 
-        from punt_vox.__main__ import (
-            _read_api_key_stdin,  # pyright: ignore[reportPrivateUsage]
+        from punt_vox.api_key_resolver import (
+            ApiKeyResolver,
         )
 
         fake_stdin = MagicMock()
         fake_stdin.isatty.return_value = True
-        monkeypatch.setattr("punt_vox.__main__.sys.stdin", fake_stdin)
+        monkeypatch.setattr("punt_vox.api_key_resolver.sys.stdin", fake_stdin)
 
         try:
-            _read_api_key_stdin()
+            ApiKeyResolver._read_stdin()
         except typer.BadParameter as exc:
             assert "requires piped input" in str(exc)
         else:  # pragma: no cover — forces the failure path
@@ -2077,7 +2078,7 @@ class TestDaemonRestartCommand:
     def test_refuses_to_run_as_root(self) -> None:
         """Refuse running as root — sudo is invoked internally only."""
         runner = CliRunner()
-        with patch(f"{_CLI}.os.geteuid", return_value=0):
+        with patch(f"{_DR}.os.geteuid", return_value=0):
             result = runner.invoke(app, ["daemon", "restart"])
         assert result.exit_code != 0
         assert "without sudo" in result.output or "not root" in result.output
@@ -2096,7 +2097,7 @@ class TestDaemonRestartCommand:
         exclusion tests above).
         """
         runner = CliRunner()
-        with patch(f"{_CLI}.sys.platform", "win32"):
+        with patch(f"{_DR}.sys.platform", "win32"):
             result = runner.invoke(app, ["daemon", "restart"], standalone_mode=False)
         assert result.exit_code != 0
         assert isinstance(result.exception, typer.BadParameter), (
@@ -2109,7 +2110,7 @@ class TestDaemonRestartCommand:
         """Windows (or anything else) raises SystemExit from detect_platform."""
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch(
                 "punt_vox.service.detect_platform",
                 side_effect=SystemExit("Unsupported platform: Windows."),
@@ -2149,20 +2150,21 @@ class TestDaemonRestartCommand:
             argv: list[str],
             *,
             check: bool = False,
+            **_: object,
         ) -> MagicMock:
             calls.append(tuple(argv))
             return MagicMock(returncode=0)
 
         # Rename-safe stubs: AttributeError at import/setup, not at call.
-        monkeypatch.setattr(service, "_systemd_stop", lambda: None)
-        monkeypatch.setattr(service, "_ensure_port_free", lambda: None)
+        monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
+        monkeypatch.setattr(service, "ensure_port_free", lambda: None)
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
+            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2200,19 +2202,20 @@ class TestDaemonRestartCommand:
             argv: list[str],
             *,
             check: bool = False,
+            **_: object,
         ) -> MagicMock:
             calls.append(tuple(argv))
             return MagicMock(returncode=0)
 
-        monkeypatch.setattr(service, "_launchd_stop", lambda: None)
-        monkeypatch.setattr(service, "_ensure_port_free", lambda: None)
+        monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
+        monkeypatch.setattr(service, "ensure_port_free", lambda: None)
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=501),
+            patch(f"{_DR}.os.geteuid", return_value=501),
             patch("punt_vox.service.detect_platform", return_value="macos"),
-            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
+            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2300,11 +2303,11 @@ class TestDaemonRestartCommand:
         monkeypatch.setattr("punt_vox.service.systemd.subprocess.run", fake_run)
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
+            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2314,8 +2317,8 @@ class TestDaemonRestartCommand:
         # service.py, the ``from punt_vox import service`` attribute
         # access below raises AttributeError at test setup — well
         # before the subprocess expectations even get checked.
-        assert callable(service._systemd_stop)  # pyright: ignore[reportPrivateUsage]
-        assert callable(service._ensure_port_free)  # pyright: ignore[reportPrivateUsage]
+        assert callable(service.stop_daemon)  # pyright: ignore[reportPrivateUsage]
+        assert callable(service.ensure_port_free)  # pyright: ignore[reportPrivateUsage]
         # Full subprocess sequence: stop voxd (from _systemd_stop),
         # then start voxd (from daemon_restart_cmd). Anything else
         # means the sequence changed and the user-visible contract
@@ -2342,14 +2345,14 @@ class TestDaemonRestartCommand:
         ]
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
-            patch("punt_vox.service._ensure_port_free"),
-            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.time.sleep") as mock_sleep,
-            patch(f"{_CLI}.installed_version", return_value="9.9.9-test"),
+            patch("punt_vox.service.stop_daemon"),
+            patch("punt_vox.service.ensure_port_free"),
+            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.time.sleep") as mock_sleep,
+            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2379,13 +2382,13 @@ class TestDaemonRestartCommand:
         }
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
-            patch("punt_vox.service._ensure_port_free"),
-            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch("punt_vox.service.stop_daemon"),
+            patch("punt_vox.service.ensure_port_free"),
+            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.installed_version", return_value="4.2.0"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2408,14 +2411,14 @@ class TestDaemonRestartCommand:
         runner = CliRunner()
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
+            patch("punt_vox.service.stop_daemon"),
             patch(
-                "punt_vox.service._ensure_port_free",
+                "punt_vox.service.ensure_port_free",
                 side_effect=SystemExit("Port 8421 is still in use (PIDs: [5555])."),
             ),
-            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2442,13 +2445,13 @@ class TestDaemonRestartCommand:
         mock_client.health.return_value = {"pid": 42, "port": 8421}
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
-            patch("punt_vox.service._ensure_port_free"),
-            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.installed_version", return_value="4.2.0"),
+            patch("punt_vox.service.stop_daemon"),
+            patch("punt_vox.service.ensure_port_free"),
+            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.installed_version", return_value="4.2.0"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2464,15 +2467,16 @@ class TestDaemonRestartCommand:
             argv: list[str],
             *,
             check: bool = False,
+            **_: object,
         ) -> MagicMock:
             raise subprocess.CalledProcessError(1, argv)
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
-            patch("punt_vox.service._ensure_port_free"),
-            patch(f"{_CLI}.subprocess.run", side_effect=fake_run),
+            patch("punt_vox.service.stop_daemon"),
+            patch("punt_vox.service.ensure_port_free"),
+            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
@@ -2492,14 +2496,14 @@ class TestDaemonRestartCommand:
         ticks = iter([0.0, 0.0, 100.0])
 
         with (
-            patch(f"{_CLI}.os.geteuid", return_value=1000),
+            patch(f"{_DR}.os.geteuid", return_value=1000),
             patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service._systemd_stop"),
-            patch("punt_vox.service._ensure_port_free"),
-            patch(f"{_CLI}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
-            patch(f"{_CLI}.time.monotonic", side_effect=lambda: next(ticks)),
-            patch(f"{_CLI}.time.sleep"),
+            patch("punt_vox.service.stop_daemon"),
+            patch("punt_vox.service.ensure_port_free"),
+            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
+            patch(f"{_DR}.time.monotonic", side_effect=lambda: next(ticks)),
+            patch(f"{_DR}.time.sleep"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 

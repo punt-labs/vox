@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
 import platform
 import shutil
 import subprocess
-import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-import click
 import typer
 
 from punt_vox import __version__
+from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import (
     read_config,
@@ -29,7 +26,7 @@ from punt_vox.config import (
 )
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
-from punt_vox.paths import installed_version, log_dir
+from punt_vox.output_formatter import OutputFormatter
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
 
@@ -69,15 +66,7 @@ _PROVIDER_DISPLAY = {
 # Global state
 # ---------------------------------------------------------------------------
 
-_json_output = False
-_quiet_output = False
-
-
-def _emit(payload: object, text: str) -> None:
-    if _json_output:
-        typer.echo(json.dumps(payload))
-    elif not _quiet_output:
-        typer.echo(text)
+_formatter = OutputFormatter()
 
 
 def _configure_logging(*, verbose: bool) -> None:
@@ -152,124 +141,6 @@ def _build_synthesis_spec(
 #      both as populating the same ``api_key`` parameter; we distinguish
 #      them via ``ctx.get_parameter_source`` to decide whether to warn)
 # ---------------------------------------------------------------------------
-
-
-_API_KEY_ARGV_WARNING = (
-    "warning: --api-key on the command line is visible via 'ps' and "
-    "shell history. Prefer VOX_API_KEY env var, --api-key-file <path>, "
-    "or --api-key-stdin for real credentials."
-)
-
-
-def _read_api_key_file(path: Path) -> str:
-    """Read a per-call API key from a file.
-
-    Rejects missing paths, non-files, and empty files. Strips trailing
-    whitespace and newlines. Warns (but does not fail) when the file
-    has any group or other permission bits set, matching the advisory
-    style used by the install path for ``keys.env`` permission
-    handling.
-
-    The check is ``mode & 0o077`` (any group or other bit), not
-    ``mode & 0o004`` (the other-read bit only). On shared Unix systems
-    a file at 0640 is readable by anyone in the owning group
-    (``nobody``, ``www-data``, a shared-dev group, etc.) — the
-    narrower check let that exposure slide silently. The only safe
-    mode for a credential file is 0600. Copilot on PR #175.
-    """
-    if not path.is_file():
-        msg = f"--api-key-file: {path} is not a file"
-        raise typer.BadParameter(msg)
-    mode = path.stat().st_mode
-    if mode & 0o077:
-        typer.echo(
-            f"warning: --api-key-file: {path} is accessible to group "
-            f"or other users (mode {oct(mode & 0o777)}). Run "
-            f"'chmod 600 {path}' to tighten permissions.",
-            err=True,
-        )
-    value = path.read_text(encoding="utf-8").strip()
-    if not value:
-        msg = f"--api-key-file: {path} is empty"
-        raise typer.BadParameter(msg)
-    return value
-
-
-def _read_api_key_stdin() -> str:
-    """Read a per-call API key from stdin (one line).
-
-    Refuses to read when stdin is a tty — the user almost certainly
-    meant to pipe the key in, and blocking on an interactive prompt
-    would be a surprising default. Strips trailing whitespace and
-    rejects empty input.
-    """
-    if sys.stdin.isatty():
-        msg = "--api-key-stdin requires piped input (stdin is a tty)"
-        raise typer.BadParameter(msg)
-    line = sys.stdin.readline().strip()
-    if not line:
-        msg = "--api-key-stdin: received empty input"
-        raise typer.BadParameter(msg)
-    return line
-
-
-def _resolve_api_key(
-    ctx: typer.Context,
-    api_key: str | None,
-    api_key_file: Path | None,
-    *,
-    api_key_stdin: bool,
-) -> str | None:
-    """Resolve the per-call API key from the first configured source.
-
-    Enforces mutual exclusion between ``--api-key-file``,
-    ``--api-key-stdin``, and ``--api-key``/``VOX_API_KEY``. Fires a
-    stderr warning when ``--api-key`` was passed literally on the
-    command line (source == COMMANDLINE) because argv is visible to
-    local process introspection and shell history. The env-var path
-    (source == ENVIRONMENT) does not warn: while environment variables
-    are not secret, they are generally less exposed to casual local
-    observation than argv.
-
-    Returns None when no source is configured — the call is anonymous
-    and voxd falls back to the ambient ``keys.env`` value.
-    """
-    file_set = api_key_file is not None
-    stdin_set = api_key_stdin
-    argv_or_env_set = api_key is not None
-    sources_set = int(file_set) + int(stdin_set) + int(argv_or_env_set)
-    if sources_set > 1:
-        named: list[str] = []
-        if file_set:
-            named.append("--api-key-file")
-        if stdin_set:
-            named.append("--api-key-stdin")
-        if argv_or_env_set:
-            # Distinguish argv vs env var so the error points at the
-            # right input surface. Users piping a key via env var and
-            # then also writing --api-key-file by mistake should see
-            # "VOX_API_KEY", not "--api-key".
-            source = ctx.get_parameter_source("api_key")
-            if source is click.core.ParameterSource.ENVIRONMENT:
-                named.append("VOX_API_KEY")
-            else:
-                named.append("--api-key")
-        conflict = ", ".join(named)
-        msg = (
-            f"Specify at most one API key source; got {conflict}. "
-            "These are mutually exclusive."
-        )
-        raise typer.BadParameter(msg)
-    if api_key_file is not None:
-        return _read_api_key_file(api_key_file)
-    if api_key_stdin:
-        return _read_api_key_stdin()
-    if api_key is not None:
-        source = ctx.get_parameter_source("api_key")
-        if source is click.core.ParameterSource.COMMANDLINE:
-            typer.echo(_API_KEY_ARGV_WARNING, err=True)
-        return api_key
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -426,9 +297,8 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     """Text-to-speech CLI."""
     if verbose and quiet:
         raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
-    global _json_output, _quiet_output
-    _json_output = json_output
-    _quiet_output = quiet
+    _formatter.set_json(value=json_output)
+    _formatter.set_quiet(value=quiet)
     _configure_logging(verbose=verbose)
 
 
@@ -488,9 +358,9 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
     # ``_resolve_api_key`` for the full rationale.
-    resolved_api_key = _resolve_api_key(
+    resolved_api_key = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
-    )
+    ).resolve()
 
     boost = speaker_boost if speaker_boost else None
     spec = _build_synthesis_spec(
@@ -522,7 +392,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
                     payload["original_played_at"] = result.original_played_at
                 if result.ttl_seconds_remaining is not None:
                     payload["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-            _emit(payload, seg_text)
+            _formatter.emit(payload, seg_text)
         except VoxdConnectionError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -596,7 +466,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(mp3_bytes)
-        _emit({"path": str(out_path)}, str(out_path))
+        _formatter.emit({"path": str(out_path)}, str(out_path))
 
 
 # ---------------------------------------------------------------------------
@@ -664,15 +534,15 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     cd = find_config_dir() or DEFAULT_CONFIG_DIR
     if mood == "auto":
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_dir=cd)
-        _emit({"vibe_mode": "auto"}, "Vibe mode: auto")
+        _formatter.emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
         write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_dir=cd)
-        _emit({"vibe_mode": "off"}, "Vibe mode: off")
+        _formatter.emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
         write_fields(
             {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_dir=cd
         )
-        _emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+        _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +582,7 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         "n": "Notifications disabled.",
         "c": "Continuous mode on.",
     }
-    _emit(updates, labels[mode])
+    _formatter.emit(updates, labels[mode])
 
 
 # ---------------------------------------------------------------------------
@@ -734,7 +604,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
 
     write_field("speak", mode, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
-    _emit({"speak": mode}, label)
+    _formatter.emit({"speak": mode}, label)
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +618,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Set the session voice."""
     write_field("voice", name, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
-    _emit({"voice": name}, f"{name}'s here.")
+    _formatter.emit({"voice": name}, f"{name}'s here.")
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +629,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
 @app.command("version")
 def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Print version."""
-    _emit({"version": __version__}, f"vox {__version__}")
+    _formatter.emit({"version": __version__}, f"vox {__version__}")
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +681,7 @@ def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         text_lines.append(f"Tags:      {cfg.vibe_tags}")
     if cfg.vibe_signals:
         text_lines.append(f"Signals:   {cfg.vibe_signals}")
-    _emit(info, "\n".join(text_lines))
+    _formatter.emit(info, "\n".join(text_lines))
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +697,7 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
     check = DoctorCheck(client=VoxClientSync())
     results = check.run_all()
     payload, text = format_results(results)
-    _emit(payload, text)
+    _formatter.emit(payload, text)
 
     if payload.get("failed", 0):
         raise typer.Exit(code=1)
@@ -839,7 +709,7 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command("migrate-audio")
-def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO refactor
+def migrate_audio_cmd(
     execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
         bool, typer.Option("--execute", help="Actually move files.")
     ] = False,
@@ -851,111 +721,18 @@ def migrate_audio_cmd(  # noqa: C901 -- TODO(vox-wy2g): reduce complexity in OO 
     ] = None,
 ) -> None:
     """Migrate saved audio from ~/vox-output to ~/Music/vox."""
-    import shutil as _shutil
+    from punt_vox.audio_migration import AudioMigration
 
     src_dir = source or (Path.home() / "vox-output")
     dst_dir = dest or default_output_dir()
+    migration = AudioMigration(src_dir, dst_dir)
 
-    if not src_dir.exists():
-        typer.echo("Nothing to migrate: source directory does not exist.")
+    if not migration.scan():
         return
-
-    if not src_dir.is_dir():
-        typer.echo(f"Source is not a directory: {src_dir}")
-        raise typer.Exit(code=1)
-
-    # Build list of (src_path, dst_path) pairs.
-    pairs: list[tuple[Path, Path]] = []
-    conflicts: list[tuple[Path, Path]] = []
-    skipped: list[tuple[Path, str]] = []
-    total_size = 0
-
-    for src_file in sorted(src_dir.rglob("*")):
-        if not src_file.is_file():
-            continue
-        rel = src_file.relative_to(src_dir)
-        # Special case: music/ -> tracks/
-        parts = rel.parts
-        if parts and parts[0] == "music":
-            rel = Path("tracks", *parts[1:])
-        dst_file = dst_dir / rel
-        try:
-            total_size += src_file.stat().st_size
-        except OSError as e:
-            skipped.append((src_file, f"unreadable ({e})"))
-            continue
-
-        if dst_file.exists():
-            try:
-                src_stat = src_file.stat()
-                dst_stat = dst_file.stat()
-            except OSError as e:
-                skipped.append((src_file, f"unreadable ({e})"))
-                continue
-            same_size = src_stat.st_size == dst_stat.st_size
-            same_mtime = abs(src_stat.st_mtime - dst_stat.st_mtime) < 1.0
-            if same_size and same_mtime:
-                skipped.append((src_file, "already migrated"))
-            else:
-                conflicts.append((src_file, dst_file))
-        else:
-            pairs.append((src_file, dst_file))
-
-    if not pairs and not conflicts and not skipped:
-        typer.echo("Nothing to migrate: source directory is empty.")
-        return
-
-    size_mb = total_size / (1024 * 1024)
-    file_count = len(pairs) + len(conflicts) + len(skipped)
-
-    if not execute:
-        typer.echo("vox migrate-audio: dry run (pass --execute to move files)\n")
-        typer.echo(f"Source:      {src_dir} ({file_count} files, {size_mb:.1f} MB)")
-        typer.echo(f"Destination: {dst_dir}\n")
-        for src_file, dst_file in pairs:
-            typer.echo(f"  {src_file} -> {dst_file}")
-        for src_file, dst_file in conflicts:
-            typer.echo(f"  {src_file} -> {dst_file} [CONFLICT]")
-        for src_file, reason in skipped:
-            typer.echo(f"  {src_file} [SKIP: {reason}]")
-        count = len(pairs)
-        typer.echo(f"\n{count} files would be moved. Run with --execute.")
-        if conflicts:
-            typer.echo(f"{len(conflicts)} conflict(s) would be skipped.")
-        return
-
-    # Execute mode: move files.
-    moved = 0
-    moved_bytes = 0
-    for src_file, dst_file in pairs:
-        dst_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _shutil.move(str(src_file), str(dst_file))
-            moved += 1
-            moved_bytes += dst_file.stat().st_size
-        except PermissionError:
-            typer.echo(f"  warning: permission denied: {src_file}", err=True)
-        except OSError as exc:
-            typer.echo(f"  warning: {exc}", err=True)
-
-    # Clean up empty source dirs.
-    removed_source = False
-    for dirpath in sorted(src_dir.rglob("*"), reverse=True):
-        if dirpath.is_dir():
-            with contextlib.suppress(OSError):
-                dirpath.rmdir()
-    try:
-        src_dir.rmdir()
-        removed_source = True
-    except OSError:
-        pass
-
-    moved_mb = moved_bytes / (1024 * 1024)
-    typer.echo(f"Moved {moved} files from {src_dir} to {dst_dir} ({moved_mb:.1f} MB)")
-    if conflicts:
-        typer.echo(f"Skipped {len(conflicts)} conflict(s).")
-    if removed_source:
-        typer.echo(f"Removed empty {src_dir} directory.")
+    if execute:
+        migration.execute()
+    else:
+        migration.preview()
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +775,7 @@ def install() -> None:
         typer.echo("    Daemon registration is optional — vox works without it.")
 
     typer.echo()
-    _emit(
+    _formatter.emit(
         {"installed": True},
         "Installed. Restart Claude Code to activate.",
     )
@@ -1019,7 +796,7 @@ def uninstall() -> None:
     if result.returncode != 0:
         typer.echo("Error: plugin uninstall failed", err=True)
         raise typer.Exit(code=1)
-    _emit({"uninstalled": True}, "Uninstalled.")
+    _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
 
 # ---------------------------------------------------------------------------
@@ -1176,7 +953,7 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         "path": str(info.path),
     }
     text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
-    _emit(payload, text)
+    _formatter.emit(payload, text)
 
 
 @cache_app.command("clear")
@@ -1189,7 +966,7 @@ def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     except OSError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    _emit({"cleared": count}, f"Cleared {count} cached files.")
+    _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
 
 
 # ---------------------------------------------------------------------------
@@ -1249,7 +1026,7 @@ def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
             text = f"Playing saved track: {name}"
         elif style_str:
             text += f" — style: {style_str}"
-        _emit(payload, text)
+        _formatter.emit(payload, text)
     except VoxdConnectionError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -1265,7 +1042,7 @@ def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music("off")
         status = result.get("status", "stopped")
-        _emit({"music": "off", "status": status}, f"Music off ({status})")
+        _formatter.emit({"music": "off", "status": status}, f"Music off ({status})")
     except VoxdConnectionError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -1286,7 +1063,7 @@ def music_play_cmd(  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music_play(name)
         track_name = result.get("name", name)
-        _emit(
+        _formatter.emit(
             {"music": "play", "name": track_name, "status": "playing"},
             f"Playing: {track_name}",
         )
@@ -1306,7 +1083,7 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         result = client.music_list()
         tracks: list[dict[str, object]] = result.get("tracks", [])
         if not tracks:
-            _emit({"tracks": []}, "No saved tracks.")
+            _formatter.emit({"tracks": []}, "No saved tracks.")
             return
         lines: list[str] = []
         for t in tracks:
@@ -1317,7 +1094,7 @@ def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
                 float(str(raw_mtime)),
             ).strftime("%Y-%m-%d %H:%M")
             lines.append(f"  {t['name']} ({size_kb} KB, {date_str})")
-        _emit(
+        _formatter.emit(
             {"tracks": tracks},
             f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
         )
@@ -1336,7 +1113,7 @@ def music_next_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     try:
         result = client.music_next()
         status = result.get("status", "unknown")
-        _emit(
+        _formatter.emit(
             {"music": "next", "status": status},
             f"Music next ({status})",
         )
@@ -1400,157 +1177,10 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     itself. Running under sudo yourself would corrupt the sudo state
     the service manager uses.
     """
-    from punt_vox.service import (
-        _ensure_port_free,  # pyright: ignore[reportPrivateUsage]
-        _launchd_stop,  # pyright: ignore[reportPrivateUsage]
-        _systemd_stop,  # pyright: ignore[reportPrivateUsage]
-        detect_platform,
-    )
+    from punt_vox.daemon_restarter import DaemonRestarter
 
-    # Refuse Windows before touching ``os.geteuid``. ``geteuid`` is
-    # POSIX-only and raises ``AttributeError`` on Windows, which would
-    # surface as a confusing crash for anyone experimenting with vox on
-    # an unsupported platform (or a Windows-based test harness). vox
-    # daemon restart has the same OS matrix as ``vox daemon install``
-    # (macOS + Linux), so match the CLI's other platform-refusal
-    # messages: explain the scope and stop cleanly. Cursor Bugbot on
-    # PR #175.
-    if sys.platform == "win32":
-        raise typer.BadParameter(
-            "vox daemon restart is only supported on macOS and Linux; "
-            "Windows does not have a comparable system service manager."
-        )
-    if os.geteuid() == 0:
-        raise typer.BadParameter(
-            "vox daemon restart must be run as your normal user, not root "
-            "or sudo. vox will prompt for your sudo password when it drives "
-            "systemctl/launchctl. Re-run without sudo:\n\n"
-            "    vox daemon restart\n"
-        )
-
-    plat = detect_platform()
-
-    logger.info("Stopping voxd via service manager...")
-    if plat == "macos":
-        _launchd_stop()
-    else:
-        _systemd_stop()
-
-    logger.info("Waiting for port to free...")
-    # ``_ensure_port_free`` raises ``SystemExit(msg)`` on port contention
-    # that survives the stop + kill attempt. Typer's runner swallows
-    # ``SystemExit`` without printing the message argument, so the user
-    # would otherwise see a silent exit-1 with no indication of why the
-    # restart aborted. Translate the raised message into a typer error
-    # with the same code path and log hint as the other failure modes.
-    try:
-        _ensure_port_free()
-    except SystemExit as exc:
-        reason = str(exc) if exc.code not in (0, None) else ""
-        detail = f": {reason}" if reason else ""
-        typer.echo(
-            f"Error: port still occupied after service manager stop{detail}\n"
-            f"Check the logs at {log_dir() / 'voxd.log'}",
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-
-    logger.info("Starting voxd via service manager...")
-    try:
-        if plat == "macos":
-            subprocess.run(
-                [
-                    "sudo",
-                    "launchctl",
-                    "load",
-                    "-w",
-                    "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
-                ],
-                check=True,
-            )
-            subprocess.run(
-                ["sudo", "launchctl", "kickstart", "-k", "system/com.punt-labs.voxd"],
-                check=True,
-            )
-        else:
-            subprocess.run(
-                ["sudo", "systemctl", "start", "voxd"],
-                check=True,
-            )
-    except subprocess.CalledProcessError as exc:
-        log_path = log_dir() / "voxd.log"
-        typer.echo(
-            f"Error: service manager failed to start voxd: {exc}\n"
-            f"Check the logs at {log_path}",
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-
-    logger.info("Waiting for voxd to come back up...")
-    deadline = time.monotonic() + 5.0
-    last_exc: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            health = VoxClientSync().health()
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            last_exc = exc
-            time.sleep(0.2)
-            continue
-        pid = health.get("pid", "?")
-        port = health.get("port", "?")
-
-        # Load-bearing verification for vox-nmb: a silent stop failure
-        # (systemctl lost the unit, dbus quirk, _is_vox_daemon_process
-        # returning False, etc.) can leave the OLD daemon alive, and
-        # ``systemctl start voxd`` exits 0 as a no-op when the unit is
-        # already active. Without this version check, the restart
-        # command would print success while the stale daemon continues
-        # to answer — which is exactly the bug vox-nmb exists to prevent.
-        running_version = str(health.get("daemon_version", ""))
-        wheel_version = installed_version()
-        log_path = log_dir() / "voxd.log"
-        if not running_version:
-            # Pre-cef3e8a daemons do not self-report a version. Fail
-            # closed: we cannot prove the restart picked up new code,
-            # and the symptom we're trying to detect (stale daemon)
-            # would look exactly like this.
-            typer.echo(
-                "Error: restarted daemon did not report a version. Expected "
-                f"{wheel_version}. Check {log_path} — the daemon may be "
-                "running pre-feat/install-verify-hardening code that cannot "
-                "self-report its version.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        if running_version != wheel_version:
-            typer.echo(
-                f"Error: daemon reports version {running_version} but wheel is "
-                f"{wheel_version}. The restart did not pick up the new code. "
-                f"Check {log_path}.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
-        _emit(
-            {
-                "restarted": True,
-                "pid": pid,
-                "port": port,
-                "daemon_version": running_version,
-            },
-            f"voxd restarted (pid={pid}, listening on port {port}, "
-            f"version {running_version})",
-        )
-        return
-
-    log_path = log_dir() / "voxd.log"
-    reason = f": {last_exc}" if last_exc is not None else ""
-    typer.echo(
-        f"Error: voxd did not come back up within 5s{reason}\n"
-        f"Check the logs at {log_path}",
-        err=True,
-    )
-    raise typer.Exit(code=1)
+    restarter = DaemonRestarter(_formatter)
+    restarter.run()
 
 
 @daemon_app.command("status")

@@ -5,22 +5,21 @@ from __future__ import annotations
 import logging
 import os
 import re
-import tempfile
-import time
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.chunked import chunked_synthesize
+from punt_vox.providers.voice_resolver import VoiceResolver
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
-    VoiceNotFoundError,
+    TTSProvider,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,95 +48,12 @@ _DEFAULT_CHAR_LIMIT = 10_000
 # ElevenLabs voice IDs are 20-char alphanumeric strings.
 _VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 
-# Cache of resolved voices, keyed by lowercase name → voice_id.
-VOICES: dict[str, str] = {}
-
-# Monotonic timestamp of the last successful voice fetch (0.0 = never).
-_voices_loaded_at: float = 0.0
-
-# Monotonic timestamp of the last *forced* refresh (0.0 = never).
-# Separate from _voices_loaded_at so a TTL-triggered load doesn't
-# block the first forced refresh on a cache miss.
-_voices_force_fetched_at: float = 0.0
-
-# Minimum interval between forced refreshes (cache-miss path).
-# Prevents typos or unknown voice names from hammering the API.
-_VOICE_FORCE_COOLDOWN_S: int = 60
-
-# Voices are re-fetched after this many seconds so newly added voices
+# Voice cache TTL in seconds -- re-fetched so newly added voices
 # appear without a daemon restart.
 _VOICE_CACHE_TTL_S: int = 1800
 
 
-def _load_voices_from_api(client: Any, *, force: bool = False) -> None:  # pyright: ignore[reportExplicitAny]
-    """Fetch all voices from the ElevenLabs API and populate the cache.
-
-    Args:
-        force: Bypass the TTL check on cache miss so newly added voices
-            are found without waiting 30 minutes. Rate-limited by
-            ``_VOICE_FORCE_COOLDOWN_S`` (60s) to prevent typos from
-            hammering the API.
-    """
-    global _voices_loaded_at, _voices_force_fetched_at
-    now = time.monotonic()
-    cache_fresh = (
-        _voices_loaded_at > 0.0 and (now - _voices_loaded_at) < _VOICE_CACHE_TTL_S
-    )
-    if force:
-        # Rate-limit forced refreshes — don't re-fetch if we just
-        # did a forced fetch recently. Uses a separate timestamp so
-        # a normal TTL-triggered load doesn't block the first force.
-        recently_loaded = (
-            _voices_force_fetched_at > 0.0
-            and (now - _voices_force_fetched_at) < _VOICE_FORCE_COOLDOWN_S
-        )
-        if recently_loaded:
-            return
-    elif cache_fresh:
-        return
-
-    # Fetch into a new dict, then swap atomically on success. If the
-    # API call raises, the old cache stays intact — no empty-cache
-    # window. The dict reference swap is atomic in CPython (GIL).
-    fresh: dict[str, str] = {}
-
-    response: Any = client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-        # Store full name (e.g. "adam - dominant, firm").
-        if full_name not in fresh:
-            fresh[full_name] = vid
-
-        # Also store short name (before " - ") for convenient lookup.
-        short_name = full_name.split(" - ", 1)[0]
-        if short_name != full_name and short_name not in fresh:
-            fresh[short_name] = vid
-
-    # Atomic swap: replace the cache contents in-place so existing
-    # references to the VOICES dict see the new data.
-    VOICES.clear()
-    VOICES.update(fresh)
-    _voices_loaded_at = now
-    if force:
-        _voices_force_fetched_at = now
-    logger.debug("Loaded %d voice entries from ElevenLabs API", len(VOICES))
-
-
-def _extract_api_error_message(exc: ApiError) -> str:
-    """Extract a human-readable message from an ElevenLabs ApiError."""
-    body: Any = exc.body  # pyright: ignore[reportUnknownMemberType]
-    if isinstance(body, dict):
-        detail: Any = body.get("detail", {})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if isinstance(detail, dict):
-            msg: Any = detail.get("message", "")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if isinstance(msg, str) and msg:
-                return msg
-    return f"HTTP {exc.status_code}"
-
-
-class ElevenLabsProvider:
+class ElevenLabsProvider(TTSProvider):
     """ElevenLabs TTS provider.
 
     Implements the TTSProvider protocol using the ElevenLabs SDK.
@@ -148,19 +64,44 @@ class ElevenLabsProvider:
     ``eleven_flash_v2_5``).
     """
 
-    def __init__(
-        self,
+    _model: str
+    _client: Any  # pyright: ignore[reportExplicitAny]
+    _voices: VoiceResolver[str]
+
+    def __new__(
+        cls,
         *,
         model: str | None = None,
         client: Any | None = None,  # pyright: ignore[reportExplicitAny]
-    ) -> None:
+    ) -> Self:
+        self = super().__new__(cls)
         self._model = model or os.environ.get("TTS_MODEL") or _DEFAULT_MODEL
         if client is not None:
-            self._client: Any = client  # pyright: ignore[reportExplicitAny]
+            self._client = client
         else:
             from elevenlabs import ElevenLabs  # pyright: ignore[reportMissingTypeStubs]
 
             self._client = ElevenLabs()  # pyright: ignore[reportUnknownMemberType]
+
+        self._voices = VoiceResolver(
+            self._fetch_voices,
+            default_key="matilda",
+            ttl_seconds=_VOICE_CACHE_TTL_S,
+            cooldown_seconds=60,
+        )
+        return self
+
+    @staticmethod
+    def _extract_api_error_message(exc: ApiError) -> str:
+        """Extract a human-readable message from an ElevenLabs ApiError."""
+        body: Any = exc.body  # pyright: ignore[reportUnknownMemberType]
+        if isinstance(body, dict):
+            detail: Any = body.get("detail", {})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(detail, dict):
+                msg: Any = detail.get("message", "")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                if isinstance(msg, str) and msg:
+                    return msg
+        return f"HTTP {exc.status_code}"
 
     @property
     def name(self) -> str:
@@ -187,7 +128,7 @@ class ElevenLabsProvider:
     def model_supports_expressive_tags(cls, model: str | None) -> bool:
         """Return whether the given model interprets expressive tags natively.
 
-        Resolves the model the same way ``__init__`` does (explicit param,
+        Resolves the model the same way the constructor does (explicit param,
         ``TTS_MODEL`` env var, then ``_DEFAULT_MODEL``) and checks
         membership in the expressive set. Returns True for ``eleven_v3``,
         which treats bracket tags like ``[alert]`` as expressive cues.
@@ -200,11 +141,6 @@ class ElevenLabsProvider:
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
-
-    def generate_audios(
-        self, requests: Sequence[SynthesisRequest]
-    ) -> list[SynthesisResult]:
-        return [self.generate_audio(request) for request in requests]
 
     def synthesize(
         self, request: SynthesisRequest, output_path: Path
@@ -230,10 +166,14 @@ class ElevenLabsProvider:
         char_limit = _MODEL_CHAR_LIMITS.get(self._model, _DEFAULT_CHAR_LIMIT)
 
         if len(text) > char_limit:
-            from dataclasses import replace as _replace
-
-            req = _replace(request, text=text)
-            self._chunked_synthesize(req, output_path, voice_id, char_limit)
+            chunked_synthesize(
+                text=text,
+                char_limit=char_limit,
+                synthesize_chunk=lambda chunk, path: self._single_synthesize(
+                    chunk, path, voice_id, request
+                ),
+                output_path=output_path,
+            )
         else:
             self._single_synthesize(text, output_path, voice_id, request)
 
@@ -293,7 +233,7 @@ class ElevenLabsProvider:
                 )
             )
         except ApiError as exc:
-            msg = _extract_api_error_message(exc)
+            msg = self._extract_api_error_message(exc)
             checks.append(
                 HealthCheck(
                     passed=False,
@@ -324,8 +264,7 @@ class ElevenLabsProvider:
         but all voices are returned regardless. Only short names (without
         descriptions) are included.
         """
-        _load_voices_from_api(self._client)
-        return sorted(k for k in VOICES if " - " not in k)
+        return [k for k in self._voices.list_all() if " - " not in k]
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -336,25 +275,42 @@ class ElevenLabsProvider:
 
     # -- Private helpers --------------------------------------------------
 
+    def _fetch_voices(self) -> dict[str, str]:
+        """Fetch all voices from the ElevenLabs API.
+
+        Returns a dict mapping lowercase name -> voice_id. Both the
+        full descriptive name (e.g. "adam - dominant, firm") and the
+        short name (e.g. "adam") are included as separate keys.
+        """
+        fresh: dict[str, str] = {}
+
+        response: Any = self._client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+            # Store full name (e.g. "adam - dominant, firm").
+            if full_name not in fresh:
+                fresh[full_name] = vid
+
+            # Also store short name (before " - ") for convenient lookup.
+            short_name = full_name.split(" - ", 1)[0]
+            if short_name != full_name and short_name not in fresh:
+                fresh[short_name] = vid
+
+        logger.debug(
+            "Fetched %d voice entries from ElevenLabs API",
+            len(fresh),
+        )
+        return fresh
+
     def _resolve_voice_id(self, name: str) -> str:
         """Resolve a voice name or ID to a voice_id string."""
         # Accept raw voice_id (20 alphanumeric chars) directly.
         if _VOICE_ID_RE.match(name):
             return name
 
-        key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
-
-        # Cache miss — force a re-fetch regardless of TTL. If the user
-        # just added a voice, waiting 30 minutes is unacceptable.
-        _load_voices_from_api(self._client, force=True)
-
-        if key in VOICES:
-            return VOICES[key]
-
-        short_names = sorted(k for k in VOICES if " - " not in k)
-        raise VoiceNotFoundError(name, short_names)
+        return self._voices.resolve(name)
 
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]
         """Build VoiceSettings from request fields, or None for defaults."""
@@ -410,31 +366,3 @@ class ElevenLabsProvider:
         with output_path.open("wb") as f:
             for chunk in response:  # pyright: ignore[reportUnknownVariableType]
                 f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
-
-    def _chunked_synthesize(
-        self,
-        request: SynthesisRequest,
-        output_path: Path,
-        voice_id: str,
-        char_limit: int,
-    ) -> None:
-        """Split text into chunks, synthesize each, then stitch."""
-        from punt_vox.core import split_text, stitch_audio
-
-        chunks = split_text(request.text, char_limit)
-        logger.debug(
-            "Chunked %d chars into %d parts",
-            len(request.text),
-            len(chunks),
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            paths: list[Path] = []
-
-            for i, chunk in enumerate(chunks):
-                chunk_path = tmp_dir / f"chunk_{i:04d}.mp3"
-                self._single_synthesize(chunk, chunk_path, voice_id, request)
-                paths.append(chunk_path)
-
-            stitch_audio(paths, output_path, pause_ms=0)
