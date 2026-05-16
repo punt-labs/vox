@@ -68,6 +68,10 @@ See `docs/architecture.tex` for the full system description.
 
 **Do not negotiate with the ratchet.** Do not edit `.oo-baseline.json` by hand except via `--rebaseline` for structural refactors. Do not suppress `check-oo`. If the ratchet fails, improve the code until it passes.
 
+**Org standards override review tools.** Copilot, Bugbot, and Cursor are advisory. When a review suggestion conflicts with rules in `../.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
+
+**Verify outputs, not just metrics.** After writing a file, open it and read the content. `make check` passing does not mean the feature works — it means the code compiles and tests pass. Those are necessary but not sufficient.
+
 Workflow:
 
 1. Write code that improves OO quality on the files you touch.
@@ -90,28 +94,34 @@ Two nested loops govern all code changes.
 
 ### Inner loop — one mission
 
-Execute after every agent delegation that produces code changes.
+Execute after every agent delegation that produces code changes. Do not start the next mission until this loop is complete — starting without local review is a procedural violation.
 
-1. **Delegate** to the right ethos specialist. One mission = one focused task. Never batch multiple steps.
+1. **Delegate** to the right ethos specialist. One mission = one focused task. Never batch multiple steps. Do not use bare `Agent()` for implementation work (review-cycle fixes are the only exception).
 2. **`make check`** — must pass before proceeding. Zero exceptions.
-3. **`/feature-dev:code-reviewer`** on the mission diff.
-4. **`/pr-review-toolkit:silent-failure-hunter`** on the mission diff.
-5. **Fix every finding.** Both agents must return zero findings. To dismiss one: document (a) the exact finding, (b) the specific reason it does not apply, (c) the code reference.
-6. **Re-run both agents.** Exit the fix loop only when both return zero findings.
-7. **Commit.**
+3. **`make install`** — builds the wheel and installs it locally. `make check` passing is not installation. **After installing, restart `voxd`** — the running daemon loads code at startup and will serve the old version until restarted. Tests that exercise MCP tools, hooks, or the synthesis pipeline are testing the old code if the daemon is stale. Restart with `vox daemon restart` (or kill and relaunch manually).
+4. **`make test`** against the installed artifact — not from source. If no test covers the changed code, write one before marking this step complete.
+5. **Exercise manually** — before running, write expected output for each case. After running, compare actual to expected; differences are bugs. Cover: one invalid or malformed input, one case where a dependency is unavailable or returns an error, one boundary condition. Paste the actual output.
+6. **`/feature-dev:code-reviewer`** on the mission diff.
+7. **`/pr-review-toolkit:silent-failure-hunter`** on the mission diff.
+8. **Fix every finding.** To dismiss one: document (a) the exact finding, (b) the specific reason it does not apply, (c) the code reference. "Pre-existing", "by design", "intentional", and "expected" are not reasons.
+9. **Re-run both agents.** Exit the fix loop on the first round that produces no findings.
+10. **Commit.**
 
 ### Outer loop — one PR (one rollback-coherent unit)
 
 After all missions for the feature complete and each has passed its inner loop:
 
 1. **`make check`** on the full accumulated diff.
-2. **Both local review agents** on the complete diff.
-3. **Fix all findings.** Re-run until clean.
-4. **Push PR.**
+2. **Both local review agents** on the complete diff — cross-mission issues only appear at this level.
+3. **Fix all findings** using the same documentation standard as the inner loop.
+4. **Human IDE review** of the full diff — the only human review in the process. Resolve all findings before proceeding.
+5. **`make install`** then restart `voxd` (`vox daemon restart`), then run the complete user-facing workflow end-to-end, including at least one path through a provider. Paste actual output and verify the changed code was exercised.
+6. **Re-run agents** until clean.
+7. **Open PR.** A PR opened before step 6 is clean is a procedural violation.
 
 ### PR boundaries
 
-Split by **rollback granularity**, not size. Ask: if this broke production, what reverts together? That is one PR. PRs should cover multiple steps — do not open a PR per step. Sequential steps in the same area belong in one PR.
+Split by **rollback granularity**, not size. Ask: if this broke production, what reverts together? That is one PR. "The diff is large" and "separate concern" are prohibited split reasons — independent rollback capability and sequential dependency are the only valid ones. PRs should cover multiple steps — do not open a PR per step. Sequential steps in the same area belong in one PR.
 
 **Known type checker workarounds:**
 
@@ -144,6 +154,8 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 ## Ethos & Delegation
 
 Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses ethos missions. Every non-trivial delegation has two phases: (1) **design mission** — describes problem, constraints, and invariants but does NOT prescribe a write set; (2) **implementation mission** — uses the write set produced by the design phase. The design mission's output IS the write set — the specialist decides what to create, split, or extract. This is critical: prescribing a write set before design prevents refactoring and forces code into existing modules.
+
+**The COO must not read implementation files before writing the design spec.** "Add a handler to `hooks.py` at line 420" is a predetermined write set that prevents the specialist from making design decisions. "Extract the vibe signal accumulation into its own domain — the codebase has a config layer and a hooks layer, the implementation must follow code quality standards" gives the specialist latitude to decompose and restructure. This is how `hooks.py` grew past 1,000 lines pre-extraction — write sets were predetermined to existing files instead of letting the specialist extract new modules.
 
 **One mission = one task.** Never give an agent multiple steps in a single prompt. Agent timeouts on multi-step prompts leave partial work and cause manual cleanup. One focused task per delegation.
 
