@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import random
+import re
 import select
 import sys
 from pathlib import Path
@@ -37,7 +38,7 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import (
     BashPayload,
     NotificationPayload,
@@ -54,10 +55,9 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
+from punt_vox.signal import Signal, SignalLog
 
 logger = logging.getLogger(__name__)
-
-MAX_VIBE_SIGNALS = 20
 
 hook_app = typer.Typer(
     help="Hook dispatchers (called by hook scripts).",
@@ -101,7 +101,7 @@ def _read_hook_input() -> dict[str, object]:
         if not raw.strip():
             return {}
         data: object = json.loads(raw)
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
     if not isinstance(data, dict):
         return {}
@@ -180,54 +180,6 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_tags_from_signals(signals: str) -> str:
-    """Pick expressive tags from accumulated session signals.
-
-    Deterministic mapping — no LLM needed. Examines signal counts and
-    trajectory (how the session ended) to choose 1-2 ElevenLabs tags.
-    """
-    parts = [s.split("@")[0] for s in signals.split(",") if s]
-    if not parts:
-        return "[calm]"
-
-    counts: dict[str, int] = {}
-    for p in parts:
-        counts[p] = counts.get(p, 0) + 1
-
-    # Trajectory: what happened at the end matters most
-    last_few = parts[-3:]
-    ended_with_fail = any(s.endswith("-fail") for s in last_few)
-    ended_with_pass = any(s.endswith("-pass") for s in last_few)
-    had_push = "git-push-ok" in counts
-    had_pr = "pr-created" in counts
-    had_fails = sum(c for k, c in counts.items() if k.endswith("-fail"))
-    had_passes = sum(c for k, c in counts.items() if k.endswith("-pass"))
-
-    # Recovery arc: fails followed by passes
-    if had_fails > 0 and ended_with_pass:
-        return "[relieved]"
-
-    # Shipped something
-    if had_push or had_pr:
-        if had_fails == 0:
-            return "[satisfied]"
-        return "[relieved] [satisfied]"
-
-    # Mostly failing
-    if ended_with_fail and had_fails > had_passes:
-        return "[frustrated] [sighs]"
-
-    # Productive session, all green
-    if had_passes > 3 and had_fails == 0:
-        return "[excited]"
-
-    # Some passes, no drama
-    if had_passes > 0:
-        return "[calm]"
-
-    return "[calm]"
-
-
 def handle_stop(payload: StopPayload, config: VoxConfig) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
@@ -271,9 +223,16 @@ def handle_stop(payload: StopPayload, config: VoxConfig) -> dict[str, object] | 
     elif config.vibe_mode == "manual" and config.vibe_tags:
         pass  # Manual mode with existing tags — already set
     else:
-        tags = resolve_tags_from_signals(config.vibe_signals)
-        config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
-        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
+        log = SignalLog.deserialize(config.vibe_signals or "")
+        tags = log.resolve_tags()
+        config_dir = find_config_dir()
+        if config_dir is None:
+            logger.warning(
+                "Stop hook: config dir not found; vibe_tags not persisted. "
+                "Run vox from inside a repo with .punt-labs/vox/ configured."
+            )
+        else:
+            write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
     return {"decision": "block", "reason": phrase}
 
 
@@ -301,8 +260,6 @@ def classify_signal(exit_code: int | None, stdout: str) -> str | None:
     Returns a signal name like ``"tests-pass"`` or None if no pattern
     matches.
     """
-    import re
-
     # Truncate to prevent regex DoS on large outputs
     text = stdout[:500]
 
@@ -331,19 +288,9 @@ def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
     if signal is None:
         return
 
-    from datetime import datetime
-
-    timestamp = datetime.now().strftime("%H:%M")
-    token = f"{signal}@{timestamp}"
-
-    current = read_config(config_dir).vibe_signals or ""
-    new_signals = f"{current},{token}" if current else token
-
-    parts = new_signals.split(",")
-    if len(parts) > MAX_VIBE_SIGNALS:
-        new_signals = ",".join(parts[-MAX_VIBE_SIGNALS:])
-
-    write_field("vibe_signals", new_signals, config_dir)
+    log = SignalLog.deserialize(read_config(config_dir).vibe_signals or "")
+    log.append(Signal.now(signal))
+    write_field("vibe_signals", log.serialize(), config_dir)
 
 
 # ---------------------------------------------------------------------------
