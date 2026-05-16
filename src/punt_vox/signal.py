@@ -25,14 +25,12 @@ class Signal:
     def from_token(cls, token: str) -> Signal:
         """Parse 'tests-pass@14:32' into a Signal."""
         if not token.strip():
-            msg = f"Cannot parse Signal from empty token: {token!r}"
-            raise ValueError(msg)
+            raise ValueError(f"empty token: {token!r}")
         if "@" not in token:
             return cls(signal_type=token.strip(), timestamp="")
         signal_type, _, timestamp = token.partition("@")
         if not signal_type.strip():
-            msg = f"Cannot parse Signal from token with empty type: {token!r}"
-            raise ValueError(msg)
+            raise ValueError(f"empty type in token: {token!r}")
         return cls(signal_type=signal_type.strip(), timestamp=timestamp.strip())
 
     @classmethod
@@ -121,18 +119,13 @@ class SignalLog:
     def deserialize(cls, raw: str, max_entries: int = 20) -> SignalLog:
         """Parse comma-separated token string into a SignalLog."""
         log = cls(max_entries=max_entries)
-        if not raw:
-            return log
-        for token in raw.split(","):
-            token = token.strip()
-            if token:
-                try:
-                    log.append(Signal.from_token(token))
-                except ValueError:
-                    logger.warning(
-                        "SignalLog.deserialize: skipping malformed token %r",
-                        token,
-                    )
+        for token in (t.strip() for t in raw.split(",") if t.strip()):
+            try:
+                log.append(Signal.from_token(token))
+            except ValueError:
+                logger.warning(
+                    "SignalLog.deserialize: skipping malformed token %r", token
+                )
         return log
 
     def __len__(self) -> int:
