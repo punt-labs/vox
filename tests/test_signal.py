@@ -158,6 +158,10 @@ class TestSignalLog:
         log.append(Signal(signal_type="only", timestamp="00:00"))
         assert len(log.last(10)) == 1
 
+    def test_last_zero_returns_empty(self) -> None:
+        log = SignalLog.deserialize("tests-pass@12:00,lint-fail@13:00")
+        assert log.last(0) == []
+
     def test_serialize_empty(self) -> None:
         assert SignalLog().serialize() == ""
 

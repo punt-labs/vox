@@ -53,11 +53,11 @@ class SignalLog:
 
     MAX_ENTRIES: ClassVar[int] = 20  # = MAX_VIBE_SIGNALS
 
-    def __new__(cls, max_entries: int = 20) -> Self:
+    def __new__(cls, max_entries: int | None = None) -> Self:
         """Create an empty SignalLog with the given capacity."""
         self = super().__new__(cls)
         self._signals = []
-        self._max_entries = max_entries
+        self._max_entries = cls.MAX_ENTRIES if max_entries is None else max_entries
         return self
 
     def append(self, signal: Signal) -> None:
@@ -75,7 +75,7 @@ class SignalLog:
 
     def last(self, n: int) -> list[Signal]:
         """Return the most recent n signals."""
-        return self._signals[-n:]
+        return self._signals[-n:] if n > 0 else []
 
     def _scan_signals(self) -> tuple[bool, bool, bool, int, int]:
         """Compute session-state flags used by resolve_tags."""
@@ -116,7 +116,7 @@ class SignalLog:
         return ",".join(s.to_token() for s in self._signals)
 
     @classmethod
-    def deserialize(cls, raw: str, max_entries: int = 20) -> SignalLog:
+    def deserialize(cls, raw: str, max_entries: int | None = None) -> SignalLog:
         """Parse comma-separated token string into a SignalLog."""
         log = cls(max_entries=max_entries)
         for token in (t.strip() for t in raw.split(",") if t.strip()):

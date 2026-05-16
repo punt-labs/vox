@@ -101,7 +101,7 @@ def _read_hook_input() -> dict[str, object]:
         if not raw.strip():
             return {}
         data: object = json.loads(raw)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
     if not isinstance(data, dict):
         return {}
