@@ -21,7 +21,6 @@ from punt_vox.hooks import (
     handle_subagent_start,
     handle_subagent_stop,
     handle_user_prompt_submit,
-    resolve_tags_from_signals,
 )
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
@@ -31,6 +30,7 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
+from punt_vox.signal import SignalLog
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -203,6 +203,17 @@ class TestHandleStop:
         # Manual mode with existing tags — no write needed
         mock_write.assert_not_called()
 
+    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.find_config_dir", return_value=None)
+    def test_auto_mode_config_dir_none_skips_write_but_still_blocks(
+        self, _mock_find: MagicMock, mock_write: MagicMock
+    ) -> None:
+        config = _make_config(vibe_signals="tests-pass@12:00")
+        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        assert result is not None
+        assert result["decision"] == "block"
+        mock_write.assert_not_called()
+
     def test_vibe_off_skips_config_write(self) -> None:
         config = VoxConfig(
             notify="y",
@@ -221,44 +232,6 @@ class TestHandleStop:
         assert result["decision"] == "block"
         # Vibe off — must not write tags to config
         mock_write.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# resolve_tags_from_signals tests
-# ---------------------------------------------------------------------------
-
-
-class TestResolveTagsFromSignals:
-    def test_empty_signals(self) -> None:
-        assert resolve_tags_from_signals("") == "[calm]"
-
-    def test_single_pass(self) -> None:
-        assert resolve_tags_from_signals("tests-pass@12:00") == "[calm]"
-
-    def test_many_passes_no_fails(self) -> None:
-        signals = ",".join(f"tests-pass@{i:02d}:00" for i in range(5))
-        assert resolve_tags_from_signals(signals) == "[excited]"
-
-    def test_recovery_arc(self) -> None:
-        signals = "tests-fail@01:00,tests-fail@02:00,tests-pass@03:00"
-        assert resolve_tags_from_signals(signals) == "[relieved]"
-
-    def test_mostly_failing(self) -> None:
-        signals = "tests-fail@01:00,tests-fail@02:00,lint-fail@03:00"
-        assert "[frustrated]" in resolve_tags_from_signals(signals)
-
-    def test_shipped_clean(self) -> None:
-        signals = "tests-pass@01:00,git-push-ok@02:00"
-        assert "[satisfied]" in resolve_tags_from_signals(signals)
-
-    def test_shipped_after_struggle(self) -> None:
-        signals = "tests-fail@01:00,tests-pass@02:00,git-push-ok@03:00"
-        tags = resolve_tags_from_signals(signals)
-        assert "[relieved]" in tags or "[satisfied]" in tags
-
-    def test_pr_created(self) -> None:
-        signals = "tests-pass@01:00,pr-created@02:00"
-        assert "[satisfied]" in resolve_tags_from_signals(signals)
 
 
 # ---------------------------------------------------------------------------
@@ -399,14 +372,15 @@ class TestHandlePostBash:
         assert not local_md.exists()
 
     def test_prunes_signals_at_max(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import MAX_VIBE_SIGNALS, handle_post_bash
+        from punt_vox.hooks import handle_post_bash
 
+        max_entries = SignalLog.MAX_ENTRIES
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
         local_md = config_dir / "vox.local.md"
         # Seed with exactly MAX signals already present
-        existing = ",".join(f"old-{i}@00:00" for i in range(MAX_VIBE_SIGNALS))
+        existing = ",".join(f"old-{i}@00:00" for i in range(max_entries))
         local_md.write_text(f'---\nvibe_signals: "{existing}"\n---\n')
 
         payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
@@ -418,7 +392,7 @@ class TestHandlePostBash:
             if "vibe_signals" in line:
                 signals = line.split(":", 1)[1].strip().strip('"')
                 parts = signals.split(",")
-                assert len(parts) == MAX_VIBE_SIGNALS
+                assert len(parts) == max_entries
                 # Oldest signal should have been pruned
                 assert "old-0@00:00" not in signals
                 # New signal should be present
