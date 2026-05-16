@@ -15,6 +15,7 @@ from punt_vox.hooks import (
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
+    handle_post_bash,
     handle_pre_compact,
     handle_session_end,
     handle_stop,
@@ -312,8 +313,6 @@ class TestHandleNotification:
 
 class TestHandlePostBash:
     def test_appends_signal(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import handle_post_bash
-
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
@@ -329,8 +328,6 @@ class TestHandlePostBash:
         assert "tests-pass" in text
 
     def test_no_signal_no_write(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import handle_post_bash
-
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
@@ -343,8 +340,6 @@ class TestHandlePostBash:
         assert not local_md.exists()
 
     def test_accumulates_signals(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import handle_post_bash
-
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
@@ -359,8 +354,6 @@ class TestHandlePostBash:
         assert "tests-pass" in text
 
     def test_invalid_tool_response(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import handle_post_bash
-
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
@@ -372,8 +365,6 @@ class TestHandlePostBash:
         assert not local_md.exists()
 
     def test_prunes_signals_at_max(self, tmp_path: Path) -> None:
-        from punt_vox.hooks import handle_post_bash
-
         max_entries = SignalLog.MAX_ENTRIES
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
