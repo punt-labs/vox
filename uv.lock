@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1151,6 +1151,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+lux = [
+    { name = "punt-lux" },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "mypy" },
     { name = "pyright" },
@@ -1158,9 +1163,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
-]
-lux = [
-    { name = "punt-lux" },
 ]
 
 [package.metadata]
@@ -1171,19 +1173,23 @@ requires-dist = [
     { name = "botocore-stubs", specifier = ">=1.35.0" },
     { name = "elevenlabs", specifier = ">=2.0.0" },
     { name = "mcp", specifier = ">=1.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.18.1" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "punt-lux", marker = "extra == 'lux'", specifier = ">=0.9.0" },
     { name = "pydub", specifier = ">=0.25.0" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.2" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["dev", "lux"]
+provides-extras = ["lux"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.18.1" },
+    { name = "pyright", specifier = ">=1.1.400" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-cov", specifier = ">=6.0.0" },
+    { name = "ruff", specifier = ">=0.13.0" },
+]
 
 [[package]]
 name = "py-key-value-aio"
