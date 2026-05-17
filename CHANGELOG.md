@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/music next` command**: skip to a new generated track while the current one keeps playing (gapless). New `music_next` WebSocket message, MCP tool, and CLI subcommand. Closes vox-n3me.
 
+### Changed
+
+- **Dev tooling moved to PEP 735 `[dependency-groups]`**: `mypy`, `pyright`, `ruff`, `pytest`, `pytest-asyncio`, and `pytest-cov` now live in `[dependency-groups].dev` instead of `[project.optional-dependencies].dev`. A plain `uv sync` installs them automatically — `--extra dev` is no longer needed (and no longer accepted). `lux` remains an end-user extra. CI's `uv sync --frozen --all-extras` continues to install everything, since uv auto-includes the `dev` group unless `--no-dev` is passed.
+
 ### Fixed
 
 - **MCP server state went stale after CLI config writes**: the MCP server seeded `SessionState` from config at startup but never re-read. CLI commands like `vox vibe auto` wrote to `vox.local.md` but the MCP server retained the old values, causing `/music on` to report stale mood. All MCP tools now call `_refresh_state_from_config()` to re-read config before acting. Closes vox-duw.

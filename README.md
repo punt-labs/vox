@@ -431,7 +431,8 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 ## Development
 
 ```bash
-uv sync --all-extras    # Install dependencies
+uv sync                 # Install dev tools (auto via [dependency-groups].dev)
+uv sync --all-extras    # Also install the `lux` optional extra
 make check              # Run all quality gates
 ```
 
