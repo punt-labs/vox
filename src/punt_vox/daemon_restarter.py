@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Self
 
 import typer
@@ -53,8 +54,10 @@ class DaemonRestarter:
         if os.geteuid() == 0:
             raise typer.BadParameter(
                 "vox daemon restart must be run as your normal user, not root "
-                "or sudo. vox will prompt for your sudo password when it drives "
-                "systemctl/launchctl. Re-run without sudo:\n\n"
+                "or sudo. On macOS the LaunchAgent installs to your home "
+                "directory and cannot function under root. On Linux vox will "
+                "prompt for sudo when it drives systemctl. Re-run without "
+                "sudo:\n\n"
                 "    vox daemon restart\n"
             )
 
@@ -97,23 +100,28 @@ class DaemonRestarter:
         logger.info("Starting voxd via service manager...")
         try:
             if plat == "macos":
-                subprocess.run(
-                    [  # noqa: S607 -- sudo/launchctl are intentional
-                        "sudo",
+                plist = str(
+                    Path.home()
+                    / "Library"
+                    / "LaunchAgents"
+                    / "com.punt-labs.voxd.plist"
+                )
+                domain = f"gui/{os.getuid()}"
+                subprocess.run(  # noqa: S603 -- launchctl with known args
+                    [  # noqa: S607 -- launchctl is intentional
                         "launchctl",
-                        "load",
-                        "-w",
-                        "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+                        "bootstrap",
+                        domain,
+                        plist,
                     ],
                     check=True,
                 )
-                subprocess.run(
-                    [  # noqa: S607 -- sudo/launchctl are intentional
-                        "sudo",
+                subprocess.run(  # noqa: S603 -- launchctl with known args
+                    [  # noqa: S607 -- launchctl is intentional
                         "launchctl",
                         "kickstart",
                         "-k",
-                        "system/com.punt-labs.voxd",
+                        f"{domain}/com.punt-labs.voxd",
                     ],
                     check=True,
                 )
