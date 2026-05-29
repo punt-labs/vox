@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **macOS daemon 7x slower than manual launch**: `voxd` was installed as a LaunchDaemon (`/Library/LaunchDaemons/`), which macOS throttles with background QoS. Moved to a LaunchAgent (`~/Library/LaunchAgents/`), eliminating CPU/IO throttling and all sudo requirements. Existing installs auto-migrate on `vox daemon install` (one final sudo to remove old plist). Closes vox-wt79.
 - **MCP server state went stale after CLI config writes**: the MCP server seeded `SessionState` from config at startup but never re-read. CLI commands like `vox vibe auto` wrote to `vox.local.md` but the MCP server retained the old values, causing `/music on` to report stale mood. All MCP tools now call `_refresh_state_from_config()` to re-read config before acting. Closes vox-duw.
 - **Music restart glitch when `/music on` called while playing**: `_handle_music_on` killed the current playback subprocess before signaling the music loop, causing a stop/pause/restart gap. Now skips the kill when the same owner re-sends `music_on` — the existing gapless handoff path generates the new track while the old one keeps playing. Closes vox-rqc.
 

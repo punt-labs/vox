@@ -18,6 +18,7 @@ from punt_vox.paths import (
 from punt_vox.service.keys_env import KeysEnvWriter
 from punt_vox.service.launchd import (
     _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
+    _OLD_LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
     LaunchdBackend,
 )
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -28,6 +29,7 @@ from punt_vox.service.systemd import (
 
 logger = logging.getLogger(__name__)
 
+# Sudo notice -- Linux only (macOS LaunchAgent installs need no sudo).
 _SUDO_NOTICE = (
     "Installing voxd as a system service. You may be prompted for your sudo password."
 )
@@ -90,11 +92,23 @@ class ServiceInstaller:
     # Install
     # ------------------------------------------------------------------
 
-    def _install_darwin(self, user: str) -> bool:
-        """Run the macOS install path.  Return True if running."""
-        self._launchd.stop()
-        self._process_mgr.ensure_port_free()
-        self._launchd.install(user)
+    def _install_darwin(self) -> bool:
+        """Run the macOS install path.  Return True if running.
+
+        Detects whether an old LaunchDaemon plist exists at
+        ``/Library/LaunchDaemons/com.punt-labs.voxd.plist`` and runs
+        the one-time migration if so.  Fresh installs need no sudo.
+        """
+        if _OLD_LAUNCHD_PLIST.exists():
+            logger.warning(
+                "Migrating voxd from LaunchDaemon to LaunchAgent "
+                "(one sudo prompt to remove old system service)..."
+            )
+            self._launchd.migrate_from_daemon()
+        else:
+            self._launchd.stop()
+            self._process_mgr.ensure_port_free()
+            self._launchd.install()
         return self._launchd.status()
 
     def _install_linux(self, user: str) -> bool:
@@ -112,9 +126,9 @@ class ServiceInstaller:
         """
         if os.geteuid() == 0:
             msg = (
-                "vox daemon install must be run as your normal user, not root "
-                "or sudo. vox will prompt for your sudo password when it needs "
-                "to install the system service unit. Re-run without sudo:\n\n"
+                "vox daemon install must run as your normal user, not root. "
+                "LaunchAgents install to your home directory and cannot "
+                "function under root. Re-run without sudo:\n\n"
                 "    vox daemon install\n"
             )
             raise SystemExit(msg)
@@ -129,10 +143,10 @@ class ServiceInstaller:
         self._keys_writer.write(dict(os.environ), keys_path)
         logger.info("Wrote provider keys to %s", keys_path)
 
-        logger.warning(_SUDO_NOTICE)
         if plat == "macos":
-            running = self._install_darwin(user)
+            running = self._install_darwin()
         else:
+            logger.warning(_SUDO_NOTICE)
             running = self._install_linux(user)
 
         exec_display = " ".join(args)

@@ -50,3 +50,7 @@
 {"ts":"2026-05-16T17:29:47Z","commit":"5d1ad91","files_scored":76,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
 {"ts":"2026-05-16T17:34:59Z","commit":"5d1ad91","files_scored":76,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/signal.py":{"module_size":[115.0,108.0]}}}
 {"ts":"2026-05-16T18:26:24Z","commit":"5e45f01","files_scored":76,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{}}
+{"ts":"2026-05-29T11:00:52Z","commit":"a488e3b","files_scored":76,"files_improved":0,"files_regressed":5,"verdict":"fail","deltas":{}}
+{"ts":"2026-05-29T11:01:33Z","commit":"a488e3b","files_scored":76,"files_improved":0,"files_regressed":5,"verdict":"fail","deltas":{}}
+{"ts":"2026-05-29T11:01:39Z","commit":"a488e3b","files_scored":76,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
+{"ts":"2026-05-29T11:06:36Z","commit":"a488e3b","files_scored":76,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}

@@ -84,6 +84,13 @@ def _setup_fake_env(
     )
 
     monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 1000)
+
+    # Ensure migration path is not triggered by a real old LaunchDaemon plist.
+    monkeypatch.setattr(
+        "punt_vox.service.installer._OLD_LAUNCHD_PLIST",
+        tmp_path / "no-such-old-plist",
+    )
+
     return fake_home
 
 
@@ -266,7 +273,7 @@ def test_install_runs_launchd_stop_before_port_check(
         "ensure_port_free",
         lambda self: call_order.append("ensure_port_free"),
     )
-    monkeypatch.setattr(LaunchdBackend, "install", lambda self, user: None)
+    monkeypatch.setattr(LaunchdBackend, "install", lambda self: None)
     monkeypatch.setattr(LaunchdBackend, "status", lambda self: True)
 
     inst = ServiceInstaller()

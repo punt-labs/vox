@@ -11,21 +11,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
-from punt_vox.paths import (
-    log_dir as _paths_log_dir,
-    user_state_dir as _paths_user_state_dir,
-)
+from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.process import ProcessManager
 
 logger = logging.getLogger(__name__)
 
 _LABEL = "com.punt-labs.voxd"
-_LAUNCHD_DIR = Path("/Library/LaunchDaemons")
+_LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
-_SUDO_NOTICE = (
-    "Installing voxd as a system service. You may be prompted for your sudo password."
-)
+# Old LaunchDaemon path -- checked during migration only.
+_OLD_LAUNCHD_PLIST = Path("/Library/LaunchDaemons") / f"{_LABEL}.plist"
 
 
 class LaunchdBackend:
@@ -47,6 +43,11 @@ class LaunchdBackend:
         return self
 
     @staticmethod
+    def _gui_domain() -> str:
+        """Return the launchd GUI domain target for the current user."""
+        return f"gui/{os.getuid()}"
+
+    @staticmethod
     def _extra_env() -> dict[str, str]:
         """Return extra env vars to bake into the launchd plist."""
         extras: dict[str, str] = {}
@@ -55,8 +56,13 @@ class LaunchdBackend:
             extras["VOXD_BIND"] = bind
         return extras
 
-    def plist_content(self, user: str) -> str:
-        """Generate the launchd plist XML for *user*."""
+    def plist_content(self) -> str:
+        """Generate the LaunchAgent plist XML.
+
+        LaunchAgents run as the session user by default -- no ``UserName``
+        key is needed (and it is invalid for agents).  ``ProcessType=Interactive``
+        prevents App Nap-style throttling on the windowless daemon.
+        """
         args = self._voxd_exec_args_fn()
         # Plist XML reads <string> values literally -- use html.escape for
         # XML-safe encoding (not shlex.quote, which adds shell quotes).
@@ -69,7 +75,6 @@ class LaunchdBackend:
         path_value = html.escape(
             os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         )
-        escaped_user = html.escape(user)
         extra_env = "".join(
             f"\n            <key>{html.escape(k)}</key>"
             f"\n            <string>{html.escape(v)}</string>"
@@ -83,8 +88,8 @@ class LaunchdBackend:
             <dict>
                 <key>Label</key>
                 <string>{_LABEL}</string>
-                <key>UserName</key>
-                <string>{escaped_user}</string>
+                <key>ProcessType</key>
+                <string>Interactive</string>
                 <key>ProgramArguments</key>
                 <array>
             {program_args}
@@ -107,7 +112,7 @@ class LaunchdBackend:
         """)
 
     def stop(self) -> None:
-        """Unload voxd from launchd if loaded.  Idempotent.
+        """Bootout voxd from launchd if loaded.  Idempotent.
 
         Called as a pre-flight step by ``install()`` before
         ``ensure_port_free`` so launchd's ``KeepAlive=true`` does not
@@ -115,69 +120,99 @@ class LaunchdBackend:
         """
         if not _LAUNCHD_PLIST.exists():
             return
+        domain = self._gui_domain()
         subprocess.run(
-            ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+            ["launchctl", "bootout", f"{domain}/{_LABEL}"],
             check=False,
         )
-        logger.info("Unloaded any previously-loaded %s", _LABEL)
+        logger.info("Booted out any previously-loaded %s", _LABEL)
 
-    def install(self, user: str) -> None:
-        """Install the launchd plist.  Sudo is invoked three times."""
-        state_root = _paths_user_state_dir()
-        tmp_plist = state_root / "com.punt-labs.voxd.plist.tmp"
-        tmp_plist.write_text(self.plist_content(user))
-        logger.info("Wrote plist to %s", tmp_plist)
+    def install(self) -> None:
+        """Install the LaunchAgent plist.  No sudo required."""
+        _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
 
-        try:
-            subprocess.run(
-                [
-                    "sudo",
-                    "install",
-                    "-m",
-                    "644",
-                    "-o",
-                    "root",
-                    "-g",
-                    "wheel",
-                    str(tmp_plist),
-                    str(_LAUNCHD_PLIST),
-                ],
-                check=True,
-            )
-            logger.info("Installed %s", _LAUNCHD_PLIST)
+        plist_text = self.plist_content()
+        _LAUNCHD_PLIST.write_text(plist_text)
+        logger.info("Wrote plist to %s", _LAUNCHD_PLIST)
 
-            subprocess.run(
-                ["sudo", "launchctl", "load", "-w", str(_LAUNCHD_PLIST)],
-                check=True,
-            )
-            logger.info("Loaded %s into launchd", _LABEL)
+        domain = self._gui_domain()
+        subprocess.run(
+            ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
+            check=True,
+        )
+        logger.info("Bootstrapped %s into launchd", _LABEL)
 
-            subprocess.run(
-                ["sudo", "launchctl", "kickstart", "-k", f"system/{_LABEL}"],
-                check=True,
-            )
-            logger.info("Kickstarted %s", _LABEL)
-        finally:
-            try:
-                tmp_plist.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("Could not remove tmp plist %s", tmp_plist)
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
+            check=True,
+        )
+        logger.info("Kickstarted %s", _LABEL)
+
+    def migrate_from_daemon(self) -> None:
+        """One-time migration from LaunchDaemon to LaunchAgent.
+
+        Called when ``_OLD_LAUNCHD_PLIST`` exists.  Uses deprecated
+        ``launchctl unload -w`` for the old system-domain plist (the only
+        place sudo is needed), then bootstraps the new LaunchAgent.
+        The old plist is removed only after the new daemon is confirmed
+        running.
+        """
+        _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
+        plist_text = self.plist_content()
+        _LAUNCHD_PLIST.write_text(plist_text)
+        logger.info("Wrote new LaunchAgent plist to %s", _LAUNCHD_PLIST)
+
+        # Unload old system-domain daemon (requires sudo).
+        subprocess.run(
+            [
+                "sudo",
+                "launchctl",
+                "unload",
+                "-w",
+                str(_OLD_LAUNCHD_PLIST),
+            ],
+            check=True,
+        )
+        logger.info("Unloaded old LaunchDaemon %s", _LABEL)
+
+        self._process_mgr.ensure_port_free()
+
+        domain = self._gui_domain()
+        subprocess.run(
+            ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
+            check=True,
+        )
+        logger.info("Bootstrapped new LaunchAgent %s", _LABEL)
+
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
+            check=True,
+        )
+        logger.info("Kickstarted %s", _LABEL)
+
+        # Remove old plist only after new daemon is running.
+        subprocess.run(
+            [
+                "sudo",
+                "rm",
+                str(_OLD_LAUNCHD_PLIST),
+            ],
+            check=True,
+        )
+        logger.info("Removed old LaunchDaemon plist %s", _OLD_LAUNCHD_PLIST)
 
     def uninstall(self) -> None:
-        """Remove the launchd plist and kill any stale daemon."""
+        """Remove the LaunchAgent plist and kill any stale daemon."""
         if _LAUNCHD_PLIST.exists():
-            logger.warning(_SUDO_NOTICE)
+            domain = self._gui_domain()
             subprocess.run(
-                ["sudo", "launchctl", "unload", "-w", str(_LAUNCHD_PLIST)],
+                ["launchctl", "bootout", f"{domain}/{_LABEL}"],
                 check=False,
             )
-            subprocess.run(
-                ["sudo", "rm", "-f", str(_LAUNCHD_PLIST)],
-                check=True,
-            )
+            _LAUNCHD_PLIST.unlink(missing_ok=True)
             logger.info("Removed %s", _LAUNCHD_PLIST)
         else:
-            logger.info("No plist found at %s — nothing to uninstall", _LAUNCHD_PLIST)
+            logger.info("No plist found at %s -- nothing to uninstall", _LAUNCHD_PLIST)
         self._process_mgr.kill_stale_daemon()
 
     def status(self) -> bool:
