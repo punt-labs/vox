@@ -13,6 +13,12 @@ from typing import Self
 import typer
 
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.service.launchd import (
+    _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
+)
+from punt_vox.service.launchd import (
+    _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
+)
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.paths import installed_version, log_dir
 
@@ -100,19 +106,13 @@ class DaemonRestarter:
         logger.info("Starting voxd via service manager...")
         try:
             if plat == "macos":
-                plist = str(
-                    Path.home()
-                    / "Library"
-                    / "LaunchAgents"
-                    / "com.punt-labs.voxd.plist"
-                )
                 domain = f"gui/{os.getuid()}"
                 subprocess.run(  # noqa: S603 -- launchctl with known args
                     [  # noqa: S607 -- launchctl is intentional
                         "launchctl",
                         "bootstrap",
                         domain,
-                        plist,
+                        str(_LAUNCHD_PLIST),
                     ],
                     check=True,
                 )
@@ -121,7 +121,7 @@ class DaemonRestarter:
                         "launchctl",
                         "kickstart",
                         "-k",
-                        f"{domain}/com.punt-labs.voxd",
+                        f"{domain}/{_LAUNCHD_LABEL}",
                     ],
                     check=True,
                 )

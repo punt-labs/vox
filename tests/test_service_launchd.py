@@ -280,8 +280,9 @@ def test_migrate_from_daemon_bootstrap_before_rm(
         be.migrate_from_daemon()
 
     cmds = [c[0][0] for c in mock_run.call_args_list]
-    # Order: unload old, bootstrap new, kickstart new, rm old
+    # Order: unload old, bootout new (pre-flight), bootstrap new, kickstart, rm old
     assert cmds[0][:3] == ["sudo", "launchctl", "unload"]
-    assert cmds[1][1] == "bootstrap"
-    assert cmds[2][1] == "kickstart"
-    assert cmds[3][:2] == ["sudo", "rm"]
+    assert cmds[1][1] == "bootout"
+    assert cmds[2][1] == "bootstrap"
+    assert cmds[3][1] == "kickstart"
+    assert cmds[4][:2] == ["sudo", "rm"]

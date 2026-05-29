@@ -187,6 +187,10 @@ class LaunchdBackend:
         else:
             logger.info("Unloaded old LaunchDaemon %s", _LABEL)
 
+        # Bootout any already-loaded new agent so a migration retry after
+        # partial failure (e.g. sudo rm declined) doesn't fail with
+        # "service already loaded" on the bootstrap call below.
+        self.stop()
         self._process_mgr.ensure_port_free()
 
         domain = self._gui_domain()
