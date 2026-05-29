@@ -140,6 +140,7 @@ class LaunchdBackend:
         """Install the LaunchAgent plist.  No sudo required."""
         _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
         _LAUNCHD_PLIST.write_text(self.plist_content())
+        _LAUNCHD_PLIST.chmod(0o644)
         logger.info("Wrote plist to %s", _LAUNCHD_PLIST)
 
         domain = self._gui_domain()
@@ -166,6 +167,7 @@ class LaunchdBackend:
         """
         _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
         _LAUNCHD_PLIST.write_text(self.plist_content())
+        _LAUNCHD_PLIST.chmod(0o644)
         logger.info("Wrote new LaunchAgent plist to %s", _LAUNCHD_PLIST)
 
         # Unload old system-domain daemon (requires sudo).
