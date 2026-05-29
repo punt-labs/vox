@@ -241,7 +241,7 @@ def test_migrate_from_daemon_uses_exactly_two_sudo_calls(
     )
     with (
         patch.object(ProcessManager, "ensure_port_free"),
-        patch("punt_vox.client.VoxClientSync", return_value=mock_client),
+        patch("punt_vox.service.launchd.VoxClientSync", return_value=mock_client),
     ):
         be.migrate_from_daemon()
 
@@ -285,7 +285,7 @@ def test_migrate_from_daemon_bootstrap_before_rm(
     )
     with (
         patch.object(ProcessManager, "ensure_port_free"),
-        patch("punt_vox.client.VoxClientSync", return_value=mock_client),
+        patch("punt_vox.service.launchd.VoxClientSync", return_value=mock_client),
     ):
         be.migrate_from_daemon()
 

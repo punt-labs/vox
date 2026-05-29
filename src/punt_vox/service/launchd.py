@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
+from punt_vox.client import VoxClientSync, VoxdConnectionError
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.process import ProcessManager
 
@@ -218,8 +219,6 @@ class LaunchdBackend:
         # Verify the new daemon is actually healthy before removing the
         # old plist — bootstrap+kickstart returning 0 does not guarantee
         # the process stayed up (bad env, missing binary, etc.).
-        from punt_vox.client import VoxClientSync, VoxdConnectionError
-
         try:
             VoxClientSync().health()
         except (VoxdConnectionError, Exception):
