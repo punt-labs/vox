@@ -226,7 +226,7 @@ class LaunchdBackend:
         last_exc: VoxdConnectionError | OSError | None = None
         while time.monotonic() < deadline:
             try:
-                VoxClientSync().health()
+                VoxClientSync(host="127.0.0.1").health()
                 last_exc = None
                 break
             except (VoxdConnectionError, OSError) as exc:
