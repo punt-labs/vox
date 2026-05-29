@@ -215,13 +215,23 @@ class LaunchdBackend:
             )
             raise RuntimeError(msg) from exc
 
-        # Remove old plist only after new daemon is running.
+        # Verify the new daemon is actually healthy before removing the
+        # old plist — bootstrap+kickstart returning 0 does not guarantee
+        # the process stayed up (bad env, missing binary, etc.).
+        from punt_vox.client import VoxClientSync, VoxdConnectionError
+
+        try:
+            VoxClientSync().health()
+        except (VoxdConnectionError, Exception):
+            logger.warning(
+                "New LaunchAgent started but health check failed. "
+                "Old plist at %s is preserved for rollback.",
+                _OLD_LAUNCHD_PLIST,
+            )
+            raise
+
         subprocess.run(
-            [
-                "sudo",
-                "rm",
-                str(_OLD_LAUNCHD_PLIST),
-            ],
+            ["sudo", "rm", str(_OLD_LAUNCHD_PLIST)],
             check=True,
         )
         logger.info("Removed old LaunchDaemon plist %s", _OLD_LAUNCHD_PLIST)

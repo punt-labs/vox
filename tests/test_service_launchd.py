@@ -232,12 +232,17 @@ def test_migrate_from_daemon_uses_exactly_two_sudo_calls(
     )
 
     mock_run.return_value = MagicMock(returncode=0)
+    mock_client = MagicMock()
+    mock_client.health.return_value = {"status": "ok"}
 
     be = LaunchdBackend(
         ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
     )
-    with patch.object(ProcessManager, "ensure_port_free"):
+    with (
+        patch.object(ProcessManager, "ensure_port_free"),
+        patch("punt_vox.client.VoxClientSync", return_value=mock_client),
+    ):
         be.migrate_from_daemon()
 
     sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
@@ -271,12 +276,17 @@ def test_migrate_from_daemon_bootstrap_before_rm(
     )
 
     mock_run.return_value = MagicMock(returncode=0)
+    mock_client = MagicMock()
+    mock_client.health.return_value = {"status": "ok"}
 
     be = LaunchdBackend(
         ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
     )
-    with patch.object(ProcessManager, "ensure_port_free"):
+    with (
+        patch.object(ProcessManager, "ensure_port_free"),
+        patch("punt_vox.client.VoxClientSync", return_value=mock_client),
+    ):
         be.migrate_from_daemon()
 
     cmds = [c[0][0] for c in mock_run.call_args_list]
