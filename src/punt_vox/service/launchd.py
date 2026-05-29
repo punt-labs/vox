@@ -229,14 +229,30 @@ class LaunchdBackend:
         """Remove the LaunchAgent plist and kill any stale daemon."""
         if _LAUNCHD_PLIST.exists():
             domain = self._gui_domain()
-            subprocess.run(
+            result = subprocess.run(
                 ["launchctl", "bootout", f"{domain}/{_LABEL}"],
                 check=False,
             )
+            if result.returncode != 0:
+                logger.warning(
+                    "bootout %s exited %d -- removing plist anyway",
+                    _LABEL,
+                    result.returncode,
+                )
             _LAUNCHD_PLIST.unlink(missing_ok=True)
             logger.info("Removed %s", _LAUNCHD_PLIST)
         else:
             logger.info("No plist found at %s -- nothing to uninstall", _LAUNCHD_PLIST)
+        if _OLD_LAUNCHD_PLIST.exists():
+            subprocess.run(
+                ["sudo", "launchctl", "unload", "-w", str(_OLD_LAUNCHD_PLIST)],
+                check=False,
+            )
+            subprocess.run(
+                ["sudo", "rm", str(_OLD_LAUNCHD_PLIST)],
+                check=False,
+            )
+            logger.info("Removed old LaunchDaemon plist %s", _OLD_LAUNCHD_PLIST)
         self._process_mgr.kill_stale_daemon()
 
     def status(self) -> bool:
