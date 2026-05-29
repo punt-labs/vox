@@ -137,9 +137,7 @@ class LaunchdBackend:
     def install(self) -> None:
         """Install the LaunchAgent plist.  No sudo required."""
         _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
-
-        plist_text = self.plist_content()
-        _LAUNCHD_PLIST.write_text(plist_text)
+        _LAUNCHD_PLIST.write_text(self.plist_content())
         logger.info("Wrote plist to %s", _LAUNCHD_PLIST)
 
         domain = self._gui_domain()
@@ -165,8 +163,7 @@ class LaunchdBackend:
         running.
         """
         _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
-        plist_text = self.plist_content()
-        _LAUNCHD_PLIST.write_text(plist_text)
+        _LAUNCHD_PLIST.write_text(self.plist_content())
         logger.info("Wrote new LaunchAgent plist to %s", _LAUNCHD_PLIST)
 
         # Unload old system-domain daemon (requires sudo).
