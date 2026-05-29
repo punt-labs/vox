@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from punt_vox.voxd.daemon import build_app
+from punt_vox.voxd.daemon import build_app, entrypoint
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.playback import (
@@ -20,4 +20,5 @@ __all__ = [
     "TrackGenerator",
     "_music_player_command",
     "build_app",
+    "entrypoint",
 ]
