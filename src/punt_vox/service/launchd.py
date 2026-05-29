@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import textwrap
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Self
@@ -219,15 +220,23 @@ class LaunchdBackend:
         # Verify the new daemon is actually healthy before removing the
         # old plist — bootstrap+kickstart returning 0 does not guarantee
         # the process stayed up (bad env, missing binary, etc.).
-        try:
-            VoxClientSync().health()
-        except (VoxdConnectionError, Exception):
+        deadline = time.monotonic() + 5.0
+        last_exc: VoxdConnectionError | OSError | None = None
+        while time.monotonic() < deadline:
+            try:
+                VoxClientSync().health()
+                last_exc = None
+                break
+            except (VoxdConnectionError, OSError) as exc:
+                last_exc = exc
+                time.sleep(0.2)
+        if last_exc is not None:
             logger.warning(
-                "New LaunchAgent started but health check failed. "
+                "New LaunchAgent started but health check failed after 5s. "
                 "Old plist at %s is preserved for rollback.",
                 _OLD_LAUNCHD_PLIST,
             )
-            raise
+            raise last_exc
 
         subprocess.run(
             ["sudo", "rm", str(_OLD_LAUNCHD_PLIST)],
