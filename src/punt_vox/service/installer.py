@@ -127,7 +127,7 @@ class ServiceInstaller:
         if os.geteuid() == 0:
             msg = (
                 "vox daemon install must run as your normal user, not root. "
-                "LaunchAgents install to your home directory and cannot "
+                "The service installs to your home directory and cannot "
                 "function under root. Re-run without sudo:\n\n"
                 "    vox daemon install\n"
             )

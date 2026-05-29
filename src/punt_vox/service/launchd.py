@@ -121,11 +121,18 @@ class LaunchdBackend:
         if not _LAUNCHD_PLIST.exists():
             return
         domain = self._gui_domain()
-        subprocess.run(
+        result = subprocess.run(
             ["launchctl", "bootout", f"{domain}/{_LABEL}"],
             check=False,
         )
-        logger.info("Booted out any previously-loaded %s", _LABEL)
+        if result.returncode != 0:
+            logger.debug(
+                "bootout %s exited %d (service may not be loaded)",
+                _LABEL,
+                result.returncode,
+            )
+        else:
+            logger.info("Booted out %s", _LABEL)
 
     def install(self) -> None:
         """Install the LaunchAgent plist.  No sudo required."""
@@ -163,7 +170,9 @@ class LaunchdBackend:
         logger.info("Wrote new LaunchAgent plist to %s", _LAUNCHD_PLIST)
 
         # Unload old system-domain daemon (requires sudo).
-        subprocess.run(
+        # check=False so re-running after a partial migration does not
+        # trap the user when the service is already unloaded.
+        unload_result = subprocess.run(
             [
                 "sudo",
                 "launchctl",
@@ -171,24 +180,39 @@ class LaunchdBackend:
                 "-w",
                 str(_OLD_LAUNCHD_PLIST),
             ],
-            check=True,
+            check=False,
         )
-        logger.info("Unloaded old LaunchDaemon %s", _LABEL)
+        if unload_result.returncode != 0:
+            logger.debug(
+                "sudo launchctl unload exited %d (service may already be unloaded)",
+                unload_result.returncode,
+            )
+        else:
+            logger.info("Unloaded old LaunchDaemon %s", _LABEL)
 
         self._process_mgr.ensure_port_free()
 
         domain = self._gui_domain()
-        subprocess.run(
-            ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
-            check=True,
-        )
-        logger.info("Bootstrapped new LaunchAgent %s", _LABEL)
+        try:
+            subprocess.run(
+                ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
+                check=True,
+            )
+            logger.info("Bootstrapped new LaunchAgent %s", _LABEL)
 
-        subprocess.run(
-            ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
-            check=True,
-        )
-        logger.info("Kickstarted %s", _LABEL)
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
+                check=True,
+            )
+            logger.info("Kickstarted %s", _LABEL)
+        except subprocess.CalledProcessError as exc:
+            msg = (
+                f"Failed to start new LaunchAgent ({exc}). "
+                f"The plist is at {_LAUNCHD_PLIST}. "
+                "Try: launchctl bootstrap "
+                f"{domain} {_LAUNCHD_PLIST}"
+            )
+            raise RuntimeError(msg) from exc
 
         # Remove old plist only after new daemon is running.
         subprocess.run(
