@@ -85,6 +85,7 @@ class DoctorCheck:
         results.extend(self.check_legacy_output_dir())
         results.extend(self.check_music_dir())
         results.extend(self.check_legacy_user_unit())
+        results.extend(self.check_stale_launch_daemon())
         results.append(self.check_uvx())
         results.extend(self.check_claude_desktop())
         results.extend(self.check_output_dir())
@@ -274,6 +275,25 @@ class DoctorCheck:
             _pass(
                 f"Legacy user unit: {legacy_unit} references current"
                 f" 'vox {referenced}' subcommand"
+            )
+        ]
+
+    def check_stale_launch_daemon(self) -> list[CheckResult]:
+        """Warn if old LaunchDaemon plist exists (macOS only, DES-038)."""
+        if platform.system() != "Darwin":
+            return []
+        from punt_vox.service.launchd import (
+            _OLD_LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        if not _OLD_LAUNCHD_PLIST.exists():
+            return []
+        return [
+            _result(
+                _WARN,
+                "Stale LaunchDaemon plist found at "
+                f"{_OLD_LAUNCHD_PLIST} -- run 'vox daemon install' to migrate",
+                required=False,
             )
         ]
 

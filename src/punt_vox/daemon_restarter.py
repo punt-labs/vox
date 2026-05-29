@@ -14,6 +14,10 @@ import typer
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.paths import installed_version, log_dir
+from punt_vox.service.launchd import (
+    _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
+    _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
+)
 
 __all__ = ["DaemonRestarter"]
 
@@ -53,8 +57,10 @@ class DaemonRestarter:
         if os.geteuid() == 0:
             raise typer.BadParameter(
                 "vox daemon restart must be run as your normal user, not root "
-                "or sudo. vox will prompt for your sudo password when it drives "
-                "systemctl/launchctl. Re-run without sudo:\n\n"
+                "or sudo. On macOS the LaunchAgent installs to your home "
+                "directory and cannot function under root. On Linux vox will "
+                "prompt for sudo when it drives systemctl. Re-run without "
+                "sudo:\n\n"
                 "    vox daemon restart\n"
             )
 
@@ -97,23 +103,22 @@ class DaemonRestarter:
         logger.info("Starting voxd via service manager...")
         try:
             if plat == "macos":
-                subprocess.run(
-                    [  # noqa: S607 -- sudo/launchctl are intentional
-                        "sudo",
+                domain = f"gui/{os.getuid()}"
+                subprocess.run(  # noqa: S603 -- launchctl with known args
+                    [  # noqa: S607 -- launchctl is intentional
                         "launchctl",
-                        "load",
-                        "-w",
-                        "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+                        "bootstrap",
+                        domain,
+                        str(_LAUNCHD_PLIST),
                     ],
                     check=True,
                 )
-                subprocess.run(
-                    [  # noqa: S607 -- sudo/launchctl are intentional
-                        "sudo",
+                subprocess.run(  # noqa: S603 -- launchctl with known args
+                    [  # noqa: S607 -- launchctl is intentional
                         "launchctl",
                         "kickstart",
                         "-k",
-                        "system/com.punt-labs.voxd",
+                        f"{domain}/{_LAUNCHD_LABEL}",
                     ],
                     check=True,
                 )

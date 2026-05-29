@@ -1133,11 +1133,12 @@ app.add_typer(daemon_app, name="daemon")
 def daemon_install_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Register vox as a system service (launchd/systemd).
 
-    Run as your normal user, NOT under ``sudo``. vox will prompt once
-    for your sudo password when it needs to place the system service
-    unit into its system directory. Running under sudo yourself would
-    cause per-user state to land under ``/root/.punt-labs/vox/`` and
-    the generated unit to run as ``User=root`` — both wrong.
+    Run as your normal user, NOT under ``sudo``. On macOS no sudo is
+    needed — the LaunchAgent installs to ``~/Library/LaunchAgents/``.
+    On Linux, vox will prompt once for your sudo password to place
+    the systemd unit. Running under sudo yourself would cause per-user
+    state to land under ``/root/.punt-labs/vox/`` — wrong on both
+    platforms.
     """
     from punt_vox.service import install as svc_install
 
@@ -1165,10 +1166,9 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     take effect until the service is restarted. ``vox daemon restart``
     is the supported way to do that.
 
-    Runs as your normal user, NOT under ``sudo``. vox will prompt once
-    for your sudo password when it drives ``systemctl``/``launchctl``
-    itself. Running under sudo yourself would corrupt the sudo state
-    the service manager uses.
+    Runs as your normal user, NOT under ``sudo``. On macOS, no sudo
+    is needed (LaunchAgent). On Linux, vox will prompt once for your
+    sudo password when it drives ``systemctl``.
     """
     from punt_vox.daemon_restarter import DaemonRestarter
 

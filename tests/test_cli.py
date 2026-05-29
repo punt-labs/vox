@@ -1264,6 +1264,10 @@ class TestDoctorCommand:
                 "punt_vox.service._legacy_user_unit_path",
                 return_value=resolved_legacy,
             ),
+            patch(
+                "punt_vox.service.launchd._OLD_LAUNCHD_PLIST",
+                tmp_path / "no-such-old-plist",
+            ),
             # Isolate legacy-path doctor checks from the real filesystem.
             patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
@@ -1398,6 +1402,10 @@ class TestDoctorCommand:
             patch(
                 "punt_vox.service._legacy_user_unit_path",
                 return_value=tmp_path / "no-such-legacy-unit",
+            ),
+            patch(
+                "punt_vox.service.launchd._OLD_LAUNCHD_PLIST",
+                tmp_path / "no-such-old-plist",
             ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
@@ -2212,6 +2220,7 @@ class TestDaemonRestartCommand:
 
         with (
             patch(f"{_DR}.os.geteuid", return_value=501),
+            patch(f"{_DR}.os.getuid", return_value=501),
             patch("punt_vox.service.detect_platform", return_value="macos"),
             patch(f"{_DR}.subprocess.run", side_effect=fake_run),
             patch(f"{_DR}.VoxClientSync", return_value=mock_client),
@@ -2221,21 +2230,22 @@ class TestDaemonRestartCommand:
 
         assert result.exit_code == 0, result.output
         assert len(calls) == 2
-        # First call: launchctl load -w
-        assert calls[0] == (
-            "sudo",
-            "launchctl",
-            "load",
-            "-w",
-            "/Library/LaunchDaemons/com.punt-labs.voxd.plist",
+        plist = str(
+            Path.home() / "Library" / "LaunchAgents" / "com.punt-labs.voxd.plist"
         )
-        # Second call: launchctl kickstart -k
+        # First call: launchctl bootstrap (no sudo)
+        assert calls[0] == (
+            "launchctl",
+            "bootstrap",
+            "gui/501",
+            plist,
+        )
+        # Second call: launchctl kickstart -k (no sudo)
         assert calls[1] == (
-            "sudo",
             "launchctl",
             "kickstart",
             "-k",
-            "system/com.punt-labs.voxd",
+            "gui/501/com.punt-labs.voxd",
         )
         assert "pid=99" in result.output
         assert "9.9.9-test" in result.output

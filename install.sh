@@ -158,7 +158,11 @@ fi
 
 # --- Step 5: Install daemon ---
 
-info "Installing vox daemon (will prompt once for sudo when placing the system service)..."
+if [ -f /Library/LaunchDaemons/com.punt-labs.voxd.plist ]; then
+  info "Migrating vox daemon (one sudo prompt to remove old system service)..."
+else
+  info "Installing vox daemon..."
+fi
 _vox_path="$(command -v "$BINARY")"
 if "$_vox_path" daemon install; then
   ok "vox daemon installed"

@@ -1290,7 +1290,7 @@ One machine, one set of speakers, one audio daemon (`voxd`). Clients send text +
 
 **Hooks:** Three-layer dispatch unchanged (hooks.md standard). Python handlers call `voxd` via WebSocket client. No in-process synthesis.
 
-**Service install:** System-level unit file, per-user daemon identity. macOS: `/Library/LaunchDaemons/com.punt-labs.voxd.plist` with `UserName` = installing user. Linux: `/etc/systemd/system/voxd.service` with `User=` installing user. `vox daemon install` runs as the normal user and prompts once for a sudo password when it places the unit file; all per-user state under `~/.punt-labs/vox/` is created with normal user permissions.
+**Service install:** macOS: `~/Library/LaunchAgents/com.punt-labs.voxd.plist` — user-level LaunchAgent, no sudo required (migrated from `/Library/LaunchDaemons/` in DES-038). Linux: `/etc/systemd/system/voxd.service` with `User=` installing user — sudo required to place the unit file. All per-user state under `~/.punt-labs/vox/` is created with normal user permissions on both platforms.
 
 ### Why Not Keep the Proxy Architecture
 
@@ -1310,7 +1310,7 @@ All per-user state lives under the installing user's home dir — same layout on
 | Logs | `~/.punt-labs/vox/logs/voxd.log` |
 | Runtime (port, token) | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
-| Service (macOS) | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` |
+| Service (macOS) | `~/Library/LaunchAgents/com.punt-labs.voxd.plist` (DES-038) |
 | Service (Linux) | `/etc/systemd/system/voxd.service` |
 
 ### Why Per-User Paths, Not System Directories
@@ -1348,14 +1348,11 @@ Each review round added another layer: Cursor Bugbot found that chowning `state_
 4. `sudo systemctl enable voxd`
 5. `sudo systemctl restart voxd`
 
-**macOS (4 calls):**
+**macOS (0 calls — DES-038):**
 
-1. `sudo launchctl unload -w <plist>` (pre-flight, skipped on fresh install)
-2. `sudo install -m 644 -o root -g wheel <tmp> /Library/LaunchDaemons/com.punt-labs.voxd.plist`
-3. `sudo launchctl load -w <plist>`
-4. `sudo launchctl kickstart -k system/com.punt-labs.voxd`
+DES-038 moved the macOS plist from `/Library/LaunchDaemons/` to `~/Library/LaunchAgents/`. LaunchAgents are user-owned — no sudo required for any steady-state operation. The one-time migration from the old LaunchDaemon uses 2 sudo calls (`unload` old plist + `rm` old plist), then never again.
 
-The unit/plist content is written to a user-owned tmp file first (`~/.punt-labs/vox/voxd.service.tmp` or `com.punt-labs.voxd.plist.tmp`), then placed into the system directory via `install(1)` — a single privileged file write per platform.
+The unit/plist content is written directly to `~/Library/LaunchAgents/` (macOS, user-writable) or to a user-owned tmp file then placed via `install(1)` into `/etc/systemd/system/` (Linux, root-writable).
 
 ### Why the Pre-flight Stop
 
@@ -1534,3 +1531,37 @@ Four env vars — three client-side, one server-side:
 - `VOXD_BIND` (server): bind address via `typer.Option(envvar="VOXD_BIND")`, default `127.0.0.1`
 
 Resolution: explicit arg > env var > file > default. Two deployment models: direct network (same LAN) and SSH tunnel (different networks). Token auth is the security boundary. Access logs redact tokens. Users configure via `.envrc`. See `docs/remote-setup.md` for the setup guide.
+
+## DES-038: LaunchAgent over LaunchDaemon — Eliminate macOS Background Throttling
+
+**Date:** 2026-05-27
+**Status:** SETTLED
+**Topic:** Move voxd from `/Library/LaunchDaemons/` to `~/Library/LaunchAgents/`
+
+### Problem
+
+macOS throttles LaunchDaemon processes (CPU QoS demotion, I/O deprioritization, thermal back-pressure). voxd synthesis measured 7x slower via LaunchDaemon vs manual launch: 17.4s vs 2.4s for a 38-character text. Every operation was uniformly slower — ElevenLabs API (4x), ffmpeg/pydub (19x), provider construction (11x). Texts over ~300 characters exceeded the 30-second client timeout.
+
+### Decision
+
+Move the plist from `/Library/LaunchDaemons/com.punt-labs.voxd.plist` (system domain, root-owned) to `~/Library/LaunchAgents/com.punt-labs.voxd.plist` (user domain, user-owned). LaunchAgents run at user QoS without background throttling.
+
+**Plist changes**: remove `UserName` (invalid for LaunchAgents), add `ProcessType=Interactive` (prevents App Nap throttling on the windowless daemon). Use `launchctl bootstrap`/`bootout` (modern syntax) instead of deprecated `load`/`unload`.
+
+**Fresh install**: no sudo. `mkdir -p ~/Library/LaunchAgents`, write plist, `ensure_port_free()`, `launchctl bootstrap gui/<uid> <plist>`, `launchctl kickstart`.
+
+**Migration** (old LaunchDaemon exists): write new plist to disk, `sudo launchctl unload -w` the old system-domain plist, `ensure_port_free()`, `launchctl bootstrap` the new LaunchAgent, verify health, `sudo rm` old plist. Two sudo calls, once, never again.
+
+### Why Not Keep the LaunchDaemon
+
+| Alternative | Rejected |
+|---|---|
+| `ProcessType=Interactive` on LaunchDaemon | Undocumented for daemons |
+| `Nice=-5` | Root-only, CPU-only, not I/O |
+| Raise client timeout to 120s | Masks symptom, users still wait 17s |
+| `bootstrap gui/<uid>` with LaunchDaemon plist | Mixing domains is unsupported |
+
+### Supersedes
+
+DES-028 §Service install (macOS): path changed from `/Library/LaunchDaemons/` to `~/Library/LaunchAgents/`.
+DES-029 §macOS sudo calls: reduced from 4 steady-state to 0; 2 migration-only calls remain.

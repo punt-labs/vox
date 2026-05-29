@@ -1,85 +1,85 @@
 {
-  "total": 222,
+  "total": 223,
   "by_category": {
-    "noqa": 31,
+    "noqa": 33,
     "type_ignore": 13,
     "pylint_disable": 0,
-    "pyright_ignore": 99,
+    "pyright_ignore": 98,
     "per_file_ignores": 79
   },
   "by_file": {
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/__main__.py": {
+    "src/punt_vox/__main__.py": {
       "noqa": 9,
       "pyright_ignore": 23
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/client.py": {
+    "src/punt_vox/client.py": {
       "type_ignore": 9
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/core.py": {
+    "src/punt_vox/core.py": {
       "noqa": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/daemon_restarter.py": {
-      "noqa": 5
+    "src/punt_vox/daemon_restarter.py": {
+      "noqa": 7
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/doctor.py": {
-      "pyright_ignore": 3
+    "src/punt_vox/doctor.py": {
+      "pyright_ignore": 4
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/hooks.py": {
-      "pyright_ignore": 14
+    "src/punt_vox/hooks.py": {
+      "pyright_ignore": 11
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/elevenlabs.py": {
+    "src/punt_vox/providers/elevenlabs.py": {
       "noqa": 4,
       "pyright_ignore": 22
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/elevenlabs_music.py": {
+    "src/punt_vox/providers/elevenlabs_music.py": {
       "pyright_ignore": 9
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/espeak.py": {
+    "src/punt_vox/providers/espeak.py": {
       "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/openai.py": {
+    "src/punt_vox/providers/openai.py": {
       "noqa": 4,
       "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/polly.py": {
+    "src/punt_vox/providers/polly.py": {
       "type_ignore": 3,
       "pyright_ignore": 5
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/providers/say.py": {
+    "src/punt_vox/providers/say.py": {
       "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/server.py": {
+    "src/punt_vox/server.py": {
       "noqa": 6,
       "pyright_ignore": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/service/installer.py": {
-      "pyright_ignore": 2
+    "src/punt_vox/service/installer.py": {
+      "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/types_errors.py": {
+    "src/punt_vox/types_errors.py": {
       "pyright_ignore": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/daemon.py": {
+    "src/punt_vox/voxd/daemon.py": {
       "type_ignore": 1,
       "pyright_ignore": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/playback.py": {
+    "src/punt_vox/voxd/playback.py": {
       "pyright_ignore": 2
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/router.py": {
+    "src/punt_vox/voxd/router.py": {
       "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/speech_handlers.py": {
+    "src/punt_vox/voxd/speech_handlers.py": {
       "pyright_ignore": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/synthesis.py": {
+    "src/punt_vox/voxd/synthesis.py": {
       "pyright_ignore": 3
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/system_handlers.py": {
+    "src/punt_vox/voxd/system_handlers.py": {
       "noqa": 1
     },
-    "/Users/jfreeman/Coding/punt-labs/vox/src/punt_vox/voxd/types.py": {
+    "src/punt_vox/voxd/types.py": {
       "noqa": 1
     }
   },
-  "updated_at": "2026-05-15T14:40:55Z"
+  "updated_at": "2026-05-29T11:53:22Z"
 }
