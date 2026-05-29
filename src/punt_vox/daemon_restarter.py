@@ -7,20 +7,17 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 from typing import Self
 
 import typer
 
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
-from punt_vox.service.launchd import (
-    _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
-)
-from punt_vox.service.launchd import (
-    _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
-)
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.paths import installed_version, log_dir
+from punt_vox.service.launchd import (
+    _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
+    _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
+)
 
 __all__ = ["DaemonRestarter"]
 
