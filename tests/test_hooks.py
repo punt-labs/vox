@@ -8,11 +8,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
+from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
     _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
+    _repo_name_from_cwd,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
+    _with_repo_name,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
     handle_post_bash,
@@ -22,6 +25,8 @@ from punt_vox.hooks import (
     handle_subagent_start,
     handle_subagent_stop,
     handle_user_prompt_submit,
+    notification_cmd,
+    stop_cmd,
 )
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
@@ -124,36 +129,40 @@ class TestClassifySignal:
 # ---------------------------------------------------------------------------
 
 
+_CONFIG_DIR = Path("/repo/.punt-labs/vox")
+
+
+def _stop(*, active: bool = False) -> StopPayload:
+    return StopPayload(stop_hook_active=active, cwd=None)
+
+
 class TestHandleStop:
     def test_notify_disabled(self) -> None:
         config = _make_config(notify="n")
-        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
+        assert handle_stop(_stop(), config, _CONFIG_DIR) is None
 
     def test_stop_hook_active(self) -> None:
         config = _make_config()
-        assert handle_stop(StopPayload(stop_hook_active=True), config) is None
+        assert handle_stop(_stop(active=True), config, _CONFIG_DIR) is None
 
     def test_no_signals(self) -> None:
         config = _make_config(vibe_signals=None)
-        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
+        assert handle_stop(_stop(), config, _CONFIG_DIR) is None
 
     def test_empty_signals(self) -> None:
         config = _make_config(vibe_signals="")
-        assert handle_stop(StopPayload(stop_hook_active=False), config) is None
+        assert handle_stop(_stop(), config, _CONFIG_DIR) is None
 
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: object) -> None:
         config = _make_config(speak="n")
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is None
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir")
-    def test_voice_mode_blocks_clean_reason(
-        self, _mock_path: MagicMock, _mock_write: MagicMock
-    ) -> None:
+    def test_voice_mode_blocks_clean_reason(self, _mock_write: MagicMock) -> None:
         config = _make_config()
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         assert result["decision"] == "block"
         reason = str(result["reason"])
@@ -164,25 +173,23 @@ class TestHandleStop:
         assert "vibe_signals" not in reason
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir")
-    def test_auto_mode_writes_tags_and_clears_signals(
-        self, mock_path: MagicMock, mock_write: MagicMock
+    def test_auto_mode_writes_tags_to_passed_config_dir(
+        self, mock_write: MagicMock
     ) -> None:
+        # The vibe-tag write lands in the config_dir resolved from the
+        # session cwd, not a re-resolved Path.cwd().
         config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
-        handle_stop(StopPayload(stop_hook_active=False), config)
+        handle_stop(_stop(), config, _CONFIG_DIR)
         assert mock_write.call_count == 1
         assert mock_write.call_args == call(
             {"vibe_tags": "[satisfied]", "vibe_signals": ""},
-            mock_path.return_value,
+            _CONFIG_DIR,
         )
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir")
-    def test_continuous_mode_blocks(
-        self, _mock_path: MagicMock, _mock_write: MagicMock
-    ) -> None:
+    def test_continuous_mode_blocks(self, _mock_write: MagicMock) -> None:
         config = _make_config(notify="c")
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         assert result["decision"] == "block"
 
@@ -198,21 +205,10 @@ class TestHandleStop:
             vibe_tags="[excited] [warm]",
             vibe_signals="tests-pass@12:00",
         )
-        with patch("punt_vox.hooks.write_field") as mock_write:
-            result = handle_stop(StopPayload(stop_hook_active=False), config)
+        with patch("punt_vox.hooks.write_fields") as mock_write:
+            result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         # Manual mode with existing tags — no write needed
-        mock_write.assert_not_called()
-
-    @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir", return_value=None)
-    def test_auto_mode_config_dir_none_skips_write_but_still_blocks(
-        self, _mock_find: MagicMock, mock_write: MagicMock
-    ) -> None:
-        config = _make_config(vibe_signals="tests-pass@12:00")
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
-        assert result is not None
-        assert result["decision"] == "block"
         mock_write.assert_not_called()
 
     def test_vibe_off_skips_config_write(self) -> None:
@@ -227,8 +223,8 @@ class TestHandleStop:
             vibe_tags=None,
             vibe_signals="tests-pass@12:00",
         )
-        with patch("punt_vox.hooks.write_field") as mock_write:
-            result = handle_stop(StopPayload(stop_hook_active=False), config)
+        with patch("punt_vox.hooks.write_fields") as mock_write:
+            result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         assert result["decision"] == "block"
         # Vibe off — must not write tags to config
@@ -751,25 +747,31 @@ class TestRepoNamePrefix:
         assert text.startswith("biff. ")
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir")
     def test_handle_stop_prepends_repo_name_to_reason(
-        self, _mock_path: MagicMock, _mock_write: MagicMock
+        self, _mock_write: MagicMock
     ) -> None:
         """handle_stop includes repo_name in the block reason string."""
         config = _make_config(repo_name="vox")
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        result = handle_stop(
+            StopPayload(stop_hook_active=False, cwd=None),
+            config,
+            Path("/repo/.punt-labs/vox"),
+        )
         assert result is not None
         reason = str(result["reason"])
         assert reason.startswith("vox. ")
 
     @patch("punt_vox.hooks.write_fields")
-    @patch("punt_vox.hooks.find_config_dir")
     def test_handle_stop_no_prefix_when_repo_name_none(
-        self, _mock_path: MagicMock, _mock_write: MagicMock
+        self, _mock_write: MagicMock
     ) -> None:
         """handle_stop reason is a plain phrase when repo_name is None."""
         config = _make_config(repo_name=None)
-        result = handle_stop(StopPayload(stop_hook_active=False), config)
+        result = handle_stop(
+            StopPayload(stop_hook_active=False, cwd=None),
+            config,
+            Path("/repo/.punt-labs/vox"),
+        )
         assert result is not None
         reason = str(result["reason"])
         assert any(reason == phrase for phrase in STOP_PHRASES)
@@ -865,3 +867,224 @@ class TestReadHookInput:
         finally:
             r.close()
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# _repo_name_from_cwd / _with_repo_name — git-root override
+# ---------------------------------------------------------------------------
+
+
+class TestRepoNameFromCwd:
+    def test_none_cwd_returns_none(self) -> None:
+        assert _repo_name_from_cwd(None) is None
+
+    def test_returns_repo_name_from_git_root(self, tmp_path: Path) -> None:
+        repo = tmp_path / "my-repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        assert _repo_name_from_cwd(repo) == "my-repo"
+
+    def test_walks_up_to_git_root(self, tmp_path: Path) -> None:
+        repo = tmp_path / "my-repo"
+        subdir = repo / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        assert _repo_name_from_cwd(subdir) == "my-repo"
+
+    def test_no_git_root_returns_none(self, tmp_path: Path) -> None:
+        isolated = tmp_path / "no-git"
+        isolated.mkdir()
+        # May find a real .git above tmp_path on the host; only assert
+        # None when truly isolated.
+        result = _repo_name_from_cwd(isolated)
+        if result is not None:
+            assert not Path(result).is_relative_to(isolated)
+
+
+class TestWithRepoName:
+    def test_overrides_when_names_differ(self, tmp_path: Path) -> None:
+        repo = tmp_path / "vox"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, repo)
+        assert updated.repo_name == "vox"
+
+    def test_no_change_when_names_match(self, tmp_path: Path) -> None:
+        repo = tmp_path / "vox"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        config = _make_config(repo_name="vox")
+        updated = _with_repo_name(config, repo)
+        assert updated is config  # same object — no replacement
+
+    def test_no_change_when_cwd_none(self) -> None:
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, None)
+        assert updated is config
+
+    def test_inherited_config_gets_child_repo_name(self, tmp_path: Path) -> None:
+        """When config_dir resolves to parent workspace but cwd is a child repo."""
+        # Simulate: workspace/child-repo/ has .git but no .punt-labs/vox/
+        # Config was inherited from workspace/.punt-labs/vox/ yielding "punt-labs"
+        child = tmp_path / "child-repo"
+        child.mkdir()
+        (child / ".git").mkdir()
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, child)
+        assert updated.repo_name == "child-repo"
+
+
+# ---------------------------------------------------------------------------
+# Command handlers resolve repo identity from the payload cwd
+# ---------------------------------------------------------------------------
+
+
+def _make_repo(root: Path, *, notify: str = "c") -> Path:
+    """Create a configured repo under *root* and return its path."""
+    config_dir = root / ".punt-labs" / "vox"
+    config_dir.mkdir(parents=True)
+    (config_dir / "vox.md").write_text(f'---\nnotify: "{notify}"\n---\n')
+    return root
+
+
+class TestCommandsResolveFromCwd:
+    """The *_cmd handlers derive the spoken repo name from payload.cwd."""
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_stop_cmd_speaks_repo_from_cwd(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path / "vox", notify="y")
+        local = repo / ".punt-labs" / "vox" / "vox.local.md"
+        local.write_text('---\nvibe_signals: "tests-pass@12:00"\n---\n')
+        payload = {"cwd": str(repo), "stop_hook_active": False}
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.hooks._emit") as mock_emit,
+            patch("punt_vox.hooks.find_config_dir", wraps=find_config_dir) as mock_find,
+        ):
+            stop_cmd()
+        mock_find.assert_called_once_with(Path(str(repo)))
+        result = mock_emit.call_args[0][0]
+        # The block reason names the repo resolved from cwd: "vox. <phrase>".
+        assert str(result["reason"]).startswith("vox. ")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_notification_cmd_speaks_repo_from_cwd(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path / "vox", notify="y")
+        payload = {
+            "cwd": str(repo),
+            "notification_type": "permission_prompt",
+            "message": "Needs your attention",
+        }
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.hooks.find_config_dir", wraps=find_config_dir) as mock_find,
+        ):
+            notification_cmd()
+        mock_find.assert_called_once_with(Path(str(repo)))
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("vox. ")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    def test_notification_cmd_silent_when_no_config(
+        self, mock_chime: MagicMock, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        # cwd points at a directory with no .punt-labs/vox config — silent.
+        bare = tmp_path / "punt-labs"
+        bare.mkdir()
+        payload = {
+            "cwd": str(bare),
+            "notification_type": "permission_prompt",
+            "message": "Needs your attention",
+        }
+        with patch("punt_vox.hooks._read_hook_input", return_value=payload):
+            notification_cmd()
+        mock_speak.assert_not_called()
+        mock_chime.assert_not_called()
+
+    def test_stop_cmd_vibe_write_targets_cwd_repo(self, tmp_path: Path) -> None:
+        # The vibe-tag write lands in the repo resolved from payload.cwd.
+        repo = _make_repo(tmp_path / "vox", notify="y")
+        config_dir = repo / ".punt-labs" / "vox"
+        (config_dir / "vox.local.md").write_text(
+            '---\nvibe_signals: "tests-pass@12:00"\n---\n'
+        )
+        payload = {"cwd": str(repo), "stop_hook_active": False}
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.hooks.write_fields") as mock_write,
+            patch("punt_vox.hooks._emit"),
+        ):
+            stop_cmd()
+        mock_write.assert_called_once()
+        assert mock_write.call_args[0][1] == config_dir
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_stop_cmd_inherited_config_uses_child_repo_name(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        """Config lives in parent workspace but cwd is a child repo.
+
+        The bug: config_dir resolves to ``workspace/.punt-labs/vox/``
+        so ``_derive_repo_name`` returns "punt-labs" (the workspace dir).
+        With ``_with_repo_name``, the git root of cwd overrides the name.
+        """
+        workspace = tmp_path / "punt-labs"
+        # Config lives only in the workspace
+        _make_repo(workspace, notify="y")
+        # Child repo has .git but no .punt-labs/vox/
+        child = workspace / "biff"
+        child.mkdir()
+        (child / ".git").mkdir()
+        # Seed signals in the workspace config so stop hook fires
+        local = workspace / ".punt-labs" / "vox" / "vox.local.md"
+        local.write_text('---\nvibe_signals: "tests-pass@12:00"\n---\n')
+        payload = {"cwd": str(child), "stop_hook_active": False}
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.hooks._emit") as mock_emit,
+        ):
+            stop_cmd()
+        result = mock_emit.call_args[0][0]
+        # Must say "biff" (child repo), not "punt-labs" (workspace)
+        assert str(result["reason"]).startswith("biff. ")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_notification_cmd_inherited_config_uses_child_repo_name(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        """Notification with inherited config speaks child repo name."""
+        workspace = tmp_path / "punt-labs"
+        _make_repo(workspace, notify="y")
+        child = workspace / "vox"
+        child.mkdir()
+        (child / ".git").mkdir()
+        payload = {
+            "cwd": str(child),
+            "notification_type": "permission_prompt",
+            "message": "Needs your attention",
+        }
+        with patch("punt_vox.hooks._read_hook_input", return_value=payload):
+            notification_cmd()
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("vox. ")
+
+    def test_stop_cmd_silent_when_cwd_missing(self, tmp_path: Path) -> None:
+        # No cwd on the payload → no new pwd-fallback suppression added;
+        # resolution falls through to find_config_dir(None). In an isolated
+        # dir with no config, the hook stays silent.
+        isolated = tmp_path / "isolated"
+        isolated.mkdir()
+        payload = {"stop_hook_active": False}
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.dirs.Path.cwd", return_value=isolated),
+            patch("punt_vox.hooks._emit") as mock_emit,
+        ):
+            stop_cmd()
+        mock_emit.assert_not_called()

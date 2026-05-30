@@ -19,6 +19,7 @@ Events:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -27,7 +28,6 @@ import re
 import select
 import sys
 from pathlib import Path
-from typing import cast
 
 import typer
 
@@ -38,12 +38,12 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import find_config_dir
+from punt_vox.dirs import find_config_dir, find_repo_root
+from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
     BashPayload,
     NotificationPayload,
     StopPayload,
-    parse_hook_payload,
 )
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
@@ -114,6 +114,29 @@ def _emit(output: dict[str, object]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Repo name resolution from session cwd
+# ---------------------------------------------------------------------------
+
+
+def _repo_name_from_cwd(cwd: Path | None) -> str | None:
+    """Derive repo name from the session's cwd via its git root."""
+    if cwd is None:
+        return None
+    repo_root = find_repo_root(cwd)
+    if repo_root is None:
+        return None
+    return repo_root.name or None
+
+
+def _with_repo_name(config: VoxConfig, cwd: Path | None) -> VoxConfig:
+    """Override config.repo_name from session cwd when config was inherited."""
+    repo_name = _repo_name_from_cwd(cwd)
+    if repo_name and repo_name != config.repo_name:
+        return dataclasses.replace(config, repo_name=repo_name)
+    return config
+
+
+# ---------------------------------------------------------------------------
 # Voxd client helpers
 # ---------------------------------------------------------------------------
 
@@ -180,11 +203,15 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
 # ---------------------------------------------------------------------------
 
 
-def handle_stop(payload: StopPayload, config: VoxConfig) -> dict[str, object] | None:
+def handle_stop(
+    payload: StopPayload, config: VoxConfig, config_dir: Path
+) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
     Returns a decision-block dict if Claude should speak a summary,
-    or None to let it stop normally.
+    or None to let it stop normally.  *config_dir* is the session's
+    resolved repo config — the vibe-tag write lands there so the
+    spoken name and the persisted tags agree on one repo.
     """
     # Not enabled
     if config.notify == "n":
@@ -225,14 +252,7 @@ def handle_stop(payload: StopPayload, config: VoxConfig) -> dict[str, object] | 
     else:
         log = SignalLog.deserialize(config.vibe_signals or "")
         tags = log.resolve_tags()
-        config_dir = find_config_dir()
-        if config_dir is None:
-            logger.warning(
-                "Stop hook: config dir not found; vibe_tags not persisted. "
-                "Run vox from inside a repo with .punt-labs/vox/ configured."
-            )
-        else:
-            write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
+        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
     return {"decision": "block", "reason": phrase}
 
 
@@ -481,16 +501,29 @@ def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:
+    """Read stdin, resolve the session's repo config from its cwd.
+
+    Returns ``(config, config_dir)`` or None when the session's cwd
+    resolves to no ``.punt-labs/vox`` config — the hook stays silent.
+    Shared by the continuous-mode commands that carry only a cwd.
+    """
+    cwd = HookEnvelope.parse(_read_hook_input()).cwd
+    config_dir = find_config_dir(cwd)
+    if config_dir is None:
+        return None
+    return _with_repo_name(read_config(config_dir), cwd), config_dir
+
+
 @hook_app.command("stop")
 def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Stop hook: task-completion notification."""
-    config_dir = find_config_dir()
+    payload = StopPayload.parse(_read_hook_input())
+    config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    config = read_config(config_dir)
-    data = _read_hook_input()
-    stop_payload = cast("StopPayload", parse_hook_payload(data, "stop"))
-    result = handle_stop(stop_payload, config)
+    config = _with_repo_name(read_config(config_dir), payload.cwd)
+    result = handle_stop(payload, config, config_dir)
     if result is not None:
         _emit(result)
 
@@ -498,75 +531,63 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @hook_app.command("post-bash")
 def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PostToolUse hook: accumulate vibe signals from Bash."""
-    config_dir = find_config_dir()
+    payload = BashPayload.parse(_read_hook_input())
+    config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    data = _read_hook_input()
-    bash_payload = cast("BashPayload", parse_hook_payload(data, "post_bash"))
-    handle_post_bash(bash_payload, config_dir)
+    handle_post_bash(payload, config_dir)
 
 
 @hook_app.command("notification")
 def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Notification hook: permission/idle prompt audio alerts."""
-    config_dir = find_config_dir()
+    payload = NotificationPayload.parse(_read_hook_input())
+    config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    config = read_config(config_dir)
-    data = _read_hook_input()
-    notif_payload = cast(
-        "NotificationPayload", parse_hook_payload(data, "notification")
-    )
-    handle_notification(notif_payload, config)
+    config = _with_repo_name(read_config(config_dir), payload.cwd)
+    handle_notification(payload, config)
 
 
 @hook_app.command("pre-compact")
 def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PreCompact hook: playful 'be right back' message."""
-    config_dir = find_config_dir()
-    if config_dir is None:
-        return
-    config = read_config(config_dir)
-    handle_pre_compact(config)
+    resolved = _resolve_continuous_config()
+    if resolved is not None:
+        handle_pre_compact(resolved[0])
 
 
 @hook_app.command("user-prompt-submit")
 def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """UserPromptSubmit hook: acknowledgment in continuous mode."""
-    config_dir = find_config_dir()
-    if config_dir is None:
-        return
-    config = read_config(config_dir)
-    handle_user_prompt_submit(config)
+    resolved = _resolve_continuous_config()
+    if resolved is not None:
+        handle_user_prompt_submit(resolved[0])
 
 
 @hook_app.command("subagent-start")
 def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStart hook: announce subagent spawn."""
-    config_dir = find_config_dir()
-    if config_dir is None:
-        return
-    config = read_config(config_dir)
-    handle_subagent_start(config)
+    resolved = _resolve_continuous_config()
+    if resolved is not None:
+        handle_subagent_start(resolved[0])
 
 
 @hook_app.command("subagent-stop")
 def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStop hook: announce subagent completion."""
-    config_dir = find_config_dir()
-    if config_dir is None:
-        return
-    config = read_config(config_dir)
-    handle_subagent_stop(config)
+    resolved = _resolve_continuous_config()
+    if resolved is not None:
+        handle_subagent_stop(resolved[0])
 
 
 @hook_app.command("session-end")
 def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SessionEnd hook: farewell speech."""
-    config_dir = find_config_dir()
-    if config_dir is None:
+    resolved = _resolve_continuous_config()
+    if resolved is None:
         return
-    config = read_config(config_dir)
+    config, config_dir = resolved
     handle_session_end(config, config_dir)
 
 

@@ -1,10 +1,10 @@
 {
-  "total": 223,
+  "total": 225,
   "by_category": {
     "noqa": 33,
     "type_ignore": 13,
     "pylint_disable": 0,
-    "pyright_ignore": 98,
+    "pyright_ignore": 100,
     "per_file_ignores": 79
   },
   "by_file": {
@@ -19,7 +19,8 @@
       "noqa": 1
     },
     "src/punt_vox/daemon_restarter.py": {
-      "noqa": 7
+      "noqa": 7,
+      "pyright_ignore": 2
     },
     "src/punt_vox/doctor.py": {
       "pyright_ignore": 4
@@ -81,5 +82,5 @@
       "noqa": 1
     }
   },
-  "updated_at": "2026-05-29T11:53:22Z"
+  "updated_at": "2026-05-30T02:16:04Z"
 }

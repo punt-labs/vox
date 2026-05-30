@@ -13,6 +13,15 @@ _REPO_SUBDIR = Path(".punt-labs") / "vox"
 DEFAULT_CONFIG_DIR = _REPO_SUBDIR  # Path(".punt-labs/vox")
 
 
+def find_repo_root(start: Path | None = None) -> Path | None:
+    """Walk up from *start* (default: cwd) to find a git repo root."""
+    path = (start or Path.cwd()).resolve()
+    for parent in (path, *path.parents):
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
 def find_config_dir(start: Path | None = None) -> Path | None:
     """Walk up from *start* (default: cwd) to find ``.punt-labs/vox/``.
 

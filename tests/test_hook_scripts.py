@@ -1,0 +1,49 @@
+"""Static assertions over the shell hook scripts in hooks/.
+
+The shell scripts cannot be unit-tested in-process, so these checks
+guard the two structural invariants the cwd fix relies on: the gate
+references the current config filenames, and the dead daemon relay and
+legacy config.md references are gone.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+_SCRIPTS = (
+    "notify.sh",
+    "notify-permission.sh",
+    "signal.sh",
+    "subagent.sh",
+    "farewell.sh",
+    "pre-compact.sh",
+    "acknowledge.sh",
+)
+
+
+def _read(name: str) -> str:
+    return (_HOOKS_DIR / name).read_text(encoding="utf-8")
+
+
+class TestHookScripts:
+    @pytest.mark.parametrize("name", _SCRIPTS)
+    def test_no_dead_relay_or_legacy_config(self, name: str) -> None:
+        text = _read(name)
+        assert "mcp-proxy" not in text
+        assert "serve.port" not in text
+        assert "serve.token" not in text
+        assert "config.md" not in text
+
+    @pytest.mark.parametrize("name", _SCRIPTS)
+    def test_gate_uses_current_filenames(self, name: str) -> None:
+        text = _read(name)
+        assert ".punt-labs/vox/vox.md" in text
+        assert ".punt-labs/vox/vox.local.md" in text
+
+    @pytest.mark.parametrize("name", _SCRIPTS)
+    def test_extracts_cwd_from_stdin(self, name: str) -> None:
+        text = _read(name)
+        assert ".cwd // empty" in text
