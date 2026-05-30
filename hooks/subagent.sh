@@ -1,41 +1,23 @@
 #!/usr/bin/env bash
-# SubagentStart/SubagentStop — daemon-first, fallback to subprocess.
+# SubagentStart/SubagentStop — pipe stdin to the vox subprocess.
 # Business logic lives in src/punt_vox/hooks.py.
-if _git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) && [[ -n "$_git_common_dir" ]]; then
-  _repo_root=$(realpath "${_git_common_dir}/.." 2>/dev/null || echo ".")
-else
-  _repo_root="."
-fi
-[[ -f "${_repo_root}/.punt-labs/vox/config.md" ]] || [[ -f "${_repo_root}/.vox/config.md" ]] || exit 0
-
-# Claude Code passes hook_event_name in JSON stdin, not as an env var.
-# Read stdin once and extract the event name with jq (or grep fallback).
 _stdin=$(cat)
+
+# Claude Code passes cwd and hook_event_name in JSON stdin, not as env vars.
 if command -v jq >/dev/null 2>&1; then
+  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null)
   _event=$(printf '%s' "$_stdin" | jq -r '.hook_event_name // empty' 2>/dev/null)
 else
+  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
   _event=$(printf '%s' "$_stdin" | grep -oE '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
 fi
+[[ -n "$_cwd" ]] || _cwd="$PWD"
+[[ -f "${_cwd}/.punt-labs/vox/vox.md" ]] || [[ -f "${_cwd}/.punt-labs/vox/vox.local.md" ]] || exit 0
 
-# Daemon relay (~15ms) — fall back to subprocess (~500ms)
-_state_dir="${HOME}/.punt-labs/vox"
-_err_log="${_state_dir}/logs/hook-errors.log"
-mkdir -p "${_state_dir}/logs" 2>/dev/null
-_token_file="${_state_dir}/serve.token"
-_port_file="${_state_dir}/serve.port"
-if command -v mcp-proxy >/dev/null 2>&1 && [[ -s "$_token_file" ]] && [[ -s "$_port_file" ]]; then
-  _token=$(cat "$_token_file")
-  _port=$(cat "$_port_file")
-  _encoded_dir=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$_repo_root" 2>/dev/null || printf '%s' "$_repo_root")
-  _url="ws://localhost:${_port}/hook?config_dir=${_encoded_dir}&token=${_token}"
-  case "${_event}" in
-    SubagentStop)  echo "$_stdin" | mcp-proxy "$_url" --hook --async SubagentStop 2>>"${_err_log}" && exit 0 ;;
-    SubagentStart) echo "$_stdin" | mcp-proxy "$_url" --hook --async SubagentStart 2>>"${_err_log}" && exit 0 ;;
-  esac
-fi
-
+_err_log="${HOME}/.punt-labs/vox/logs/hook-errors.log"
+mkdir -p "${HOME}/.punt-labs/vox/logs" 2>/dev/null
 case "${_event}" in
-  SubagentStop)  echo "$_stdin" | vox hook subagent-stop 2>>"${_err_log}" || true ;;
-  SubagentStart) echo "$_stdin" | vox hook subagent-start 2>>"${_err_log}" || true ;;
+  SubagentStop)  printf '%s' "$_stdin" | vox hook subagent-stop 2>>"${_err_log}" || true ;;
+  SubagentStart) printf '%s' "$_stdin" | vox hook subagent-start 2>>"${_err_log}" || true ;;
   *) ;;  # unknown event — do nothing
 esac
