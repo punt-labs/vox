@@ -19,6 +19,7 @@ Events:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import find_config_dir
+from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
     BashPayload,
@@ -110,6 +111,29 @@ def _read_hook_input() -> dict[str, object]:
 def _emit(output: dict[str, object]) -> None:
     """Write JSON response to stdout."""
     typer.echo(json.dumps(output))
+
+
+# ---------------------------------------------------------------------------
+# Repo name resolution from session cwd
+# ---------------------------------------------------------------------------
+
+
+def _repo_name_from_cwd(cwd: Path | None) -> str | None:
+    """Derive repo name from the session's cwd via its git root."""
+    if cwd is None:
+        return None
+    repo_root = find_repo_root(cwd)
+    if repo_root is None:
+        return None
+    return repo_root.name or None
+
+
+def _with_repo_name(config: VoxConfig, cwd: Path | None) -> VoxConfig:
+    """Override config.repo_name from session cwd when config was inherited."""
+    repo_name = _repo_name_from_cwd(cwd)
+    if repo_name and repo_name != config.repo_name:
+        return dataclasses.replace(config, repo_name=repo_name)
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +512,7 @@ def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:
     config_dir = find_config_dir(cwd)
     if config_dir is None:
         return None
-    return read_config(config_dir), config_dir
+    return _with_repo_name(read_config(config_dir), cwd), config_dir
 
 
 @hook_app.command("stop")
@@ -498,7 +522,7 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    config = read_config(config_dir)
+    config = _with_repo_name(read_config(config_dir), payload.cwd)
     result = handle_stop(payload, config, config_dir)
     if result is not None:
         _emit(result)
@@ -521,7 +545,8 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    handle_notification(payload, read_config(config_dir))
+    config = _with_repo_name(read_config(config_dir), payload.cwd)
+    handle_notification(payload, config)
 
 
 @hook_app.command("pre-compact")

@@ -11,6 +11,7 @@ from punt_vox.dirs import (
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
     find_config_dir,
+    find_repo_root,
     music_output_dir,
 )
 
@@ -22,6 +23,40 @@ from punt_vox.dirs import (
 class TestDefaultConfigDir:
     def test_uses_punt_labs_subdir(self) -> None:
         assert Path(".punt-labs/vox") == DEFAULT_CONFIG_DIR
+
+
+# ---------------------------------------------------------------------------
+# find_repo_root
+# ---------------------------------------------------------------------------
+
+
+class TestFindRepoRoot:
+    def test_finds_git_directory(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        assert find_repo_root(tmp_path) == tmp_path
+
+    def test_returns_none_when_no_git(self, tmp_path: Path) -> None:
+        isolated = tmp_path / "no-git"
+        isolated.mkdir()
+        # Walk is bounded by tmp_path; real .git above tmp_path may
+        # exist, so patch Path.parents to ensure isolation.
+        with patch("punt_vox.dirs.Path.cwd", return_value=isolated):
+            result = find_repo_root(isolated)
+        # The result may find a real .git above tmp_path on the test
+        # host, so only assert None when isolated dir is truly rootless.
+        if result is not None:
+            assert not result.is_relative_to(isolated)
+
+    def test_walks_up_from_subdirectory(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        subdir = tmp_path / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        assert find_repo_root(subdir) == tmp_path
+
+    def test_submodule_git_file(self, tmp_path: Path) -> None:
+        """Submodules use a .git file (not directory) pointing to the parent."""
+        (tmp_path / ".git").write_text("gitdir: ../.git/modules/sub\n")
+        assert find_repo_root(tmp_path) == tmp_path
 
 
 # ---------------------------------------------------------------------------

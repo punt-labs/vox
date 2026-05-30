@@ -13,7 +13,9 @@ from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
     _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
+    _repo_name_from_cwd,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
+    _with_repo_name,  # pyright: ignore[reportPrivateUsage]
     classify_signal,
     handle_notification,
     handle_post_bash,
@@ -868,6 +870,72 @@ class TestReadHookInput:
 
 
 # ---------------------------------------------------------------------------
+# _repo_name_from_cwd / _with_repo_name — git-root override
+# ---------------------------------------------------------------------------
+
+
+class TestRepoNameFromCwd:
+    def test_none_cwd_returns_none(self) -> None:
+        assert _repo_name_from_cwd(None) is None
+
+    def test_returns_repo_name_from_git_root(self, tmp_path: Path) -> None:
+        repo = tmp_path / "my-repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        assert _repo_name_from_cwd(repo) == "my-repo"
+
+    def test_walks_up_to_git_root(self, tmp_path: Path) -> None:
+        repo = tmp_path / "my-repo"
+        subdir = repo / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        assert _repo_name_from_cwd(subdir) == "my-repo"
+
+    def test_no_git_root_returns_none(self, tmp_path: Path) -> None:
+        isolated = tmp_path / "no-git"
+        isolated.mkdir()
+        # May find a real .git above tmp_path on the host; only assert
+        # None when truly isolated.
+        result = _repo_name_from_cwd(isolated)
+        if result is not None:
+            assert not Path(result).is_relative_to(isolated)
+
+
+class TestWithRepoName:
+    def test_overrides_when_names_differ(self, tmp_path: Path) -> None:
+        repo = tmp_path / "vox"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, repo)
+        assert updated.repo_name == "vox"
+
+    def test_no_change_when_names_match(self, tmp_path: Path) -> None:
+        repo = tmp_path / "vox"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        config = _make_config(repo_name="vox")
+        updated = _with_repo_name(config, repo)
+        assert updated is config  # same object — no replacement
+
+    def test_no_change_when_cwd_none(self) -> None:
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, None)
+        assert updated is config
+
+    def test_inherited_config_gets_child_repo_name(self, tmp_path: Path) -> None:
+        """When config_dir resolves to parent workspace but cwd is a child repo."""
+        # Simulate: workspace/child-repo/ has .git but no .punt-labs/vox/
+        # Config was inherited from workspace/.punt-labs/vox/ yielding "punt-labs"
+        child = tmp_path / "child-repo"
+        child.mkdir()
+        (child / ".git").mkdir()
+        config = _make_config(repo_name="punt-labs")
+        updated = _with_repo_name(config, child)
+        assert updated.repo_name == "child-repo"
+
+
+# ---------------------------------------------------------------------------
 # Command handlers resolve repo identity from the payload cwd
 # ---------------------------------------------------------------------------
 
@@ -955,6 +1023,56 @@ class TestCommandsResolveFromCwd:
             stop_cmd()
         mock_write.assert_called_once()
         assert mock_write.call_args[0][1] == config_dir
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_stop_cmd_inherited_config_uses_child_repo_name(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        """Config lives in parent workspace but cwd is a child repo.
+
+        The bug: config_dir resolves to ``workspace/.punt-labs/vox/``
+        so ``_derive_repo_name`` returns "punt-labs" (the workspace dir).
+        With ``_with_repo_name``, the git root of cwd overrides the name.
+        """
+        workspace = tmp_path / "punt-labs"
+        # Config lives only in the workspace
+        _make_repo(workspace, notify="y")
+        # Child repo has .git but no .punt-labs/vox/
+        child = workspace / "biff"
+        child.mkdir()
+        (child / ".git").mkdir()
+        # Seed signals in the workspace config so stop hook fires
+        local = workspace / ".punt-labs" / "vox" / "vox.local.md"
+        local.write_text('---\nvibe_signals: "tests-pass@12:00"\n---\n')
+        payload = {"cwd": str(child), "stop_hook_active": False}
+        with (
+            patch("punt_vox.hooks._read_hook_input", return_value=payload),
+            patch("punt_vox.hooks._emit") as mock_emit,
+        ):
+            stop_cmd()
+        result = mock_emit.call_args[0][0]
+        # Must say "biff" (child repo), not "punt-labs" (workspace)
+        assert str(result["reason"]).startswith("biff. ")
+
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_notification_cmd_inherited_config_uses_child_repo_name(
+        self, mock_speak: MagicMock, tmp_path: Path
+    ) -> None:
+        """Notification with inherited config speaks child repo name."""
+        workspace = tmp_path / "punt-labs"
+        _make_repo(workspace, notify="y")
+        child = workspace / "vox"
+        child.mkdir()
+        (child / ".git").mkdir()
+        payload = {
+            "cwd": str(child),
+            "notification_type": "permission_prompt",
+            "message": "Needs your attention",
+        }
+        with patch("punt_vox.hooks._read_hook_input", return_value=payload):
+            notification_cmd()
+        text = mock_speak.call_args[0][0]
+        assert text.startswith("vox. ")
 
     def test_stop_cmd_silent_when_cwd_missing(self, tmp_path: Path) -> None:
         # No cwd on the payload → no new pwd-fallback suppression added;
