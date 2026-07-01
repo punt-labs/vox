@@ -7,18 +7,20 @@ import logging
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 from typing import Self
 
+from punt_vox.client import VoxClientSync, VoxdConnectionError
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
+    log_dir as _paths_log_dir,
     user_state_dir as _paths_user_state_dir,
 )
 from punt_vox.service.keys_env import KeysEnvWriter
 from punt_vox.service.launchd import (
     _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
-    _OLD_LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
     LaunchdBackend,
 )
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -33,6 +35,13 @@ logger = logging.getLogger(__name__)
 _SUDO_NOTICE = (
     "Installing voxd as a system service. You may be prompted for your sudo password."
 )
+
+# voxd health poll after install. launchctl/systemctl registration proves the
+# job is scheduled, not that voxd bound its port and stayed up; a daemon that
+# dies on startup (bad env, missing binary) would otherwise be reported
+# "running". Poll the health endpoint until it answers or the deadline lapses.
+_HEALTH_DEADLINE_S = 5.0
+_HEALTH_POLL_INTERVAL_S = 0.2
 
 
 class ServiceInstaller:
@@ -95,20 +104,13 @@ class ServiceInstaller:
     def _install_darwin(self) -> bool:
         """Run the macOS install path.  Return True if running.
 
-        Detects whether an old LaunchDaemon plist exists at
-        ``/Library/LaunchDaemons/com.punt-labs.voxd.plist`` and runs
-        the one-time migration if so.  Fresh installs need no sudo.
+        Writes the user LaunchAgent plist and bootstraps it.  No sudo:
+        the agent lives under ``~/Library/LaunchAgents`` and runs in the
+        session user's ``gui/<uid>`` domain.
         """
-        if _OLD_LAUNCHD_PLIST.exists():
-            logger.warning(
-                "Migrating voxd from LaunchDaemon to LaunchAgent "
-                "(one sudo prompt to remove old system service)..."
-            )
-            self._launchd.migrate_from_daemon()
-        else:
-            self._launchd.stop()
-            self._process_mgr.ensure_port_free()
-            self._launchd.install()
+        self._launchd.stop()
+        self._process_mgr.ensure_port_free()
+        self._launchd.install()
         return self._launchd.status()
 
     def _install_linux(self, user: str) -> bool:
@@ -118,6 +120,33 @@ class ServiceInstaller:
         self._process_mgr.ensure_port_free()
         self._systemd.install(user)
         return self._systemd.status()
+
+    @staticmethod
+    def _verify_serving(service_path: Path) -> None:
+        """Poll voxd's health endpoint until it answers or the deadline lapses.
+
+        ``launchctl``/``systemctl`` registration proves only that the job is
+        scheduled, not that voxd bound its port and stayed up.  Without this
+        poll, ``install()`` reports "running" for a daemon that died on
+        startup -- the silent-down failure mode.  Raise so ``vox daemon
+        install`` exits non-zero when voxd never becomes reachable.
+        """
+        deadline = time.monotonic() + _HEALTH_DEADLINE_S
+        last_exc: VoxdConnectionError | OSError | None = None
+        while time.monotonic() < deadline:
+            try:
+                VoxClientSync(host="127.0.0.1").health()
+                return
+            except (VoxdConnectionError, OSError) as exc:
+                last_exc = exc
+                time.sleep(_HEALTH_POLL_INTERVAL_S)
+        log_dir = _paths_log_dir()
+        msg = (
+            f"voxd registered but never became reachable within "
+            f"{_HEALTH_DEADLINE_S:.0f}s. Service: {service_path}. "
+            f"Check the daemon logs in {log_dir}."
+        )
+        raise RuntimeError(msg) from last_exc
 
     def install(self) -> str:
         """Install voxd as a system service.  Return a status message.
@@ -145,9 +174,17 @@ class ServiceInstaller:
 
         if plat == "macos":
             running = self._install_darwin()
+            service_path = _LAUNCHD_PLIST
         else:
             logger.warning(_SUDO_NOTICE)
             running = self._install_linux(user)
+            service_path = _SYSTEMD_UNIT
+
+        # Registration alone does not prove voxd serves; verify it answers
+        # health before reporting "running", so a silent-down daemon fails
+        # the install loudly instead of masquerading as healthy.
+        if running:
+            self._verify_serving(service_path)
 
         exec_display = " ".join(args)
         status = "running" if running else "installed (not yet running)"

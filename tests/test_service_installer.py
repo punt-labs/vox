@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from punt_vox.client import VoxdConnectionError
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import ProcessManager
@@ -67,8 +68,16 @@ def test_ensure_user_dirs_creates_tree_under_current_home(
 def _setup_fake_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    bypass_health: bool = True,
 ) -> Path:
-    """Set up fake HOME, voxd binary, and sys.executable for install tests."""
+    """Set up fake HOME, voxd binary, and sys.executable for install tests.
+
+    ``bypass_health`` stubs the post-install health poll to a no-op so that
+    wiring/ordering tests do not attempt a real socket connection. The
+    health boundary itself is exercised by the dedicated tests below, which
+    pass ``bypass_health=False``.
+    """
     fake_home = tmp_path / "home" / "user"
     fake_home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
@@ -85,11 +94,12 @@ def _setup_fake_env(
 
     monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 1000)
 
-    # Ensure migration path is not triggered by a real old LaunchDaemon plist.
-    monkeypatch.setattr(
-        "punt_vox.service.installer._OLD_LAUNCHD_PLIST",
-        tmp_path / "no-such-old-plist",
-    )
+    if bypass_health:
+        monkeypatch.setattr(
+            ServiceInstaller,
+            "_verify_serving",
+            staticmethod(lambda service_path: None),
+        )
 
     return fake_home
 
@@ -156,6 +166,82 @@ def test_install_reports_not_running(
     inst = ServiceInstaller()
     result = inst.install()
     assert "not yet running" in result
+
+
+# ---------------------------------------------------------------------------
+# install() — post-install health verification (silent-down guard)
+# ---------------------------------------------------------------------------
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_reports_running_when_daemon_healthy(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered daemon that answers health is reported 'running'."""
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+
+    healthy = MagicMock()
+    healthy.health.return_value = {"status": "ok"}
+    monkeypatch.setattr(
+        "punt_vox.service.installer.VoxClientSync",
+        lambda **_kwargs: healthy,
+    )
+
+    inst = ServiceInstaller()
+    result = inst.install()
+
+    healthy.health.assert_called_once()
+    assert "running" in result
+    assert "not yet running" not in result
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_raises_when_daemon_never_healthy(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered daemon that never serves fails the install loudly.
+
+    ``launchctl`` registration succeeds but voxd dies on startup, so the
+    health poll exhausts its deadline and ``install()`` raises rather than
+    reporting a false 'running' -- the silent-down regression guard.
+    """
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    # Shrink the deadline and drop the sleep so the poll exhausts instantly.
+    monkeypatch.setattr("punt_vox.service.installer._HEALTH_DEADLINE_S", 0.05)
+    monkeypatch.setattr("punt_vox.service.installer.time.sleep", lambda _s: None)
+
+    down = MagicMock()
+    down.health.side_effect = VoxdConnectionError("connection refused")
+    monkeypatch.setattr(
+        "punt_vox.service.installer.VoxClientSync",
+        lambda **_kwargs: down,
+    )
+
+    inst = ServiceInstaller()
+    with pytest.raises(RuntimeError, match="never became reachable"):
+        inst.install()
+
+    assert down.health.called
 
 
 @patch.object(LaunchdBackend, "status", return_value=True)

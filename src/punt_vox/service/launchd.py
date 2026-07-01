@@ -7,12 +7,10 @@ import logging
 import os
 import subprocess
 import textwrap
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
-from punt_vox.client import VoxClientSync, VoxdConnectionError
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.process import ProcessManager
 
@@ -21,9 +19,6 @@ logger = logging.getLogger(__name__)
 _LABEL = "com.punt-labs.voxd"
 _LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
-
-# Old LaunchDaemon path -- checked during migration only.
-_OLD_LAUNCHD_PLIST = Path("/Library/LaunchDaemons") / f"{_LABEL}.plist"
 
 
 class LaunchdBackend:
@@ -156,96 +151,6 @@ class LaunchdBackend:
         )
         logger.info("Kickstarted %s", _LABEL)
 
-    def migrate_from_daemon(self) -> None:
-        """One-time migration from LaunchDaemon to LaunchAgent.
-
-        Called when ``_OLD_LAUNCHD_PLIST`` exists.  Uses deprecated
-        ``launchctl unload -w`` for the old system-domain plist (the only
-        place sudo is needed), then bootstraps the new LaunchAgent.
-        The old plist is removed only after the new daemon is confirmed
-        running.
-        """
-        _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
-        _LAUNCHD_PLIST.write_text(self.plist_content())
-        _LAUNCHD_PLIST.chmod(0o644)
-        logger.info("Wrote new LaunchAgent plist to %s", _LAUNCHD_PLIST)
-
-        # Unload old system-domain daemon (requires sudo).
-        # check=False so re-running after a partial migration does not
-        # trap the user when the service is already unloaded.
-        unload_result = subprocess.run(
-            [
-                "sudo",
-                "launchctl",
-                "unload",
-                "-w",
-                str(_OLD_LAUNCHD_PLIST),
-            ],
-            check=False,
-        )
-        if unload_result.returncode != 0:
-            logger.debug(
-                "sudo launchctl unload exited %d (service may already be unloaded)",
-                unload_result.returncode,
-            )
-        else:
-            logger.info("Unloaded old LaunchDaemon %s", _LABEL)
-
-        # Bootout any already-loaded new agent so a migration retry after
-        # partial failure (e.g. sudo rm declined) doesn't fail with
-        # "service already loaded" on the bootstrap call below.
-        self.stop()
-        self._process_mgr.ensure_port_free()
-
-        domain = self._gui_domain()
-        try:
-            subprocess.run(
-                ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
-                check=True,
-            )
-            logger.info("Bootstrapped new LaunchAgent %s", _LABEL)
-
-            subprocess.run(
-                ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
-                check=True,
-            )
-            logger.info("Kickstarted %s", _LABEL)
-        except subprocess.CalledProcessError as exc:
-            msg = (
-                f"Failed to start new LaunchAgent ({exc}). "
-                f"The plist is at {_LAUNCHD_PLIST}. "
-                "Try: launchctl bootstrap "
-                f"{domain} {_LAUNCHD_PLIST}"
-            )
-            raise RuntimeError(msg) from exc
-
-        # Verify the new daemon is actually healthy before removing the
-        # old plist — bootstrap+kickstart returning 0 does not guarantee
-        # the process stayed up (bad env, missing binary, etc.).
-        deadline = time.monotonic() + 5.0
-        last_exc: VoxdConnectionError | OSError | None = None
-        while time.monotonic() < deadline:
-            try:
-                VoxClientSync(host="127.0.0.1").health()
-                last_exc = None
-                break
-            except (VoxdConnectionError, OSError) as exc:
-                last_exc = exc
-                time.sleep(0.2)
-        if last_exc is not None:
-            logger.warning(
-                "New LaunchAgent started but health check failed after 5s. "
-                "Old plist at %s is preserved for rollback.",
-                _OLD_LAUNCHD_PLIST,
-            )
-            raise last_exc
-
-        subprocess.run(
-            ["sudo", "rm", str(_OLD_LAUNCHD_PLIST)],
-            check=True,
-        )
-        logger.info("Removed old LaunchDaemon plist %s", _OLD_LAUNCHD_PLIST)
-
     def uninstall(self) -> None:
         """Remove the LaunchAgent plist and kill any stale daemon."""
         if _LAUNCHD_PLIST.exists():
@@ -264,16 +169,6 @@ class LaunchdBackend:
             logger.info("Removed %s", _LAUNCHD_PLIST)
         else:
             logger.info("No plist found at %s -- nothing to uninstall", _LAUNCHD_PLIST)
-        if _OLD_LAUNCHD_PLIST.exists():
-            subprocess.run(
-                ["sudo", "launchctl", "unload", "-w", str(_OLD_LAUNCHD_PLIST)],
-                check=False,
-            )
-            subprocess.run(
-                ["sudo", "rm", str(_OLD_LAUNCHD_PLIST)],
-                check=False,
-            )
-            logger.info("Removed old LaunchDaemon plist %s", _OLD_LAUNCHD_PLIST)
         self._process_mgr.kill_stale_daemon()
 
     def status(self) -> bool:

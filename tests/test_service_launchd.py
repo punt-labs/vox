@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.service import DEFAULT_PORT
-from punt_vox.service.launchd import _OLD_LAUNCHD_PLIST, LaunchdBackend
+from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import ProcessManager
 
 
@@ -208,91 +208,106 @@ def test_launchd_install_uses_gui_domain(
     assert kickstart_cmd[3] == f"gui/{uid}/com.punt-labs.voxd"
 
 
-# ---------------------------------------------------------------------------
-# migrate_from_daemon
-# ---------------------------------------------------------------------------
-
-
 @patch("punt_vox.service.launchd.subprocess.run")
-def test_migrate_from_daemon_uses_exactly_two_sudo_calls(
+def test_launchd_reinstall_over_stale_agent_is_idempotent(
     mock_run: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Migration: sudo launchctl unload + sudo rm = 2 sudo calls."""
+    """A second install over a live agent boots it out, then re-bootstraps."""
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
 
     agents_dir = fake_home / "Library" / "LaunchAgents"
+    plist = agents_dir / "com.punt-labs.voxd.plist"
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
-    monkeypatch.setattr(
-        "punt_vox.service.launchd._LAUNCHD_PLIST",
-        agents_dir / "com.punt-labs.voxd.plist",
-    )
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
 
     mock_run.return_value = MagicMock(returncode=0)
-    mock_client = MagicMock()
-    mock_client.health.return_value = {"status": "ok"}
 
     be = LaunchdBackend(
         ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
     )
-    with (
-        patch.object(ProcessManager, "ensure_port_free"),
-        patch("punt_vox.service.launchd.VoxClientSync", return_value=mock_client),
-    ):
-        be.migrate_from_daemon()
+    # First install writes the plist and bootstraps.
+    be.install()
+    assert plist.exists()
 
-    sudo_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "sudo"]
-    assert len(sudo_calls) == 2, (
-        f"Expected 2 sudo calls, got {len(sudo_calls)}: {[c[0][0] for c in sudo_calls]}"
-    )
-    # First sudo: unload old LaunchDaemon
-    assert sudo_calls[0][0][0][:3] == ["sudo", "launchctl", "unload"]
-    assert str(_OLD_LAUNCHD_PLIST) in sudo_calls[0][0][0]
-    # Second sudo: rm old plist
-    assert sudo_calls[1][0][0][:2] == ["sudo", "rm"]
-    assert str(_OLD_LAUNCHD_PLIST) in sudo_calls[1][0][0]
+    # Second install: a live agent exists, so stop() must bootout first.
+    be.stop()
+    be.install()
+
+    # No sudo anywhere across either install.
+    for call in mock_run.call_args_list:
+        assert call[0][0][0] != "sudo", f"Unexpected sudo call: {call[0][0]}"
+
+    verbs = [c[0][0][1] for c in mock_run.call_args_list]
+    # bootstrap+kickstart (first install), bootout (stop), bootstrap+kickstart.
+    assert verbs == ["bootstrap", "kickstart", "bootout", "bootstrap", "kickstart"]
+    # The plist survives the idempotent reinstall.
+    assert plist.exists()
+
+
+# ---------------------------------------------------------------------------
+# uninstall
+# ---------------------------------------------------------------------------
 
 
 @patch("punt_vox.service.launchd.subprocess.run")
-def test_migrate_from_daemon_bootstrap_before_rm(
+def test_launchd_uninstall_boots_out_and_removes_plist(
     mock_run: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Migration: new agent is bootstrapped before old plist is removed."""
+    """uninstall boots out the job (no sudo) and unlinks the LaunchAgent plist."""
     fake_home = tmp_path / "home" / "jfreeman"
     fake_home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
 
     agents_dir = fake_home / "Library" / "LaunchAgents"
+    agents_dir.mkdir(parents=True)
+    plist = agents_dir / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
-    monkeypatch.setattr(
-        "punt_vox.service.launchd._LAUNCHD_PLIST",
-        agents_dir / "com.punt-labs.voxd.plist",
-    )
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
 
     mock_run.return_value = MagicMock(returncode=0)
-    mock_client = MagicMock()
-    mock_client.health.return_value = {"status": "ok"}
 
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
-    with (
-        patch.object(ProcessManager, "ensure_port_free"),
-        patch("punt_vox.service.launchd.VoxClientSync", return_value=mock_client),
-    ):
-        be.migrate_from_daemon()
+    be = LaunchdBackend(ProcessManager(), list)
+    with patch.object(ProcessManager, "kill_stale_daemon") as mock_kill:
+        be.uninstall()
 
-    cmds = [c[0][0] for c in mock_run.call_args_list]
-    # Order: unload old, bootout new (pre-flight), bootstrap new, kickstart, rm old
-    assert cmds[0][:3] == ["sudo", "launchctl", "unload"]
-    assert cmds[1][1] == "bootout"
-    assert cmds[2][1] == "bootstrap"
-    assert cmds[3][1] == "kickstart"
-    assert cmds[4][:2] == ["sudo", "rm"]
+    assert not plist.exists()
+    mock_kill.assert_called_once()
+
+    # Exactly one bootout call, no sudo.
+    assert len(mock_run.call_args_list) == 1
+    cmd = mock_run.call_args_list[0][0][0]
+    assert cmd[0] == "launchctl"
+    assert cmd[1] == "bootout"
+    assert "sudo" not in cmd
+
+
+@patch("punt_vox.service.launchd.subprocess.run")
+def test_launchd_uninstall_noop_when_plist_missing(
+    mock_run: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uninstall skips bootout when no plist exists but still kills stale daemon."""
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    agents_dir = fake_home / "Library" / "LaunchAgents"
+    plist = agents_dir / "com.punt-labs.voxd.plist"
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+
+    be = LaunchdBackend(ProcessManager(), list)
+    with patch.object(ProcessManager, "kill_stale_daemon") as mock_kill:
+        be.uninstall()
+
+    mock_run.assert_not_called()
+    mock_kill.assert_called_once()

@@ -64,3 +64,5 @@
 {"ts":"2026-05-30T02:43:10Z","commit":"66d983d","files_scored":77,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
 {"ts":"2026-05-30T02:45:27Z","commit":"4039d5d","files_scored":77,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{}}
 {"ts":"2026-05-30T02:45:59Z","commit":"4039d5d","files_scored":77,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{}}
+{"ts":"2026-07-01T18:56:49Z","commit":"9b5e736","files_scored":77,"files_improved":1,"files_regressed":3,"verdict":"fail","deltas":{"src/punt_vox/service/__init__.py":{"module_size":[78.0,76.0]}}}
+{"ts":"2026-07-01T18:58:31Z","commit":"9b5e736","files_scored":77,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","deltas":{}}
