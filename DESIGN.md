@@ -1550,7 +1550,7 @@ Move the plist from `/Library/LaunchDaemons/com.punt-labs.voxd.plist` (system do
 
 **Fresh install**: no sudo. `mkdir -p ~/Library/LaunchAgents`, write plist, `ensure_port_free()`, `launchctl bootstrap gui/<uid> <plist>`, `launchctl kickstart`.
 
-**Migration** (old LaunchDaemon exists): write new plist to disk, `sudo launchctl unload -w` the old system-domain plist, `ensure_port_free()`, `launchctl bootstrap` the new LaunchAgent, verify health, `sudo rm` old plist. Two sudo calls, once, never again.
+**Migration** (old LaunchDaemon exists): originally shipped as an automated path — write new plist, `sudo launchctl unload -w` the old system-domain plist, `ensure_port_free()`, `launchctl bootstrap` the new LaunchAgent, verify health, `sudo rm` old plist. **Removed 2026-07-01 — see Amendment below.**
 
 ### Why Not Keep the LaunchDaemon
 
@@ -1564,4 +1564,21 @@ Move the plist from `/Library/LaunchDaemons/com.punt-labs.voxd.plist` (system do
 ### Supersedes
 
 DES-028 §Service install (macOS): path changed from `/Library/LaunchDaemons/` to `~/Library/LaunchAgents/`.
-DES-029 §macOS sudo calls: reduced from 4 steady-state to 0; 2 migration-only calls remain.
+DES-029 §macOS sudo calls: reduced from 4 steady-state to 0. (The 2 migration-only calls that briefly remained were removed — see Amendment.)
+
+### Amendment (2026-07-01): migration path removed
+
+The automated LaunchDaemon→LaunchAgent migration described above was removed before it ever shipped in a release (it lived only in `[Unreleased]`). Rationale:
+
+- **Only ~3 total installs exist**, all on team machines. A one-time manual cleanup is cheaper than carrying, testing, and maintaining a one-shot migration path that becomes dead code the moment those machines are migrated.
+- **It's a backwards-compat shim** — `PL-PP-1` forbids these ("if something is removed, it is removed completely").
+- **It carried a live defect**: the final `sudo rm` of the old plist used `check=True`, so any sudo auth failure (no tty, wrong password, cancel) aborted `vox daemon install` with a traceback and exit 1 — even though the new LaunchAgent was already installed, booted, and health-checked. Every other step in the migration tolerated failure with `check=False`; only the least-important cleanup step hard-failed. Removing the path deletes the defect instead of fixing an edge case in dead code.
+
+**Consequence:** `_install_darwin()` now runs the clean path unconditionally (stop → `ensure_port_free` → install → bootstrap → kickstart) with **zero sudo on macOS for both install and uninstall**. The `check_stale_launch_daemon()` doctor check (which only nagged users to migrate) and the `_OLD_LAUNCHD_PLIST` constant are gone. The pre-release machines that still carry the old system plist are cleaned up once, by hand:
+
+```bash
+sudo launchctl bootout system /Library/LaunchDaemons/com.punt-labs.voxd.plist 2>/dev/null
+sudo rm -f /Library/LaunchDaemons/com.punt-labs.voxd.plist
+```
+
+Closes vox-zt3r. Shipped in v4.9.0.
