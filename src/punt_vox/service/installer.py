@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import ipaddress
 import logging
 import os
 import platform
@@ -11,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Self
 
-from punt_vox.client import VoxClientSync, VoxdConnectionError
+from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
@@ -42,6 +43,64 @@ _SUDO_NOTICE = (
 # "running". Poll the health endpoint until it answers or the deadline lapses.
 _HEALTH_DEADLINE_S = 5.0
 _HEALTH_POLL_INTERVAL_S = 0.2
+
+
+class _HealthTarget:
+    """Resolve the exact host and port of the voxd instance just installed.
+
+    The service unit is always started with ``--port DEFAULT_PORT`` (see
+    ``_voxd_exec_args``) and, when ``VOXD_BIND`` is set, binds there. The
+    health poll must talk to *that* daemon -- not whatever a stray
+    ``VOXD_PORT`` env var or the run file points at. Pinning ``host`` and
+    ``port`` explicitly bypasses ``VoxClientSync``'s env/run-file
+    resolution so the poll cannot pass or fail against a different daemon.
+    """
+
+    __slots__ = ("_host", "_port")
+
+    _host: str
+    _port: int
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._host = self._resolve_host()
+        # ``_voxd_exec_args`` bakes ``--port DEFAULT_PORT`` into every unit;
+        # the daemon binds this port regardless of ``VOXD_PORT``.
+        self._port = DEFAULT_PORT
+        return self
+
+    @staticmethod
+    def _resolve_host() -> str:
+        """Map the service's ``VOXD_BIND`` to a reachable health host.
+
+        A wildcard bind (the unspecified addresses, or unset) accepts
+        loopback, so poll ``127.0.0.1``. A concrete bind address is the
+        only address voxd listens on -- poll it directly, since loopback
+        would false-fail. A non-IP value (e.g. a hostname) is polled as
+        given.
+        """
+        bind = os.environ.get("VOXD_BIND", "").strip()
+        if not bind:
+            return "127.0.0.1"
+        try:
+            # ``is_unspecified`` covers both 0.0.0.0 and :: (and ::0).
+            if ipaddress.ip_address(bind).is_unspecified:
+                return "127.0.0.1"
+        except ValueError:
+            pass
+        return bind
+
+    @property
+    def host(self) -> str:
+        return self._host
+
+    @property
+    def port(self) -> int:
+        return self._port
+
+    def client(self) -> VoxClientSync:
+        """Return a client pinned to the installed daemon's host and port."""
+        return VoxClientSync(host=self._host, port=self._port)
 
 
 class ServiceInstaller:
@@ -131,20 +190,25 @@ class ServiceInstaller:
         startup -- the silent-down failure mode.  Raise so ``vox daemon
         install`` exits non-zero when voxd never becomes reachable.
         """
+        target = _HealthTarget()
         deadline = time.monotonic() + _HEALTH_DEADLINE_S
-        last_exc: VoxdConnectionError | OSError | None = None
+        # None until the first probe fails: no exception has occurred yet.
+        last_exc: VoxdConnectionError | VoxdProtocolError | OSError | None = None
         while time.monotonic() < deadline:
             try:
-                VoxClientSync(host="127.0.0.1").health()
+                target.client().health()
                 return
-            except (VoxdConnectionError, OSError) as exc:
+            except (VoxdConnectionError, VoxdProtocolError, OSError) as exc:
+                # VoxdProtocolError covers a receive timeout while voxd is
+                # still binding its port -- transient during startup, so
+                # retry until the deadline rather than failing on the first.
                 last_exc = exc
                 time.sleep(_HEALTH_POLL_INTERVAL_S)
         log_dir = _paths_log_dir()
         msg = (
             f"voxd registered but never became reachable within "
-            f"{_HEALTH_DEADLINE_S:.0f}s. Service: {service_path}. "
-            f"Check the daemon logs in {log_dir}."
+            f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}. "
+            f"Service: {service_path}. Check the daemon logs in {log_dir}."
         )
         raise RuntimeError(msg) from last_exc
 

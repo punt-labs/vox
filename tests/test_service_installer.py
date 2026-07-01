@@ -3,16 +3,20 @@
 
 from __future__ import annotations
 
+import ipaddress
 import stat as stat_mod
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.client import VoxdConnectionError
-from punt_vox.service.installer import ServiceInstaller
+from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.service.installer import (
+    ServiceInstaller,
+    _HealthTarget,  # pyright: ignore[reportPrivateUsage]
+)
 from punt_vox.service.launchd import LaunchdBackend
-from punt_vox.service.process import ProcessManager
+from punt_vox.service.process import DEFAULT_PORT, ProcessManager
 from punt_vox.service.systemd import SystemdBackend
 
 # ---------------------------------------------------------------------------
@@ -450,3 +454,146 @@ def test_install_cleans_stale_user_unit_before_systemd_stop(
         "systemd_stop",
         "ensure_port_free",
     ], f"unexpected install() ordering: {call_order}"
+
+
+# ---------------------------------------------------------------------------
+# _HealthTarget — host/port derivation for the post-install poll
+# ---------------------------------------------------------------------------
+
+
+def test_health_target_pins_installed_default_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll port is DEFAULT_PORT regardless of a stray VOXD_PORT env."""
+    monkeypatch.setenv("VOXD_PORT", "9999")
+    assert _HealthTarget().port == DEFAULT_PORT
+
+
+def test_health_target_unset_bind_maps_to_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset VOXD_BIND resolves the loopback health host."""
+    monkeypatch.delenv("VOXD_BIND", raising=False)
+    assert _HealthTarget().host == "127.0.0.1"
+
+
+# Construct the unspecified addresses rather than spelling "0.0.0.0" as a
+# literal, which trips ruff S104 (bind-all-interfaces) even in a test value.
+_IPV4_WILDCARD = str(ipaddress.IPv4Address(0))
+_IPV6_WILDCARD = str(ipaddress.IPv6Address(0))
+
+
+@pytest.mark.parametrize(
+    "wildcard",
+    [_IPV4_WILDCARD, _IPV6_WILDCARD, f"  {_IPV4_WILDCARD}  "],
+)
+def test_health_target_wildcard_bind_maps_to_loopback(
+    wildcard: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wildcard (unspecified) binds resolve loopback — voxd accepts it there."""
+    monkeypatch.setenv("VOXD_BIND", wildcard)
+    assert _HealthTarget().host == "127.0.0.1"
+
+
+def test_health_target_concrete_bind_used_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concrete bind address is the only address voxd listens on."""
+    monkeypatch.setenv("VOXD_BIND", "192.168.1.50")
+    assert _HealthTarget().host == "192.168.1.50"
+
+
+def test_health_target_hostname_bind_used_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-IP bind value (hostname) is polled as given, not loopback."""
+    monkeypatch.setenv("VOXD_BIND", "voxd.internal")
+    assert _HealthTarget().host == "voxd.internal"
+
+
+# ---------------------------------------------------------------------------
+# install() — health poll targets the exact installed daemon
+# ---------------------------------------------------------------------------
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_health_poll_pins_installed_port_over_env(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The health poll targets DEFAULT_PORT even when VOXD_PORT points elsewhere.
+
+    A stray VOXD_PORT in the install environment must not redirect the poll
+    to a different daemon than the one the service unit was started with.
+    """
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    monkeypatch.setenv("VOXD_PORT", "9999")
+    monkeypatch.setenv("VOXD_BIND", "192.168.1.50")
+
+    captured: list[dict[str, object]] = []
+
+    def _factory(**kwargs: object) -> MagicMock:
+        captured.append(kwargs)
+        client = MagicMock()
+        client.health.return_value = {"status": "ok"}
+        return client
+
+    monkeypatch.setattr("punt_vox.service.installer.VoxClientSync", _factory)
+
+    inst = ServiceInstaller()
+    inst.install()
+
+    assert captured, "VoxClientSync was never constructed"
+    assert captured[0]["port"] == DEFAULT_PORT
+    assert captured[0]["host"] == "192.168.1.50"
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_health_poll_retries_transient_protocol_error(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient VoxdProtocolError is retried, not fatal.
+
+    A receive timeout while voxd is still binding its port surfaces as
+    VoxdProtocolError. The poll must sleep and retry until the daemon
+    answers rather than failing the install on the first hiccup.
+    """
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    monkeypatch.setattr("punt_vox.service.installer.time.sleep", lambda _s: None)
+
+    client = MagicMock()
+    client.health.side_effect = [
+        VoxdProtocolError("timeout waiting for response to 'health'"),
+        {"status": "ok"},
+    ]
+    monkeypatch.setattr(
+        "punt_vox.service.installer.VoxClientSync",
+        lambda **_kwargs: client,
+    )
+
+    inst = ServiceInstaller()
+    result = inst.install()
+
+    assert client.health.call_count == 2
+    assert "running" in result
+    assert "not yet running" not in result
