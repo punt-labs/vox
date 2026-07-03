@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "repo-biff": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "ROOT=\"$(eval echo \"${workspaceFolder}\")\"; case \"$ROOT\" in ''|null) ROOT=\"$PWD\" ;; esac; cd \"$ROOT\" && exec biff mcp"
+      ]
+    }
+  }
+}

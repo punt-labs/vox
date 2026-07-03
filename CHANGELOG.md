@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-07-03
+
 ### Added
 
 - **`/music next` command**: skip to a new generated track while the current one keeps playing (gapless). New `music_next` WebSocket message, MCP tool, and CLI subcommand. Closes vox-n3me.
