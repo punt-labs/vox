@@ -1,0 +1,14 @@
+name: cli-specialist
+responsibilities:
+  - CLI command structure and help text design
+  - composability and output formatting
+  - man page quality
+permissions:
+  - edit-cli-code
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob

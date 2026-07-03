@@ -1,0 +1,97 @@
+name: engineering
+repositories:
+  - punt-labs/vox
+members:
+  - identity: jfreeman
+    role: ceo
+  - identity: claude
+    role: coo
+  # Python
+  - identity: rmh
+    role: python-specialist
+  - identity: gvr
+    role: python-language-design
+  # Go
+  - identity: bwk
+    role: go-specialist
+  # OO patterns / refactoring
+  - identity: rej
+    role: smalltalk-patterns
+  # CLI
+  - identity: mdm
+    role: cli-specialist
+  - identity: rop
+    role: cli-minimalist
+  # Security
+  - identity: djb
+    role: security-engineer
+  # Infrastructure / DevOps
+  - identity: adb
+    role: infra-engineer
+  # ML / inference
+  - identity: kpz
+    role: ml-specialist
+  # Formal methods
+  - identity: jms
+    role: z-specialist
+  # UX / info design
+  - identity: edt
+    role: ux-designer
+  - identity: dna
+    role: ux-cognitive
+  # Product
+  - identity: mcg
+    role: product-strategy
+collaborations:
+  - from: coo
+    to: ceo
+    type: reports_to
+  - from: python-specialist
+    to: coo
+    type: reports_to
+  - from: python-language-design
+    to: coo
+    type: reports_to
+  - from: go-specialist
+    to: coo
+    type: reports_to
+  - from: smalltalk-patterns
+    to: coo
+    type: reports_to
+  - from: cli-specialist
+    to: coo
+    type: reports_to
+  - from: cli-minimalist
+    to: coo
+    type: reports_to
+  - from: security-engineer
+    to: coo
+    type: reports_to
+  - from: infra-engineer
+    to: coo
+    type: reports_to
+  - from: ml-specialist
+    to: coo
+    type: reports_to
+  - from: z-specialist
+    to: coo
+    type: reports_to
+  - from: ux-designer
+    to: coo
+    type: reports_to
+  - from: ux-cognitive
+    to: coo
+    type: reports_to
+  - from: product-strategy
+    to: coo
+    type: reports_to
+  # Domain pairings
+  - from: python-language-design
+    to: python-specialist
+    type: collaborates_with
+  - from: cli-minimalist
+    to: cli-specialist
+    type: collaborates_with
+  - from: ux-cognitive
+    to: ux-designer
+    type: collaborates_with

@@ -1,0 +1,17 @@
+name: infra-engineer
+responsibilities:
+  - CI/CD pipeline design and maintenance
+  - cross-repo tooling and deployment
+  - NATS relay and shared infrastructure
+  - install scripts and binary distribution
+  - depot system and dependency management
+permissions:
+  - edit-ci-config
+  - manage-infrastructure
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob

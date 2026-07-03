@@ -1,0 +1,92 @@
+mission_id: m-2026-07-01-007
+status: closed
+type: implement
+created_at: "2026-07-01T18:17:35Z"
+updated_at: "2026-07-01T19:06:20Z"
+closed_at: "2026-07-01T19:06:20Z"
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-01T18:17:35Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs:
+    ticket: vox-zt3r
+    files:
+        - src/punt_vox/service/launchd.py
+        - src/punt_vox/service/installer.py
+        - tests/test_service_launchd.py
+        - tests/test_service_installer.py
+write_set:
+    - src/punt_vox/service/launchd.py
+    - src/punt_vox/service/installer.py
+    - tests/test_service_launchd.py
+    - tests/test_service_installer.py
+success_criteria:
+    - No reference to _OLD_LAUNCHD_PLIST or the /Library/LaunchDaemons path remains anywhere in launchd.py or installer.py (grep returns zero hits).
+    - migrate_from_daemon() is deleted entirely. The macOS install path (_install_darwin) unconditionally runs the clean path — stop, ensure_port_free, install the LaunchAgent — with NO branch on an old-plist existing and NO sudo call anywhere in the steady-state install or uninstall path.
+    - uninstall() no longer touches the old LaunchDaemon plist (remove the _OLD_LAUNCHD_PLIST sudo unload+rm block).
+    - Dead migration tests are removed; the clean-install and uninstall paths retain/gain coverage (happy path installs LaunchAgent and reports running; uninstall removes the LaunchAgent plist and boots out the job; a stale-agent reinstall is idempotent). No test references the old LaunchDaemon migration.
+    - make check exits 0. OO ratchet (make check-oo) does not regress on touched files; run make update-oo after and stage .oo-baseline.json + .oo-audit.jsonl.
+    - No backwards-compat shim or tombstone comment left behind (PL-PP-1) — the migration is removed completely, not aliased or commented out.
+    - Commit incrementally — one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do NOT bump the version, edit CHANGELOG.md, or edit DESIGN.md — the leader owns those. Do NOT open a PR. Work on the current branch (fix/service-install-reconcile).
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Goal
+
+    Remove the one-time LaunchDaemon-to-LaunchAgent migration path from vox's
+    macOS service installer. DES-038 (commit 70fda4c) moved voxd to a user
+    LaunchAgent and added migrate_from_daemon() to auto-remove the old
+    system-domain LaunchDaemon on upgrade. vox has only ~3 total installs; the
+    three boxes will be cleaned up manually (a one-time
+    `sudo launchctl bootout system /Library/LaunchDaemons/com.punt-labs.voxd.plist;
+    sudo rm -f /Library/LaunchDaemons/com.punt-labs.voxd.plist`). The migration
+    code is therefore a backwards-compat shim (PL-PP-1 forbids these) carrying a
+    live defect — its final `sudo rm` uses check=True, so a sudo auth failure
+    aborts `vox daemon install` with a traceback and exit 1 even though the new
+    LaunchAgent is already installed, booted, and health-checked. Rather than fix
+    that edge case, delete the whole path: it becomes dead code once the 3 boxes
+    are migrated, and removing it makes the install path fully sudo-free (DES-038's
+    actual intent).
+
+    ## What exists now (verified live 2026-07-01)
+
+    - src/punt_vox/service/launchd.py:
+      - `_OLD_LAUNCHD_PLIST = Path("/Library/LaunchDaemons") / f"{_LABEL}.plist"` (line ~26)
+      - `migrate_from_daemon()` (lines ~159-247): writes the new LaunchAgent plist,
+        `sudo launchctl unload -w` the old daemon (check=False), stop + free port,
+        bootstrap + kickstart the new agent, health-check for 5s, then
+        `sudo rm` the old plist (check=True — the defect).
+      - `uninstall()` (lines ~249-273): after removing the LaunchAgent, also does a
+        `sudo launchctl unload -w` + `sudo rm` on `_OLD_LAUNCHD_PLIST` (check=False).
+    - src/punt_vox/service/installer.py `_install_darwin()` (lines ~95-112):
+      branches on `_OLD_LAUNCHD_PLIST.exists()` -> migrate_from_daemon(); else the
+      clean path (stop, ensure_port_free, install). The clean path is what should
+      run unconditionally.
+
+    ## Constraints / invariants
+
+    - Daemon vs client boundary holds — this is service-lifecycle code only; do not
+      touch voxd, client, server, or hooks.
+    - Fresh-install behavior on macOS must be unchanged: write
+      ~/Library/LaunchAgents/com.punt-labs.voxd.plist, bootstrap + kickstart it,
+      report running. No sudo.
+    - Linux/systemd path is untouched.
+    - Follow the python-*.md rules on every line you write (frozen/slots dataclasses,
+      __new__ over __init__, no public attrs, mypy --strict + pyright clean,
+      check=False subprocess calls where a nonzero exit is tolerable, specific
+      exception types).
+    - The service package must stay importable and all existing non-migration tests
+      must still pass.
+
+    ## Deliverable
+
+    A simplified service installer with the migration path fully removed, the macOS
+    install path unconditional and sudo-free, tests updated to match, make check
+    green, and the OO baseline refreshed. One logical change per commit on the
+    current branch. The leader handles DESIGN.md (DES-038 ADR amendment), CHANGELOG,
+    version bump, manual-cleanup documentation, and the PR.

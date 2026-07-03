@@ -1,0 +1,29 @@
+results:
+    - mission: m-2026-05-30-002
+      round: 1
+      created_at: "2026-05-30T01:47:03Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .tmp/missions/results/hook-repo-name-design.md
+          added: 1
+          removed: 0
+      evidence:
+        - name: cwd field confirmed empirically (.tmp/spike-hook capture, v2.1.81) + Claude Code hook envelope schema cited
+          status: pass
+        - name: 'daemon-relay diagnosed dead: voxd serves only /ws and /health (no /hook); scripts read serve.port at wrong path (run/ missing)'
+          status: pass
+        - name: config.md split confirmed at commit 7e151b1 (#238); gate at hooks/*.sh:9 still checks dead config.md
+          status: pass
+        - name: find_config_dir(dirs.py:16-27) bounded walk-up already correct once fed payload.cwd; _derive_repo_name needs no change
+          status: pass
+        - name: 'OO ratchet: hook_payload.py method_ratio=0.75 FAIL; folding dispatch into type layer + cwd improves it (net win)'
+          status: pass
+      open_questions:
+        - 'Decision 1: parent meta-repo (cwd=.../punt-labs) — recommend silent via fixed gate (no repo-local vox config), confirm vs explicit meta-repo announcement.'
+        - 'Decision 2: shell gate exact (cwd/.punt-labs/vox/vox.md) with Python as authoritative resolver vs bash walk-up — recommend exact + Python authority.'
+        - 'Decision 3: remove dead mcp-proxy daemon-relay block entirely (PL-PP-1) — confirm no planned revival this cycle.'
+        - 'Decision 4: missing/malformed cwd — recommend handlers stay silent rather than fall back to Path.cwd() (which reintroduces the bug).'
+      prose: |
+        Design produces the write set across hook_payload.py (carry cwd on every payload, fold the free dispatcher into the type layer), dirs.py (feed payload.cwd to the already-bounded find_config_dir, no signature change required), hooks.py (every *_cmd resolves config_dir from payload.cwd and gates on it; thread the dir into handle_stop so read and vibe-write agree), and the six shared shell scripts plus acknowledge.sh (extract cwd from stdin via jq mirroring subagent.sh, fix gate to vox.md/vox.local.md, delete the dead relay). config.py and voxd are untouched. Result: one resolution path fed by payload.cwd, so daemon-relay/subprocess agreement holds by construction. Tests specified for cwd parsing (present/absent/malformed), bounded resolution (subdir + parent-isolation), gate filename, and handler name/skip behavior. Four operator decisions flagged before implementation.

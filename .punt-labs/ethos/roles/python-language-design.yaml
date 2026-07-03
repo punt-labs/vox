@@ -1,0 +1,14 @@
+name: python-language-design
+responsibilities:
+  - Python language-design judgment on protocols, typing, and PEP-aligned idioms
+  - review of Python public API surfaces for clarity and consistency
+  - long-horizon evolution of typing, packaging, and module structure
+permissions:
+  - edit-python-code
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob
