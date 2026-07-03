@@ -41,6 +41,23 @@ def test_health_target_unset_bind_maps_to_loopback(
     assert HealthTarget(platform).host == "127.0.0.1"
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
+@pytest.mark.parametrize("bind", ["", "   "])
+def test_health_target_empty_bind_maps_to_loopback(
+    bind: str,
+    platform: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A set-but-empty or whitespace-only VOXD_BIND resolves loopback.
+
+    A stray shell ``export VOXD_BIND=""`` (or whitespace) leaves the unit with
+    no concrete bind, so voxd falls back to its loopback -- the health host
+    must follow it there rather than polling an empty address.
+    """
+    monkeypatch.setenv("VOXD_BIND", bind)
+    assert HealthTarget(platform).host == "127.0.0.1"
+
+
 # Construct the unspecified addresses rather than spelling "0.0.0.0" as a
 # literal, which trips ruff S104 (bind-all-interfaces) even in a test value.
 _IPV4_WILDCARD = str(ipaddress.IPv4Address(0))
@@ -110,6 +127,28 @@ def test_health_target_launchd_does_not_apply_systemd_gate(
     """
     monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
     assert HealthTarget("macos").host == "192.168.1.50"
+
+
+# ---------------------------------------------------------------------------
+# platform domain — the constructor rejects anything but the two known values
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["Linux", "Darwin", "bsd", "windows", ""])
+def test_health_target_rejects_unknown_platform(
+    bad: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrecognized platform fails loud, never mis-branching the host gate.
+
+    ``_effective_bind`` gates the systemd path on ``platform == "linux"``; a
+    miscapitalized ``"Linux"`` or a future ``"bsd"`` would skip that gate and
+    resolve the wrong host against a healthy daemon. The constructor is the
+    boundary, so it rejects the value before any branch runs.
+    """
+    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
+    with pytest.raises(ValueError, match="unknown platform"):
+        HealthTarget(bad)
 
 
 # ---------------------------------------------------------------------------

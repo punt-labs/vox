@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from typing import Self
+from typing import Literal, Self, final
 
 from punt_vox.client import VoxClientSync, read_token_file
 from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.systemd import SystemdBackend
 
 
+@final
 class HealthTarget:
     """Resolve host, port, and token of the voxd instance just installed.
 
@@ -30,13 +31,34 @@ class HealthTarget:
     _port: int
 
     def __new__(cls, platform: str) -> Self:
+        # __new__ is the platform boundary: an unknown value would silently
+        # skip the systemd gate below and mis-resolve the host, so reject it
+        # here and narrow str -> Literal for every helper downstream.
+        checked = cls._require_platform(platform)
         self = super().__new__(cls)
-        self._host = self._resolve_host(platform)
+        self._host = self._resolve_host(checked)
         self._port = DEFAULT_PORT
         return self
 
     @staticmethod
-    def _effective_bind(platform: str) -> str:
+    def _require_platform(platform: str) -> Literal["macos", "linux"]:
+        """Return *platform* if it names a supported OS, else raise.
+
+        The health host resolution branches on exactly ``"macos"`` and
+        ``"linux"``; any other value (a miscapitalized ``"Linux"``, a future
+        ``"bsd"``) would fall through the systemd gate onto the launchd
+        verbatim path and poll the wrong host. Enforce the two-value domain
+        at runtime so a bad platform fails loud instead of mis-branching.
+        """
+        if platform == "macos":
+            return "macos"
+        if platform == "linux":
+            return "linux"
+        msg = f"unknown platform: {platform!r}"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _effective_bind(platform: Literal["macos", "linux"]) -> str:
         """Return the ``VOXD_BIND`` value the installed unit passes to voxd.
 
         The install-shell value is not necessarily what voxd receives, because
@@ -56,7 +78,7 @@ class HealthTarget:
         return raw.strip()
 
     @classmethod
-    def _resolve_host(cls, platform: str) -> str:
+    def _resolve_host(cls, platform: Literal["macos", "linux"]) -> str:
         """Map the unit's effective ``VOXD_BIND`` to a reachable health host.
 
         A wildcard bind (unspecified addresses, or unset/dropped) accepts
