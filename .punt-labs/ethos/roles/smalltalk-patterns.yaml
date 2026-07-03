@@ -1,0 +1,14 @@
+name: smalltalk-patterns
+responsibilities:
+  - design patterns and refactoring discipline for Smalltalk codebases
+  - framework design review, hot-spot identification, polymorphism over conditionals
+  - Pharo image hygiene and class-extension etiquette
+permissions:
+  - edit-smalltalk-code
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob

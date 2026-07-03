@@ -1,0 +1,3 @@
+{"ts":"2026-07-01T18:17:35Z","event":"create","actor":"claude","details":{"evaluator":"djb","ticket":"vox-zt3r","worker":"adb"}}
+{"ts":"2026-07-01T18:32:21Z","event":"result","actor":"adb","details":{"confidence":0.9,"evidence_entries":8,"files_changed":4,"round":1,"verdict":"escalate"}}
+{"ts":"2026-07-01T19:06:20Z","event":"close","actor":"claude","details":{"round":1,"status":"closed","verdict":"escalate"}}

@@ -1,0 +1,14 @@
+name: python-specialist
+responsibilities:
+  - Python package implementation with tests
+  - code review for Python projects
+  - adherence to punt-kit/standards/python.md
+permissions:
+  - edit-python-code
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob

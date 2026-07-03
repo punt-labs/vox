@@ -1,0 +1,22 @@
+mission_id: m-2026-05-30-002
+status: open
+type: design
+created_at: "2026-05-30T01:41:16Z"
+updated_at: "2026-05-30T01:41:16Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-05-30T01:41:16Z"
+    hash: 666f503c819ad8e6414405d5bb4e68310cdd70e1e6b338991d291dce0e73bdb3
+inputs:
+    ticket: vox-q6v2
+write_set:
+    - .tmp/missions/results/hook-repo-name-design.md
+success_criteria:
+    - Read bead vox-q6v2 for full root cause; confirm Claude hook payload 'cwd' field shape with captured example or schema citation; produce design doc at the write-set path with exact write-set across shell hook scripts and Python daemon/fallback resolution; specify how payload.cwd flows to repo name bounded at repo's own .git with no parent climb identical for daemon-relay and subprocess; fix dead config.md gate to vox.md/vox.local.md; list tests to add; flag decisions needing operator ruling before implementation; do not implement
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: 'Hooks speak parent folder name ''punt-labs'' not the repo the user is in. Defect 1: hook scripts derive repo via ''git rev-parse --git-common-dir'' in the hook process pwd then pass as config_dir to voxd; fallback ''vox hook'' uses find_config_dir() Path.cwd() walk-up (dirs.py:16-27). Demonstrated cwd=vox->vox, cwd=parent->punt-labs. Defect 2: gate checks config.md (dead since 7e151b1) so migrated repos hooks exit silently. Claude pipes payload.cwd but scripts discard it. Ratified: name from payload.cwd, no walk-up past repo git root, daemon+fallback agree, gate fixed. Design only.'

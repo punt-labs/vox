@@ -1,0 +1,86 @@
+results:
+    - mission: m-2026-05-30-003
+      round: 1
+      created_at: "2026-05-30T02:20:23Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.92
+      files_changed:
+        - path: src/punt_vox/hook_payload.py
+          added: 18
+          removed: 23
+        - path: src/punt_vox/hooks.py
+          added: 46
+          removed: 50
+        - path: hooks/notify.sh
+          added: 10
+          removed: 21
+        - path: hooks/notify-permission.sh
+          added: 10
+          removed: 21
+        - path: hooks/signal.sh
+          added: 10
+          removed: 21
+        - path: hooks/subagent.sh
+          added: 11
+          removed: 29
+        - path: hooks/farewell.sh
+          added: 10
+          removed: 21
+        - path: hooks/pre-compact.sh
+          added: 10
+          removed: 21
+        - path: hooks/acknowledge.sh
+          added: 10
+          removed: 21
+        - path: tests/test_hook_payload.py
+          added: 58
+          removed: 62
+        - path: tests/test_hooks.py
+          added: 146
+          removed: 41
+        - path: tests/test_dirs.py
+          added: 36
+          removed: 0
+        - path: CHANGELOG.md
+          added: 1
+          removed: 0
+      evidence:
+        - name: make check
+          status: pass
+        - name: uv run pytest (1647 passed)
+          status: pass
+        - name: 'manual: StopPayload.parse cwd=.../punt-labs/vox -> find_config_dir -> repo_name ''vox'''
+          status: pass
+        - name: 'manual: non-string/absent cwd -> payload.cwd None (no pwd-fallback bug reintroduced)'
+          status: pass
+        - name: 'check-oo: hook_payload method_ratio 0.75->1.0, hooks max_complexity 11->10, no regressions'
+          status: pass
+      prose: |
+        Repo identity now flows from the session cwd Claude Code puts on hook
+        stdin: payload.cwd -> find_config_dir(cwd) -> _derive_repo_name. THE
+        ONE RULE honored exactly — no parent/meta-repo detection, no name
+        suppression. A directory with no .punt-labs/vox config is naturally
+        silent. The dead config.md gate and the dead mcp-proxy daemon-relay
+        branch are removed from all seven shell scripts.
+
+        Two artifacts outside the declared write_set, both authorized by the
+        design phase's "the design's output IS the write set" latitude:
+
+        1. src/punt_vox/hook_envelope.py (NEW) — the cwd-carrying envelope and
+           shared HookEnvelope.cwd_of extraction. Extracted to keep
+           hook_payload.py at exactly 3 payload classes (classes_per_module
+           baseline 3.0 would have regressed to 5.0 had the enum + a 4th
+           dataclass stayed in one module). This is the OO ratchet forcing a
+           non-obvious split: the dispatcher/envelope had to leave the payload
+           module. hook_payload.py improved on every metric (method_ratio
+           0.75->1.0, class_to_func 0.75->1.0, module_size 73->69).
+
+        2. .oo-baseline.json / .suppression-baseline.json corrections — PR #274
+           (LaunchAgent migration) left both baselines stale: it grew
+           launchd.py and added two justified launchctl noqa suppressions to
+           daemon_restarter.py without rebaselining. check-suppressions failed
+           whole-tree (223 vs 225) on my watch. Per no-pre-existing-excuse I
+           recorded committed reality (make update-oo + make update-suppressions);
+           launchd's OO regression was REFUSED by --update and left untouched
+           since I did not change that file.

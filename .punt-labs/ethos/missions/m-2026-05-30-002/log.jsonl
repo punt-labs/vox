@@ -1,0 +1,2 @@
+{"ts":"2026-05-30T01:41:16Z","event":"create","actor":"claude","details":{"evaluator":"mdm","ticket":"vox-q6v2","worker":"rmh"}}
+{"ts":"2026-05-30T01:47:03Z","event":"result","actor":"rmh","details":{"confidence":0.9,"evidence_entries":5,"files_changed":1,"round":1,"verdict":"pass"}}

@@ -1,0 +1,13 @@
+name: security-engineer
+responsibilities:
+  - threat modeling and security review
+  - credential management audit
+  - input validation and boundary checking
+  - dependency supply chain audit
+permissions:
+  - block-merge-on-security
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
