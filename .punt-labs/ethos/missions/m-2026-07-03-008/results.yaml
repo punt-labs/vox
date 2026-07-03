@@ -1,0 +1,96 @@
+results:
+    - mission: m-2026-07-03-008
+      round: 1
+      created_at: "2026-07-03T20:26:13Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/service/health.py
+          added: 97
+          removed: 0
+        - path: src/punt_vox/service/installer.py
+          added: 3
+          removed: 91
+        - path: tests/test_service_health.py
+          added: 167
+          removed: 0
+        - path: tests/test_service_installer.py
+          added: 7
+          removed: 107
+      evidence:
+        - name: installer.py module_size 300 -> 226 (74 lines headroom, beats ~285 target)
+          status: pass
+        - name: make check exits 0 at branch tip (ruff, mypy, pyright, 1692 pytest, markdownlint, ratchets)
+          status: pass
+        - name: HealthTarget extracted to service/health.py; old definition deleted, no shim (PL-PP-1)
+          status: pass
+        - name: new mirrored test file tests/test_service_health.py — 18 tests (construction, host/port/token resolution, wildcard/whitespace boundary, run-file-absent token=None)
+          status: pass
+        - name: 67 service tests pass (health + installer + process); behavior preserved
+          status: pass
+        - name: rebaseline recorded per structural-refactor policy — health.py added (all thresholds pass), installer.py synced
+          status: pass
+      prose: |
+        Behavior-preserving Split Module (PY-RF-3). HealthTarget (host/port/token
+        resolution for the post-install health poll) moved into the new
+        service/health.py; installer.py imports it and keeps the poll loop in
+        _verify_serving. The old private class was deleted in the same commit that
+        wired the importer; its unit tests moved to tests/test_service_health.py and
+        the installer tests repoint the VoxClientSync monkeypatch to
+        punt_vox.service.health (where client() now constructs it).
+
+        installer.py module_size dropped from 300 (at threshold, zero headroom) to
+        226 — 74 lines of headroom. classes_per_module 2->1 and avg_params 0.38->0.30
+        also improved. Three per-file metrics shifted as relocation arithmetic:
+        method_ratio 0.938->0.90, avg_complexity 2.06->2.10, class_to_func_ratio
+        0.667->0.50. These are not quality loss — HealthTarget's small methods now
+        live in health.py, which passes every threshold on its own (method_ratio 1.0,
+        module_size 80). The residual _voxd_exec_args free function drives the ratio
+        shift, but moving it onto ServiceInstaller would require editing
+        test_service_process.py, which is outside the admitted write set, and would
+        not fix avg_complexity anyway. make update-oo therefore refused the drift, so
+        I rebaselined — the sanctioned mechanism for structural refactors (vox
+        CLAUDE.md; precedent commit 9cb5d53). CI does not run the ratchet; the branch
+        tip passes make check because the baseline-sync commit touches no .py files.
+
+        Two commits on refactor/health-target-extract off main:
+          b56130e refactor(service): extract HealthTarget into service/health.py
+          8e16ad5 chore(oo): rebaseline after HealthTarget split
+    - mission: m-2026-07-03-008
+      round: 2
+      created_at: "2026-07-03T21:07:34Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/service/health.py
+          added: 26
+          removed: 4
+        - path: src/punt_vox/service/installer.py
+          added: 5
+          removed: 3
+        - path: tests/test_service_health.py
+          added: 39
+          removed: 0
+      evidence:
+        - name: 'Platform domain enforced at type AND runtime — detect_platform() -> Literal[''macos'',''linux''] threaded through _verify_serving/_effective_bind/_resolve_host; HealthTarget.__new__ validates via _require_platform, raises ValueError on unknown. Verified live: HealthTarget(''Linux'') raises; HealthTarget(''macos'') -> 127.0.0.1:8421'
+          status: pass
+        - name: '@final added to HealthTarget (PY-IC-2)'
+          status: pass
+        - name: Boundary tests added — unknown-platform ValueError (Linux/Darwin/bsd/windows/empty) + set-empty/whitespace VOXD_BIND -> loopback on both platforms
+          status: pass
+        - name: 'make check exits 0 at branch tip: mypy + pyright strict, ruff, 1701 pytest, markdownlint, all ratchets'
+          status: pass
+        - name: 'Round-2 re-review (3 agents): type-design confirms round-1 HIGH fully closed at type+runtime; code-reviewer and pr-test-analyzer clean (44 service tests pass)'
+          status: pass
+        - name: 'OO --rebaseline accepted by operator: guard adds lines (health.py module_size 80->100), all metrics far under absolute thresholds'
+          status: pass
+      prose: |
+        Round 2 closed the platform-domain High concern. HealthTarget's platform
+        string is now validated at the __new__ boundary (str -> Literal via
+        _require_platform, ValueError on anything outside {macos, linux}) and the
+        Literal threads through every downstream signature, so the silent
+        systemd-gate-skip is impossible at both type and runtime. @final seals the
+        leaf class. Two low, non-blocking follow-ups tracked in vox-n0b6
+        (single-source PlatformName Literal; tighten public detect_platform wrappers).
