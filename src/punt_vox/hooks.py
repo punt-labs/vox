@@ -20,6 +20,7 @@ Events:
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
 import logging
 import os
@@ -74,9 +75,18 @@ def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedF
         configure_logging(stderr_level="WARNING")
 
 
-# ---------------------------------------------------------------------------
 # Shared helpers
-# ---------------------------------------------------------------------------
+
+# Genuine read failures worth logging; an empty/closed pipe (errno None) stays quiet.
+_UNEXPECTED_ERRNOS: frozenset[int] = frozenset(
+    {errno.EBADF, errno.EIO, errno.EMFILE, errno.EINTR}
+)
+
+
+def _warn_unexpected_read_error(exc: OSError) -> None:
+    """Log a genuine stdin read failure; stay quiet on an empty pipe."""
+    if exc.errno in _UNEXPECTED_ERRNOS:
+        logger.warning("hook stdin read failed: errno %s (%s)", exc.errno, exc)
 
 
 def _read_hook_input() -> dict[str, object]:
@@ -101,7 +111,10 @@ def _read_hook_input() -> dict[str, object]:
         if not raw.strip():
             return {}
         data: object = json.loads(raw)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except OSError as exc:
+        _warn_unexpected_read_error(exc)
+        return {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
     if not isinstance(data, dict):
         return {}
@@ -113,9 +126,7 @@ def _emit(output: dict[str, object]) -> None:
     typer.echo(json.dumps(output))
 
 
-# ---------------------------------------------------------------------------
 # Repo name resolution from session cwd
-# ---------------------------------------------------------------------------
 
 
 def _repo_name_from_cwd(cwd: Path | None) -> str | None:
@@ -136,9 +147,7 @@ def _with_repo_name(config: VoxConfig, cwd: Path | None) -> VoxConfig:
     return config
 
 
-# ---------------------------------------------------------------------------
 # Voxd client helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_client() -> VoxClientSync:
@@ -198,9 +207,7 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
         logger.warning("voxd not running, skipping chime")
 
 
-# ---------------------------------------------------------------------------
 # Stop handler — decision-block pattern
-# ---------------------------------------------------------------------------
 
 
 def handle_stop(
@@ -256,16 +263,14 @@ def handle_stop(
     return {"decision": "block", "reason": phrase}
 
 
-# ---------------------------------------------------------------------------
 # PostToolUse Bash — signal accumulator
-# ---------------------------------------------------------------------------
 
 _SIGNAL_PATTERNS: list[tuple[str, list[str]]] = [
     # Lint patterns before tests — "errors" appears in both contexts,
     # so the more specific "Found N error" and "0 errors" must match first.
     ("lint-fail", [r"Found [0-9]+ error"]),
     ("lint-pass", [r"All checks passed", r"0 errors"]),
-    ("tests-pass", [r"[0-9]+ passed", r"tests? ok", "\u2713.*passed"]),
+    ("tests-pass", [r"[0-9]+ passed", r"tests? ok", "✓.*passed"]),
     ("tests-fail", [r"FAILED", r"AssertionError", r"ERRORS?\b"]),
     ("merge-conflict", [r"CONFLICT"]),
     ("git-push-ok", [r"Everything up-to-date", r"->.*main"]),
@@ -308,14 +313,15 @@ def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
     if signal is None:
         return
 
-    log = SignalLog.deserialize(read_config(config_dir).vibe_signals or "")
-    log.append(Signal.now(signal))
-    write_field("vibe_signals", log.serialize(), config_dir)
+    try:
+        log = SignalLog.deserialize(read_config(config_dir).vibe_signals or "")
+        log.append(Signal.now(signal))
+        write_field("vibe_signals", log.serialize(), config_dir)
+    except (OSError, ValueError) as exc:
+        logger.warning("post-bash: cannot save vibe signal in %s: %s", config_dir, exc)
 
 
-# ---------------------------------------------------------------------------
 # Notification — permission/idle prompt audio alerts
-# ---------------------------------------------------------------------------
 
 
 def _pick_notification_phrase(
@@ -366,9 +372,7 @@ def handle_notification(payload: NotificationPayload, config: VoxConfig) -> None
     _speak_via_voxd(text, config)
 
 
-# ---------------------------------------------------------------------------
 # Shared speech helper — used by continuous mode hooks
-# ---------------------------------------------------------------------------
 
 
 def _speak_phrase(
@@ -394,9 +398,7 @@ def _speak_phrase(
     _speak_via_voxd(text, config)
 
 
-# ---------------------------------------------------------------------------
 # PreCompact — playful 'be right back' before context compaction
-# ---------------------------------------------------------------------------
 
 
 def handle_pre_compact(config: VoxConfig) -> None:
@@ -413,9 +415,7 @@ def handle_pre_compact(config: VoxConfig) -> None:
     _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
 
 
-# ---------------------------------------------------------------------------
 # UserPromptSubmit — acknowledgment in continuous mode
-# ---------------------------------------------------------------------------
 
 
 def handle_user_prompt_submit(config: VoxConfig) -> None:
@@ -435,9 +435,7 @@ def handle_user_prompt_submit(config: VoxConfig) -> None:
     _speak_phrase(ACKNOWLEDGE_PHRASES, config, chime_signal="acknowledge")
 
 
-# ---------------------------------------------------------------------------
 # SubagentStart / SubagentStop — continuous mode announcements
-# ---------------------------------------------------------------------------
 
 
 def handle_subagent_start(config: VoxConfig) -> None:
@@ -472,9 +470,15 @@ def handle_subagent_stop(config: VoxConfig) -> None:
     _speak_phrase(SUBAGENT_STOP_PHRASES, config, chime_signal="subagent")
 
 
-# ---------------------------------------------------------------------------
 # SessionEnd — farewell speech
-# ---------------------------------------------------------------------------
+
+
+def _clear_vibe_signals(config_dir: Path) -> None:
+    """Reset accumulated vibe signals, warning instead of raising on failure."""
+    try:
+        write_field("vibe_signals", "", config_dir)
+    except (OSError, ValueError) as exc:
+        logger.warning("session-end: cannot clear signals in %s: %s", config_dir, exc)
 
 
 def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
@@ -493,12 +497,10 @@ def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
 
     # Clean slate for next session
     if config.vibe_signals:
-        write_field("vibe_signals", "", config_dir)
+        _clear_vibe_signals(config_dir)
 
 
-# ---------------------------------------------------------------------------
 # CLI commands
-# ---------------------------------------------------------------------------
 
 
 def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:

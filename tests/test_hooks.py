@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
@@ -37,6 +40,9 @@ from punt_vox.quips import (
     SUBAGENT_STOP_PHRASES,
 )
 from punt_vox.signal import SignalLog
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -388,6 +394,34 @@ class TestHandlePostBash:
         else:
             raise AssertionError("vibe_signals not found in config")
 
+    def test_write_failure_warns_and_returns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A corrupt/unwritable vox.local.md must not crash the PostToolUse hook.
+        config_dir = tmp_path
+        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        with (
+            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_post_bash(payload, config_dir)  # must not raise
+        assert any("post-bash" in r.getMessage() for r in caplog.records)
+
+    def test_read_failure_warns_and_returns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A malformed config that raises on read is swallowed with a warning.
+        config_dir = tmp_path
+        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        with (
+            patch("punt_vox.hooks.read_config", side_effect=ValueError("bad yaml")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_post_bash(payload, config_dir)  # must not raise
+        assert any("post-bash" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # handle_pre_compact tests
@@ -658,6 +692,19 @@ class TestHandleSessionEnd:
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_write.assert_not_called()
 
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_clear_failure_warns_and_returns(
+        self, _mock_speak: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # An unwritable vox.local.md must not crash the Stop/SessionEnd hook.
+        config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
+        with (
+            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_session_end(config, Path("/fake/.punt-labs/vox"))  # must not raise
+        assert any("session-end" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # Quip pool size tests
@@ -867,6 +914,67 @@ class TestReadHookInput:
         finally:
             r.close()
         assert result == {}
+
+    def test_unexpected_oserror_logs_errno(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A genuine read failure (EIO) logs the errno at WARNING, returns {}."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"x": 1}')  # ensure select() reports readable
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                patch("punt_vox.hooks.os.read", side_effect=OSError(errno.EIO, "io")),
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {}
+        assert any(
+            str(errno.EIO) in rec.getMessage() and "errno" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_oserror_without_errno_stays_quiet(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An OSError with no errno (e.g. empty pipe) returns {} without warning."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"x": 1}')
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                patch("punt_vox.hooks.os.read", side_effect=OSError()),
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {}
+        assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
+    def test_closed_empty_stdin_stays_quiet(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """EOF with no data returns {} quietly — the expected empty path."""
+        r_fd, w_fd = os.pipe()
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+        assert result == {}
+        assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
 
 
 # ---------------------------------------------------------------------------
