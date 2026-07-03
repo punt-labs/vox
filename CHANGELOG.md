@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Ethos is now project-local, not a git submodule**: `.punt-labs/ethos/` was a `punt-labs/team` submodule; it is now a vendored project-local directory trimmed to the 15 identities vox delegates to, plus the engineering team and the durable mission records (`missions/` + `missions.jsonl`; verbatim per-session activity logs are gitignored). Removes `.gitmodules`. Vox owns its identity data rather than depending on the shared team submodule, so the repo is self-standing. (Ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry; repo-primary resolution is a pending ethos-side change coordinated with the ethos agent.)
+- **Health-check target extracted and hardened**: the post-install health poll's `HealthTarget` (host/port/token resolution) moved out of `service/installer.py` into a focused `service/health.py` module (relieving `installer.py`, which sat at the OO `module_size` limit), and now validates its platform domain at construction — an unexpected value (e.g. a miscapitalized `"Linux"`) can no longer silently skip the systemd bind-gate and false-fail against a healthy daemon; it raises `ValueError`. Internal refactor plus latent-bug hardening; no behavior change on supported platforms. Closes vox-84ft.
 
 ### Fixed
 
