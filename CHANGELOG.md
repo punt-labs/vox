@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Ethos is now project-local, not a git submodule**: `.punt-labs/ethos/` was a `punt-labs/team` submodule; it is now a vendored project-local directory trimmed to the 15 identities vox delegates to, plus the engineering team and the mission/session ledger. Removes `.gitmodules`. Vox owns its identity data rather than depending on the shared team submodule, so the repo is self-standing. (Ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry; repo-primary resolution is a pending ethos-side change coordinated with the ethos agent.)
+- **Ethos is now project-local, not a git submodule**: `.punt-labs/ethos/` was a `punt-labs/team` submodule; it is now a vendored project-local directory trimmed to the 15 identities vox delegates to, plus the engineering team and the durable mission records (`missions/` + `missions.jsonl`; verbatim per-session activity logs are gitignored). Removes `.gitmodules`. Vox owns its identity data rather than depending on the shared team submodule, so the repo is self-standing. (Ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry; repo-primary resolution is a pending ethos-side change coordinated with the ethos agent.)
 
 ### Fixed
 
