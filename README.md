@@ -105,14 +105,10 @@ TTS_PROVIDER=elevenlabs
 ### 3. Restart the daemon to pick up the changes
 
 ```bash
-# Linux
-sudo systemctl restart voxd
-
-# macOS
-sudo launchctl kickstart -k system/com.punt-labs.voxd
+vox daemon restart
 ```
 
-This is the only sudo prompt for routine key management — `systemctl` and `launchctl` are system-level daemon managers and always require root to manage services. Editing `keys.env` itself is sudo-free.
+Run it as your normal user, **not** under `sudo`. On **macOS** this is fully sudo-free — `voxd` is a user LaunchAgent, so no password is required. On **Linux** it prompts once for sudo internally, only for the `systemctl` call that manages the system service. Editing `keys.env` itself never needs sudo on either platform.
 
 ### 4. Verify
 

@@ -268,9 +268,12 @@ A vibe signal token (e.g., \texttt{tests-pass}, \texttt{lint-fail},
 
 \subsection{StartSession}
 
-Vox reads notification config from \texttt{.vox/config.md} at
-startup. The \texttt{SessionStart} hook sets the initial notify
-and speak modes.
+Vox reads notification config from \texttt{.punt-labs/vox/vox.md}
+(durable preferences: \texttt{notify}, \texttt{speak}, \texttt{voice},
+\texttt{vibe\_mode}) at startup. Ephemeral session state
+(\texttt{vibe}, \texttt{vibe\_tags}, \texttt{vibe\_signals}) lives in
+the gitignored \texttt{.punt-labs/vox/vox.local.md} (DES-036). The
+\texttt{SessionStart} hook sets the initial notify and speak modes.
 
 \begin{schema}{StartSession}
   \Delta State \\
@@ -969,6 +972,7 @@ No speech, no block.
 \textbf{Hook} & \textbf{Matcher} & \textbf{Operation} & \textbf{Vox Effect} & \textbf{Blocks?} \\
 \hline
 SessionStart & * & StartSession & Load config & No \\
+UserPromptSubmit & * & AcknowledgePrompt & Ack phrase (continuous) & No \\
 PostToolUse & Bash & AccumulateSignal & Classify output & No \\
 PostToolUse & vox\_\_notify & EnableNotify/DisableNotify & Set mode & No \\
 PostToolUse & vox\_\_speak & Mute/Unmute & Toggle voice & No \\
@@ -976,7 +980,9 @@ Stop & * & StopHookBlock/Allow/Skip & Decision-block & Yes \\
 Notification & permission & (chime/speak) & Alert user & No \\
 Notification & idle & (chime/speak) & Alert user & No \\
 PreCompact & * & (speak ``be right back'') & Continuous only & No \\
-SessionEnd & * & EndSession & Clear state & No \\
+SubagentStart & * & AnnounceSubagentStart & Announce spawn (continuous) & No \\
+SubagentStop & * & AnnounceSubagentStop & Announce done (continuous) & No \\
+SessionEnd & * & EndSession, FarewellSession & Clear state, farewell & No \\
 \hline
 \end{tabular}
 
@@ -986,8 +992,10 @@ SessionEnd & * & EndSession & Clear state & No \\
 
 In continuous mode (\texttt{nmContinuous}), vox provides ambient
 audio feedback at additional lifecycle points. These are all
-fire-and-forget (async, non-blocking). They do not fire in
-on-demand mode (\texttt{nmOnDemand}) or when disabled (\texttt{nmOff}).
+fire-and-forget (async, non-blocking). The acknowledgment and
+subagent announcements fire in continuous mode only; the farewell
+fires in on-demand mode as well. None fire when disabled
+(\texttt{nmOff}).
 
 \subsection{AcknowledgePrompt}
 
@@ -1089,8 +1097,9 @@ blocks, second fire allows.
 \textbf{Signal classification:} The implementation classifies 8 signal
 types (lint-fail, lint-pass, tests-pass, tests-fail, merge-conflict,
 git-push-ok, git-commit, pr-created) plus a fallback (cmd-fail). Signals
-are timestamped and appended to \texttt{vibe\_signals} in config. The Z
-spec abstracts this as \texttt{vibeSignals : $\finset$ SIGNAL}.
+are timestamped and appended to \texttt{vibe\_signals} in the ephemeral
+\texttt{.punt-labs/vox/vox.local.md} (gitignored). The Z spec abstracts
+this as \texttt{vibeSignals : $\finset$ SIGNAL}.
 
 \textbf{Vibe tag resolution:} At Stop, the implementation maps signal
 trajectories to expressive tags (recovery arc $\to$ \texttt{[relieved]},
@@ -1111,39 +1120,41 @@ Mute/Unmute & \multicolumn{3}{l}{Spec requires notifyMode $\neq$ nmOff. Verify C
 \hline
 \end{tabular}
 
-\textbf{Signal pruning:} The implementation appends signals indefinitely
-to \texttt{vibe\_signals}. In long sessions this grows unbounded. The Z
-spec bounds it with \texttt{maxSignals}. The implementation should prune
-old signals (e.g., keep only last $N$ or signals from the current turn).
+\textbf{Signal lifetime:} \texttt{vibe\_signals} is ephemeral,
+session-scoped state (\texttt{vox.local.md}, gitignored --- DES-036). It
+does not accumulate indefinitely: the Stop hook consumes the accumulated
+signals into vibe tags and clears the field on every turn
+(\texttt{write\_fields(\{vibe\_signals: ""\})} --- DES-018), and
+\texttt{farewell.sh} clears it again at \texttt{SessionEnd}. The Z spec
+models this correctly --- \texttt{SubmitPrompt} resets
+\texttt{vibeSignals} to $\emptyset$ at the start of each turn and
+\texttt{SpeakSummary} clears it at Stop --- and the \texttt{maxSignals}
+bound reflects the per-turn ceiling, not an unbounded history.
 
-\subsection{Not Yet Built}
+\subsection{Continuous-Mode Async Events (Shipped)}
 
-\begin{tabular}{lllll}
+As of v4.9.0 all four fire-and-forget audio events ship. They mutate
+no state and are modeled as $\Xi State$ observations (see the
+Continuous Mode Enhancements section).
+
+\begin{tabular}{llllll}
 \hline
-\textbf{Operation} & \textbf{Hook Event} & \textbf{Mode} & \textbf{Behavior} & \textbf{Blocking?} \\
+\textbf{Operation} & \textbf{Hook Event} & \textbf{File} & \textbf{Mode} & \textbf{Behavior} & \textbf{Blocking?} \\
 \hline
-AcknowledgePrompt & UserPromptSubmit & Continuous & ``On it!'' & No (async) \\
-AnnounceSubagentStart & SubagentStart & Continuous & ``Getting help'' & No (async) \\
-AnnounceSubagentStop & SubagentStop & Continuous & ``Got good input'' & No (async) \\
-FarewellSession & SessionEnd & On-demand+ & ``See you next time!'' & No (async) \\
+AcknowledgePrompt & UserPromptSubmit & acknowledge.sh & Continuous & ``On it!'' & No (async) \\
+AnnounceSubagentStart & SubagentStart & subagent.sh & Continuous & ``Getting help'' & No (async) \\
+AnnounceSubagentStop & SubagentStop & subagent.sh & Continuous & ``Got good input'' & No (async) \\
+FarewellSession & SessionEnd & farewell.sh & On-demand+ & ``See you next time!'' & No (async) \\
 \hline
 \end{tabular}
 
-These are all fire-and-forget audio events with no state mutation.
-They are modeled as $\Xi State$ operations (observation only). The
-implementation requires:
-
-\begin{enumerate}
-  \item Add \texttt{UserPromptSubmit}, \texttt{SubagentStart},
-    \texttt{SubagentStop}, and \texttt{SessionEnd} sections to
-    \texttt{hooks/hooks.json} (all async).
-  \item Create dispatcher scripts (or reuse a shared dispatcher).
-  \item Add handlers in \texttt{hooks.py} following the existing
-    pattern: check \texttt{notifyMode}, pick random phrase, call
-    \texttt{vox unmute} or enqueue chime.
-  \item Phrase pools: 5--7 short phrases per event, matching the
-    existing style (STOP\_PHRASES, PERMISSION\_PHRASES, etc.).
-\end{enumerate}
+Each hook is registered async in \texttt{hooks/hooks.json}, dispatches
+through its shell script to \texttt{hooks.py}, checks \texttt{notifyMode}
+(continuous-only for the acknowledgment and subagent phrases,
+on-demand-or-continuous for the farewell), selects a phrase from the
+matching pool in \texttt{quips.py}, and enqueues speech or a chime via
+\texttt{VoxClientSync}. \texttt{farewell.sh} additionally clears
+\texttt{vibe\_signals} as the session ends.
 
 \subsection{Coverage Summary}
 
@@ -1168,10 +1179,10 @@ StopHookAllow & notify.sh & Correct \\
 StopHookSkip & notify.sh & Correct \\
 CompactContext & (base) & Correct \\
 EndSession & (base) & Correct \\
-AcknowledgePrompt & --- & \textbf{Not built} \\
-AnnounceSubagentStart & --- & \textbf{Not built} \\
-AnnounceSubagentStop & --- & \textbf{Not built} \\
-FarewellSession & --- & \textbf{Not built} \\
+AcknowledgePrompt & acknowledge.sh & Correct \\
+AnnounceSubagentStart & subagent.sh & Correct \\
+AnnounceSubagentStop & subagent.sh & Correct \\
+FarewellSession & farewell.sh & Correct \\
 \hline
 \end{tabular}
 

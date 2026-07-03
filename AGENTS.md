@@ -1,5 +1,7 @@
 # Agent Instructions
 
+> **Authoritative workflow is `CLAUDE.md` (noted 2026-07-03).** This file is a generic beads onboarding stub. vox requires **all changes to land via pull request; direct pushes to `main` are prohibited** (branch protection). Below, "push" means push your **feature branch** and open a PR — never push to `main`.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

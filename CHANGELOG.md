@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Remote voxd connectivity**: client-side env vars `VOXD_HOST`, `VOXD_PORT`, `VOXD_TOKEN` override localhost/file-based discovery, enabling cross-host audio playback without SSH tunnels. Server-side `VOXD_BIND` (via `--host` flag or env var) controls the bind address (default `127.0.0.1`, opt-in `0.0.0.0`). Token auth remains the security boundary. `vox doctor` reports active env var overrides. Access logs redact auth tokens. Warning logged when binding to non-localhost. See `docs/remote-setup.md` for setup guide.
+- **Remote voxd connectivity**: client-side env vars `VOXD_HOST`, `VOXD_PORT`, `VOXD_TOKEN` override localhost/file-based discovery, enabling cross-host audio playback without SSH tunnels. Server-side `VOXD_BIND` (via `--host` flag or env var) controls the bind address (default `127.0.0.1`, opt-in `0.0.0.0`). Token auth remains the security boundary. `vox doctor` reports active env var overrides. Access logs redact auth tokens. Warning logged when binding to non-localhost. See `docs/guide-remote-setup.md` for setup guide.
 - **Repo name in spoken notifications**: hook quips now prefix the repo name (e.g. "vox. Needs your approval.") so users with multiple simultaneous sessions can identify which project needs attention. Derived from the config directory path. Degrades gracefully when config_dir is unavailable.
 
 ### Fixed

@@ -1,5 +1,7 @@
 # Config Split Design: vox.md + vox.local.md
 
+**Status:** SHIPPED (v4.7.5) — this is the settled, live layout (see DESIGN.md DES-036). The `.vox/config.md` path referenced below as "current" is the pre-split state and was removed; it is retained here as the original design record.
+
 ## 1. File Layout
 
 ```text

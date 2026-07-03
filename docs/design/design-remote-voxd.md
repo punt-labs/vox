@@ -3,7 +3,7 @@
 **Author:** Raymond H (rmh)
 **Date:** 2026-05-12
 **Mission:** m-2026-05-12-009
-**Status:** PROPOSED
+**Status:** SHIPPED (v4.8.0, 2026-05-12) — `VOXD_HOST`/`VOXD_PORT`/`VOXD_TOKEN` (client) and `VOXD_BIND` (server) are live in `client.py`, `doctor.py`, `voxd/daemon.py`, and the `service/` modules. User guide: [`docs/guide-remote-setup.md`](../guide-remote-setup.md). The launchd details below predate the DES-038 LaunchDaemon→LaunchAgent move (v4.9.0) and are retained as the original design record.
 
 ## Problem
 
