@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, assert_never
 
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.keys_env import KeysEnvWriter
@@ -22,6 +23,9 @@ from punt_vox.service.systemd import (
     _SYSTEMD_UNIT,
     SystemdBackend,
 )
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 # ---------------------------------------------------------------------------
 # Module-level singletons and free-function API that callers expect.
@@ -51,7 +55,7 @@ def is_running() -> bool:
     return _installer.is_running()
 
 
-def detect_platform() -> str:
+def detect_platform() -> PlatformName:
     """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms."""
     return ServiceInstaller.detect_platform()
 
@@ -66,12 +70,14 @@ def ensure_port_free() -> None:
     _process_mgr.ensure_port_free()
 
 
-def stop_daemon(plat: str) -> None:
+def stop_daemon(plat: PlatformName) -> None:
     """Public API: stop the voxd daemon for the given platform."""
     if plat == "macos":
         _launchd.stop()
-    else:
+    elif plat == "linux":
         _systemd.stop()
+    else:
+        assert_never(plat)
 
 
 def _legacy_user_unit_path() -> Path:

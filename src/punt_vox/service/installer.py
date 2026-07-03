@@ -9,7 +9,7 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Self, assert_never
 
 from punt_vox.client import (
     VoxdConnectionError,
@@ -32,6 +32,9 @@ from punt_vox.service.systemd import (
     _SYSTEMD_UNIT,  # pyright: ignore[reportPrivateUsage]
     SystemdBackend,
 )
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +70,36 @@ class ServiceInstaller:
         self = super().__new__(cls)
         self._process_mgr = ProcessManager()
         self._keys_writer = KeysEnvWriter()
-        self._launchd = LaunchdBackend(self._process_mgr, _voxd_exec_args)
-        self._systemd = SystemdBackend(self._process_mgr, _voxd_exec_args)
+        self._launchd = LaunchdBackend(self._process_mgr, self._voxd_exec_args)
+        self._systemd = SystemdBackend(self._process_mgr, self._voxd_exec_args)
         return self
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _voxd_exec_args() -> list[str]:
+        """Return the command to invoke ``voxd``.
+
+        Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
+        always runs the binary from the same distribution that provided
+        ``vox``.
+        """
+        voxd_path = Path(sys.executable).parent / "voxd"
+        if not voxd_path.is_file():
+            msg = (
+                f"voxd binary not found at {voxd_path}. "
+                "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+            )
+            raise SystemExit(msg)
+        if not os.access(voxd_path, os.X_OK):
+            msg = (
+                f"voxd at {voxd_path} exists but is not executable. "
+                "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+            )
+            raise SystemExit(msg)
+        return [str(voxd_path), "--port", str(DEFAULT_PORT)]
 
     @staticmethod
     def _ensure_user_dirs() -> Path:
@@ -88,7 +114,7 @@ class ServiceInstaller:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def detect_platform() -> Literal["macos", "linux"]:
+    def detect_platform() -> PlatformName:
         """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms."""
         system = platform.system()
         if system == "Darwin":
@@ -126,9 +152,7 @@ class ServiceInstaller:
         return self._systemd.status()
 
     @staticmethod
-    def _verify_serving(
-        platform: Literal["macos", "linux"], service_path: Path
-    ) -> None:
+    def _verify_serving(platform: PlatformName, service_path: Path) -> None:
         """Poll voxd's health endpoint until it answers or the deadline lapses.
 
         ``launchctl``/``systemctl`` registration proves only that the job is
@@ -177,7 +201,7 @@ class ServiceInstaller:
 
         plat = self.detect_platform()
         user = getpass.getuser()
-        args = _voxd_exec_args()
+        args = self._voxd_exec_args()
 
         state_root = self._ensure_user_dirs()
 
@@ -188,10 +212,12 @@ class ServiceInstaller:
         if plat == "macos":
             running = self._install_darwin()
             service_path = _LAUNCHD_PLIST
-        else:
+        elif plat == "linux":
             logger.warning(_SUDO_NOTICE)
             running = self._install_linux(user)
             service_path = _SYSTEMD_UNIT
+        else:
+            assert_never(plat)
 
         # Registration alone does not prove voxd serves; verify it answers
         # health before reporting "running", so a silent-down daemon fails
@@ -203,7 +229,7 @@ class ServiceInstaller:
         status = "running" if running else "installed (not yet running)"
         lines = [
             f"voxd daemon {status} on port {DEFAULT_PORT}.",
-            f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
+            f"  Service: {service_path}",
             f"  Keys:    {keys_path}",
             f"  State:   {state_root}",
             f"  Command: {exec_display}",
@@ -227,10 +253,12 @@ class ServiceInstaller:
         if plat == "macos":
             killed = self._launchd.uninstall()
             path = _LAUNCHD_PLIST
-        else:
+        elif plat == "linux":
             self._systemd.uninstall()
             killed = False
             path = _SYSTEMD_UNIT
+        else:
+            assert_never(plat)
         # kill_stale_daemon() returns False both for "nothing to kill" and
         # "kill failed"; re-scan the port to tell a survivor from an empty
         # port (systemd can't report the result, so its branch always scans).
@@ -257,32 +285,6 @@ class ServiceInstaller:
         plat = self.detect_platform()
         if plat == "macos":
             return self._launchd.status()
-        return self._systemd.status()
-
-
-# ---------------------------------------------------------------------------
-# Module-level helper used by backends (avoids circular dependency)
-# ---------------------------------------------------------------------------
-
-
-def _voxd_exec_args() -> list[str]:
-    """Return the command to invoke ``voxd``.
-
-    Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
-    always runs the binary from the same distribution that provided
-    ``vox``.
-    """
-    voxd_path = Path(sys.executable).parent / "voxd"
-    if not voxd_path.is_file():
-        msg = (
-            f"voxd binary not found at {voxd_path}. "
-            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
-        )
-        raise SystemExit(msg)
-    if not os.access(voxd_path, os.X_OK):
-        msg = (
-            f"voxd at {voxd_path} exists but is not executable. "
-            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
-        )
-        raise SystemExit(msg)
-    return [str(voxd_path), "--port", str(DEFAULT_PORT)]
+        if plat == "linux":
+            return self._systemd.status()
+        assert_never(plat)

@@ -1,0 +1,35 @@
+mission_id: m-2026-07-03-015
+status: closed
+type: implement
+created_at: "2026-07-03T22:28:42Z"
+updated_at: "2026-07-03T23:40:32Z"
+closed_at: "2026-07-03T23:40:32Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-03T22:28:42Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-376k
+write_set:
+    - src/punt_vox/service/installer.py
+    - src/punt_vox/service/health.py
+    - src/punt_vox/service/__init__.py
+    - src/punt_vox/service/daemon_restarter.py
+    - tests/test_service_process.py
+    - tests/test_service_health.py
+success_criteria:
+    - 'vox-376k: _voxd_exec_args is rehomed onto ServiceInstaller (a method) — no module-level free function remains for it; the LaunchdBackend/SystemdBackend wiring and the internal call site are updated; behavior is unchanged. installer.py''s class_to_func_ratio and method_ratio gain headroom (no longer at 0.5 / 0.9).'
+    - 'vox-n0b6: a single PEP 695 `type PlatformName = Literal["macos","linux"]` alias is defined once and used at every site that currently spells the Literal inline (health.py, installer.py). The public wrappers service/__init__.py detect_platform() and daemon_restarter.py _detect_platform() return the alias, not bare str.'
+    - 'Behavior-preserving throughout: no change to install/uninstall/health-poll/restart behavior. Every importer of the moved/retyped symbols is updated (PL-PP-1: no shim, alias, or tombstone).'
+    - make check exits 0 (mypy + pyright strict, ruff, pytest, check-oo). OO ratchet does not regress on touched files; prefer `make update-oo`, and only `--rebaseline` if a structural move shifts within-threshold metrics (document it).
+    - 'Tests: cover the rehomed _voxd_exec_args at its new location; keep existing behavior covered. Optionally add the whitespace-padded-concrete VOXD_BIND cell to test_service_health.py (n0b6 item 3).'
+    - Commit incrementally — ONE commit per bead (376k, then n0b6), each passing make check. Do NOT accumulate uncommitted work across both beads; commit 376k before starting n0b6.
+    - Work on branch refactor/service-oo-typing-cleanup off current main. Do NOT open a PR, bump the version, or edit CHANGELOG.md/DESIGN.md — the leader owns those.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    Two low-priority OO/typing follow-ups from the vox-84ft work, both centered on service/installer.py (so they share a mission to avoid a merge conflict). (1) vox-376k: the module-level free function _voxd_exec_args (installer.py) builds ServiceInstaller's voxd exec args and is a PY-OO-7 "helper that should be a method" — it drags installer.py's class_to_func_ratio to exactly 0.5 (threshold) and method_ratio to 0.9. It is currently injected into LaunchdBackend and SystemdBackend as a callable. Move it onto the class that owns the vocabulary so installer.py regains ratio headroom, without changing behavior. (2) vox-n0b6: the platform domain Literal["macos","linux"] is spelled inline in ~5 sites (health.py x3, installer.py detect_platform + _verify_serving); introduce a single shared alias (PEP 695 `type PlatformName = Literal["macos","linux"]`) so the domain is single-sourced and HealthTarget._require_platform's branches can't drift from the type. Also tighten the two public wrappers that widen it back to str — service/__init__.py detect_platform() and daemon_restarter.py _detect_platform() — to return the alias (they discard the narrower type from the underlying impl; this does not reopen any bug since HealthTarget re-validates). You choose where the alias lives (a types module is natural) and exactly how to rehome _voxd_exec_args.
