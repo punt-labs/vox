@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call, patch
 
 from punt_vox.config import VoxConfig
@@ -37,6 +40,9 @@ from punt_vox.quips import (
     SUBAGENT_STOP_PHRASES,
 )
 from punt_vox.signal import SignalLog
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -388,6 +394,34 @@ class TestHandlePostBash:
         else:
             raise AssertionError("vibe_signals not found in config")
 
+    def test_write_failure_warns_and_returns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A corrupt/unwritable vox.local.md must not crash the PostToolUse hook.
+        config_dir = tmp_path
+        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        with (
+            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_post_bash(payload, config_dir)  # must not raise
+        assert any("post-bash" in r.getMessage() for r in caplog.records)
+
+    def test_read_failure_warns_and_returns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A malformed config that raises on read is swallowed with a warning.
+        config_dir = tmp_path
+        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        with (
+            patch("punt_vox.hooks.read_config", side_effect=ValueError("bad yaml")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_post_bash(payload, config_dir)  # must not raise
+        assert any("post-bash" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # handle_pre_compact tests
@@ -658,6 +692,19 @@ class TestHandleSessionEnd:
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_write.assert_not_called()
 
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_clear_failure_warns_and_returns(
+        self, _mock_speak: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # An unwritable vox.local.md must not crash the Stop/SessionEnd hook.
+        config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
+        with (
+            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            handle_session_end(config, Path("/fake/.punt-labs/vox"))  # must not raise
+        assert any("session-end" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # Quip pool size tests
@@ -868,6 +915,70 @@ class TestReadHookInput:
             r.close()
         assert result == {}
 
+    def test_unexpected_oserror_logs_errno(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Any errno logs at WARNING — even ENFILE, outside the old allow-list."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"x": 1}')  # ensure select() reports readable
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                patch(
+                    "punt_vox.hooks.os.read",
+                    side_effect=OSError(errno.ENFILE, "too many open files"),
+                ),
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {}
+        assert any(
+            str(errno.ENFILE) in rec.getMessage() and "errno" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_oserror_without_errno_stays_quiet(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An OSError with no errno (e.g. empty pipe) returns {} without warning."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"x": 1}')
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                patch("punt_vox.hooks.os.read", side_effect=OSError()),
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+            os.close(w_fd)
+        assert result == {}
+        assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
+    def test_closed_empty_stdin_stays_quiet(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """EOF with no data returns {} quietly — the expected empty path."""
+        r_fd, w_fd = os.pipe()
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                result = _read_hook_input()
+        finally:
+            r.close()
+        assert result == {}
+        assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
 
 # ---------------------------------------------------------------------------
 # _repo_name_from_cwd / _with_repo_name — git-root override
@@ -992,10 +1103,12 @@ class TestCommandsResolveFromCwd:
     @patch("punt_vox.hooks._speak_via_voxd")
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_notification_cmd_silent_when_no_config(
-        self, mock_chime: MagicMock, mock_speak: MagicMock, tmp_path: Path
+        self, mock_chime: MagicMock, mock_speak: MagicMock, no_config_dir: Path
     ) -> None:
         # cwd points at a directory with no .punt-labs/vox config — silent.
-        bare = tmp_path / "punt-labs"
+        # no_config_dir has no ambient config above it, so find_config_dir
+        # cannot leak into the real repo config (fails under TMPDIR=.tmp).
+        bare = no_config_dir / "punt-labs"
         bare.mkdir()
         payload = {
             "cwd": str(bare),
@@ -1074,11 +1187,12 @@ class TestCommandsResolveFromCwd:
         text = mock_speak.call_args[0][0]
         assert text.startswith("vox. ")
 
-    def test_stop_cmd_silent_when_cwd_missing(self, tmp_path: Path) -> None:
+    def test_stop_cmd_silent_when_cwd_missing(self, no_config_dir: Path) -> None:
         # No cwd on the payload → no new pwd-fallback suppression added;
         # resolution falls through to find_config_dir(None). In an isolated
-        # dir with no config, the hook stays silent.
-        isolated = tmp_path / "isolated"
+        # dir with no config above it, the hook stays silent (no ambient
+        # repo config leaks in under TMPDIR=.tmp).
+        isolated = no_config_dir / "isolated"
         isolated.mkdir()
         payload = {"stop_hook_active": False}
         with (

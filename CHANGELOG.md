@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hooks no longer crash on config I/O errors**: `handle_post_bash` and `handle_session_end` now guard their `read_config`/`write_field` calls — a corrupt or unwritable `vox.local.md` logs a warning and the hook returns cleanly instead of raising a non-zero exit that could block the Claude Code tool it gates. Closes vox-nb7i.
+- **Unexpected hook stdin read failures are now logged**: `_read_hook_input` logs any genuine `OSError` (with its errno) at WARNING instead of silently returning `{}`; the expected empty/closed-pipe case (no errno) stays quiet. Closes vox-gsh4.
+
 ## [4.9.0] - 2026-07-03
 
 ### Added
