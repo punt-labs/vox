@@ -65,9 +65,13 @@ MagicMock/
 .cursor/
 .punt-labs/quarry/
 
-# Vendored ethos (project-local): ignore the upstream team-repo dev scaffolding
-# that rode along with the de-submodule. Vox tracks only the identity registry
-# (identities/personalities/writing-styles/talents/roles/agents/teams) + ledger.
+# Vendored ethos (project-local): vox tracks the identity registry
+# (identities/personalities/writing-styles/talents/roles/agents/teams) and the
+# durable mission records (missions/ + missions.jsonl). Two things are ignored:
+#   1. upstream team-repo dev scaffolding that rode along with the de-submodule
+#   2. verbatim per-session activity logs (sessions/**/audit.jsonl) and locks —
+#      these are runtime logs (like quarry captures) that must not enter the
+#      public repo and would churn the tree on every action.
 .punt-labs/ethos/.github/
 .punt-labs/ethos/.envrc
 .punt-labs/ethos/.biff
@@ -77,3 +81,5 @@ MagicMock/
 .punt-labs/ethos/.claude/
 .punt-labs/ethos/CHANGELOG.md
 .punt-labs/ethos/README.md
+.punt-labs/ethos/sessions/
+.punt-labs/ethos/missions/.create.lock
