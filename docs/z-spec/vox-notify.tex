@@ -48,6 +48,13 @@ that transition between states, and the constraints imposed by
 the current implementation. Its purpose is to identify
 unreachable states and missing commands.
 
+The $notify$, $speak$, and $voice$ components modeled here are
+durable preferences: the implementation persists them in
+\texttt{.punt-labs/vox/vox.md} (tracked in git). Ephemeral session
+state --- the current vibe, resolved vibe tags, and accumulated vibe
+signals --- lives in the gitignored \texttt{.punt-labs/vox/vox.local.md}
+and is outside this model (DES-036).
+
 % ===================================================================
 \section{Basic Types}
 % ===================================================================
