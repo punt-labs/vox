@@ -1264,10 +1264,6 @@ class TestDoctorCommand:
                 "punt_vox.service._legacy_user_unit_path",
                 return_value=resolved_legacy,
             ),
-            patch(
-                "punt_vox.service.launchd._OLD_LAUNCHD_PLIST",
-                tmp_path / "no-such-old-plist",
-            ),
             # Isolate legacy-path doctor checks from the real filesystem.
             patch(f"{_doc}.Path.home", return_value=tmp_path),
             patch(
@@ -1402,10 +1398,6 @@ class TestDoctorCommand:
             patch(
                 "punt_vox.service._legacy_user_unit_path",
                 return_value=tmp_path / "no-such-legacy-unit",
-            ),
-            patch(
-                "punt_vox.service.launchd._OLD_LAUNCHD_PLIST",
-                tmp_path / "no-such-old-plist",
             ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])

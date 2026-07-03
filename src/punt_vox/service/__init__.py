@@ -10,7 +10,6 @@ from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.keys_env import KeysEnvWriter
 from punt_vox.service.launchd import (
     _LAUNCHD_PLIST,
-    _OLD_LAUNCHD_PLIST,
     LaunchdBackend,
 )
 from punt_vox.service.process import (
@@ -84,7 +83,6 @@ __all__ = [
     "DEFAULT_PORT",
     "_LAUNCHD_PLIST",
     "_LEGACY_USER_UNIT_RELATIVE",
-    "_OLD_LAUNCHD_PLIST",
     "_SYSTEMD_DIR",
     "_SYSTEMD_UNIT",
     "KeysEnvWriter",

@@ -327,7 +327,7 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 
 ### State Paths
 
-`voxd` runs as a single user (`User=` in the systemd unit, `UserName` in the launchd plist), so all of its state is per-user, not system-shared. Everything lives under the installing user's home directory — no `/etc`, no `/var`, same layout on macOS and Linux.
+`voxd` runs as a single user (`User=` in the systemd unit on Linux; a user LaunchAgent that runs as the logged-in user on macOS), so all of its state is per-user, not system-shared. Everything lives under the installing user's home directory — no `/etc`, no `/var`, same layout on macOS and Linux.
 
 | Purpose | Path |
 |---------|------|
@@ -336,7 +336,7 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
 | Service unit (Linux) | `/etc/systemd/system/voxd.service` |
-| Service plist (macOS) | `/Library/LaunchDaemons/com.punt-labs.voxd.plist` |
+| Service plist (macOS) | `~/Library/LaunchAgents/com.punt-labs.voxd.plist` |
 
 ### Service Install
 
@@ -344,7 +344,7 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 vox daemon install    # registers service, writes keys.env, starts voxd
 ```
 
-vox prompts once for your sudo password when it installs the system service unit. Everything else runs as your normal user. The `keys.env` file and all other per-user state are created in your home dir with normal user permissions — no chown, no fd tricks, no symlink defenses. The daemon runs as the installing user, not root — it needs audio device access tied to the desktop session.
+On **macOS** the install is fully sudo-free: `voxd` is a user LaunchAgent, so no password is required to install, restart, or uninstall it. On **Linux** `vox` prompts once for your sudo password to place the systemd unit file; everything else runs as your normal user. The `keys.env` file and all other per-user state are created in your home dir with normal user permissions — no chown, no fd tricks, no symlink defenses. The daemon runs as the installing user, not root — it needs audio device access tied to the desktop session.
 
 **Upgrading from v3 or v4.0.x?** If you had cloud provider keys configured before v3.0.0 (2026-03-29), they will work again automatically after you upgrade. v3 moved voxd's config dir to `/etc/vox/` but never migrated your existing `~/.punt-labs/vox/keys.env` — this release reverts the path and your pre-v3 keys come back online without any manual intervention.
 
