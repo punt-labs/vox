@@ -1,5 +1,7 @@
 # Music Set Rotation Design
 
+**Status:** DEFERRED — NOT IMPLEMENTED. As of v4.9.0, music plays a single vibe-driven track with gapless handoff on vibe change (`/music next` for a fresh track); set rotation is not built (`music_set_size`/`music_tracks` do not exist in the code). **Open question to resolve before implementation:** the default set size is inconsistent in this doc — the body (§7) sets `set_size = 10` (clamp 1–10) while the cost model (§8) assumes a default of 3 (~6,000 credits). At ~2,000 credits/track a default of 10 is ~20,000 credits per vibe; pick the intended default before building.
+
 ## Goal
 
 Enhance `_music_loop` from single-track looping to per-vibe set rotation

@@ -54,14 +54,9 @@ def _generate_valid_mp3_bytes() -> bytes:
 
 ## Voice Cache Isolation
 
-Every provider has a module-level voice cache (`VOICES` dict + `_voices_loaded` flag) that's populated on first use by calling the provider API. Four `autouse=True` fixtures in `conftest.py` pre-populate these caches before every test and restore them after:
+Provider voice caches are **per-instance**, not module-level. Each provider holds its own `self._voices = VoiceResolver(...)` (populated lazily on first use by calling the provider API); the OO refactor (Phase F, PR #264) moved these off the old module-level `VOICES` dict + `_voices_loaded` globals. Because the cache lives on the instance, constructing a fresh provider (or mock-backed provider) per test gives natural isolation — there is no module-level global to reset, and the old `autouse` `_populate_*_voice_cache` fixtures are gone.
 
-- `_populate_voice_cache` — Polly voices (Joanna, Hans, Tatyana, Seoyeon)
-- `_populate_elevenlabs_voice_cache` — ElevenLabs voices (Matilda, Drew)
-- `_populate_say_voice_cache` — macOS Say voices (Fred, Samantha, Anna)
-- `_populate_espeak_voice_cache` — espeak voices (English, German, French)
-
-Tests that verify the cache-loading behavior itself (e.g., "does `resolve_voice` call the API when the cache is empty?") explicitly clear `VOICES` and reset `_voices_loaded` before their test logic.
+Tests that verify cache-loading behavior itself (e.g., "does `resolve` call the API when the cache is empty?") construct a `VoiceResolver`/provider with an empty cache and assert the load path fires. (OpenAI keeps a static `VOICES` name→id constant map — that is a fixed lookup table, not a runtime API cache, so it needs no reset.)
 
 ## Mock Boundaries
 

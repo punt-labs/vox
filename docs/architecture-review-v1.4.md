@@ -1,5 +1,7 @@
 # Architecture Review: Vox v1.4.0
 
+> **Point-in-time artifact (noted 2026-07-03).** This review was conducted against the v1.4.0 architecture (March 2026) and its findings are mostly marked Resolved. It does **not** reflect the shipped v4.9.0 system (daemon/client split, LaunchAgent service model, config split, music/remote subsystems). Two findings remain open — F9 (config-write race) and F12 (voice-list filtering). Superseded by the v4.9.0 `architecture.tex` refresh; retained as a historical record.
+
 Reviewed against `docs/architecture.tex` (March 2026).
 
 ## Summary
