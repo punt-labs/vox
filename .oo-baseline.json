@@ -533,14 +533,14 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/service/installer.py": {
-    "method_ratio": 0.909,
+    "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
     "avg_params": 0.27,
     "max_complexity": 4.0,
     "avg_complexity": 2.36,
-    "module_size": 248.0,
+    "module_size": 246.0,
     "classes_per_module": 1.0,
-    "class_to_func_ratio": 0.5,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

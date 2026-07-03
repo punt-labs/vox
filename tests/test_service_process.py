@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from punt_vox.service import DEFAULT_PORT
-from punt_vox.service.installer import _voxd_exec_args
+from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.process import ProcessManager
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ from punt_vox.service.process import ProcessManager
 
 
 def test_voxd_exec_args() -> None:
-    args = _voxd_exec_args()
+    args = ServiceInstaller._voxd_exec_args()
     assert args[0].endswith("voxd")
     assert "--port" in args
     assert str(DEFAULT_PORT) in args
@@ -41,7 +41,7 @@ def test_voxd_exec_args_resolves_relative_to_sys_executable(
     fake_python.chmod(0o755)
 
     monkeypatch.setattr("punt_vox.service.installer.sys.executable", str(fake_python))
-    args = _voxd_exec_args()
+    args = ServiceInstaller._voxd_exec_args()
     assert args[0] == str(fake_voxd)
     assert "--port" in args
 
@@ -69,7 +69,7 @@ def test_voxd_exec_args_ignores_stale_voxd_on_path(
         str(current / "python"),
     )
 
-    args = _voxd_exec_args()
+    args = ServiceInstaller._voxd_exec_args()
     assert args[0] == str(current / "voxd"), (
         "Expected sys.executable-relative voxd, "
         f"got {args[0]} — stale binary from PATH leaked in."
@@ -89,7 +89,7 @@ def test_voxd_exec_args_missing_binary_raises(
 
     monkeypatch.setattr("punt_vox.service.installer.sys.executable", str(fake_python))
     with pytest.raises(SystemExit, match="voxd binary not found"):
-        _voxd_exec_args()
+        ServiceInstaller._voxd_exec_args()
 
 
 def test_voxd_exec_args_rejects_non_executable(
@@ -108,7 +108,7 @@ def test_voxd_exec_args_rejects_non_executable(
 
     monkeypatch.setattr("punt_vox.service.installer.sys.executable", str(fake_python))
     with pytest.raises(SystemExit, match="not executable"):
-        _voxd_exec_args()
+        ServiceInstaller._voxd_exec_args()
 
 
 def test_voxd_exec_args_rejects_directory(
@@ -125,7 +125,7 @@ def test_voxd_exec_args_rejects_directory(
 
     monkeypatch.setattr("punt_vox.service.installer.sys.executable", str(fake_python))
     with pytest.raises(SystemExit, match="voxd binary not found"):
-        _voxd_exec_args()
+        ServiceInstaller._voxd_exec_args()
 
 
 # ---------------------------------------------------------------------------

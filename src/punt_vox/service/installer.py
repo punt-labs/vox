@@ -67,13 +67,36 @@ class ServiceInstaller:
         self = super().__new__(cls)
         self._process_mgr = ProcessManager()
         self._keys_writer = KeysEnvWriter()
-        self._launchd = LaunchdBackend(self._process_mgr, _voxd_exec_args)
-        self._systemd = SystemdBackend(self._process_mgr, _voxd_exec_args)
+        self._launchd = LaunchdBackend(self._process_mgr, self._voxd_exec_args)
+        self._systemd = SystemdBackend(self._process_mgr, self._voxd_exec_args)
         return self
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _voxd_exec_args() -> list[str]:
+        """Return the command to invoke ``voxd``.
+
+        Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
+        always runs the binary from the same distribution that provided
+        ``vox``.
+        """
+        voxd_path = Path(sys.executable).parent / "voxd"
+        if not voxd_path.is_file():
+            msg = (
+                f"voxd binary not found at {voxd_path}. "
+                "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+            )
+            raise SystemExit(msg)
+        if not os.access(voxd_path, os.X_OK):
+            msg = (
+                f"voxd at {voxd_path} exists but is not executable. "
+                "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
+            )
+            raise SystemExit(msg)
+        return [str(voxd_path), "--port", str(DEFAULT_PORT)]
 
     @staticmethod
     def _ensure_user_dirs() -> Path:
@@ -177,7 +200,7 @@ class ServiceInstaller:
 
         plat = self.detect_platform()
         user = getpass.getuser()
-        args = _voxd_exec_args()
+        args = self._voxd_exec_args()
 
         state_root = self._ensure_user_dirs()
 
@@ -258,31 +281,3 @@ class ServiceInstaller:
         if plat == "macos":
             return self._launchd.status()
         return self._systemd.status()
-
-
-# ---------------------------------------------------------------------------
-# Module-level helper used by backends (avoids circular dependency)
-# ---------------------------------------------------------------------------
-
-
-def _voxd_exec_args() -> list[str]:
-    """Return the command to invoke ``voxd``.
-
-    Resolves ``voxd`` relative to ``sys.executable`` so the systemd unit
-    always runs the binary from the same distribution that provided
-    ``vox``.
-    """
-    voxd_path = Path(sys.executable).parent / "voxd"
-    if not voxd_path.is_file():
-        msg = (
-            f"voxd binary not found at {voxd_path}. "
-            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
-        )
-        raise SystemExit(msg)
-    if not os.access(voxd_path, os.X_OK):
-        msg = (
-            f"voxd at {voxd_path} exists but is not executable. "
-            "Reinstall punt-vox (uv tool install punt-vox or pip install punt-vox)."
-        )
-        raise SystemExit(msg)
-    return [str(voxd_path), "--port", str(DEFAULT_PORT)]
