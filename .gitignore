@@ -62,3 +62,4 @@ uv.toml
 .envrc.local
 MagicMock/
 .idea/
+.cursor/
