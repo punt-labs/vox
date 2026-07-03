@@ -1,4 +1,4 @@
-# product-management
+# Product Management
 
 ## 1. Product Discovery & Validation
 

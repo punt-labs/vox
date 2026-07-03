@@ -81,5 +81,6 @@ MagicMock/
 .punt-labs/ethos/.claude/
 .punt-labs/ethos/CHANGELOG.md
 .punt-labs/ethos/README.md
+.punt-labs/ethos/ethos.yaml
 .punt-labs/ethos/sessions/
 .punt-labs/ethos/missions/.create.lock
