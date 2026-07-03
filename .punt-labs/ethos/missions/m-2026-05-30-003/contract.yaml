@@ -28,17 +28,7 @@ write_set:
     - tests/test_dirs.py
     - CHANGELOG.md
 success_criteria:
-    - 'Implement the design at .tmp/missions/results/hook-repo-name-design.md with ONE simplification: NO special-casing of any directory. The rule is exactly: spoken repo name = the repo of the session''s cwd. Steps: (1) hook_payload.py carries cwd:Path|None on every payload'
-    - parsed from the stdin 'cwd' field
-    - improving method_ratio off 0.75; (2) hooks.py *_cmd handlers resolve find_config_dir(payload.cwd) and gate on it returning None (no config there -> silent
-    - which is natural not a special case)
-    - and thread the resolved dir into handle_stop so read and vibe-write agree; (3) the seven shell hook scripts extract cwd from stdin via jq mirroring subagent.sh
-    - fix the gate to ${cwd}/.punt-labs/vox/vox.md|vox.local.md
-    - and DELETE the dead mcp-proxy/serve.port relay branch entirely (PL-PP-1); (4) when cwd is absent fall back to existing Path.cwd() default in find_config_dir
-    - 'do not add suppression logic; (5) no punt-labs or parent special-case anywhere. Tests: cwd present->repo name; cwd in subdir->resolves the repo; cwd missing->None payload field; gate matches vox.md not config.md; no script references mcp-proxy/serve.port/config.md after edit. Commit incrementally one commit per logical step each passing make check; do not accumulate more than 30 minutes uncommitted. make check (incl check-oo'
-    - mypy
-    - pyright
-    - shellcheck) must pass; OO ratchet must not regress. Add a CHANGELOG entry under [Unreleased] Fixed. Do not open a PR.
+    - 'Implement the design at .tmp/missions/results/hook-repo-name-design.md with ONE simplification: NO special-casing of any directory. The rule is exactly: spoken repo name = the repo of the session''s cwd. Steps: (1) hook_payload.py carries cwd:Path|None on every payload, parsed from the stdin ''cwd'' field, improving method_ratio off 0.75; (2) hooks.py *_cmd handlers resolve find_config_dir(payload.cwd) and gate on it returning None (no config there -> silent, which is natural not a special case), and thread the resolved dir into handle_stop so read and vibe-write agree; (3) the seven shell hook scripts extract cwd from stdin via jq mirroring subagent.sh, fix the gate to ${cwd}/.punt-labs/vox/vox.md|vox.local.md, and DELETE the dead mcp-proxy/serve.port relay branch entirely (PL-PP-1); (4) when cwd is absent fall back to existing Path.cwd() default in find_config_dir, do not add suppression logic; (5) no punt-labs or parent special-case anywhere. Tests: cwd present->repo name; cwd in subdir->resolves the repo; cwd missing->None payload field; gate matches vox.md not config.md; no script references mcp-proxy/serve.port/config.md after edit. Commit incrementally one commit per logical step each passing make check; do not accumulate more than 30 minutes uncommitted. make check (incl check-oo, mypy, pyright, shellcheck) must pass; OO ratchet must not regress. Add a CHANGELOG entry under [Unreleased] Fixed. Do not open a PR.'
 budget:
     rounds: 2
     reflection_after_each: true
