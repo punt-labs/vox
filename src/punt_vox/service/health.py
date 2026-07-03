@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from typing import Literal, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client import VoxClientSync, read_token_file
 from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.systemd import SystemdBackend
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 
 @final
@@ -41,7 +44,7 @@ class HealthTarget:
         return self
 
     @staticmethod
-    def _require_platform(platform: str) -> Literal["macos", "linux"]:
+    def _require_platform(platform: str) -> PlatformName:
         """Return *platform* if it names a supported OS, else raise.
 
         The health host resolution branches on exactly ``"macos"`` and
@@ -58,7 +61,7 @@ class HealthTarget:
         raise ValueError(msg)
 
     @staticmethod
-    def _effective_bind(platform: Literal["macos", "linux"]) -> str:
+    def _effective_bind(platform: PlatformName) -> str:
         """Return the ``VOXD_BIND`` value the installed unit passes to voxd.
 
         The install-shell value is not necessarily what voxd receives, because
@@ -78,7 +81,7 @@ class HealthTarget:
         return raw.strip()
 
     @classmethod
-    def _resolve_host(cls, platform: Literal["macos", "linux"]) -> str:
+    def _resolve_host(cls, platform: PlatformName) -> str:
         """Map the unit's effective ``VOXD_BIND`` to a reachable health host.
 
         A wildcard bind (unspecified addresses, or unset/dropped) accepts

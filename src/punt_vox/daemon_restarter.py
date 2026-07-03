@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import typer
 
@@ -18,6 +18,9 @@ from punt_vox.service.launchd import (
     _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
     _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
 )
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 __all__ = ["DaemonRestarter"]
 
@@ -65,7 +68,7 @@ class DaemonRestarter:
             )
 
     @staticmethod
-    def _detect_platform() -> str:
+    def _detect_platform() -> PlatformName:
         """Return the service platform identifier."""
         from punt_vox.service import detect_platform  # noqa: PLC0415
 

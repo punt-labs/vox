@@ -9,7 +9,7 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.client import (
     VoxdConnectionError,
@@ -32,6 +32,9 @@ from punt_vox.service.systemd import (
     _SYSTEMD_UNIT,  # pyright: ignore[reportPrivateUsage]
     SystemdBackend,
 )
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +114,7 @@ class ServiceInstaller:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def detect_platform() -> Literal["macos", "linux"]:
+    def detect_platform() -> PlatformName:
         """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms."""
         system = platform.system()
         if system == "Darwin":
@@ -149,9 +152,7 @@ class ServiceInstaller:
         return self._systemd.status()
 
     @staticmethod
-    def _verify_serving(
-        platform: Literal["macos", "linux"], service_path: Path
-    ) -> None:
+    def _verify_serving(platform: PlatformName, service_path: Path) -> None:
         """Poll voxd's health endpoint until it answers or the deadline lapses.
 
         ``launchctl``/``systemctl`` registration proves only that the job is

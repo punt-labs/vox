@@ -80,12 +80,14 @@ def test_health_target_wildcard_bind_maps_to_loopback(
 
 
 @pytest.mark.parametrize("platform", ["macos", "linux"])
+@pytest.mark.parametrize("bind", ["192.168.1.50", "  192.168.1.50  "])
 def test_health_target_concrete_bind_used_directly(
+    bind: str,
     platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A concrete, safe bind is polled directly on both backends."""
-    monkeypatch.setenv("VOXD_BIND", "192.168.1.50")
+    """A concrete, safe bind is polled directly, stripped of surrounding space."""
+    monkeypatch.setenv("VOXD_BIND", bind)
     assert HealthTarget(platform).host == "192.168.1.50"
 
 

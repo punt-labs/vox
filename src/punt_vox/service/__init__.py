@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.keys_env import KeysEnvWriter
@@ -22,6 +23,9 @@ from punt_vox.service.systemd import (
     _SYSTEMD_UNIT,
     SystemdBackend,
 )
+
+if TYPE_CHECKING:
+    from punt_vox.service.types import PlatformName
 
 # ---------------------------------------------------------------------------
 # Module-level singletons and free-function API that callers expect.
@@ -51,7 +55,7 @@ def is_running() -> bool:
     return _installer.is_running()
 
 
-def detect_platform() -> str:
+def detect_platform() -> PlatformName:
     """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms."""
     return ServiceInstaller.detect_platform()
 
