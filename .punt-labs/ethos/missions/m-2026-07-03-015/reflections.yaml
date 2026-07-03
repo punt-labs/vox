@@ -1,0 +1,13 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-03T23:12:59Z"
+      author: claude
+      converging: true
+      signals:
+        - 'code-reviewer CLEAN: 376k rehoming byte-identical + all call sites updated; n0b6 TYPE_CHECKING guards correct, narrowing preserved; coupling rebaseline masks nothing (every efferent <= 7, all circular_imports 0)'
+        - 'pr-test-analyzer CLEAN: no coverage dropped in the rehoming; test_service_types.py pins the PlatformName domain meaningfully'
+        - make check green (1712 tests); installer.py class_to_func_ratio 0.5->1.0, method_ratio 0.909->1.0
+        - 'type-design found an incomplete routing (High): 3 restart-path consumers stay typed str — stop_daemon (__init__.py:73), _stop and _start (daemon_restarter.py:78,104) — dropping the PlatformName narrowing; _start does if plat==''macos'' else systemctl, so a bad string silently starts under systemd'
+        - 'type-design also flagged: no assert_never at the two-way platform branches, so a future 3rd PlatformName member would silently mis-route the else branches (the ''cannot drift'' claim only holds at the annotation layer, not the runtime branches)'
+      recommendation: continue
+      reason: Round 1 refactors are clean and behavior-preserving; round 2 completes n0b6's single-sourcing by typing the 3 remaining str consumers as PlatformName and adding assert_never so domain growth becomes a compile error — making the platform domain drift-proof end to end.
