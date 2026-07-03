@@ -102,7 +102,7 @@ def _setup_fake_env(
         monkeypatch.setattr(
             ServiceInstaller,
             "_verify_serving",
-            staticmethod(lambda service_path: None),
+            staticmethod(lambda platform, service_path: None),
         )
 
     return fake_home
@@ -461,20 +461,24 @@ def test_install_cleans_stale_user_unit_before_systemd_stop(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
 def test_health_target_pins_installed_default_port(
+    platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The poll port is DEFAULT_PORT regardless of a stray VOXD_PORT env."""
     monkeypatch.setenv("VOXD_PORT", "9999")
-    assert _HealthTarget().port == DEFAULT_PORT
+    assert _HealthTarget(platform).port == DEFAULT_PORT
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
 def test_health_target_unset_bind_maps_to_loopback(
+    platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unset VOXD_BIND resolves the loopback health host."""
+    """An unset VOXD_BIND resolves the loopback health host on both backends."""
     monkeypatch.delenv("VOXD_BIND", raising=False)
-    assert _HealthTarget().host == "127.0.0.1"
+    assert _HealthTarget(platform).host == "127.0.0.1"
 
 
 # Construct the unspecified addresses rather than spelling "0.0.0.0" as a
@@ -483,33 +487,69 @@ _IPV4_WILDCARD = str(ipaddress.IPv4Address(0))
 _IPV6_WILDCARD = str(ipaddress.IPv6Address(0))
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
 @pytest.mark.parametrize(
     "wildcard",
     [_IPV4_WILDCARD, _IPV6_WILDCARD, f"  {_IPV4_WILDCARD}  "],
 )
 def test_health_target_wildcard_bind_maps_to_loopback(
     wildcard: str,
+    platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Wildcard (unspecified) binds resolve loopback — voxd accepts it there."""
     monkeypatch.setenv("VOXD_BIND", wildcard)
-    assert _HealthTarget().host == "127.0.0.1"
+    assert _HealthTarget(platform).host == "127.0.0.1"
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
 def test_health_target_concrete_bind_used_directly(
+    platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A concrete bind address is the only address voxd listens on."""
+    """A concrete, safe bind is polled directly on both backends."""
     monkeypatch.setenv("VOXD_BIND", "192.168.1.50")
-    assert _HealthTarget().host == "192.168.1.50"
+    assert _HealthTarget(platform).host == "192.168.1.50"
 
 
+@pytest.mark.parametrize("platform", ["macos", "linux"])
 def test_health_target_hostname_bind_used_directly(
+    platform: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A non-IP bind value (hostname) is polled as given, not loopback."""
     monkeypatch.setenv("VOXD_BIND", "voxd.internal")
-    assert _HealthTarget().host == "voxd.internal"
+    assert _HealthTarget(platform).host == "voxd.internal"
+
+
+def test_health_target_systemd_rejected_bind_maps_to_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A VOXD_BIND rejected by safe_systemd_value resolves to loopback (linux).
+
+    ``SystemdBackend.unit_content`` embeds ``VOXD_BIND`` only when
+    ``safe_systemd_value`` accepts it. A trailing newline is rejected, so the
+    unit drops the variable and voxd binds its DEFAULT_HOST loopback. The
+    health host must match that -- 127.0.0.1 -- not the rejected raw address,
+    or the poll false-fails a healthy daemon.
+    """
+    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
+    assert not SystemdBackend.safe_systemd_value("192.168.1.50\n")
+    assert _HealthTarget("linux").host == "127.0.0.1"
+
+
+def test_health_target_launchd_does_not_apply_systemd_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """launchd embeds VOXD_BIND verbatim, so the systemd gate must not apply.
+
+    The same value the systemd gate rejects is passed through by launchd,
+    which has no safety gate. The health host must therefore resolve the
+    address (whitespace-normalized), not loopback -- the resolution diverges
+    by backend exactly as the units do.
+    """
+    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
+    assert _HealthTarget("macos").host == "192.168.1.50"
 
 
 # ---------------------------------------------------------------------------
@@ -597,3 +637,99 @@ def test_install_health_poll_retries_transient_protocol_error(
     assert client.health.call_count == 2
     assert "running" in result
     assert "not yet running" not in result
+
+
+# ---------------------------------------------------------------------------
+# install() — health poll auth token comes from the run file, not the shell
+# ---------------------------------------------------------------------------
+
+
+def _write_run_token(fake_home: Path, token: str) -> None:
+    """Write ``serve.token`` under the install's run dir so the poll reads it."""
+    run_dir = fake_home / ".punt-labs" / "vox" / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "serve.token").write_text(token)
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_health_poll_uses_run_file_token_not_shell_env(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The health client authenticates with serve.token, not a stray VOXD_TOKEN.
+
+    ``VoxClientSync``'s normal resolution prefers a shell ``VOXD_TOKEN`` over
+    the run file. Passing the run-file token explicitly means a stale/wrong
+    ``VOXD_TOKEN`` in the install environment cannot redirect auth and
+    false-fail a healthy daemon.
+    """
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
+    _write_run_token(fake_home, "authoritative-run-token")
+
+    captured: list[dict[str, object]] = []
+
+    def _factory(**kwargs: object) -> MagicMock:
+        captured.append(kwargs)
+        client = MagicMock()
+        client.health.return_value = {"status": "ok"}
+        return client
+
+    monkeypatch.setattr("punt_vox.service.installer.VoxClientSync", _factory)
+
+    inst = ServiceInstaller()
+    inst.install()
+
+    assert captured, "VoxClientSync was never constructed"
+    # The run-file token wins; the stray shell VOXD_TOKEN never reaches auth.
+    assert captured[0]["token"] == "authoritative-run-token"
+
+
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_health_poll_token_none_when_run_file_absent(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no serve.token yet, the health client gets token=None, not VOXD_TOKEN.
+
+    voxd writes serve.token on startup; an early probe may see no file. The
+    client must pass ``None`` (bypassing auth for the retry) rather than fall
+    back to a stray shell ``VOXD_TOKEN``. The poll's retry loop tolerates the
+    brief race until the run file appears.
+    """
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
+
+    captured: list[dict[str, object]] = []
+
+    def _factory(**kwargs: object) -> MagicMock:
+        captured.append(kwargs)
+        client = MagicMock()
+        client.health.return_value = {"status": "ok"}
+        return client
+
+    monkeypatch.setattr("punt_vox.service.installer.VoxClientSync", _factory)
+
+    inst = ServiceInstaller()
+    inst.install()
+
+    assert captured, "VoxClientSync was never constructed"
+    assert captured[0]["token"] is None

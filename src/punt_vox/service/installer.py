@@ -12,7 +12,12 @@ import time
 from pathlib import Path
 from typing import Self
 
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.client import (
+    VoxClientSync,
+    VoxdConnectionError,
+    VoxdProtocolError,
+    read_token_file,
+)
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
@@ -46,14 +51,16 @@ _HEALTH_POLL_INTERVAL_S = 0.2
 
 
 class _HealthTarget:
-    """Resolve the exact host and port of the voxd instance just installed.
+    """Resolve host, port, and token of the voxd instance just installed.
 
-    The service unit is always started with ``--port DEFAULT_PORT`` (see
-    ``_voxd_exec_args``) and, when ``VOXD_BIND`` is set, binds there. The
-    health poll must talk to *that* daemon -- not whatever a stray
-    ``VOXD_PORT`` env var or the run file points at. Pinning ``host`` and
-    ``port`` explicitly bypasses ``VoxClientSync``'s env/run-file
-    resolution so the poll cannot pass or fail against a different daemon.
+    The health poll must reach *the daemon the backend actually started* --
+    never whatever the install shell's ``VOXD_*`` env vars point at. All
+    three connection values are pinned from authoritative sources, bypassing
+    ``VoxClientSync``'s env/run-file resolution: ``port`` is ``DEFAULT_PORT``
+    (baked into every unit by ``_voxd_exec_args``); ``host`` is the bind the
+    *backend* applied, gated as its unit gates it (``_effective_bind``);
+    ``token`` is read from voxd's ``serve.token`` run file, never a stray
+    shell ``VOXD_TOKEN``.
     """
 
     __slots__ = ("_host", "_port")
@@ -61,30 +68,46 @@ class _HealthTarget:
     _host: str
     _port: int
 
-    def __new__(cls) -> Self:
+    def __new__(cls, platform: str) -> Self:
         self = super().__new__(cls)
-        self._host = self._resolve_host()
-        # ``_voxd_exec_args`` bakes ``--port DEFAULT_PORT`` into every unit;
-        # the daemon binds this port regardless of ``VOXD_PORT``.
+        self._host = self._resolve_host(platform)
         self._port = DEFAULT_PORT
         return self
 
     @staticmethod
-    def _resolve_host() -> str:
-        """Map the service's ``VOXD_BIND`` to a reachable health host.
+    def _effective_bind(platform: str) -> str:
+        """Return the ``VOXD_BIND`` value the installed unit passes to voxd.
 
-        A wildcard bind (the unspecified addresses, or unset) accepts
-        loopback, so poll ``127.0.0.1``. A concrete bind address is the
-        only address voxd listens on -- poll it directly, since loopback
-        would false-fail. A non-IP value (e.g. a hostname) is polled as
-        given.
+        The install-shell value is not necessarily what voxd receives, because
+        each backend gates ``VOXD_BIND`` differently: systemd embeds it only
+        when ``safe_systemd_value`` accepts it (a rejected value is dropped, so
+        voxd binds its ``DEFAULT_HOST`` loopback); launchd embeds it verbatim
+        when non-empty, with no gate. The gate runs on the *raw* env value to
+        match the backends -- a trailing ``\\n`` fails ``safe_systemd_value``
+        yet vanishes under ``.strip()``, so stripping before gating would
+        disagree with the unit and resolve the wrong host.
         """
-        bind = os.environ.get("VOXD_BIND", "").strip()
+        raw = os.environ.get("VOXD_BIND")
+        if not raw:
+            return ""
+        if platform == "linux" and not SystemdBackend.safe_systemd_value(raw):
+            return ""
+        return raw.strip()
+
+    @classmethod
+    def _resolve_host(cls, platform: str) -> str:
+        """Map the unit's effective ``VOXD_BIND`` to a reachable health host.
+
+        A wildcard bind (unspecified addresses, or unset/dropped) accepts
+        loopback, so poll ``127.0.0.1``. A concrete bind is the only address
+        voxd listens on -- poll it directly (loopback would false-fail). A
+        non-IP value (e.g. a hostname) is polled as given.
+        """
+        bind = cls._effective_bind(platform)
         if not bind:
             return "127.0.0.1"
         try:
-            # ``is_unspecified`` covers both 0.0.0.0 and :: (and ::0).
-            if ipaddress.ip_address(bind).is_unspecified:
+            if ipaddress.ip_address(bind).is_unspecified:  # 0.0.0.0, ::, ::0
                 return "127.0.0.1"
         except ValueError:
             pass
@@ -99,8 +122,18 @@ class _HealthTarget:
         return self._port
 
     def client(self) -> VoxClientSync:
-        """Return a client pinned to the installed daemon's host and port."""
-        return VoxClientSync(host=self._host, port=self._port)
+        """Return a client pinned to the daemon's host, port, and run-file token.
+
+        The token is read fresh from ``serve.token`` and passed explicitly, so
+        ``VoxClientSync`` cannot fall back to a stray shell ``VOXD_TOKEN``.
+        voxd writes ``serve.token`` on startup, so an early probe may read
+        ``None``; the poll's retry loop tolerates that brief race.
+        """
+        return VoxClientSync(
+            host=self._host,
+            port=self._port,
+            token=read_token_file(),
+        )
 
 
 class ServiceInstaller:
@@ -181,16 +214,18 @@ class ServiceInstaller:
         return self._systemd.status()
 
     @staticmethod
-    def _verify_serving(service_path: Path) -> None:
+    def _verify_serving(platform: str, service_path: Path) -> None:
         """Poll voxd's health endpoint until it answers or the deadline lapses.
 
         ``launchctl``/``systemctl`` registration proves only that the job is
         scheduled, not that voxd bound its port and stayed up.  Without this
         poll, ``install()`` reports "running" for a daemon that died on
         startup -- the silent-down failure mode.  Raise so ``vox daemon
-        install`` exits non-zero when voxd never becomes reachable.
+        install`` exits non-zero when voxd never becomes reachable.  *platform*
+        selects the backend whose ``VOXD_BIND`` gating the health host mirrors
+        (see ``_HealthTarget._effective_bind``).
         """
-        target = _HealthTarget()
+        target = _HealthTarget(platform)
         deadline = time.monotonic() + _HEALTH_DEADLINE_S
         # None until the first probe fails: no exception has occurred yet.
         last_exc: VoxdConnectionError | VoxdProtocolError | OSError | None = None
@@ -248,7 +283,7 @@ class ServiceInstaller:
         # health before reporting "running", so a silent-down daemon fails
         # the install loudly instead of masquerading as healthy.
         if running:
-            self._verify_serving(service_path)
+            self._verify_serving(plat, service_path)
 
         exec_display = " ".join(args)
         status = "running" if running else "installed (not yet running)"
