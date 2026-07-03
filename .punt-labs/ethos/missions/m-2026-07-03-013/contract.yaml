@@ -1,0 +1,35 @@
+mission_id: m-2026-07-03-013
+status: closed
+type: implement
+created_at: "2026-07-03T21:14:21Z"
+updated_at: "2026-07-03T21:52:34Z"
+closed_at: "2026-07-03T21:52:34Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-03T21:14:21Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs:
+    ticket: vox-qogn
+write_set:
+    - src/punt_vox/service/installer.py
+    - src/punt_vox/service/launchd.py
+    - src/punt_vox/hooks.py
+    - tests/test_service_installer.py
+    - tests/test_service_launchd.py
+    - tests/test_hooks.py
+success_criteria:
+    - 'vox-qogn: the uninstall path no longer discards kill_stale_daemon()''s result. When the kill fails, `vox daemon uninstall` communicates a non-success outcome (your choice of mechanism — return value, raise, exit code, or explicit message) instead of printing plain success. The success path is unchanged.'
+    - 'vox-qogn: a test drives the kill-fails branch (kill_stale_daemon()/kill_pid returns False) and asserts uninstall surfaces the failure — not a silent success. Cover both LaunchdBackend.uninstall() and the ServiceInstaller path if they diverge.'
+    - 'vox-wqft: the _chime_via_voxd OSError warning includes the exception detail — logger.warning(''Could not spawn chime subprocess: %s'', e) (errno/strerror in the message), lazy %-formatting (PY-CS-11), not an f-string. A test asserts the exception detail reaches the log.'
+    - make check exits 0 (mypy, pyright, ruff, pytest, check-oo). OO ratchet does not regress on touched files; run make update-oo and stage .oo-baseline.json + .oo-audit.jsonl if scores change.
+    - No backwards-compat shim or dead code (PL-PP-1). No print() in daemon/server code (voxd logs to stderr).
+    - Commit incrementally — one commit per logical step (qogn, then wqft, or file-by-file). Each commit passes make check. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Work on branch fix/surface-swallowed-failures off current main. Do NOT open a PR, bump the version, or edit CHANGELOG.md/DESIGN.md — the leader owns those.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Two swallowed failures flagged by silent-failure-hunter, both in the "a real failure is logged but the caller reports success" class. Surface them. (1) vox-qogn: the daemon uninstall path calls kill_stale_daemon() but discards its bool return. LaunchdBackend.uninstall() (service/launchd.py, ~line 172) and the ServiceInstaller uninstall path (service/installer.py, ~lines 160-169) both ignore the result, so if kill_pid returns False (PermissionError, or a process owned by another user — process.py:128-133) the daemon survives but `vox daemon uninstall` still reports success ("uninstalled"). The failure is logged at WARNING but the success message is optimistic. (2) vox-wqft: in hooks.py, the `except OSError` block in _chime_via_voxd logs "Could not spawn chime subprocess" with no exception context — no errno/strerror for debugging. You decide the exact mechanism for surfacing (1) — propagate the bool, raise, a non-zero exit, or a clear non-success message — but `vox daemon uninstall` must NOT report plain success when the stale-daemon kill actually failed. Keep the daemon/client boundary intact; do not change unrelated behavior.

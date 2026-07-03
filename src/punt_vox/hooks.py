@@ -196,8 +196,8 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
                 stderr=_sp.DEVNULL,
                 start_new_session=True,
             )
-        except OSError:
-            logger.warning("Could not spawn chime subprocess")
+        except OSError as e:
+            logger.warning("Could not spawn chime subprocess: %s", e)
         return
     try:
         client = _make_client()

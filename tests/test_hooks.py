@@ -14,6 +14,7 @@ from punt_vox.config import VoxConfig
 from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
+    _chime_via_voxd,  # pyright: ignore[reportPrivateUsage]
     _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
     _read_hook_input,  # pyright: ignore[reportPrivateUsage]
     _repo_name_from_cwd,  # pyright: ignore[reportPrivateUsage]
@@ -978,6 +979,30 @@ class TestReadHookInput:
             r.close()
         assert result == {}
         assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
+
+# ---------------------------------------------------------------------------
+# _chime_via_voxd — spawn failure carries exception detail (vox-wqft)
+# ---------------------------------------------------------------------------
+
+
+class TestChimeSpawnFailure:
+    """The detached-chime spawn warning must name the OSError detail."""
+
+    def test_spawn_failure_logs_exception_detail(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed Popen logs the errno/strerror, not just a generic message."""
+        boom = OSError(errno.ENOENT, "No such file or directory")
+        with (
+            patch("subprocess.Popen", side_effect=boom),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            _chime_via_voxd("done", wait=False)
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("Could not spawn chime subprocess" in m for m in messages)
+        assert any("No such file or directory" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`vox daemon uninstall` no longer reports success when a daemon survives**: the uninstall path discarded `kill_stale_daemon()`'s result, so a failed kill (e.g. a `PermissionError`, or a daemon owned by another user) left `voxd` running while the command still reported success. Uninstall now re-scans the port and exits non-zero if a `voxd` daemon survives — distinguishing a genuine survivor from an already-stopped daemon (an empty port stays a clean success, so a normal uninstall doesn't false-fail). Closes vox-qogn.
+- **Chime spawn failures now log the underlying error**: `_chime_via_voxd`'s `OSError` handler logged a bare "Could not spawn chime subprocess" with no context; it now includes the errno/strerror (`"…: %s", e`) so the failure is diagnosable. Closes vox-wqft.
 - **Hooks no longer crash on config I/O errors**: `handle_post_bash` and `handle_session_end` now guard their `read_config`/`write_field` calls — a corrupt or unwritable `vox.local.md` logs a warning and the hook returns cleanly instead of raising a non-zero exit that could block the Claude Code tool it gates. Closes vox-nb7i.
 - **Unexpected hook stdin read failures are now logged**: `_read_hook_input` logs any genuine `OSError` (with its errno) at WARNING instead of silently returning `{}`; the expected empty/closed-pipe case (no errno) stays quiet. Closes vox-gsh4.
 
