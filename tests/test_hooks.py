@@ -992,10 +992,12 @@ class TestCommandsResolveFromCwd:
     @patch("punt_vox.hooks._speak_via_voxd")
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_notification_cmd_silent_when_no_config(
-        self, mock_chime: MagicMock, mock_speak: MagicMock, tmp_path: Path
+        self, mock_chime: MagicMock, mock_speak: MagicMock, no_config_dir: Path
     ) -> None:
         # cwd points at a directory with no .punt-labs/vox config — silent.
-        bare = tmp_path / "punt-labs"
+        # no_config_dir has no ambient config above it, so find_config_dir
+        # cannot leak into the real repo config (fails under TMPDIR=.tmp).
+        bare = no_config_dir / "punt-labs"
         bare.mkdir()
         payload = {
             "cwd": str(bare),
@@ -1074,11 +1076,12 @@ class TestCommandsResolveFromCwd:
         text = mock_speak.call_args[0][0]
         assert text.startswith("vox. ")
 
-    def test_stop_cmd_silent_when_cwd_missing(self, tmp_path: Path) -> None:
+    def test_stop_cmd_silent_when_cwd_missing(self, no_config_dir: Path) -> None:
         # No cwd on the payload → no new pwd-fallback suppression added;
         # resolution falls through to find_config_dir(None). In an isolated
-        # dir with no config, the hook stays silent.
-        isolated = tmp_path / "isolated"
+        # dir with no config above it, the hook stays silent (no ambient
+        # repo config leaks in under TMPDIR=.tmp).
+        isolated = no_config_dir / "isolated"
         isolated.mkdir()
         payload = {"stop_hook_active": False}
         with (

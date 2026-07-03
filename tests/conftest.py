@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import shutil
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,6 +14,7 @@ import pytest
 from pydub import AudioSegment
 
 from punt_vox.core import TTSClient
+from punt_vox.dirs import find_config_dir
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.providers.espeak import EspeakProvider, EspeakVoiceConfig
 from punt_vox.providers.openai import OpenAIProvider
@@ -30,6 +34,39 @@ def tmp_output_dir(tmp_path: Path) -> Path:
     out = tmp_path / "output"
     out.mkdir()
     return out
+
+
+def _repo_free_base() -> Path:
+    """Return a temp base directory with no ``.punt-labs/vox`` ancestor.
+
+    On dev boxes ``TMPDIR`` points at the repo's ``.tmp/`` (see .envrc),
+    which sits inside a real ``.punt-labs/vox`` config.  ``find_config_dir``
+    walks up into that ambient config, so tests asserting "no config
+    resolves" break.  Climb above any config found from the platform temp
+    root so the search starts clean — reproducing CI, where ``TMPDIR`` is
+    outside the repo.
+    """
+    base = Path(tempfile.gettempdir()).resolve()
+    while (found := find_config_dir(base)) is not None:
+        # found is ``<repo>/.punt-labs/vox``; step above <repo>.
+        base = found.parent.parent.parent
+    return base
+
+
+@pytest.fixture
+def no_config_dir(tmp_path: Path) -> Iterator[Path]:
+    """Yield a temp dir guaranteed to have no ``.punt-labs/vox`` ancestor.
+
+    ``tmp_path`` is unusable for config-resolution tests when ``TMPDIR``
+    lives inside the repo, because the upward walk reaches the real
+    config.  This fixture roots the tree above any such config and cleans
+    it up afterward.
+    """
+    path = Path(tempfile.mkdtemp(dir=_repo_free_base()))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _generate_valid_mp3_bytes() -> bytes:

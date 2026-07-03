@@ -129,15 +129,16 @@ class TestFindConfigDir:
         result = find_config_dir(child)
         assert result == child_config
 
-    def test_legacy_config_md_resolves_none(self, tmp_path: Path) -> None:
+    def test_legacy_config_md_resolves_none(self, no_config_dir: Path) -> None:
         # A dir with only legacy config.md (no vox.md/vox.local.md) resolves None.
-        legacy_dir = tmp_path / ".punt-labs" / "vox"
+        # no_config_dir has no ambient .punt-labs/vox above it, so the walk
+        # cannot leak into the real repo config (fails under TMPDIR=.tmp).
+        legacy_dir = no_config_dir / ".punt-labs" / "vox"
         legacy_dir.mkdir(parents=True)
         (legacy_dir / "config.md").write_text("---\nnotify: y\n---\n")
-        isolated = tmp_path / "leaf"
+        isolated = no_config_dir / "leaf"
         isolated.mkdir()
-        with patch("punt_vox.dirs.Path.cwd", return_value=isolated):
-            result = find_config_dir(isolated)
+        result = find_config_dir(isolated)
         assert result is None
 
 
