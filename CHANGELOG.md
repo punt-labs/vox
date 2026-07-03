@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Ethos is now project-local, not a git submodule**: `.punt-labs/ethos/` was a `punt-labs/team` submodule; it is now a vendored project-local directory trimmed to the 15 identities vox delegates to, plus the engineering team and the mission/session ledger. Removes `.gitmodules`. Vox owns its identity data rather than depending on the shared team submodule, so the repo is self-standing. (Ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry; repo-primary resolution is a pending ethos-side change coordinated with the ethos agent.)
+
 ### Fixed
 
 - **Hooks no longer crash on config I/O errors**: `handle_post_bash` and `handle_session_end` now guard their `read_config`/`write_field` calls — a corrupt or unwritable `vox.local.md` logs a warning and the hook returns cleanly instead of raising a non-zero exit that could block the Claude Code tool it gates. Closes vox-nb7i.
