@@ -63,3 +63,17 @@ uv.toml
 MagicMock/
 .idea/
 .cursor/
+.punt-labs/quarry/
+
+# Vendored ethos (project-local): ignore the upstream team-repo dev scaffolding
+# that rode along with the de-submodule. Vox tracks only the identity registry
+# (identities/personalities/writing-styles/talents/roles/agents/teams) + ledger.
+.punt-labs/ethos/.github/
+.punt-labs/ethos/.envrc
+.punt-labs/ethos/.biff
+.punt-labs/ethos/.gitignore
+.punt-labs/ethos/.markdownlint-cli2.jsonc
+.punt-labs/ethos/.markdownlint.jsonc
+.punt-labs/ethos/.claude/
+.punt-labs/ethos/CHANGELOG.md
+.punt-labs/ethos/README.md
