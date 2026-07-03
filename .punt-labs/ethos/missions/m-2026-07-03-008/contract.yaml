@@ -1,0 +1,33 @@
+mission_id: m-2026-07-03-008
+status: closed
+type: implement
+created_at: "2026-07-03T20:14:56Z"
+updated_at: "2026-07-03T21:07:34Z"
+closed_at: "2026-07-03T21:07:34Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-03T20:14:56Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-84ft
+write_set:
+    - src/punt_vox/service/installer.py
+    - src/punt_vox/service/health.py
+    - tests/test_service_installer.py
+    - tests/test_service_health.py
+success_criteria:
+    - Extract _HealthTarget (and only its tightly-coupled helpers) into a new cohesive service module. You choose the module name and the exact boundary — service/health.py is a suggestion, not a mandate. installer.py imports the class from the new module; behavior is unchanged.
+    - installer.py module_size drops below 300 with real headroom (aim for <= ~285). make check-oo must not regress on touched files and at least one metric must improve; run make update-oo and stage .oo-baseline.json + .oo-audit.jsonl.
+    - The new module has its own mirrored test file. Cover _HealthTarget construction, validation, and host/port/token resolution — happy path, one boundary, and any missing/invalid-field path. Existing installer tests keep passing with unchanged behavior.
+    - 'Behavior-preserving: no change to install / uninstall / health-poll behavior. make check exits 0 (mypy, pyright, ruff format+lint, pytest, check-oo).'
+    - 'No backwards-compat shim, alias, or re-export tombstone (PL-PP-1): move the class, update every importer, delete the old definition in the same commit.'
+    - Commit incrementally — one commit per logical step (extract, wire callers, tests). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Work on branch refactor/health-target-extract off current main. Do NOT open a PR, bump the version, or edit CHANGELOG.md/DESIGN.md — the leader owns those.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    src/punt_vox/service/installer.py sits exactly at the oo_score module_size threshold (300 lines, PASS but with zero headroom). The _HealthTarget value object — host/port/token resolution for the post-install health poll, added in the vox-zt3r cycle — is a cohesive unit that belongs in its own module so the next change to installer.py doesn't force a split under pressure. This is a behavior-preserving Split Module refactor (PY-RF-3), NOT a behavior change. Do not touch the vox-qogn (uninstall reporting) or vox-wqft (chime logging) concerns — they are separate missions.
