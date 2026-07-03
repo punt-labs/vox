@@ -9,7 +9,7 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, assert_never
 
 from punt_vox.client import (
     VoxdConnectionError,
@@ -212,10 +212,12 @@ class ServiceInstaller:
         if plat == "macos":
             running = self._install_darwin()
             service_path = _LAUNCHD_PLIST
-        else:
+        elif plat == "linux":
             logger.warning(_SUDO_NOTICE)
             running = self._install_linux(user)
             service_path = _SYSTEMD_UNIT
+        else:
+            assert_never(plat)
 
         # Registration alone does not prove voxd serves; verify it answers
         # health before reporting "running", so a silent-down daemon fails
@@ -227,7 +229,7 @@ class ServiceInstaller:
         status = "running" if running else "installed (not yet running)"
         lines = [
             f"voxd daemon {status} on port {DEFAULT_PORT}.",
-            f"  Service: {_LAUNCHD_PLIST if plat == 'macos' else _SYSTEMD_UNIT}",
+            f"  Service: {service_path}",
             f"  Keys:    {keys_path}",
             f"  State:   {state_root}",
             f"  Command: {exec_display}",
@@ -251,10 +253,12 @@ class ServiceInstaller:
         if plat == "macos":
             killed = self._launchd.uninstall()
             path = _LAUNCHD_PLIST
-        else:
+        elif plat == "linux":
             self._systemd.uninstall()
             killed = False
             path = _SYSTEMD_UNIT
+        else:
+            assert_never(plat)
         # kill_stale_daemon() returns False both for "nothing to kill" and
         # "kill failed"; re-scan the port to tell a survivor from an empty
         # port (systemd can't report the result, so its branch always scans).
@@ -281,4 +285,6 @@ class ServiceInstaller:
         plat = self.detect_platform()
         if plat == "macos":
             return self._launchd.status()
-        return self._systemd.status()
+        if plat == "linux":
+            return self._systemd.status()
+        assert_never(plat)

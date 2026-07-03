@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, assert_never, final
 
 from punt_vox.client import VoxClientSync, read_token_file
 from punt_vox.service.process import DEFAULT_PORT
@@ -76,8 +76,14 @@ class HealthTarget:
         raw = os.environ.get("VOXD_BIND")
         if not raw:
             return ""
-        if platform == "linux" and not SystemdBackend.safe_systemd_value(raw):
-            return ""
+        match platform:
+            case "linux":
+                if not SystemdBackend.safe_systemd_value(raw):
+                    return ""
+            case "macos":
+                pass
+            case _:
+                assert_never(platform)
         return raw.strip()
 
     @classmethod

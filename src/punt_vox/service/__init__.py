@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.keys_env import KeysEnvWriter
@@ -70,12 +70,14 @@ def ensure_port_free() -> None:
     _process_mgr.ensure_port_free()
 
 
-def stop_daemon(plat: str) -> None:
+def stop_daemon(plat: PlatformName) -> None:
     """Public API: stop the voxd daemon for the given platform."""
     if plat == "macos":
         _launchd.stop()
-    else:
+    elif plat == "linux":
         _systemd.stop()
+    else:
+        assert_never(plat)
 
 
 def _legacy_user_unit_path() -> Path:

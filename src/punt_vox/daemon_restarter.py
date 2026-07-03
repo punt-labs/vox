@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, assert_never
 
 import typer
 
@@ -75,7 +75,7 @@ class DaemonRestarter:
         return detect_platform()
 
     @staticmethod
-    def _stop(plat: str) -> None:
+    def _stop(plat: PlatformName) -> None:
         """Stop the daemon via the platform service manager."""
         from punt_vox.service import stop_daemon  # noqa: PLC0415
 
@@ -101,7 +101,7 @@ class DaemonRestarter:
             raise typer.Exit(code=1) from exc
 
     @staticmethod
-    def _start(plat: str) -> None:
+    def _start(plat: PlatformName) -> None:
         """Start the daemon via the platform service manager."""
         logger.info("Starting voxd via service manager...")
         try:
@@ -125,11 +125,13 @@ class DaemonRestarter:
                     ],
                     check=True,
                 )
-            else:
+            elif plat == "linux":
                 subprocess.run(
                     ["sudo", "systemctl", "start", "voxd"],  # noqa: S607
                     check=True,
                 )
+            else:
+                assert_never(plat)
         except subprocess.CalledProcessError as exc:
             log_path = log_dir() / "voxd.log"
             typer.echo(
