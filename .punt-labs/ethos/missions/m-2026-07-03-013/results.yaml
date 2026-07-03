@@ -1,0 +1,55 @@
+results:
+    - mission: m-2026-07-03-013
+      round: 1
+      created_at: "2026-07-03T21:46:54Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/service/installer.py
+          added: 24
+          removed: 2
+        - path: src/punt_vox/service/launchd.py
+          added: 3
+          removed: 3
+        - path: src/punt_vox/hooks.py
+          added: 2
+          removed: 2
+        - path: tests/test_service_installer.py
+          added: 109
+          removed: 0
+        - path: tests/test_service_launchd.py
+          added: 37
+          removed: 2
+        - path: tests/test_hooks.py
+          added: 25
+          removed: 0
+      evidence:
+        - name: make check
+          status: pass
+        - name: pytest (1709 passed, 8 new)
+          status: pass
+        - name: new uninstall kill-fails + chime-spawn-detail tests
+          status: pass
+      open_questions:
+        - 'OO ratchet: qogn''s installer.py grew within-threshold (module_size 228->248, avg_complexity 2.10->2.36; both far under 300/5.0) while improving method_ratio 0.90->0.909 and avg_params 0.30->0.27. update-oo refuses within-threshold regressions, so the structural change (new _stale_daemon_survives method + guard branch) was recorded via --rebaseline (commit 5939b7b). Requesting leader ratification of the rebaseline.'
+      prose: |
+        Both swallowed failures surfaced.
+
+        vox-qogn: LaunchdBackend.uninstall() now returns kill_stale_daemon()'s
+        bool instead of discarding it. ServiceInstaller.uninstall() re-scans the
+        port after the kill (via new _stale_daemon_survives) and raises SystemExit
+        when a voxd daemon survives -- covering both the macOS (launchd, uses the
+        returned bool as a fast path) and Linux (systemd, always re-scans) paths.
+        Mechanism chosen: non-zero exit via SystemExit. False from kill_stale_daemon
+        is ambiguous (nothing-to-kill vs kill-failed), so a raw-bool propagation
+        would false-fail a clean uninstall of a stopped daemon; the port re-scan
+        distinguishes a genuine survivor from an empty port. A clean uninstall with
+        an empty port still returns the success message. systemd.py was out of the
+        write set, so the Linux surfacing lives in ServiceInstaller (installer.py).
+
+        vox-wqft: the _chime_via_voxd OSError branch now logs
+        'Could not spawn chime subprocess: %s', e (lazy %-formatting, PY-CS-11).
+
+        Commits: d313e47 (qogn), bd6abec (wqft), 5939b7b (OO rebaseline).
+        make check exits 0.
