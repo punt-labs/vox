@@ -20,7 +20,6 @@ Events:
 from __future__ import annotations
 
 import dataclasses
-import errno
 import json
 import logging
 import os
@@ -77,15 +76,15 @@ def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedF
 
 # Shared helpers
 
-# Genuine read failures worth logging; an empty/closed pipe (errno None) stays quiet.
-_UNEXPECTED_ERRNOS: frozenset[int] = frozenset(
-    {errno.EBADF, errno.EIO, errno.EMFILE, errno.EINTR}
-)
-
 
 def _warn_unexpected_read_error(exc: OSError) -> None:
-    """Log a genuine stdin read failure; stay quiet on an empty pipe."""
-    if exc.errno in _UNEXPECTED_ERRNOS:
+    """Log a genuine stdin read failure; stay quiet on a non-fd stdin.
+
+    A real empty or closed pipe returns ``b""`` and never raises, so any
+    ``OSError`` carrying an errno is a genuine failure worth logging.
+    ``errno`` is None only for a non-fd stdin (e.g. ``StringIO`` in tests).
+    """
+    if exc.errno is not None:
         logger.warning("hook stdin read failed: errno %s (%s)", exc.errno, exc)
 
 
@@ -477,7 +476,7 @@ def _clear_vibe_signals(config_dir: Path) -> None:
     """Reset accumulated vibe signals, warning instead of raising on failure."""
     try:
         write_field("vibe_signals", "", config_dir)
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         logger.warning("session-end: cannot clear signals in %s: %s", config_dir, exc)
 
 

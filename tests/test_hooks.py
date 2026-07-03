@@ -918,13 +918,16 @@ class TestReadHookInput:
     def test_unexpected_oserror_logs_errno(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A genuine read failure (EIO) logs the errno at WARNING, returns {}."""
+        """Any errno logs at WARNING — even ENFILE, outside the old allow-list."""
         r_fd, w_fd = os.pipe()
         os.write(w_fd, b'{"x": 1}')  # ensure select() reports readable
         r = os.fdopen(r_fd, "r")
         try:
             with (
-                patch("punt_vox.hooks.os.read", side_effect=OSError(errno.EIO, "io")),
+                patch(
+                    "punt_vox.hooks.os.read",
+                    side_effect=OSError(errno.ENFILE, "too many open files"),
+                ),
                 caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
                 patch.object(sys, "stdin", r),
             ):
@@ -934,7 +937,7 @@ class TestReadHookInput:
             os.close(w_fd)
         assert result == {}
         assert any(
-            str(errno.EIO) in rec.getMessage() and "errno" in rec.getMessage()
+            str(errno.ENFILE) in rec.getMessage() and "errno" in rec.getMessage()
             for rec in caplog.records
         )
 

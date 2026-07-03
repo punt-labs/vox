@@ -54,7 +54,7 @@ def _repo_free_base() -> Path:
 
 
 @pytest.fixture
-def no_config_dir(tmp_path: Path) -> Iterator[Path]:
+def no_config_dir() -> Iterator[Path]:
     """Yield a temp dir guaranteed to have no ``.punt-labs/vox`` ancestor.
 
     ``tmp_path`` is unusable for config-resolution tests when ``TMPDIR``
