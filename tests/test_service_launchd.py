@@ -275,11 +275,16 @@ def test_launchd_uninstall_boots_out_and_removes_plist(
     mock_run.return_value = MagicMock(returncode=0)
 
     be = LaunchdBackend(ProcessManager(), list)
-    with patch.object(ProcessManager, "kill_stale_daemon") as mock_kill:
-        be.uninstall()
+    with patch.object(
+        ProcessManager, "kill_stale_daemon", return_value=True
+    ) as mock_kill:
+        result = be.uninstall()
 
     assert not plist.exists()
     mock_kill.assert_called_once()
+    # uninstall must not discard the kill result — a live daemon that was
+    # killed reports True.
+    assert result is True
 
     # Exactly one bootout call, no sudo.
     assert len(mock_run.call_args_list) == 1
@@ -311,3 +316,33 @@ def test_launchd_uninstall_noop_when_plist_missing(
 
     mock_run.assert_not_called()
     mock_kill.assert_called_once()
+
+
+@patch("punt_vox.service.launchd.subprocess.run")
+def test_launchd_uninstall_propagates_failed_kill(
+    mock_run: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uninstall returns False when the stale-daemon kill fails (survivor)."""
+    fake_home = tmp_path / "home" / "jfreeman"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    agents_dir = fake_home / "Library" / "LaunchAgents"
+    agents_dir.mkdir(parents=True)
+    plist = agents_dir / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+
+    mock_run.return_value = MagicMock(returncode=0)
+
+    be = LaunchdBackend(ProcessManager(), list)
+    with patch.object(ProcessManager, "kill_stale_daemon", return_value=False):
+        result = be.uninstall()
+
+    # A failed kill must not be swallowed — the caller re-scans on False.
+    assert result is False
+    # The plist is removed regardless of the kill outcome.
+    assert not plist.exists()

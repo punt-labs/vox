@@ -216,15 +216,37 @@ class ServiceInstaller:
     # ------------------------------------------------------------------
 
     def uninstall(self) -> str:
-        """Remove voxd system service.  Return a status message."""
+        """Remove voxd system service.  Return a status message.
+
+        Raise ``SystemExit`` if the service files are removed but a voxd
+        daemon survives the kill -- ``os.kill`` raises ``PermissionError``
+        for a process owned by another user, so reporting success would
+        strand a live daemon.
+        """
         plat = self.detect_platform()
         if plat == "macos":
-            self._launchd.uninstall()
+            killed = self._launchd.uninstall()
             path = _LAUNCHD_PLIST
         else:
             self._systemd.uninstall()
+            killed = False
             path = _SYSTEMD_UNIT
+        # kill_stale_daemon() returns False both for "nothing to kill" and
+        # "kill failed"; re-scan the port to tell a survivor from an empty
+        # port (systemd can't report the result, so its branch always scans).
+        if not killed and self._stale_daemon_survives():
+            msg = (
+                f"voxd files removed ({path}), but a daemon is still running "
+                "and could not be stopped -- it may be owned by another user."
+            )
+            raise SystemExit(msg)
         return f"voxd daemon uninstalled. Removed {path}."
+
+    def _stale_daemon_survives(self) -> bool:
+        """Return True if a voxd daemon still occupies the daemon port."""
+        port = self._process_mgr.read_port_file() or DEFAULT_PORT
+        pids = self._process_mgr.find_pid_on_port(port)
+        return any(self._process_mgr.is_vox_daemon_process(p) for p in pids)
 
     # ------------------------------------------------------------------
     # Status

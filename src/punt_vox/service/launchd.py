@@ -151,8 +151,8 @@ class LaunchdBackend:
         )
         logger.info("Kickstarted %s", _LABEL)
 
-    def uninstall(self) -> None:
-        """Remove the LaunchAgent plist and kill any stale daemon."""
+    def uninstall(self) -> bool:
+        """Remove the LaunchAgent plist; return ``kill_stale_daemon()``'s result."""
         if _LAUNCHD_PLIST.exists():
             domain = self._gui_domain()
             result = subprocess.run(
@@ -169,7 +169,7 @@ class LaunchdBackend:
             logger.info("Removed %s", _LAUNCHD_PLIST)
         else:
             logger.info("No plist found at %s -- nothing to uninstall", _LAUNCHD_PLIST)
-        self._process_mgr.kill_stale_daemon()
+        return self._process_mgr.kill_stale_daemon()
 
     def status(self) -> bool:
         """Return True if voxd is registered and running under launchd."""

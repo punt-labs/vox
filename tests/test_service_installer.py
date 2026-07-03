@@ -633,3 +633,112 @@ def test_install_health_poll_token_none_when_run_file_absent(
 
     assert captured, "VoxClientSync was never constructed"
     assert captured[0]["token"] is None
+
+
+# ---------------------------------------------------------------------------
+# uninstall — surface a surviving daemon (vox-qogn)
+# ---------------------------------------------------------------------------
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_uninstall_macos_clean_when_daemon_killed(
+    _mock_platform: MagicMock,
+) -> None:
+    """macOS uninstall reports success when the backend confirms the kill."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(LaunchdBackend, "uninstall", return_value=True) as mock_ld,
+        patch.object(ProcessManager, "find_pid_on_port") as mock_scan,
+    ):
+        msg = inst.uninstall()
+
+    mock_ld.assert_called_once()
+    # A confirmed kill short-circuits the survival re-scan.
+    mock_scan.assert_not_called()
+    assert "uninstalled" in msg
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_uninstall_macos_clean_when_nothing_to_kill(
+    _mock_platform: MagicMock,
+) -> None:
+    """A False kill result with an empty port is a clean uninstall, not a failure."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "read_port_file", return_value=None),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[]),
+    ):
+        msg = inst.uninstall()
+
+    assert "uninstalled" in msg
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_uninstall_macos_raises_when_daemon_survives(
+    _mock_platform: MagicMock,
+) -> None:
+    """A surviving voxd daemon must surface as a failure, not plain success."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
+        patch.object(ProcessManager, "is_vox_daemon_process", return_value=True),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        inst.uninstall()
+
+    assert "still running" in str(excinfo.value)
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_uninstall_macos_clean_when_survivor_is_not_voxd(
+    _mock_platform: MagicMock,
+) -> None:
+    """A non-voxd process on the port is not our survivor — uninstall succeeds."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
+        patch.object(ProcessManager, "is_vox_daemon_process", return_value=False),
+    ):
+        msg = inst.uninstall()
+
+    assert "uninstalled" in msg
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="linux")
+def test_uninstall_linux_raises_when_daemon_survives(
+    _mock_platform: MagicMock,
+) -> None:
+    """The systemd path can't report the kill result, so it always re-scans."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(SystemdBackend, "uninstall", return_value=None) as mock_sd,
+        patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
+        patch.object(ProcessManager, "is_vox_daemon_process", return_value=True),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        inst.uninstall()
+
+    mock_sd.assert_called_once()
+    assert "still running" in str(excinfo.value)
+
+
+@patch.object(ServiceInstaller, "detect_platform", return_value="linux")
+def test_uninstall_linux_clean_when_port_empty(
+    _mock_platform: MagicMock,
+) -> None:
+    """Linux uninstall with an empty port reports success."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(SystemdBackend, "uninstall", return_value=None),
+        patch.object(ProcessManager, "read_port_file", return_value=None),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[]),
+    ):
+        msg = inst.uninstall()
+
+    assert "uninstalled" in msg
