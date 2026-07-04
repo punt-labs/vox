@@ -112,8 +112,21 @@ class Playlist:
         Serves both auto-advance and manual skip. On a single-track pool this
         returns that track (the transient loop); once the pool grows it returns
         a different track.
+
+        When no pool member exists yet but a track is playing -- a named-first
+        track whose stem does not match the pool prefix, with the fill not yet
+        landed a member -- this loops the current track rather than raising,
+        keeping the loop alive until a member lands. The empty-pool-with-nothing-
+        playing case stays a tripwire (``ValueError``): the loop only advances
+        after spawning a track, so it never reaches here.
         """
-        return self._pool().pick_next(self._track)
+        pool = self._pool()
+        if len(pool) == 0:
+            if self._track is not None:
+                return self._track
+            msg = "cannot advance: pool is empty and nothing is playing"
+            raise ValueError(msg)
+        return pool.pick_next(self._track)
 
     def mark_playing(self, track: Path) -> None:
         """Record ``track`` as the now-playing (avoid-repeat) track."""

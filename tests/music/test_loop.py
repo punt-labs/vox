@@ -647,6 +647,53 @@ class TestNamedReplayResumesFill:
         asyncio.run(_drive())
 
 
+class TestNamedFirstNonMatchingStemDoesNotCrash:
+    """Finding B: track-end over an empty pool loops the current track, no crash.
+
+    A named-first track (``/music on --name X`` for a not-yet-saved X) is named
+    ``X`` -- a stem that does NOT match the (vibe, style) pool prefix. If the
+    fill then exhausts its retries before landing any pool member, the pool for
+    that prefix stays empty while ``X`` is playing. Before the fix, track-end
+    called ``pick_next`` on the empty pool and raised ``ValueError``, crashing
+    the loop task. The loop must replay the current track instead.
+    """
+
+    def test_track_end_replays_current_when_pool_has_no_member(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        sched = _scheduler(store)
+        players = _FakePlayers()
+
+        async def gen_first_then_fail(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            if name:  # the named-first track: stem does not match the pool prefix
+                return store.add(name), name
+            msg = "no pool member"  # every auto-named generation fails
+            raise RuntimeError(msg)
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gen_first_then_fail),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "mysong")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)  # plays the named-first track
+                assert players.track_of(0) == "mysong.mp3"
+
+                players.end(0)  # track ends -> advance over an empty pool
+                await players.wait_for(2)  # replays current instead of crashing
+                assert not task.done()  # loop survived the empty-pool advance
+                await _stop(task)
+                assert players.track_of(1) == "mysong.mp3"  # looped the current
+
+        asyncio.run(_drive())
+
+
 class TestRestartResumesFromDisk:
     """Restart (turn_on with tracks on disk) plays now and resumes fill."""
 
