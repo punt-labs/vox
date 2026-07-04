@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from punt_vox.voxd.music.pool import POOL_SIZE, TrackPool
 
 __all__: list[str] = []
@@ -55,3 +57,8 @@ class TestPickNext:
         only = Path("/music/solo.mp3")
         pool = TrackPool.from_paths((only,))
         assert pool.pick_next(only) == only
+
+    def test_empty_pool_raises(self) -> None:
+        pool = TrackPool.from_paths(())
+        with pytest.raises(ValueError, match="empty pool"):
+            pool.pick_next(None)

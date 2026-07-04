@@ -30,6 +30,12 @@ class TrackPool:
         return len(self._tracks) >= POOL_SIZE
 
     def pick_next(self, last: Path | None) -> Path:
-        """Return a shuffled track, avoiding ``last`` when alternatives exist."""
+        """Return a shuffled track, avoiding ``last`` when alternatives exist.
+
+        Raise ``ValueError`` on an empty pool -- callers gate on ``is_full``.
+        """
+        if not self._tracks:
+            msg = "cannot pick a track from an empty pool"
+            raise ValueError(msg)
         candidates = tuple(t for t in self._tracks if t != last) or self._tracks
         return secrets.choice(candidates)
