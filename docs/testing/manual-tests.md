@@ -53,11 +53,14 @@ Confirm in `/tmp/voxd.log` that the synthesis line shows the expected provider (
 
 Repeat step 1 with the exact same `text`. The cache key is `(text, voice, provider)`; identical inputs must hit the cache.
 
-The reliable indicator is in the log, not the audio: on the second call `/tmp/voxd.log` should show **no new `Synthesize:` line** (voxd returns the cached result instead of re-synthesizing) and a `Playback start` for the same cache file as step 1. The audio should be byte-identical.
+The cache hit is now an explicit, assertable signal — no log-grepping guesswork:
+
+- **MCP result:** the `unmute` result JSON carries `"cached": true` for this call, versus `"cached": false` on the first (miss) call. The model driving the flight asserts this directly.
+- **Log:** `/tmp/voxd.log` shows a distinct `cache HIT: ... file=<cache path>` INFO line on the second call, where the first call logged `cache MISS: ...`. No new synthesis runs on the hit.
+
+The audio should be byte-identical to step 1.
 
 **Ask the operator:** "Did this call sound identical to step 1 — same intonation, same pacing, no fresh synthesis variation?"
-
-> ⚠️ Cache hit identity is currently hard to confirm by ear because both paths produce identical-sounding audio, and there is no distinct audible/visual cache-hit signal. Tracked in `vox-90vw`. Until that's fixed, verify via the log (no new `Synthesize:` line) and accept "sounded the same" as best-effort.
 
 ### Step 3 — long text, sentence splitting
 
@@ -114,6 +117,5 @@ Call `mcp__plugin_vox_mic__music` with `mode="off"`. Confirm the music player is
 
 - `vox-ekmx` — small clipping artifact at end of synthesized audio (missing trailing silence)
 - `vox-zuqr` — music ducking is static, not dynamic during voice playback
-- `vox-90vw` — cache hit on identical text needs a verifiable audible or visual signal
 
 When these are open, factor them in when interpreting operator answers. A "yes, clipping at the end" answer for step 1 is the known issue, not a new regression — unless the clipping is markedly worse or in a different place.

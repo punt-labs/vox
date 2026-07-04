@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cache hit/miss is now observable**: the `unmute` MCP result (and the internal `playing` response) carries a `cached` boolean, and `voxd` logs a distinct `cache HIT` / `cache MISS` line at INFO with the cache file path. A second identical request (same text+voice+provider) is served from cache with `cached: true`, so callers — and the manual test flight (Step 2) — can confirm a cache hit directly instead of grepping the daemon log for a missing `Synthesize:` line. Caching behavior is unchanged; this is observability only. Closes vox-90vw.
+
 ### Changed
 
 - **Ethos is now project-local, not a git submodule**: `.punt-labs/ethos/` was a `punt-labs/team` submodule; it is now a vendored project-local directory trimmed to the 15 identities vox delegates to, plus the engineering team and the durable mission records (`missions/` + `missions.jsonl`; verbatim per-session activity logs are gitignored). Removes `.gitmodules`. Vox owns its identity data rather than depending on the shared team submodule, so the repo is self-standing. (Ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry; repo-primary resolution is a pending ethos-side change coordinated with the ethos agent.)

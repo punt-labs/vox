@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Self
@@ -25,7 +26,7 @@ from punt_vox.types import (
     TTSProvider,
 )
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voxd.playback import _monotonic
+from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = [
     "_LOCAL_PROVIDERS",
@@ -265,18 +266,15 @@ class SynthesisPipeline:
         spec: SynthesisSpec,
         *,
         request_id: str = "",
-    ) -> Path:
-        """Run TTS synthesis and return the output path.
+    ) -> SynthesisOutcome:
+        """Run TTS synthesis and return the output path plus cache status.
 
-        Handles API key injection, provider construction, and caching.
-        Raises on failure.
-
-        When ``api_key`` is set, the cache is bypassed on both the lookup
-        and the store so the per-call billing scope (vox-a3e) never reads
-        bytes that were synthesized under a different key and never leaves
-        bytes behind that a later call on a different key could reuse. The
-        anonymous path (``api_key is None``) uses the MD5-keyed on-disk
-        cache unchanged. See ``src/punt_vox/cache.py`` for the rationale.
+        Handles API key injection, provider construction, and caching, and
+        raises on failure. ``cached=True`` marks an on-disk cache hit (no
+        TTS call); ``cached=False`` marks fresh audio -- the observability
+        signal forwarded to callers. A per-call ``api_key`` bypasses the
+        cache on lookup and store (vox-a3e billing isolation); the
+        anonymous path uses the MD5-keyed cache. See ``punt_vox.cache``.
         """
         voice = spec.voice
         provider_name = spec.provider or ""
@@ -284,28 +282,29 @@ class SynthesisPipeline:
         api_key = spec.api_key
         resolved_voice = voice or ""
 
-        # apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
-        # on the body itself (after splitting leading bracket tags off, which
-        # would otherwise be eaten by normalization).
+        # apply_vibe_for_synthesis takes RAW text: it normalizes the body
+        # after splitting off bracket tags that normalization would eat.
         normalized = self.apply_vibe_for_synthesis(
             text, spec.vibe_tags, provider_name, model
         )
 
-        # Cache lookup: anonymous calls only. Per-call api_key scopes
-        # bypass the cache entirely so a billing-isolated call never
-        # reads bytes synthesized under a different key (or no key).
-        # CodeQL py/weak-sensitive-data-hashing also required that we
-        # never feed the api_key into any digest in cache.py.
+        # Cache lookup on the anonymous path only; per-call api_key scopes
+        # bypass it (billing isolation + CodeQL sensitive-hash avoidance).
         key = CacheKey(normalized, resolved_voice, provider_name)
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
-                return cached
-        else:
-            logger.debug(
-                "Per-call api_key set; bypassing cache for this request (id=%s)",
-                request_id,
-            )
+                logger.info(
+                    "cache HIT: id=%s provider=%s voice=%s file=%s chars_in=%d",
+                    request_id,
+                    provider_name,
+                    resolved_voice,
+                    cached,
+                    len(text),
+                )
+                return SynthesisOutcome(path=cached, cached=True)
+        # Per-call api_key scopes skip the lookup; the MISS log below records
+        # the bypass ("not cached (per-call api_key)") so no separate log here.
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
@@ -334,41 +333,33 @@ class SynthesisPipeline:
                 except OSError:
                     synth_size = -1
                 if synth_size <= 0:
-                    logger.error(
-                        "synthesize FAILED: provider=%s voice=%s file=%s "
-                        "size=%d chars_in=%d -- zero-byte or missing output",
-                        provider_name,
-                        resolved_voice,
-                        output_path,
-                        synth_size,
-                        len(text),
-                    )
-                    # Delete the broken temp file and fail fast. Caching it
-                    # would poison every subsequent identical request.
+                    # Delete the broken temp file and fail fast; caching it
+                    # would poison every identical request. The caller logs
+                    # this exception (traceback + fields) -- no separate log.
                     output_path.unlink(missing_ok=True)
                     msg = (
                         f"synthesis produced missing or empty output file: "
                         f"{output_path} (provider={provider_name}, "
-                        f"voice={resolved_voice}, chars_in={len(text)})"
+                        f"voice={resolved_voice}, size={synth_size}, "
+                        f"chars_in={len(text)})"
                     )
                     raise RuntimeError(msg)
 
+                # Anonymous path only; log the real cache_put path, never a
+                # CACHE_DIR snapshot and never file= when the bytes weren't cached
+                # (per-call api_key scopes and refused writes both yield None).
+                cached_path = cache_put(key, output_path) if api_key is None else None
+                location = f"file={cached_path}" if cached_path else "not cached"
                 logger.info(
-                    "synthesize done: provider=%s voice=%s file=%s size=%d chars_in=%d",
+                    "cache MISS: id=%s provider=%s voice=%s size=%d chars_in=%d %s",
+                    request_id,
                     provider_name,
                     resolved_voice,
-                    output_path,
                     synth_size,
                     len(text),
+                    location,
                 )
-
-                # Only cache verified-good output, and only on the
-                # anonymous path. Per-call api_key scopes skip cache_put
-                # so a billing-isolated call can never leave bytes behind
-                # that a later call on a different key could reuse.
-                if api_key is None:
-                    cache_put(key, output_path)
-                return output_path
+                return SynthesisOutcome(path=output_path, cached=False)
 
     async def try_direct_play(
         self,
@@ -417,7 +408,7 @@ class SynthesisPipeline:
         def _factory() -> TTSProvider:
             return get_provider(provider_name, config_dir=None, model=model)
 
-        start = _monotonic()
+        start = time.monotonic()
         try:
             # _playback_mutex serializes audible output across all paths --
             # the queue consumer holds it too. Without this, two hooks firing
@@ -447,7 +438,7 @@ class SynthesisPipeline:
         if rc is None:
             return None
 
-        elapsed = _monotonic() - start
+        elapsed = time.monotonic() - start
         record_result(
             path=Path(f"<direct:{provider_name}>"),
             rc=rc,

@@ -13,6 +13,7 @@ from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
 def _make_synthesize_handler(
@@ -79,9 +80,9 @@ class TestHandleSynthesizeOnceFlag:
         """Build a handler with fake synthesis and instant playback."""
         synthesis_calls: list[str] = []
 
-        async def fake_synthesize(*args: object, **_kwargs: object) -> Path:
+        async def fake_synthesize(*args: object, **_kwargs: object) -> SynthesisOutcome:
             synthesis_calls.append(str(args[0]))
-            return Path("/tmp/fake.mp3")
+            return SynthesisOutcome(path=Path("/tmp/fake.mp3"), cached=False)
 
         mock_synth = MagicMock(spec=SynthesisPipeline)
         mock_synth.synthesize_to_file = fake_synthesize
@@ -188,3 +189,51 @@ class TestHandleSynthesizeOnceFlag:
         await handler(msg2, ws)
 
         assert len(synthesis_calls) == 2
+
+
+class TestHandleSynthesizeCachedSignal:
+    """SynthesizeHandler rides the cache hit/miss flag on the 'playing' response."""
+
+    @staticmethod
+    def _drive_with_cached(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        cached: bool,
+    ) -> list[dict[str, object]]:
+        """Run the handler once with a stubbed outcome; return sent messages."""
+
+        async def fake_synthesize(*_a: object, **_k: object) -> SynthesisOutcome:
+            return SynthesisOutcome(path=Path("/tmp/fake.mp3"), cached=cached)
+
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = fake_synthesize
+        monkeypatch.setattr(
+            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.speech_handlers.auto_detect_provider", lambda: "elevenlabs"
+        )
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+
+        class _InstantPlaybackQueue:
+            async def put(self, item: PlaybackItem) -> None:
+                item.notify.set()
+
+        handler._playback._queue = _InstantPlaybackQueue()  # type: ignore[assignment]
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        asyncio.run(handler({"type": "synthesize", "id": "x", "text": "hi"}, ws))
+        return [call[0][0] for call in ws.send_json.call_args_list]
+
+    def test_playing_reports_cache_hit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent = self._drive_with_cached(monkeypatch, cached=True)
+        playing = [m for m in sent if m.get("type") == "playing"]
+        assert len(playing) == 1
+        assert playing[0]["cached"] is True
+
+    def test_playing_reports_cache_miss(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent = self._drive_with_cached(monkeypatch, cached=False)
+        playing = [m for m in sent if m.get("type") == "playing"]
+        assert len(playing) == 1
+        assert playing[0]["cached"] is False

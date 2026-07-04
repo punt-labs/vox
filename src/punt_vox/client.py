@@ -35,23 +35,23 @@ logger = logging.getLogger(__name__)
 class SynthesizeResult:
     """Result of a ``synthesize`` call on voxd.
 
-    When ``deduped`` is False, the request was sent to TTS and played
-    through the audio device. When ``deduped`` is True, the caller passed
-    an ``once=<ttl>`` window and the server found an identical text
-    already played within that window — the audio was NOT re-played.
-    The user heard the message from a prior call. The caller should
-    treat this as success, not an error.
+    ``deduped`` is True when the caller passed an ``once=<ttl>`` window and
+    the server found an identical text already played within it -- the
+    audio was NOT re-played; treat it as success, not an error. Non-deduped
+    results leave ``original_played_at`` and ``ttl_seconds_remaining`` None.
+    (See bead vox-0e9 for the biff-wall use case.)
 
-    Non-deduped results have ``original_played_at`` and
-    ``ttl_seconds_remaining`` both set to ``None``.
-
-    See bead vox-0e9 for the biff-wall use case that motivated this.
+    ``cached`` reports whether voxd served the audio from its
+    content-addressed cache (True) or synthesized it fresh (False) -- the
+    observability signal a caller asserts to confirm a cache hit. A dedup
+    short-circuit leaves it False since no synthesis path ran.
     """
 
     request_id: str
     deduped: bool = False
     original_played_at: float | None = None
     ttl_seconds_remaining: float | None = None
+    cached: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -346,12 +346,8 @@ class VoxClient:
     ) -> SynthesizeResult:
         """Send synthesize request. Audio plays on server.
 
-        Returns a ``SynthesizeResult`` carrying the request id and any
-        dedup status. On a dedup hit (caller passed ``once=<ttl>`` and
-        the server found an identical text within the window), the
-        returned ``deduped`` field is True and the audio is NOT played
-        a second time. The caller should treat a deduped result as
-        success, not failure.
+        Returns a ``SynthesizeResult`` carrying the request id, ``cached``
+        (cache-hit signal), and any dedup status. See :class:`SynthesizeResult`.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
@@ -405,7 +401,10 @@ class VoxClient:
                     else None
                 ),
             )
-        return SynthesizeResult(request_id=request_id)
+        return SynthesizeResult(
+            request_id=request_id,
+            cached=bool(terminal.get("cached", False)),
+        )
 
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""

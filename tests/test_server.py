@@ -476,6 +476,35 @@ class TestUnmute:
         assert len(result) == 2  # pyright: ignore[reportUnknownArgumentType]
         assert mock_client.synthesize.call_count == 2
 
+    def test_cached_flag_surfaces_in_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The client's cache-hit signal reaches the unmute MCP result."""
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = SynthesizeResult(
+            request_id="rc", cached=True
+        )
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(unmute(text="Hello world"))
+
+        assert isinstance(result, list)
+        assert result[0]["cached"] is True
+
+    def test_cache_miss_flag_surfaces_in_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cache miss reports cached=False in the unmute MCP result."""
+        mock_client = MagicMock()
+        mock_client.synthesize.return_value = SynthesizeResult(
+            request_id="rm", cached=False
+        )
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(unmute(text="Hello world"))
+
+        assert result[0]["cached"] is False
+
     def test_no_input_returns_error(self) -> None:
         result = json.loads(unmute())
         assert "error" in result

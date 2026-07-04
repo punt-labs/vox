@@ -405,8 +405,7 @@ def unmute(
     # Validate voice settings via SynthesisSpec (single validation path).
     SynthesisSpec(stability=stability, similarity=similarity, style=style).validate()
 
-    # ephemeral is accepted for callers (architecture spec) but voxd
-    # handles ephemeral cleanup internally today.  Silence linters.
+    # ephemeral is accepted for callers but voxd cleans up internally today.
     _ = ephemeral
 
     # Update in-memory state for persistent fields.
@@ -442,6 +441,7 @@ def unmute(
             "text": seg_text,
             "voice": seg_spec.voice,
             "provider": effective_provider,
+            "cached": result.cached,
         }
         if result.deduped:
             entry["deduped"] = True

@@ -16,6 +16,7 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
 def _default_spec(**overrides: object) -> SynthesisSpec:
@@ -741,6 +742,124 @@ class TestSynthesizeFailFast:
         mock_cache_put.assert_not_called()
         assert "path" in captured_temp
         assert not captured_temp["path"].exists()
+
+
+class TestSynthesizeCacheObservability:
+    """synthesize_to_file reports cache hit/miss via SynthesisOutcome.cached."""
+
+    @staticmethod
+    def _run(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        requests: list[tuple[str, SynthesisSpec]],
+    ) -> tuple[list[SynthesisOutcome], list[str]]:
+        """Drive synthesize_to_file over a real temp cache with a counting synth.
+
+        Returns the ordered outcomes and the list of texts actually
+        synthesized (one entry per real TTS call, so a cache hit adds none).
+        """
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+        synth_calls: list[str] = []
+        mp3 = _get_valid_mp3_bytes()
+
+        def fake_synth(request: object, output_path: Path) -> None:
+            synth_calls.append(getattr(request, "text", ""))
+            output_path.write_bytes(mp3)
+
+        mock_client = MagicMock()
+        mock_client.synthesize = fake_synth
+        pipeline = _make_pipeline()
+
+        async def _drive() -> list[SynthesisOutcome]:
+            return [await pipeline.synthesize_to_file(t, s) for t, s in requests]
+
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=MagicMock()),
+            patch("punt_vox.voxd.synthesis.TTSClient", return_value=mock_client),
+        ):
+            outcomes = asyncio.run(_drive())
+        return outcomes, synth_calls
+
+    def test_miss_then_hit_flips_cached_without_resynth(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = _default_spec(provider="openai")
+        outcomes, synth_calls = self._run(
+            tmp_path, monkeypatch, [("hello", spec), ("hello", spec)]
+        )
+
+        assert outcomes[0].cached is False
+        assert outcomes[1].cached is True
+        # The hit is served from the cache dir, not re-synthesized: the miss
+        # returns its temp file, the hit returns the copied-in cache entry.
+        assert outcomes[1].path.parent == tmp_path
+        assert synth_calls == ["hello"]
+
+    def test_different_voice_is_a_miss(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes, synth_calls = self._run(
+            tmp_path,
+            monkeypatch,
+            [
+                ("hello", _default_spec(provider="openai", voice="roger")),
+                ("hello", _default_spec(provider="openai", voice="alice")),
+            ],
+        )
+
+        # A different voice is a different cache key -> both miss and synth.
+        assert outcomes[0].cached is False
+        assert outcomes[1].cached is False
+        assert len(synth_calls) == 2
+
+    def test_per_call_api_key_bypasses_cache_is_a_miss(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = _default_spec(provider="openai", api_key="sk-scope")
+        outcomes, synth_calls = self._run(
+            tmp_path, monkeypatch, [("hello", spec), ("hello", spec)]
+        )
+
+        # Per-call api_key bypasses the cache on both calls: always a miss.
+        assert outcomes[0].cached is False
+        assert outcomes[1].cached is False
+        assert len(synth_calls) == 2
+
+    def test_miss_and_cached_logs_the_real_cache_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        spec = _default_spec(provider="openai")
+        with caplog.at_level(logging.INFO, logger="punt_vox.voxd"):
+            outcomes, _ = self._run(tmp_path, monkeypatch, [("hello", spec)])
+
+        assert outcomes[0].cached is False
+        miss = [m for r in caplog.records if "cache MISS" in (m := r.getMessage())]
+        assert len(miss) == 1
+        # The log points at the file cache_put actually wrote (under the
+        # monkeypatched cache dir), not a CACHE_DIR snapshot.
+        assert f"file={tmp_path}" in miss[0]
+        assert "not cached" not in miss[0]
+
+    def test_miss_not_cached_logs_no_bogus_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        spec = _default_spec(provider="openai", api_key="sk-scope")
+        with caplog.at_level(logging.INFO, logger="punt_vox.voxd"):
+            outcomes, _ = self._run(tmp_path, monkeypatch, [("hello", spec)])
+
+        assert outcomes[0].cached is False
+        # A non-anonymous request is NOT cached: the log must not claim a
+        # file that does not exist.
+        miss = [m for r in caplog.records if "cache MISS" in (m := r.getMessage())]
+        assert len(miss) == 1
+        assert "not cached" in miss[0]
+        assert "file=" not in miss[0]
 
 
 class TestModelSupportsExpressiveTags:
