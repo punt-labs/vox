@@ -1003,6 +1003,9 @@ class TestChimeSpawnFailure:
         messages = [rec.getMessage() for rec in caplog.records]
         assert any("Could not spawn chime subprocess" in m for m in messages)
         assert any("No such file or directory" in m for m in messages)
+        # The errno NUMBER must survive too -- %s on the full OSError yields
+        # "[Errno 2] ...", locking the contract against a strerror-only log.
+        assert any("Errno 2" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------

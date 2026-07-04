@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import subprocess
 from pathlib import Path
@@ -154,6 +155,17 @@ def test_find_pid_on_port_macos_multiple(
     assert mgr.find_pid_on_port(8421) == [12345, 67890]
 
 
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_find_pid_on_port_ignores_non_decimal_digits(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    """Superscript digits pass str.isdigit but break int(); isdecimal drops them."""
+    # "²" (superscript two): isdigit() is True, isdecimal() is False.
+    mock_run.return_value = MagicMock(returncode=0, stdout="123\n²\n456\n")
+    assert ProcessManager().find_pid_on_port(8421) == [123, 456]
+
+
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
 @patch("punt_vox.service.process.subprocess.run")
 def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
@@ -183,6 +195,58 @@ def test_find_pid_on_port_empty_when_not_bound(
 def test_find_pid_on_port_timeout(_mock_run: MagicMock, _mock_sys: MagicMock) -> None:
     mgr = ProcessManager()
     assert mgr.find_pid_on_port(8421) == []
+
+
+def test_find_pid_on_port_timeout_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A probe timeout must warn -- a stalled tool can't read as an empty port."""
+    with (
+        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
+        patch(
+            "punt_vox.service.process.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="lsof", timeout=5),
+        ),
+        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
+    ):
+        assert ProcessManager().find_pid_on_port(8421) == []
+
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("lsof" in m for m in messages)
+
+
+def test_find_pid_on_port_tool_failure_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing probe binary logs a WARNING naming the tool and the error."""
+    boom = FileNotFoundError(2, "No such file or directory")
+    with (
+        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
+        patch("punt_vox.service.process.subprocess.run", side_effect=boom),
+        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
+    ):
+        assert ProcessManager().find_pid_on_port(8421) == []
+
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("lsof" in m for m in messages)
+    assert any("No such file or directory" in m for m in messages)
+
+
+def test_find_pid_on_port_empty_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A genuinely empty port (tool ran, exit 1) must stay quiet -- no warning."""
+    with (
+        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
+        patch(
+            "punt_vox.service.process.subprocess.run",
+            return_value=MagicMock(returncode=1, stdout=""),
+        ),
+        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
+    ):
+        assert ProcessManager().find_pid_on_port(8421) == []
+
+    assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
 
 
 # ---------------------------------------------------------------------------

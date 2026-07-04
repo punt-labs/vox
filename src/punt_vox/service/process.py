@@ -67,20 +67,18 @@ class ProcessManager:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS
             )
-            if result.returncode == 0 and result.stdout.strip():
-                pids: list[int] = []
-                # lsof: one PID per line.  fuser: "8421/tcp:  6789 1234".
-                # Split the entire output on whitespace/colons and collect
-                # every purely numeric token.
-                pids.extend(
-                    int(token)
-                    for token in re.split(r"[\s:]+", result.stdout.strip())
-                    if token.isdigit()
-                )
-                return pids
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-        return []
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            # Probe TOOL failed -- a broken probe must not read as an empty port.
+            logger.warning(
+                "Could not probe port %d for PIDs via %s: %s", port, cmd[0], exc
+            )
+            return []
+        out = result.stdout.strip()
+        if result.returncode != 0 or not out:
+            return []  # tool ran cleanly, found nothing -- port genuinely empty
+        # isdecimal (not isdigit) is the strict subset int() always accepts:
+        # it rejects superscripts like "²" that isdigit would pass.
+        return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
 
     def is_vox_daemon_process(self, pid: int) -> bool:
         """Check whether *pid* is a voxd daemon process.
