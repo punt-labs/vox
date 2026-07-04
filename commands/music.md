@@ -6,16 +6,15 @@ allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__music_play",
 
 # /music command
 
-Control vibe-driven background music generation. When on, vox generates
-instrumental tracks derived from the current session vibe and loops them
-through voxd at reduced volume. When the vibe changes, a new track
-generates to match.
-
-Once a `(vibe, style)` has 12 saved tracks, `/music next` and vibe changes
-**rotate that pool** (shuffled, never repeating the just-played track) at
-zero credits instead of generating. Below 12, each generation uses a distinct
-musical variation so the pool spans a range of textures rather than
-near-identical tracks.
+Control vibe-driven background music generation. `/music on` plays the first
+track as soon as it is ready and then, with no further commands, generates the
+rest of the `(vibe, style)` pool (up to 12 distinct tracks) in the background
+and **auto-advances** to a different track as each one ends. Once the pool has
+12, generation stops and playback **rotates** the pool (shuffled, never the
+just-played track) at zero credits. A vibe/style change finishes the current
+song, then switches to that vibe's pool (filling it if it has fewer than 12).
+Each of the 12 generations uses a distinct musical variation so the pool spans
+a range of textures rather than near-identical tracks.
 
 ## Usage
 
@@ -23,7 +22,7 @@ near-identical tracks.
 - `/music on style techno` -- start music with a style modifier
 - `/music on --name focus-beats` -- generate and save as "focus-beats", or replay if it exists
 - `/music off` -- stop music
-- `/music next` -- skip to the next track (gapless): rotate the saved pool if it holds 12+ tracks (zero credits), otherwise generate a fresh one
+- `/music next` -- optional manual skip (playback auto-advances on its own): jump to the next track now — rotate the pool if it holds 12+ (zero credits), else generate a fresh one
 - `/music play <name>` -- replay a saved track by name
 - `/music list` -- show saved tracks with metadata
 - `/music` -- show current music state

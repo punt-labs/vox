@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.music.store import TrackStore
 
 __all__ = ["MusicTrack", "TrackGenerator"]
 
@@ -24,21 +28,6 @@ class MusicTrack:
     path: Path
     size_bytes: int
     modified: float  # Unix timestamp (st_mtime)
-
-    @classmethod
-    def from_stat(cls, mp3: Path) -> MusicTrack | None:
-        """Return a MusicTrack from the file's stat, or None if the file disappeared."""
-        try:
-            stat = mp3.stat()
-        except FileNotFoundError:
-            logger.debug("Track disappeared during listing, skipping: %s", mp3)
-            return None
-        return cls(
-            name=mp3.stem,
-            path=mp3,
-            size_bytes=stat.st_size,
-            modified=stat.st_mtime,
-        )
 
     @classmethod
     def from_dict(cls, d: dict[str, object]) -> MusicTrack:
@@ -73,32 +62,41 @@ _MUSIC_DURATION_MS = 120_000
 
 
 class TrackGenerator:
-    """Generate, name, and list music tracks in an output directory."""
+    """Generate, name, and list music tracks through an injected store.
 
-    __slots__ = ("_output_dir",)
+    Disk access is delegated to a :class:`~punt_vox.voxd.music.store.TrackStore`
+    (Amendment A): this class holds no ``pathlib`` logic of its own.
+    """
 
-    _output_dir: Path
+    __slots__ = ("_store",)
 
-    def __new__(cls, output_dir: Path) -> Self:
+    _store: TrackStore
+
+    def __new__(cls, store: TrackStore) -> Self:
         self = super().__new__(cls)
-        self._output_dir = output_dir
+        self._store = store
         return self
 
-    @property
-    def output_dir(self) -> Path:
-        """Return the output directory for generated tracks."""
-        return self._output_dir
+    @staticmethod
+    def can_generate() -> bool:
+        """Return whether generation is possible (an ElevenLabs key is set).
+
+        Generation is hard-wired to ElevenLabs (see :meth:`generate`), so a
+        usable ``ELEVENLABS_API_KEY`` is the precondition for producing tracks.
+        """
+        return bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
 
     def find_track(self, name: str) -> Path | None:
         """Return the path to an existing track by name, or None."""
         if not (safe_name := self.slugify(name, max_len=60)):
             return None
-        path = self._output_dir / f"{safe_name}.mp3"
-        return path if path.exists() else None
+        if not self._store.exists(safe_name):
+            return None
+        return self._store.path_for(safe_name)
 
-    def tracks_for(self, prefix: str) -> list[Path]:
+    def tracks_for(self, prefix: str) -> tuple[Path, ...]:
         """Return saved track paths sharing a pool prefix."""
-        return sorted(self._output_dir.glob(f"{prefix}*.mp3"))
+        return self._store.tracks_for(prefix)
 
     async def generate(
         self,
@@ -112,16 +110,17 @@ class TrackGenerator:
         from punt_vox.music import vibe_to_prompt
 
         hour = time.localtime().tm_hour
-        variation = len(self.tracks_for(self.pool_prefix((vibe_text, style))))
+        variation = len(self._store.tracks_for(self.pool_prefix((vibe_text, style))))
         prompt = vibe_to_prompt(
             vibe_text or None, vibe_tags or None, style or None, hour, [], variation
         )
 
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._store.prepare()
         safe_name = self.slugify(
-            track_name or self.auto_track_name(vibe_text, style), 60
+            track_name or self.auto_track_name(self.pool_prefix((vibe_text, style))),
+            60,
         )
-        output_path = self._output_dir / f"{safe_name}.mp3"
+        output_path = self._store.path_for(safe_name)
 
         from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 
@@ -130,11 +129,11 @@ class TrackGenerator:
         )
         return output_path, safe_name
 
-    def auto_track_name(self, vibe: str, style: str) -> str:
-        """Return a collision-free auto-name at the lowest free counter."""
-        stem = f"{self.pool_prefix((vibe, style))}{time.strftime('%Y%m%d_%H%M')}"
+    def auto_track_name(self, pool_prefix: str) -> str:
+        """Return a collision-free auto-name within ``pool_prefix``."""
+        stem = f"{pool_prefix}{time.strftime('%Y%m%d_%H%M')}"
         counters = (f"{stem}_{n}" for n in itertools.count())
-        return next(c for c in counters if not (self._output_dir / f"{c}.mp3").exists())
+        return next(c for c in counters if not self._store.exists(c))
 
     @staticmethod
     def pool_prefix(key: tuple[str, str]) -> str:
@@ -149,9 +148,16 @@ class TrackGenerator:
         return re.sub(r"\d{8}_\d{4}_\d+$", "", track.stem) or track.stem
 
     def list_tracks(self) -> list[MusicTrack]:
-        """Return metadata for all saved .mp3 tracks in the output directory."""
-        mp3s = sorted(self._output_dir.glob("*.mp3"))
-        return [t for mp3 in mp3s if (t := MusicTrack.from_stat(mp3)) is not None]
+        """Return metadata for all saved .mp3 tracks in the store."""
+        return [
+            MusicTrack(
+                name=meta.path.stem,
+                path=meta.path,
+                size_bytes=meta.size_bytes,
+                modified=meta.modified,
+            )
+            for meta in self._store.listing()
+        ]
 
     @staticmethod
     def slugify(text: str, max_len: int = 40) -> str:

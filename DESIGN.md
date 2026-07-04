@@ -1582,3 +1582,237 @@ sudo rm -f /Library/LaunchDaemons/com.punt-labs.voxd.plist
 ```
 
 Closes vox-zt3r. Shipped in v4.9.0.
+
+## DES-039: Self-Driving Playlist — Eager Background Fill, Auto-Advance, Prefetch
+
+**Date:** 2026-07-04
+**Status:** SETTLED
+**Ticket:** vox-1rxb (rebuild of bas7 / #291)
+
+### Problem
+
+bas7 (#291) shipped the wrong music UX. On track-end, `MusicLoop` respawns the
+*same* file (`loop.py`: "Subprocess ended naturally — Return the same
+current_track so the caller respawns it"), and the pool only grows when the user
+runs `/music next`. Result: `/music on` plays one track that loops forever.
+Confirmed by smoke test — pool stuck at 1, same track repeating. The subsystem
+was built around the manual-skip path; the unattended listening experience was
+never validated.
+
+The root cause is a conflation of two concerns in one `gen_task`: the loop used a
+single generation task to *both* prepare the next handoff track *and* (never)
+grow the pool. Generation only fired on a `changed` signal, so nothing ran
+"forward" of playback. There was no continuous supply and no auto-advance.
+
+### Target behavior (operator-locked)
+
+Put music on and forget it:
+
+1. `/music on` (or a vibe change) generates track #1 and plays it the instant it
+   is ready.
+2. Immediately, the remaining tracks for that `(vibe, style)` pool generate in
+   the **background, one at a time (sequential)**, until the pool reaches
+   `POOL_SIZE` (12).
+3. Playback **auto-advances**: when a track ends the next one plays with no
+   command. Because background fill runs far ahead of ~3-min playback, the next
+   track is already on disk — prefetch is a *consequence*, not separate
+   machinery. Only while just track #1 exists does it loop #1 until #2 lands,
+   then advance.
+4. Once the pool has 12, generation stops and playback **auto-rotates** (shuffle,
+   never the just-played track) among the 12 forever, at zero credits.
+5. A vibe/style change **finishes the current song**, then switches to the new
+   pool: resume background fill if that pool has < 12, else rotate.
+
+### State / flow model
+
+Four states own the daemon-wide music subsystem. The state is a derived view of
+`(mode, pool-on-disk-count, fill-task-alive)`, not a stored enum to keep in sync.
+
+```text
+                turn_on / vibe-change (empty pool)
+   ┌────────┐ ─────────────────────────────────────▶ ┌──────────────────┐
+   │  off   │                                          │ generating-first │
+   │ (idle) │ ◀──────────── turn_off ───────────────── │ (await track #1) │
+   └────────┘                                          └──────────────────┘
+       ▲  ▲   turn_on / restart (1..11 on disk)                 │ #1 ready
+       │  │ ──────────────────────────────┐                     ▼
+       │  │                                ▼             ┌──────────────────┐
+       │  └───── turn_off ──────────  ┌─────────────────▶│  playing+filling │
+       │                              │  track-end:      │  (pool < 12)     │
+       │                              │  advance(pick_next)└─────────────────┘
+       │   turn_on / restart (≥12)    │                     │ fill reaches 12
+       │ ─────────────────────────────┤                     ▼
+       │                              │             ┌──────────────────┐
+       └───────── turn_off ────────── └─────────────│  full / rotating │
+                                        track-end:  │  (no fill task)  │
+                                        rotate       └──────────────────┘
+```
+
+- **off / idle** — `mode == "off"`, no player subprocess, no fill task.
+- **generating-first** — `mode == "on"`, pool empty, fill task producing #1, no
+  playback yet. The handler returns `"generating"` immediately; generation is off
+  the handler's critical path.
+- **playing+filling** — a track is playing and the fill task is alive
+  (`pool < 12`). Track-end **advances** by selecting from the growing on-disk
+  pool.
+- **full / rotating** — a track is playing, the fill task has exited
+  (`pool ≥ 12`). Track-end **rotates** (shuffle-avoid-last) with zero generation.
+
+**Auto-advance on track-end.** The player subprocess ending is the trigger. The
+loop asks the scheduler for the next track — a pure selection over the current
+on-disk pool: `TrackPool.from_paths(gen.tracks_for(prefix)).pick_next(last)`. On a
+one-element pool `pick_next` returns that same element (loops #1); once fill has
+landed #2 it returns a different element (auto-advance); on a full pool it rotates
+avoiding the just-played track. The "loop-#1-until-#2-lands" edge is not special
+cased — it falls out of `pick_next`.
+
+**Prefetch readiness** is therefore implicit: advance always reads the *current*
+on-disk pool. If fill kept ahead (it always does at 3 min/track vs seconds/gen),
+a fresh track is present. Readiness reduces to "does `pick_next(last) != last`" —
+a consequence of the fill running forward, with no separate prefetch state or
+task.
+
+**The cancellable sequential background-fill task.** A new `PoolFiller` owns
+exactly one `asyncio.Task`. Its body is `while not pool.is_full: await
+generate_one()` — sequential by construction. It is retargeted or cancelled
+through two methods:
+
+- `ensure_running(vibe, style)` — if a task is alive for a *different* pool,
+  cancel it and (if that pool is `< 12`) spawn a fresh one; if alive for the same
+  pool, leave it; if the pool is already full, no-op.
+- `cancel()` — cancel the task, awaiting its `CancelledError`, leaving no
+  orphaned generation.
+
+The **exactly-one-active-fill** invariant is structural: the class holds at most
+one live task and always cancels before spawning.
+
+**Vibe/style change** (finish current song, then switch): `update_vibe`
+*immediately* retargets the fill — `PoolFiller.ensure_running(new pool)` cancels
+the old pool's fill and starts the new one (bounds credit spend and gives the new
+pool a head start) — and marks a pending playback switch. It does **not** kill the
+current player. When the current song ends naturally, the loop switches playback
+to the new pool (select from disk, or await #1 if the new pool is empty). This
+replaces the mid-generation gapless handoff of DES-033 (see Supersedes).
+
+**Restart** (`turn_on` reads the pool from disk): the on-disk count decides the
+entry state directly. `≥ 12` → full/rotating, no generation. `1..11` → play a
+pool member now, `ensure_running` resumes fill from the current count. `0` →
+generating-first.
+
+**`/music off`** — `turn_off` calls `PoolFiller.cancel()` *and* kills the player
+in the same synchronous method: no orphaned generation, playback stopped, state
+back to idle.
+
+**`/music next`** (manual skip, unchanged role) — advance *now*: kill the player,
+select the next track, play it. **`/music play <name>`** (named replay,
+unchanged) — play the named track, retarget the pool/fill to that track's pool.
+
+### Invariants preserved (each cited from the contract)
+
+1. **Daemon/client boundary — no business logic in the client layer.** All new
+   logic (`PoolFiller`, `select_next_track`, advance-on-end) lives under
+   `voxd/music/`. `client.py` is untouched; handlers stay thin parse-and-delegate
+   shells with unchanged signatures.
+2. **`/music next` stays an optional manual skip; `/music play <name>` stays
+   named replay; `/music off` cancels the fill task AND stops playback; gapless
+   handoff preserved.** Skip/play/off map to the transitions above. `off` cancels
+   fill synchronously. Handoff is now *near-instant* because the next track is
+   already on disk — the loop kills the old player and spawns the next
+   prefetched file with no generation wait (true zero-gap crossfade remains out
+   of scope, as in bas7).
+3. **Cache key, `--name` replay path, and deterministic collision-free naming from
+   bas7 are unchanged.** Fill generates through the existing
+   `TrackGenerator.generate(vibe, style, "")` → `auto_track_name` path; the named
+   replay path (`find_track` → replay) is untouched. DES-035 stands.
+4. **Reuse `TrackPool` (`is_full`, `pick_next`), `TrackGenerator`, the
+   generate-vs-rotate decision.** `pick_next` *is* advance and rotate; `is_full`
+   *is* the fill stop condition; the generator is reused verbatim. The
+   generate-vs-rotate decision is now *split by owner*: rotate/advance = the loop
+   via `select_next_track` (never generates); generate = `PoolFiller` (never
+   plays).
+5. **No `print()` in daemon code; logs to stderr only.** `PoolFiller` and the
+   reduced loop log via `logging.getLogger(__name__)`.
+
+### Rejected alternatives
+
+1. **Prefetch-one-ahead vs eager-fill-all.** Prefetch-one-ahead generates only
+   the single next track just-in-time before the current ends. Rejected: it never
+   builds a reusable pool, so *every* advance costs credits forever; it couples
+   playback duration to generation latency, so a slow generation produces a gap;
+   and target behavior #4 explicitly wants zero-credit rotation over a filled
+   pool. **Eager-fill-all** builds the 12-track pool once, then rotates free
+   forever, and the "prefetched" next track is a side effect of the pool being
+   ahead.
+2. **Concurrent vs sequential fill.** Concurrent fires all 11 remaining
+   generations at once. Rejected (operator-locked): it hits the ElevenLabs
+   rate-limits bas7 already tripped; playback at ~3 min/track means one-at-a-time
+   stays far ahead regardless; sequential bounds in-flight credit spend and is
+   trivially cancellable at a generation boundary. **Sequential** wins on every
+   axis here.
+3. **Auto-advance in the loop vs a scheduler callback.** A scheduler callback
+   would register an on-track-end handler that the subprocess watcher invokes.
+   Rejected: the callback needs loop context (kill proc, spawn next), so it pulls
+   playback wiring back into the scheduler; and bas7's test failure was precisely
+   tests hitting the scheduler directly while the real loop looped one file —
+   putting advance behind a scheduler method re-opens that trap. **Advance lives
+   in the loop's proc-end branch** and calls the scheduler only for the *pure*
+   `select_next_track` decision. Tests drive the loop and observe a real second
+   subprocess spawned for a *different* file.
+4. **`PoolFiller` owned by the loop vs by the scheduler.** Loop-owned leaves a
+   window where the fill task generates one more track after `/music off` before
+   the loop notices. **Scheduler-owned** lets `turn_off`/`update_vibe`
+   cancel/retarget the fill synchronously — satisfying "off cancels the fill task
+   (no orphaned generation)" and "a vibe change cancels the old fill and starts
+   the new pool's fill" as locked. The scheduler *delegates* to `PoolFiller`
+   (one-line calls); it does not implement the fill loop, so cohesion holds. The
+   loop talks only to the scheduler, which is the facade over
+   `(generator, pool, filler)`.
+
+### Supersedes
+
+**DES-033 (Gapless Music Handoff on Vibe Change)** — the mid-generation
+concurrent-handoff model is replaced. A vibe change no longer loops the old track
+while generating the new one; it *finishes the current song* (operator-locked),
+having already retargeted the background fill so the new pool is ready. The
+`music_changed`-race-plus-gen-task machinery that DES-033 introduced is removed:
+the next track is prefetched by the fill task, so there is nothing to wait for at
+the handoff. Gapless-ness now comes from the pool being ahead, not from looping
+during generation.
+
+### Amendment A (operator, 2026-07-04): disk access behind an injected `TrackStore` protocol
+
+**Status:** SETTLED (operator directive during design review).
+
+The music subsystem must not hard-code filesystem access. All track storage and
+retrieval — pool enumeration (`tracks_for`), full listing, find-by-name,
+the existence checks the deterministic naming counter relies on, and the write
+target for a newly generated track — go through a **`TrackStore` protocol**
+(a structural interface, PY-TS-6 / PY-IC-9), **injected** into the components
+that need it. Domain code depends on the protocol, never on `Path.glob` /
+`pathlib` directly.
+
+- **`FilesystemTrackStore`** is the production implementation; the glob/dir logic
+  currently inside `TrackGenerator` moves behind it. The daemon wires it.
+- **Injection**: `TrackGenerator` (and, through the scheduler, `PoolFiller`)
+  receive the store via their constructor. `daemon.py` constructs the
+  `FilesystemTrackStore` and injects it.
+- **Tests use an in-memory fake store** — pool-enumeration, selection, fill, and
+  restart-from-count tests run with no `tmp_path`, no filesystem, no ffmpeg
+  round-trip. (The one place a real MP3 is produced — the provider write path —
+  still uses valid silent-MP3 bytes per `TESTING.md`; but the *domain* tests
+  that made bas7's suite slow and filesystem-coupled now inject a fake.)
+- **Write-set delta**: add the `TrackStore` protocol (in `types.py` per PY-IC-9)
+  and a `FilesystemTrackStore` implementation module; inject it through
+  `generator.py` → `scheduler.py`/`filler.py` → `daemon.py`. The exact protocol
+  surface (method signatures) is settled in implementation; the *contract* — an
+  injected, mockable, multi-implementation interface for all disk access — is
+  locked here.
+
+**Rationale.** Testability (mock the store: deterministic and fast, and the fill
+/ restart / selection paths become unit-testable with zero filesystem), swappable
+implementations (the operator's explicit requirement — e.g. an in-memory or
+remote store later), and correct dependency direction (PY-IC-8: the domain
+depends inward on a protocol, not outward on the filesystem). This also directly
+serves the two-goals-together bar: the seam that makes disk access mockable is
+the same seam that raises cohesion and testability on `generator.py` and the new
+`filler.py`.

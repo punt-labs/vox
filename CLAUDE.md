@@ -68,6 +68,8 @@ See `docs/architecture.tex` for the full system description.
 
 **Do not negotiate with the ratchet.** Do not edit `.oo-baseline.json` by hand except via `--rebaseline` for structural refactors. Do not suppress `check-oo`. If the ratchet fails, improve the code until it passes.
 
+**The ratchet is tech-debt paydown — make medium-scale improvements, do not squeeze under the limit.** The ratchet exists to retire OO and complexity debt across the *whole* codebase a little at a time, the way you amortize a loan: every commit pays down some principal, no matter which file it touches. This is deliberately counterintuitive — it means taking on scope *beyond* the immediate task, and that added scope is the point, not a distraction from it. When you touch a file, make a *substantive* improvement to it — extract a class, break up a god method, replace a primitive-obsessed signature with a type, collapse a conditional forest — not the smallest metric nudge that scrapes past the "at least one metric improved" gate. Gaming the minimum is the failure mode: it burns more time (and review churn) than a real improvement, and it retires no debt. The waste to eliminate is relitigating tiny ratchet deltas and hunting for the cheapest legal change to pass; the goal is a genuine, medium-scale improvement at *every* opportunity. The test is simple: if the file you touched is meaningfully cleaner than you found it, the ratchet did its job — if you spent that time trying to change as little as possible, you used it wrong. This philosophy is org-wide; it belongs in the workspace ratchet policy (`../.claude/rules/python-oo-adoption.md`) as well.
+
 **Org standards override review tools.** Copilot, Bugbot, and Cursor are advisory. When a review suggestion conflicts with rules in `../.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
 
 **Verify outputs, not just metrics.** After writing a file, open it and read the content. `make check` passing does not mean the feature works — it means the code compiles and tests pass. Those are necessary but not sufficient.
@@ -123,6 +125,8 @@ After all missions for the feature complete and each has passed its inner loop:
 
 Split by **rollback granularity**, not size. Ask: if this broke production, what reverts together? That is one PR. "The diff is large" and "separate concern" are prohibited split reasons — independent rollback capability and sequential dependency are the only valid ones. PRs should cover multiple steps — do not open a PR per step. Sequential steps in the same area belong in one PR.
 
+**PRs do not need to be "pure," and purity is never a reason to hold back an improvement.** These PRs are agent-reviewed and squash-merged — the whole branch collapses to one commit on `main`, so the "normal fencing" (one-concern-per-PR, keep-the-diff-minimal, split-out-the-unrelated-bit) does not apply. Do not spend time policing scope: a docs tweak, an OO/complexity paydown, or an adjacent bug fix riding along with a feature PR is welcome, not a violation. **The operator explicitly rejects rules that make it harder to improve code.** If you are in a file and can make it better, do it — never revert or defer a genuine improvement to keep a PR "clean," and never open a separate PR solely for purity. The one real constraint is mechanical, not stylistic: when multiple agents share one worktree, don't let them edit the same uncommitted lines simultaneously — sequence them so no one's work is clobbered. That is about not losing work, not about scope.
+
 **Known type checker workarounds:**
 
 - **mypy vs pyright on boto3** (`providers/polly.py`): boto3-stubs types `boto3.client("polly")` correctly for mypy but pyright sees partially unknown overloads. Solution: `cast("PollyClientType", boto3.client("polly"))` with `# type: ignore[redundant-cast]` + `# pyright: ignore[reportUnknownMemberType]`.
@@ -150,6 +154,32 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 - **Use `side_effect=lambda` instead of `return_value`** for fresh mocks per call. `return_value` shares the same object across calls, causing aliasing bugs in tests that mutate results.
 - **Every provider must test both success and auth failure paths.** A provider that can't authenticate should raise a clear error, not silently fall back.
 - **Hook tests must verify signal classification.** The `classify_signal()` function in `hooks.py` determines what event type a Bash command represents. Misclassification means the wrong audio plays — test the classification logic explicitly.
+
+## Formal Modeling (z-spec)
+
+**When a change is a state machine, model it formally before implementing it.** A Z specification (`/z-spec:code2model`, fuzz type-checked) is REQUIRED — during the design phase, before the implementation mission dispatches — for the class of work below. This is not optional documentation: the design and its tests must satisfy the model, and every finding the formalization surfaces is resolved in the design review.
+
+**Trigger — a change qualifies when it is a stateful subsystem AND any of:**
+
+- It has 3+ modes/states with transitions between them (e.g. the music playlist `off → generating-first → playing-filling → rotating`; the vibe/signal state; the daemon playback lifecycle).
+- Invariants must hold across transitions (e.g. `pool ≤ 12`, "at most one fill active", "playing ∈ pool", "generation only below full").
+- A wrong transition corrupts state silently, crashes, or yields a UX expensive to discover late. bas7 (#291) shipped a broken loop precisely because a transition — advance-on-track-end — was never modeled and never listened to.
+
+**Does NOT qualify** (skip the ceremony): pure I/O helpers, provider SDK wrappers, text formatting/normalization, single-function bug fixes with no state.
+
+**What the model must contain:**
+
+- A state schema with the invariants in its predicate (not scattered in prose).
+- One operation schema per transition, with preconditions, postconditions, and framing.
+- `fuzz -t` exits 0. For higher-stakes invariants, model-check with `/z-spec:test` (probcli) to explore the reachable state space, not just type-check.
+
+**How it plugs into the workflow:**
+
+- The design mission (or the leader) produces `docs/<feature>.tex` and commits it with the design artifacts.
+- The leader's design review cites the model's findings and confirms the write-set and test plan satisfy it. Each finding is either designed-for or escalated to the operator — before implementation dispatches.
+- The implementation's tests assert the modeled properties by name (e.g. "no immediate repeat", "fill stops at 12", "skip in the empty-pool state is a no-op").
+
+**Precedent:** `docs/vox-notify.tex` (notification system) and `docs/music-playlist.tex` (vox-1rxb). The latter caught a crash path at design time — `/music next` before track #1 exists would call `pick_next` on an empty pool and raise — that the informal design missed. That is the whole point: design-time resolution is cheap; implementation-time discovery is a full defect cycle.
 
 ## Ethos & Delegation
 

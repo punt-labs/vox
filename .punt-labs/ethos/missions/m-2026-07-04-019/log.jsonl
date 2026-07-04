@@ -1,0 +1,2 @@
+{"ts":"2026-07-04T16:58:54Z","event":"create","actor":"claude","details":{"evaluator":"bwk","ticket":"vox-1rxb","worker":"rmh"}}
+{"ts":"2026-07-04T18:23:50Z","event":"result","actor":"rmh","details":{"confidence":0.9,"evidence_entries":8,"files_changed":12,"round":1,"verdict":"pass"}}

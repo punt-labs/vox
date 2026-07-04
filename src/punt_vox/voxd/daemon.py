@@ -41,6 +41,7 @@ from punt_vox.voxd.music.off_handler import MusicOffHandler
 from punt_vox.voxd.music.on_handler import MusicOnHandler
 from punt_vox.voxd.music.play_handler import MusicPlayHandler
 from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.store import FilesystemTrackStore
 from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
@@ -177,8 +178,6 @@ class VoxDaemon:
                 self._config.remove_port_file()
             logger.info("voxd stopped")
 
-    # -- Static helpers used by both the class and the test factory ----------
-
     @staticmethod
     def read_port_file() -> int | None:
         """Read the daemon port from the port file."""
@@ -281,7 +280,7 @@ class VoxDaemon:
         """
         pb = playback or PlaybackQueue()
         syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
-        tg = TrackGenerator(VoxDaemon._music_output_dir())
+        tg = TrackGenerator(FilesystemTrackStore(VoxDaemon._music_output_dir()))
         mus = music or MusicScheduler(tg)
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
@@ -344,7 +343,7 @@ def main(
 
     auth_token = daemon_cfg.read_or_create_token()
 
-    tg = TrackGenerator(VoxDaemon._music_output_dir())
+    tg = TrackGenerator(FilesystemTrackStore(VoxDaemon._music_output_dir()))
     scheduler = MusicScheduler(tg)
     playback = PlaybackQueue()
     synthesis = SynthesisPipeline(playback_mutex=playback.mutex)

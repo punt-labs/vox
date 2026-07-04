@@ -1,0 +1,385 @@
+%
+% music-playlist.tex
+%
+% Z Specification for the Vox self-driving music playlist (bead vox-1rxb)
+% Formal model of the eager-fill / auto-advance / rotate-at-12 state machine
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Self-Driving Music Playlist: A Z Specification}
+\author{Formal Model of vox-1rxb (eager fill, auto-advance, rotate-at-12)}
+\date{July 2026}
+\hypersetup{
+  pdftitle={Vox Self-Driving Music Playlist: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This specification pins the target behaviour of the vox background-music
+playlist for a single \emph{(vibe, style)} pool. On turn-on the daemon
+generates the first track and starts playing it, then generates the
+remaining tracks in the background (one at a time) up to a fixed pool
+size. Playback advances automatically as each track ends; once the pool
+is full, playback rotates among the saved tracks with no further
+generation. The model exists to make the transitions and invariants
+unambiguous before implementation, and to expose any underspecified or
+contradictory cases (see Section~\ref{sec:findings}).
+
+\section{Basic Types}
+
+A track is an opaque saved-audio identifier (in the implementation, the
+content-addressed filename within a pool). A session identifies the agent
+that turned music on -- the \emph{owner} whose forwarded vibe and skip
+commands the daemon honours.
+
+\begin{zed}
+  [TRACK, SESSION]
+\end{zed}
+
+\section{Free Types}
+
+The playback mode is a four-state machine.
+
+\begin{zed}
+  Mode ::= off | generatingFirst | playingFilling | playingRotating
+\end{zed}
+
+A Z boolean (avoids the ProB/B keyword clash with \texttt{BOOL}).
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{Global Constants}
+
+The pool fills to \textbf{maxPool} distinct tracks, after which
+generation stops and playback rotates. The design value is 12.
+
+\begin{axdef}
+  maxPool : \nat
+  \where
+  maxPool = 12
+\end{axdef}
+
+\section{State}
+
+\texttt{playing} and \texttt{lastPlayed} are modelled as sets of at most
+one track (an ``optional track''): empty when nothing is playing / no
+track has yet been played.
+
+\texttt{owner} is the session that turned music on, modelled as a set of at
+most one session: empty exactly when music is off. It gates who may change
+the vibe or skip.
+
+\begin{schema}{Playlist}
+  pool : \power TRACK \\
+  playing : \power TRACK \\
+  lastPlayed : \power TRACK \\
+  owner : \power SESSION \\
+  mode : Mode \\
+  filling : ZBOOL
+  \where
+  \# pool \leq maxPool \\
+  \# playing \leq 1 \\
+  \# lastPlayed \leq 1 \\
+  \# owner \leq 1 \\
+  playing \subseteq pool \\
+  lastPlayed \subseteq pool \\
+  owner = \emptyset \iff mode = off \\
+  mode = off \implies (playing = \emptyset \land filling = zfalse) \\
+  mode = generatingFirst \implies \\
+  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = ztrue) \\
+  mode = playingFilling \implies \\
+  \quad~ (\# playing = 1 \land \# pool \geq 1 \\
+  \quad~ \land \# pool < maxPool \land filling = ztrue) \\
+  mode = playingRotating \implies \\
+  \quad~ (\# playing = 1 \land \# pool = maxPool \land filling = zfalse) \\
+  filling = ztrue \implies \\
+  \quad~ (mode = generatingFirst \lor mode = playingFilling)
+\end{schema}
+
+\section{Initialisation}
+
+The daemon starts idle with an empty pool. \texttt{InitFromDisk}
+models a restart where a pool of already-saved tracks is loaded (still
+idle until turned on).
+
+\begin{schema}{Init}
+  Playlist'
+  \where
+  pool' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse
+\end{schema}
+
+\begin{schema}{InitFromDisk}
+  Playlist' \\
+  diskPool? : \power TRACK
+  \where
+  \# diskPool? \leq maxPool \\
+  pool' = diskPool? \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse
+\end{schema}
+
+\section{Operations}
+
+\subsection{TurnOn}
+
+From \texttt{off}, enter the pool. An empty pool begins generating the
+first track; a partial pool starts playing and resumes the background
+fill; a full pool starts playing and rotates. \texttt{who?} becomes the
+owner. (Restart is \texttt{InitFromDisk} followed by \texttt{TurnOn}.)
+
+\begin{schema}{TurnOn}
+  \Delta Playlist \\
+  who? : SESSION
+  \where
+  mode = off \\
+  pool' = pool \\
+  lastPlayed' = \emptyset \\
+  owner' = \{ who? \} \\
+  (pool = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \\
+  \quad~ \land filling' = ztrue)) \\
+  (\# pool \geq 1 \land \# pool < maxPool \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq pool \\
+  \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# pool = maxPool \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq pool \\
+  \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{FillProduces}
+
+The background fill delivers one fresh track. It is enabled only while
+\texttt{filling} and the pool is not yet full, and the track must be new
+(the deterministic collision-free naming from bas7 guarantees this). The
+first delivered track starts playback; reaching \texttt{maxPool} stops
+the fill and switches to rotation.
+
+\begin{schema}{FillProduces}
+  \Delta Playlist \\
+  newTrack? : TRACK
+  \where
+  filling = ztrue \\
+  \# pool < maxPool \\
+  newTrack? \notin pool \\
+  owner' = owner \\
+  pool' = pool \cup \{ newTrack? \} \\
+  lastPlayed' = lastPlayed \\
+  (mode = generatingFirst \implies \\
+    \quad~ (playing' = \{ newTrack? \} \land mode' = playingFilling \\
+  \quad~ \land filling' = ztrue)) \\
+  (mode = playingFilling \implies \\
+    \quad~ (playing' = playing \\
+      \quad~ \land (\# pool' = maxPool \implies \\
+      \quad\quad~ (mode' = playingRotating \land filling' = zfalse)) \\
+      \quad~ \land (\# pool' < maxPool \implies \\
+  \quad\quad~ (mode' = playingFilling \land filling' = ztrue))))
+\end{schema}
+
+\subsection{Advance (auto-advance and manual skip)}
+
+When the current track ends, move to another track, avoiding an
+immediate repeat of the just-ended track when the pool holds more than
+one. With a single track (the transient state before the second track
+lands) it replays --- the only intended looping. This one transition
+serves both the automatic track-end advance and the manual
+\texttt{/music next}.
+
+\begin{schema}{Advance}
+  \Delta Playlist
+  \where
+  (mode = playingFilling \lor mode = playingRotating) \\
+  pool' = pool \\
+  owner' = owner \\
+  mode' = mode \\
+  filling' = filling \\
+  lastPlayed' = playing \\
+  (\# pool \geq 2 \implies \\
+    \quad~ (playing' \subseteq pool \land \# playing' = 1 \\
+  \quad~ \land playing' \neq playing)) \\
+  (\# pool = 1 \implies playing' = playing)
+\end{schema}
+
+The automatic track-end advance fires with no owner check. A manual
+\texttt{Skip} is the same transition, additionally gated on the requester
+owning music: \texttt{who?} must be the current owner. Because
+\texttt{Advance} is enabled only in \texttt{playingFilling} or
+\texttt{playingRotating}, both share the ``a track is really playing''
+precondition -- \texttt{Skip} in \texttt{generatingFirst} is impossible
+(Z finding~\#1). The implementation keys this guard off the playing track,
+not the \emph{(vibe, style)} prefix glob, so a custom-named track whose stem
+misses the glob still advances.
+
+\begin{zed}
+  TrackEnds \defs Advance
+\end{zed}
+
+\begin{schema}{Skip}
+  Advance \\
+  who? : SESSION
+  \where
+  who? \in owner
+\end{schema}
+
+\subsection{VibeChange}
+
+A vibe/style change finishes the current song, then switches to the new
+pool (the tracks already saved on disk for the new key). The selection
+of initial mode/playing/filling mirrors \texttt{TurnOn} applied to the
+new pool. \texttt{newPool?} is the new key's on-disk track set. Only the
+owner may retune, and only while music is on (\texttt{mode} $\neq$
+\texttt{off}) -- a forwarded vibe while off is refused, so it spends no
+generation credits (finding~\#4). Ownership is unchanged.
+
+\begin{schema}{VibeChange}
+  \Delta Playlist \\
+  newPool? : \power TRACK \\
+  who? : SESSION
+  \where
+  mode \neq off \\
+  who? \in owner \\
+  owner' = owner \\
+  \# newPool? \leq maxPool \\
+  pool' = newPool? \\
+  lastPlayed' = \emptyset \\
+  (newPool? = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \\
+  \quad~ \land filling' = ztrue)) \\
+  (\# newPool? \geq 1 \land \# newPool? < maxPool \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq newPool? \\
+  \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# newPool? = maxPool \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq newPool? \\
+  \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{TurnOff}
+
+Cancel the background fill and stop playback. Ownership is released so a
+later forwarded vibe from the old owner is refused (finding~\#5). The pool
+remains on disk.
+
+\begin{schema}{TurnOff}
+  \Delta Playlist
+  \where
+  mode \neq off \\
+  mode' = off \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  filling' = zfalse \\
+  pool' = pool
+\end{schema}
+
+\subsection{Disable}
+
+An unrecoverable failure (the first track could not be generated) turns
+music off with the same cleanup as \texttt{TurnOff}: fill cancelled,
+playback stopped, and -- crucially -- ownership released and the
+avoid-repeat key (\texttt{lastPlayed}) cleared, so a disabled session
+leaves nothing a later message could act on (finding~\#6). It shares
+\texttt{TurnOff}'s postcondition.
+
+\begin{zed}
+  Disable \defs TurnOff
+\end{zed}
+
+\section{Key Properties}
+
+The following hold by construction (state invariants) or as operation
+postconditions; they are the intended proof obligations for animation:
+
+\begin{itemize}
+  \item \textbf{Bounded pool}: $\# pool \leq maxPool$ always.
+  \item \textbf{Generation only below full}: \texttt{FillProduces} requires
+    $\# pool < maxPool$; at $\# pool = maxPool$ the mode is
+    \texttt{playingRotating} with $filling = zfalse$, so no generation
+    occurs.
+  \item \textbf{At most one fill}: $filling = ztrue$ implies
+    \texttt{mode} is \texttt{generatingFirst} or \texttt{playingFilling}.
+  \item \textbf{Playing is real}: when $mode \neq off$, $\# playing = 1$
+    and $playing \subseteq pool$.
+  \item \textbf{No immediate repeat}: \texttt{Advance} with $\# pool \geq 2$
+    gives $playing' \neq playing$ (equivalently $playing' \neq
+    lastPlayed'$).
+  \item \textbf{Sole looping case}: \texttt{Advance} replays only when
+    $\# pool = 1$, the transient before the second track lands.
+  \item \textbf{Owned exactly when on}: $owner = \emptyset \iff mode =
+    off$. \texttt{TurnOn} claims the owner; \texttt{TurnOff} and
+    \texttt{Disable} release it, so a stopped or disabled session is
+    unowned and cannot be driven by a stale message.
+  \item \textbf{Control requires ownership while on}: \texttt{Skip} and
+    \texttt{VibeChange} both require $who? \in owner$, and
+    \texttt{VibeChange} additionally requires $mode \neq off$ -- a
+    forwarded vibe while off spends no credits.
+\end{itemize}
+
+\section{Findings from Formalisation}
+\label{sec:findings}
+
+Writing the model surfaced these decisions, which the informal design
+(mission m-2026-07-04-018) must resolve consistently:
+
+\begin{enumerate}
+  \item \textbf{Skip while generating the first track is undefined and is
+    excluded.} \texttt{Advance} requires \texttt{playingFilling} or
+    \texttt{playingRotating}; in \texttt{generatingFirst} nothing is
+    playing, so \texttt{/music next} must be a no-op until track \#1
+    lands.
+  \item \textbf{Auto-advance and manual skip are the same transition}
+    ($TrackEnds \defs Skip \defs Advance$). The implementation should
+    share one code path, not two.
+  \item \textbf{TurnOn, VibeChange, and restart share one ``enter a pool''
+    rule} keyed on $\# pool$ (empty $\to$ generate first; partial $\to$
+    play + fill; full $\to$ play + rotate). This is a natural single
+    unit to extract.
+  \item \textbf{VibeChange abstracts over ``finish current first.''} The
+    model captures the switch after the current song ends; the temporal
+    ``finish current'' is a refinement realised by deferring the switch
+    to the next track-end.
+  \item \textbf{The only looping is the single-track transient.} Any other
+    repeat (the shipped bug) violates the \emph{No immediate repeat}
+    property and is therefore a defect, not a mode.
+  \item \textbf{Fresh-track precondition ties to naming.}
+    \texttt{FillProduces} requires $newTrack? \notin pool$; this is only
+    safe because bas7's deterministic naming guarantees uniqueness.
+  \item \textbf{Ownership is a lifecycle invariant, not per-command
+    state.} Modelling $owner = \emptyset \iff mode = off$ forced every
+    stop path to release ownership. The shipped code cleared the owner on
+    neither \texttt{TurnOff} nor \texttt{Disable}, so a stale forwarded
+    vibe passed the owner check and could restart the fill (findings
+    \#5/\#6). \texttt{VibeChange}'s $mode \neq off$ precondition likewise
+    exposed that the code retargeted the fill even while off (finding
+    \#4). Pinning ownership to the mode in the state predicate makes these
+    a type-level obligation rather than scattered defensive checks.
+  \item \textbf{The fill targets the played pool, not the session key.}
+    Selection and fill must key on the same pool identifier. The shipped
+    code selected the replayed track's pool but keyed the fill off the
+    session \emph{(vibe, style)}, so a named replay grew the wrong pool
+    or skipped the intended one (findings \#1/\#7). The refined
+    implementation threads one pool prefix through both.
+\end{enumerate}
+
+\end{document}
