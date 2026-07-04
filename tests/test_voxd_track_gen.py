@@ -32,27 +32,27 @@ class TestSlugify:
 
 
 class TestAutoTrackName:
-    """TrackGenerator.auto_track_name derives vibe-style-YYYYMMDD-HHMM patterns."""
+    """auto_track_name derives <vibe>_<style>_YYYYMMDD_HHMM_<nonce> patterns."""
 
     def test_with_vibe_and_style(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)
         name = gen.auto_track_name("happy", "techno")
-        # Name has vibe-style-YYYYMMDD-HHMM structure.
-        assert name.startswith("happy-techno-")
-        # Suffix is YYYYMMDD-HHMM: 8 digits, dash, 4 digits.
-        parts = name.split("-")
-        assert len(parts[-2]) == 8  # YYYYMMDD
-        assert len(parts[-1]) == 4  # HHMM
+        assert name.startswith("happy_techno_")
+        # Suffix is YYYYMMDD_HHMM_<nonce>: 8 digits, 4 digits, 4-hex nonce.
+        parts = name.split("_")
+        assert len(parts[-3]) == 8  # YYYYMMDD
+        assert len(parts[-2]) == 4  # HHMM
+        assert len(parts[-1]) == 4  # nonce
 
     def test_no_vibe_uses_ambient(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)
         name = gen.auto_track_name("", "")
-        assert name.startswith("ambient-mix-")
+        assert name.startswith("ambient_mix_")
 
     def test_no_style_uses_mix(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)
         name = gen.auto_track_name("chill", "")
-        assert name.startswith("chill-mix-")
+        assert name.startswith("chill_mix_")
 
 
 class TestListTracks:
