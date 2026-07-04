@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -21,6 +22,7 @@ from music.conftest import FakeTrackStore
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import POOL_SIZE
+from punt_vox.voxd.music.store import FilesystemTrackStore
 
 __all__: list[str] = []
 
@@ -221,6 +223,9 @@ class TestRetargetCancelsOldTask:
                 old_task_holder.append(old_task)
                 filler.ensure_running(("bright", ""), "techno")  # retarget
                 await asyncio.sleep(0)
+                # The single-flight guard makes pool B wait for pool A's
+                # in-flight provider call to drain before it starts; release it.
+                release.set()
                 await _drain(filler)  # new pool fills
 
         asyncio.run(_drive())
@@ -312,3 +317,76 @@ class TestGenerationFailureBackoff:
         assert len(store.tracks_for(TrackGenerator.pool_prefix(("calm", "jazz")))) == (
             POOL_SIZE
         )
+
+
+class TestSingleInFlightAcrossRetarget:
+    """A retarget mid-generation never runs two provider calls at once.
+
+    Regression for the orphaned-generation bug: the provider call runs in
+    ``asyncio.to_thread`` which cancellation cannot stop, so a retarget that
+    dropped the old task and started a new fill spawned a *second* concurrent
+    provider call and left the old track orphaned on disk. The fake models the
+    uncancellable thread with ``asyncio.shield`` (its work completes even after
+    the fill task is cancelled) and writes to a real on-disk store, so both
+    invariants are checked against reality: at most one provider call in flight,
+    and no track left behind by the abandoned generation.
+    """
+
+    def test_retarget_bounds_concurrency_and_discards_orphan(
+        self, tmp_path: Path
+    ) -> None:
+        store = FilesystemTrackStore(tmp_path)
+        prefix_a = TrackGenerator.pool_prefix(("calm", "jazz"))  # abandoned pool
+        prefix_b = TrackGenerator.pool_prefix(("bright", "techno"))  # new target
+        started = asyncio.Event()
+        release_a = asyncio.Event()
+        concurrency = 0
+        max_concurrency = 0
+
+        async def _core(stem: str, path: Path) -> tuple[Path, str]:
+            nonlocal concurrency, max_concurrency
+            concurrency += 1
+            max_concurrency = max(max_concurrency, concurrency)
+            if not started.is_set():
+                started.set()
+                await release_a.wait()  # hold pool A's first generation open
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")  # the write completes despite the cancel
+            concurrency -= 1
+            return path, stem
+
+        async def uncancellable_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            prefix = TrackGenerator.pool_prefix((vibe[0], style))
+            n = len(self._store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            # shield models asyncio.to_thread: the work is not cancellable.
+            return await asyncio.shield(_core(stem, self._store.path_for(stem)))
+
+        filler: PoolFiller | None = None
+
+        async def _drive() -> None:
+            nonlocal filler
+            with (
+                patch.object(TrackGenerator, "generate", uncancellable_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                filler = PoolFiller(TrackGenerator(store))
+                filler.ensure_running(("calm", ""), "jazz")  # pool A starts
+                await asyncio.wait_for(started.wait(), timeout=2.0)
+
+                filler.ensure_running(("bright", ""), "techno")  # retarget -> B
+                await asyncio.sleep(0)  # let B reach the single-flight lock
+                assert concurrency == 1  # B is blocked; only A is in flight
+
+                release_a.set()  # A finishes, releases the lock, B proceeds
+                await _drain(filler)  # B fills to POOL_SIZE
+                for _ in range(5):
+                    await asyncio.sleep(0)  # let the discard callback settle
+
+        asyncio.run(_drive())
+
+        assert max_concurrency == 1  # A and B never ran concurrently
+        assert store.tracks_for(prefix_a) == ()  # the orphan was discarded
+        assert len(store.tracks_for(prefix_b)) == POOL_SIZE  # new pool filled

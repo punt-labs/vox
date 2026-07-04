@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Self
 
@@ -31,7 +32,16 @@ class PoolFiller:
     ``turn_off``.
     """
 
-    __slots__ = ("_first", "_first_name", "_first_ready", "_generator", "_key", "_task")
+    __slots__ = (
+        "_first",
+        "_first_name",
+        "_first_ready",
+        "_gen_lock",
+        "_generator",
+        "_inflight",
+        "_key",
+        "_task",
+    )
 
     _generator: TrackGenerator
     _task: asyncio.Task[None] | None
@@ -39,6 +49,8 @@ class PoolFiller:
     _first_ready: asyncio.Event
     _first: Path | BaseException | None
     _first_name: str
+    _gen_lock: asyncio.Lock
+    _inflight: asyncio.Task[tuple[Path, str]] | None
 
     def __new__(cls, generator: TrackGenerator) -> Self:
         self = super().__new__(cls)
@@ -48,6 +60,8 @@ class PoolFiller:
         self._first_ready = asyncio.Event()
         self._first = None
         self._first_name = ""
+        self._gen_lock = asyncio.Lock()
+        self._inflight = None
         return self
 
     @property
@@ -122,18 +136,46 @@ class PoolFiller:
     async def _generate_one(self, vibe: tuple[str, str], style: str) -> Path | None:
         """Generate a single track, or None if generation failed.
 
-        Cancellation propagates (``/music off`` and vibe retarget cancel the
-        task); provider/IO failures are logged and reported as None so
-        :meth:`_fill` can back off.
+        The provider call runs in a detached task (:meth:`_protected_generate`)
+        that holds ``_gen_lock`` for its whole lifetime. We await it through
+        ``asyncio.shield`` so cancelling the fill loop (``/music off`` and vibe
+        retarget) cancels *this* await without cascading into the detached
+        generation -- the underlying ``asyncio.to_thread`` cannot be stopped, so
+        we let it finish while it keeps the lock, guaranteeing no second
+        provider call runs concurrently. The abandoned generation's output is
+        discarded by :meth:`_abandon_inflight`. Provider/IO failures are logged
+        and reported as None so :meth:`_fill` can back off.
         """
+        inflight = asyncio.ensure_future(
+            self._protected_generate(vibe, style, self._first_name)
+        )
+        self._inflight = inflight
         try:
-            path, _ = await self._generator.generate(vibe, style, self._first_name)
+            path, _ = await asyncio.shield(inflight)
         except asyncio.CancelledError:
             raise
         except Exception:  # provider / IO boundary (PY-EH-6)
             logger.exception("Background fill generation failed")
             return None
+        finally:
+            if self._inflight is inflight:
+                self._inflight = None
         return path
+
+    async def _protected_generate(
+        self, vibe: tuple[str, str], style: str, first_name: str
+    ) -> tuple[Path, str]:
+        """Run one provider generation while holding the single-flight lock.
+
+        The lock is held across the whole generation -- including the
+        uncancellable ``asyncio.to_thread`` inside the provider -- so no second
+        provider call can begin until this one's thread has finished. This
+        coroutine is never cancelled directly (the fill loop is), so the lock
+        releases only on true completion, bounding concurrent provider calls to
+        exactly one across an off/retarget boundary.
+        """
+        async with self._gen_lock:
+            return await self._generator.generate(vibe, style, first_name)
 
     def _deliver_first(self, path: Path) -> None:
         """Record the first produced track and wake any waiter."""
@@ -149,11 +191,40 @@ class PoolFiller:
             self._first_ready.set()
 
     def _cancel_task(self) -> None:
-        """Request cancellation of the live fill task, if any."""
+        """Cancel the live fill task and abandon any in-flight generation."""
         task = self._task
         self._task = None
         if task is not None and not task.done():
             task.cancel()
+        self._abandon_inflight()
+
+    def _abandon_inflight(self) -> None:
+        """Detach the in-flight generation so its output is discarded on settle.
+
+        ``asyncio.to_thread`` cannot be cancelled: the provider call and file
+        write run to completion regardless. Rather than leave the produced
+        track orphaned in a pool the caller has left, we detach the generation
+        and unlink whatever file it wrote once it settles. It keeps holding
+        ``_gen_lock`` until then, so no second provider call starts meanwhile.
+        """
+        inflight = self._inflight
+        self._inflight = None
+        if inflight is None:
+            return
+        if inflight.done():
+            self._discard_generated(inflight)
+        else:
+            inflight.add_done_callback(self._discard_generated)
+
+    @staticmethod
+    def _discard_generated(task: asyncio.Task[tuple[Path, str]]) -> None:
+        """Unlink the track an abandoned generation wrote (task done callback)."""
+        if task.cancelled() or task.exception() is not None:
+            return
+        path, _ = task.result()
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        logger.info("Discarded orphaned track from a cancelled fill: %s", path)
 
     def _reset_first(self) -> None:
         """Reset the first-track handshake for a new target pool.
