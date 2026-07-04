@@ -32,17 +32,17 @@ class TestSlugify:
 
 
 class TestAutoTrackName:
-    """auto_track_name derives <vibe>_<style>_YYYYMMDD_HHMM_<nonce> patterns."""
+    """auto_track_name derives <vibe>_<style>_YYYYMMDD_HHMM_<counter> patterns."""
 
     def test_with_vibe_and_style(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)
         name = gen.auto_track_name("happy", "techno")
         assert name.startswith("happy_techno_")
-        # Suffix is YYYYMMDD_HHMM_<nonce>: 8 digits, 4 digits, 4-hex nonce.
+        # Suffix is YYYYMMDD_HHMM_<counter>: 8 digits, 4 digits, then a counter.
         parts = name.split("_")
         assert len(parts[-3]) == 8  # YYYYMMDD
         assert len(parts[-2]) == 4  # HHMM
-        assert len(parts[-1]) == 4  # nonce
+        assert parts[-1] == "0"  # first free counter in an empty dir
 
     def test_no_vibe_uses_ambient(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)

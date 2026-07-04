@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
-import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -64,9 +64,8 @@ class MusicTrack:
 
     def display_line(self) -> str:
         """Return a human-readable summary line for this track."""
-        size_kb = self.size_bytes // 1024
         date_str = datetime.fromtimestamp(self.modified).strftime("%Y-%m-%d %H:%M")
-        return f"{self.name} ({size_kb} KB, {date_str})"
+        return f"{self.name} ({self.size_bytes // 1024} KB, {date_str})"
 
     def to_dict(self) -> dict[str, object]:
         """Serialize for WebSocket wire format (backward compat)."""
@@ -140,9 +139,10 @@ class TrackGenerator:
         return output_path, safe_name
 
     def auto_track_name(self, vibe: str, style: str) -> str:
-        """Derive a unique auto-name: <prefix><YYYYMMDD_HHMM>_<nonce>."""
-        stamp = time.strftime("%Y%m%d_%H%M")
-        return f"{self.pool_prefix((vibe, style))}{stamp}_{secrets.token_hex(2)}"
+        """Return a collision-free auto-name at the lowest free counter."""
+        stem = f"{self.pool_prefix((vibe, style))}{time.strftime('%Y%m%d_%H%M')}"
+        counters = (f"{stem}_{n}" for n in itertools.count())
+        return next(c for c in counters if not (self._output_dir / f"{c}.mp3").exists())
 
     @staticmethod
     def pool_prefix(key: tuple[str, str]) -> str:

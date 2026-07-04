@@ -103,12 +103,22 @@ class TestPoolPrefix:
         gen = TrackGenerator(tmp_path)
         assert gen.pool_prefix(("", "")) == "ambient_mix_"
 
-    def test_auto_name_starts_with_prefix_and_is_unique(self, tmp_path: Path) -> None:
+    def test_auto_name_counter_is_deterministically_unique(
+        self, tmp_path: Path
+    ) -> None:
+        # Writing each named file (as generate() would) must make the next
+        # call pick the next free counter -- deterministic, never a collision.
         gen = TrackGenerator(tmp_path)
         prefix = gen.pool_prefix(("calm", "jazz"))
-        names = {gen.auto_track_name("calm", "jazz") for _ in range(20)}
+        names: list[str] = []
+        for _ in range(20):
+            name = gen.auto_track_name("calm", "jazz")
+            names.append(name)
+            (tmp_path / f"{name}.mp3").write_bytes(b"x")
+
         assert all(n.startswith(prefix) for n in names)
-        assert len(names) == 20  # nonce suffix keeps sub-minute names distinct
+        assert len(set(names)) == 20  # 20 sequential same-minute files, all distinct
+        assert names[-1].endswith("_19")  # counter advanced 0..19, deterministically
 
 
 class TestTracksFor:
