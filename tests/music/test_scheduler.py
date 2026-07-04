@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -327,6 +328,11 @@ def _tuned(scheduler: MusicScheduler, vibe: str, style: str) -> MusicScheduler:
     return scheduler
 
 
+def _first(seq: Sequence[Path]) -> Path:
+    """Deterministic stand-in for secrets.choice: pick the first candidate."""
+    return seq[0]
+
+
 class TestPoolRotation:
     """skip_next rotates a full pool with no generation, else generates."""
 
@@ -364,6 +370,24 @@ class TestPoolRotation:
             scheduler.skip_next(owner_id="sess-1")
             assert scheduler.track != previous
             previous = scheduler.track
+
+    def test_off_clears_stale_track_so_rotation_isnt_constrained(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+        pool = sorted(gen.tracks_for(("calm", "jazz")))
+        scheduler._track = pool[0]  # simulate pool[0] as the just-played track
+
+        asyncio.run(scheduler.turn_off())
+        assert scheduler.track is None  # PY-EN-5: stale avoid-repeat key cleared
+
+        # Resume and rotate. With the avoid key cleared, pool[0] is a candidate
+        # again; pick the first candidate to prove it is no longer excluded.
+        monkeypatch.setattr("punt_vox.voxd.music.pool.secrets.choice", _first)
+        scheduler._mode = "on"
+        result = scheduler.skip_next(owner_id="sess-1")
+        assert result.track == str(pool[0])  # pre-off track not permanently excluded
 
     def test_separate_pool_per_style(self, tmp_path: Path) -> None:
         # Pool is full for jazz but empty for techno -> techno must generate.

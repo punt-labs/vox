@@ -163,11 +163,15 @@ class MusicScheduler:
         )
 
     async def turn_off(self) -> MusicResponse:
-        """Stop music playback."""
+        """Stop music playback and clear stale rotation state (PY-EN-5)."""
         await self._kill_proc()
         self._mode = "off"
         self._state = "idle"
         self._replay = False
+        # _track is the rotation avoid-repeat key; a stopped track is not
+        # "just played", so clear it or the next rotation wrongly excludes it.
+        self._track = None
+        self._track_name = ""
         self._changed.set()
         return MusicResponse(status="stopped")
 
