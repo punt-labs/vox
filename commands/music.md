@@ -11,13 +11,19 @@ instrumental tracks derived from the current session vibe and loops them
 through voxd at reduced volume. When the vibe changes, a new track
 generates to match.
 
+Once a `(vibe, style)` has 12 saved tracks, `/music next` and vibe changes
+**rotate that pool** (shuffled, never repeating the just-played track) at
+zero credits instead of generating. Below 12, each generation uses a distinct
+musical variation so the pool spans a range of textures rather than
+near-identical tracks.
+
 ## Usage
 
 - `/music on` -- start music with current vibe
 - `/music on style techno` -- start music with a style modifier
 - `/music on --name focus-beats` -- generate and save as "focus-beats", or replay if it exists
 - `/music off` -- stop music
-- `/music next` -- skip to a new generated track (gapless)
+- `/music next` -- skip to the next track (gapless): rotate the saved pool if it holds 12+ tracks (zero credits), otherwise generate a fresh one
 - `/music play <name>` -- replay a saved track by name
 - `/music list` -- show saved tracks with metadata
 - `/music` -- show current music state

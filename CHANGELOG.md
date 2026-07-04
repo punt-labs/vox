@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background music now rotates a playlist instead of regenerating every time**: once a `(vibe, style)` has 12 saved tracks, `/music next` and vibe changes shuffle through the existing pool (never repeating the just-played track) with **zero** ElevenLabs credits, instead of generating a fresh track each time. Below 12 it still generates (lazy fill). And generated tracks are now genuinely distinct — each of the 12 gets a different musical variation descriptor (analog pads, arpeggios, sub-bass, Rhodes, lo-fi tape, four-on-the-floor, woodwinds, …), so the pool spans the sonic space rather than 12 near-clones. Fixes the "too repetitive" complaint. Closes vox-bas7.
 - **Cache hit/miss is now observable**: the `unmute` MCP result (and the internal `playing` response) carries a `cached` boolean, and `voxd` logs a distinct `cache HIT` / `cache MISS` line at INFO with the cache file path. A second identical request (same text+voice+provider) is served from cache with `cached: true`, so callers — and the manual test flight (Step 2) — can confirm a cache hit directly instead of grepping the daemon log for a missing `Synthesize:` line. Caching behavior is unchanged; this is observability only. Closes vox-90vw.
 
 ### Changed
