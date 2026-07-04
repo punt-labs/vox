@@ -26,6 +26,17 @@ __all__: list[str] = []
 _CHOICE = "punt_vox.voxd.music.pool.secrets.choice"
 
 
+@pytest.fixture(autouse=True)
+def _music_api_key(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """turn_on preflights a provider key; assume one is present unless cleared.
+
+    The generating path now refuses to start without ELEVENLABS_API_KEY, so
+    the domain tests that reach it need a key. Tests that assert the
+    missing-key behaviour clear it explicitly.
+    """
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-music-key")
+
+
 def _scheduler(store: FakeTrackStore | None = None) -> MusicScheduler:
     """Build a scheduler over an in-memory store."""
     return MusicScheduler(TrackGenerator(store or FakeTrackStore()))
@@ -122,6 +133,53 @@ class TestTurnOn:
         sched = _scheduler()
         with pytest.raises(ValueError, match="invalid track name"):
             asyncio.run(sched.turn_on("u1", "", ("", ""), "---"))
+
+
+class TestKeyPreflight:
+    """turn_on refuses to start generation without a usable provider key."""
+
+    def test_missing_key_reports_clear_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        sched = _scheduler()
+        with pytest.raises(ValueError, match="requires an ElevenLabs API key"):
+            asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+        assert sched.mode == "off"  # never entered the generating state
+        assert not sched.filling  # no silent attempt-then-disable
+
+    def test_blank_key_reports_clear_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "   ")  # whitespace-only is empty
+        sched = _scheduler()
+        with pytest.raises(ValueError, match="requires an ElevenLabs API key"):
+            asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+        assert sched.mode == "off"
+
+    def test_present_key_starts_normally(self) -> None:
+        # The autouse fixture supplies a key; the happy path acks generating.
+        sched = _scheduler()
+        with patch.object(TrackGenerator, "generate", AsyncMock()):
+            result = asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+        assert result == MusicResponse(status="generating")
+
+    def test_present_key_with_transient_error_is_not_a_key_error(self) -> None:
+        # A present key that later hits quota/rate limits must NOT be
+        # misreported as a missing key: turn_on passes the preflight and
+        # returns "generating"; the transient failure is handled downstream
+        # by the fill's own retry/backoff (vox-ig52), off the turn_on path.
+        sched = _scheduler()
+        quota = AsyncMock(side_effect=RuntimeError("quota_exceeded"))
+        with patch.object(TrackGenerator, "generate", quota):
+
+            async def _run() -> MusicResponse:
+                result = await sched.turn_on("u1", "techno", ("focused", ""), "")
+                await sched.shutdown()  # cancel the retrying fill cleanly
+                return result
+
+            result = asyncio.run(_run())
+        assert result == MusicResponse(status="generating")
 
 
 class TestTurnOff:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -75,6 +76,15 @@ class TrackGenerator:
         self = super().__new__(cls)
         self._store = store
         return self
+
+    @staticmethod
+    def can_generate() -> bool:
+        """Return whether generation is possible (an ElevenLabs key is set).
+
+        Generation is hard-wired to ElevenLabs (see :meth:`generate`), so a
+        usable ``ELEVENLABS_API_KEY`` is the precondition for producing tracks.
+        """
+        return bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
 
     def find_track(self, name: str) -> Path | None:
         """Return the path to an existing track by name, or None."""

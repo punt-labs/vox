@@ -73,6 +73,10 @@ class Playlist:
 
     # -- Background fill --------------------------------------------------------
 
+    def can_generate(self) -> bool:
+        """Return whether the pool can be filled (a provider API key is set)."""
+        return self._generator.can_generate()
+
     def ensure_fill(self, first_name: str = "") -> None:
         """(Re)start the background fill for the current pool if not full."""
         self._filler.ensure_running(self._vibe, self._style, first_name=first_name)

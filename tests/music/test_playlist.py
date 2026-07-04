@@ -101,6 +101,18 @@ class TestSelection:
         assert pl.current_track is None
 
 
+class TestCanGenerate:
+    """can_generate delegates to the generator's provider-key check."""
+
+    def test_true_when_key_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-real")
+        assert _playlist(FakeTrackStore()).can_generate() is True
+
+    def test_false_when_key_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        assert _playlist(FakeTrackStore()).can_generate() is False
+
+
 class TestFind:
     """find locates a saved track by name."""
 

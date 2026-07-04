@@ -197,6 +197,22 @@ class TestAutoTrackName:
         assert _gen(tmp_path).auto_track_name(("chill", "")).startswith("chill_mix_")
 
 
+class TestCanGenerate:
+    """can_generate reflects whether a provider API key is configured."""
+
+    def test_true_when_key_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-real")
+        assert _gen(tmp_path).can_generate() is True
+
+    def test_false_when_key_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        assert _gen(tmp_path).can_generate() is False
+
+
 class TestListTracks:
     """TrackGenerator.list_tracks maps stored metadata to MusicTrack (migrated)."""
 

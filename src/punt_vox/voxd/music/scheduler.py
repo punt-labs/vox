@@ -24,6 +24,8 @@ __all__ = ["MusicRequest", "MusicScheduler"]
 
 _NAME_MAX_LEN = 60
 
+_NO_KEY_MSG = "Background music requires an ElevenLabs API key (set ELEVENLABS_API_KEY)"
+
 # The pending playback action the loop reads at the next control point.
 MusicControl = Literal["none", "off", "skip", "play", "vibe"]
 
@@ -143,6 +145,9 @@ class MusicScheduler:
             replayed = await self._replay_named(req)
             if replayed is not None:
                 return replayed
+        # Preflight the key: a missing key fails fast, not a silent self-disable.
+        if not self._playlist.can_generate():
+            raise ValueError(_NO_KEY_MSG)
         await self._adopt(req)
         first_name = TrackGenerator.slugify(name, _NAME_MAX_LEN) if name else ""
         self._playlist.ensure_fill(first_name=first_name)
