@@ -111,14 +111,17 @@ class MusicLoop:
                 return None
             if control == "play":
                 return sched.take_pending_track()
-            if control == "vibe":
+            if control in {"skip", "vibe"}:
                 sched.ensure_fill()
                 if not sched.pool_empty:
-                    # The retarget landed on a pool with tracks on disk (partial
-                    # or full): play one now. Awaiting a first generation that a
-                    # full pool never starts would hang the loop forever.
+                    # skip (advance now) and vibe (retarget) both want an on-disk
+                    # track the instant one exists: play it. ensure_fill covers the
+                    # vibe case where the pool identity changed; awaiting a first
+                    # generation a full pool never starts would hang forever.
                     return sched.select_first()
-                # Genuinely empty -> loop and re-race the new pool's first track.
+                # Empty pool: loop and re-race the first track. skip never reaches
+                # here (skip_next no-ops on an empty pool, Z finding #1); only a
+                # vibe retarget onto a still-empty pool falls through.
 
     async def _spawn(self, track: Path) -> asyncio.subprocess.Process:
         """Mark ``track`` playing and start its player subprocess."""

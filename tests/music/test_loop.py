@@ -441,6 +441,59 @@ class TestSkipEmptyPoolIsNoOp:
         asyncio.run(_drive())
 
 
+class TestSkipDuringGeneratingFirstWithDiskTrack:
+    """/music next during generating-first advances from disk once a track lands.
+
+    Regression for the dropped-skip hang: ``_await_first`` handled off / play /
+    vibe but not skip. A skip issued while awaiting the first track (after a
+    track has landed on disk, so ``skip_next`` signals rather than no-oping) was
+    silently ignored -- the loop kept re-racing ``await_first_track()``, which a
+    disk-only track never resolves, so it hung. The loop must play the on-disk
+    track at once, mirroring the vibe-to-non-empty-pool path.
+    """
+
+    def test_skip_after_disk_track_lands_plays_without_awaiting_generation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        never = asyncio.Event()  # the fill's first generation never lands
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await never.wait()  # await_first_track stays blocked forever
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await _settle()
+                assert sched.state == "generating"  # awaiting the first track
+                assert not players.commands
+
+                # A track lands on disk (out of band from the blocked fill), so
+                # the pool is no longer empty and skip_next signals rather than
+                # no-oping. Before the fix the loop dropped the skip and hung.
+                store.add(f"{prefix}00")
+                result = sched.skip_next("u1")
+                assert result.status == "playing"
+                await players.wait_for(1)  # plays from disk at once -- no hang
+                await _stop(task)
+                assert players.track_of(0) == f"{prefix}00.mp3"
+
+        asyncio.run(_drive())
+
+
 class TestTurnOnWhileActiveDoesNotCrash:
     """turn_on while music is already active must never crash the loop.
 
