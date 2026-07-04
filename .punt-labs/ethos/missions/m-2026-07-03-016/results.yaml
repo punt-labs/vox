@@ -1,0 +1,111 @@
+results:
+    - mission: m-2026-07-03-016
+      round: 1
+      created_at: "2026-07-04T00:04:47Z"
+      author: rmh
+      verdict: pass
+      confidence: 1
+      files_changed:
+        - path: src/punt_vox/service/process.py
+          added: 13
+          removed: 14
+        - path: tests/test_service_process.py
+          added: 53
+          removed: 0
+        - path: tests/test_hooks.py
+          added: 3
+          removed: 0
+        - path: tests/test_service_installer.py
+          added: 22
+          removed: 0
+      evidence:
+        - name: find_pid_on_port warns on tool failure, quiet on empty port
+          status: pass
+        - name: tool-failure vs empty-port distinction test (OSError + timeout warn; exit-1/empty silent)
+          status: pass
+        - name: chime-spawn test asserts errno NUMBER ("Errno 2") reaches log
+          status: pass
+        - name: mixed-PID _stale_daemon_survives test (survivor not first PID)
+          status: pass
+        - name: make check exits 0 (1716 passed; OO ratchet PASS; coupling PASS)
+          status: pass
+      prose: |
+        Branch fix/surface-detection-tool-failures, 3 commits off main.
+
+        find_pid_on_port distinguishes a probe-TOOL FAILURE from a genuinely
+        EMPTY port by WHERE the [] originates:
+
+          - Tool failure: subprocess.run raises OSError (missing lsof/fuser) or
+            subprocess.TimeoutExpired. Caught -> logger.warning naming the tool
+            (cmd[0]) and the exception via lazy %-args -> return []. This mirrors
+            is_vox_daemon_process's ps-failure warning.
+          - Genuinely empty: subprocess.run returns cleanly with a non-zero exit
+            code or empty stdout (lsof/fuser exit 1 when nothing is on the port).
+            Falls through to `return []` with NO log.
+
+        The old code wrapped the whole body in one try/except that swallowed both
+        cases into a silent []. Splitting the except out of the success path is
+        what makes the two distinguishable. Return value is unchanged in every
+        case (always list[int]); only the tool-failure path is now observable.
+
+        Restructuring the method (early-return on failure + comprehension) also
+        dropped a redundant parsing comment already covered by the docstring,
+        lowering process.py module_size 187->186 (OO ratchet IMPROVED, no
+        regressions). Baseline rebaselined in a trailing chore commit (touches
+        no src file, so the HEAD~1..HEAD ratchet trivially passes).
+
+        Commits:
+          551c5e4 fix(service): surface port-probe tool failures in find_pid_on_port
+          fb7851b test(service): harden chime errno + mixed-PID survivor detection
+          28dde9f chore(oo): rebaseline after process.py module_size improvement
+
+        make check: exits 0 (lint, type, docs, 1716 tests, check-oo IMPROVED,
+        check-coupling PASS, suppression ratchet -2).
+    - mission: m-2026-07-03-016
+      round: 2
+      created_at: "2026-07-04T00:14:42Z"
+      author: rmh
+      verdict: pass
+      confidence: 1
+      files_changed:
+        - path: src/punt_vox/service/process.py
+          added: 5
+          removed: 6
+        - path: tests/test_service_process.py
+          added: 11
+          removed: 0
+      evidence:
+        - name: isdigit -> isdecimal makes the PID guard total (int() provably non-raising)
+          status: pass
+        - name: regression test feeds superscript "²" token; asserts it is dropped, decimals kept
+          status: pass
+        - name: make check exits 0 (1717 tests; OO ratchet module_size 186->185 IMPROVED)
+          status: pass
+      prose: |
+        Round-2 finding from silent-failure-hunter, addressed.
+
+        str.isdigit() returns True for Unicode superscript/subscript digits
+        (e.g. "²", U+00B2) that int() rejects with ValueError. The prior commit
+        removed the ValueError catch from find_pid_on_port on the premise that
+        the isdigit() guard made it unreachable -- but that was true only
+        because lsof/fuser happen to emit ASCII. The guard was safe by luck of
+        input, not by construction.
+
+        Fix: change token.isdigit() to token.isdecimal(). str.isdecimal() is a
+        strict subset of the decimal characters int() accepts, so the guard is
+        now total -- int(token) can never raise -- and the removed catch is
+        truly dead, not dead-by-accident.
+
+        Also single-sourced the duplicated result.stdout.strip() into a local
+        (`out`), a genuine DRY improvement that dropped process.py module_size
+        186->185 (OO ratchet IMPROVED, no regressions), and added a regression
+        test (test_find_pid_on_port_ignores_non_decimal_digits) that feeds a
+        superscript token: it would raise an uncaught ValueError under the old
+        isdigit guard, and is silently dropped under isdecimal.
+
+        Commits:
+          ee0ca62 fix(service): use isdecimal so the PID guard is total
+          5c38347 chore(oo): rebaseline process.py module_size 186->185
+
+        make check: exits 0 (lint, type, docs, 1717 tests, check-oo IMPROVED,
+        check-coupling PASS, suppression ratchet -2).

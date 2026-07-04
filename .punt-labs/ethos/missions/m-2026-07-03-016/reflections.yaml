@@ -1,0 +1,12 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-04T00:09:00Z"
+      author: claude
+      converging: true
+      signals:
+        - 'pr-test-analyzer adequate: the critical pair (tool-failure WARNING + empty-port silent) is tested as a pair; errno-number and mixed-PID survivor tests present and passing'
+        - 'code-reviewer clean: try/except restructure behavior-preserving, WARNING format PY-CS-11 compliant, update-oo legit (process.py module_size 187->186 real improvement, not a rebaseline-to-accept)'
+        - 'silent-failure-hunter found one valid issue: the ValueError-catch removal is justified as ''unreachable behind token.isdigit()'', but str.isdigit() is True for Unicode superscript digits (e.g. ''²'') that int() rejects — so the guard is only accidentally safe (lsof/fuser emit ASCII), and the removed catch leaves a theoretically-uncaught ValueError path'
+        - make check green (1716 tests); coupling PASS; the fix correctly distinguishes tool-failure (logs) from empty-port (silent)
+      recommendation: continue
+      reason: Round 1 is behavior-correct and well-tested; round 2 is a one-word hardening — change token.isdigit() to token.isdecimal() so int() is provably non-raising, making the removed ValueError catch truly (not accidentally) dead and closing the theoretical uncaught-exception path.
