@@ -151,6 +151,32 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 - **Every provider must test both success and auth failure paths.** A provider that can't authenticate should raise a clear error, not silently fall back.
 - **Hook tests must verify signal classification.** The `classify_signal()` function in `hooks.py` determines what event type a Bash command represents. Misclassification means the wrong audio plays — test the classification logic explicitly.
 
+## Formal Modeling (z-spec)
+
+**When a change is a state machine, model it formally before implementing it.** A Z specification (`/z-spec:code2model`, fuzz type-checked) is REQUIRED — during the design phase, before the implementation mission dispatches — for the class of work below. This is not optional documentation: the design and its tests must satisfy the model, and every finding the formalization surfaces is resolved in the design review.
+
+**Trigger — a change qualifies when it is a stateful subsystem AND any of:**
+
+- It has 3+ modes/states with transitions between them (e.g. the music playlist `off → generating-first → playing-filling → rotating`; the vibe/signal state; the daemon playback lifecycle).
+- Invariants must hold across transitions (e.g. `pool ≤ 12`, "at most one fill active", "playing ∈ pool", "generation only below full").
+- A wrong transition corrupts state silently, crashes, or yields a UX expensive to discover late. bas7 (#291) shipped a broken loop precisely because a transition — advance-on-track-end — was never modeled and never listened to.
+
+**Does NOT qualify** (skip the ceremony): pure I/O helpers, provider SDK wrappers, text formatting/normalization, single-function bug fixes with no state.
+
+**What the model must contain:**
+
+- A state schema with the invariants in its predicate (not scattered in prose).
+- One operation schema per transition, with preconditions, postconditions, and framing.
+- `fuzz -t` exits 0. For higher-stakes invariants, model-check with `/z-spec:test` (probcli) to explore the reachable state space, not just type-check.
+
+**How it plugs into the workflow:**
+
+- The design mission (or the leader) produces `docs/<feature>.tex` and commits it with the design artifacts.
+- The leader's design review cites the model's findings and confirms the write-set and test plan satisfy it. Each finding is either designed-for or escalated to the operator — before implementation dispatches.
+- The implementation's tests assert the modeled properties by name (e.g. "no immediate repeat", "fill stops at 12", "skip in the empty-pool state is a no-op").
+
+**Precedent:** `docs/vox-notify.tex` (notification system) and `docs/music-playlist.tex` (vox-1rxb). The latter caught a crash path at design time — `/music next` before track #1 exists would call `pick_next` on an empty pool and raise — that the informal design missed. That is the whole point: design-time resolution is cheap; implementation-time discovery is a full defect cycle.
+
 ## Ethos & Delegation
 
 Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses ethos missions. Every non-trivial delegation has two phases: (1) **design mission** — describes problem, constraints, and invariants but does NOT prescribe a write set; (2) **implementation mission** — uses the write set produced by the design phase. The design mission's output IS the write set — the specialist decides what to create, split, or extract. This is critical: prescribing a write set before design prevents refactoring and forces code into existing modules.
