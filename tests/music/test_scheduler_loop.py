@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.loop import _MUSIC_MAX_RETRIES, MusicLoop
+from punt_vox.voxd.music.pool import POOL_SIZE
 from punt_vox.voxd.music.scheduler import MusicScheduler
 
 __all__: list[str] = []
@@ -19,6 +20,80 @@ def _make_scheduler(tmp_path: Path) -> MusicScheduler:
     """Build a MusicScheduler with a TrackGenerator writing to tmp_path."""
     gen = TrackGenerator(tmp_path)
     return MusicScheduler(gen)
+
+
+async def _fake_player(*args: object, **kwargs: object) -> MagicMock:
+    """Return a fake playback subprocess that stays alive until killed."""
+    proc = MagicMock()
+    proc.returncode = None
+
+    async def _wait() -> int:
+        await asyncio.sleep(5.0)
+        return 0
+
+    proc.wait = _wait
+    proc.kill = MagicMock(side_effect=lambda: setattr(proc, "returncode", -9))
+    return proc
+
+
+class TestRotationMakesNoApiCall:
+    """A full pool replays through MusicLoop with zero provider calls.
+
+    This is the boundary assertion the scheduler-level call-count cannot make:
+    generation lives in loop.py, so patching the real
+    ElevenLabsMusicProvider.generate_track and driving MusicLoop proves the
+    rotate path never reaches the API. If rotation regressed to generation,
+    the loop would invoke the provider and this test would fail.
+    """
+
+    def test_full_pool_rotation_never_calls_provider(self, tmp_path: Path) -> None:
+        gen = TrackGenerator(tmp_path)
+        prefix = gen.pool_prefix(("calm", "jazz"))
+        for i in range(POOL_SIZE):
+            (tmp_path / f"{prefix}{i:02d}.mp3").write_bytes(b"x")
+
+        scheduler = MusicScheduler(gen)
+        scheduler._mode = "on"
+        scheduler._owner = "u1"
+        scheduler._vibe = ("calm", "")
+        scheduler._style = "jazz"
+
+        # The scheduler rotates: replay a pool member, no generation signalled.
+        assert scheduler.skip_next(owner_id="u1").status == "playing"
+
+        generate_track = AsyncMock()
+        playback_started = False
+
+        async def _drive() -> None:
+            nonlocal playback_started
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music."
+                    "ElevenLabsMusicProvider.generate_track",
+                    generate_track,
+                ),
+                patch(
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
+                    _fake_player,
+                ),
+            ):
+                task = asyncio.create_task(MusicLoop(scheduler).run())
+                for _ in range(100):
+                    await asyncio.sleep(0.01)
+                    if scheduler.proc is not None:
+                        playback_started = True
+                        break
+                # Cancel triggers kill_proc(), which clears _proc -- capture
+                # the playback-started signal above, before cancelling.
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        generate_track.assert_not_called()
+        assert playback_started  # a pool member reached playback
+        assert scheduler.track in set(gen.tracks_for(("calm", "jazz")))
 
 
 class TestMaxRetriesDisablesMusic:
