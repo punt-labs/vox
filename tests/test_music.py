@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from punt_vox.music import _LOOP_SUFFIX, _VARIATION_DESCRIPTORS, vibe_to_prompt
+from punt_vox.voxd.music.pool import POOL_SIZE
 
 # -- Layer 2: time-of-day parametrization -----------------------------------
 
@@ -154,8 +155,10 @@ class TestFallbacks:
 class TestVariation:
     """Layer 4 — the distinctness descriptor keyed by variation index."""
 
-    def test_at_least_twelve_distinct_descriptors(self) -> None:
-        assert len(_VARIATION_DESCRIPTORS) >= 12
+    def test_descriptors_cover_pool_size(self) -> None:
+        # Guards drift: a POOL_SIZE bump must not silently reuse descriptors
+        # via the modulo in _layer_variation.
+        assert len(_VARIATION_DESCRIPTORS) >= POOL_SIZE
         assert len(set(_VARIATION_DESCRIPTORS)) == len(_VARIATION_DESCRIPTORS)
 
     def test_none_reproduces_four_layer_prompt(self) -> None:
