@@ -19,6 +19,7 @@ from punt_vox.voxd.music.off_handler import MusicOffHandler
 from punt_vox.voxd.music.on_handler import MusicOnHandler
 from punt_vox.voxd.music.play_handler import MusicPlayHandler
 from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.store import FilesystemTrackStore
 from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.router import WebSocketRouter
@@ -36,7 +37,7 @@ def _make_router(
     from punt_vox.dirs import music_output_dir
 
     pb = PlaybackQueue()
-    tg = TrackGenerator(music_output_dir())
+    tg = TrackGenerator(FilesystemTrackStore(music_output_dir()))
     ms = MusicScheduler(tg)
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)

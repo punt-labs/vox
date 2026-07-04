@@ -18,6 +18,7 @@ from punt_vox.voxd import (
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.on_handler import MusicOnHandler
 from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.store import FilesystemTrackStore
 from punt_vox.voxd.playback import PlaybackQueue
 
 
@@ -386,9 +387,9 @@ class TestMusicSeparateFromPlaybackQueue:
     separation by checking that _handle_music_on does not enqueue anything.
     """
 
-    def test_music_on_does_not_enqueue(self) -> None:
+    def test_music_on_does_not_enqueue(self, tmp_path: Path) -> None:
         playback = PlaybackQueue()
-        tg = TrackGenerator(Path("/tmp/vox-test-music"))
+        tg = TrackGenerator(FilesystemTrackStore(tmp_path))
         music = MusicScheduler(tg)
         handler = MusicOnHandler(scheduler=music)
 

@@ -1628,7 +1628,7 @@ Put music on and forget it:
 Four states own the daemon-wide music subsystem. The state is a derived view of
 `(mode, pool-on-disk-count, fill-task-alive)`, not a stored enum to keep in sync.
 
-```
+```text
                 turn_on / vibe-change (empty pool)
    ┌────────┐ ─────────────────────────────────────▶ ┌──────────────────┐
    │  off   │                                          │ generating-first │

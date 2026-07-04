@@ -1,117 +1,435 @@
-"""Tests for MusicLoop.run -- max retries disables music."""
+"""Experience-level tests for MusicLoop.
+
+These drive the REAL loop with a fake subprocess that records each argv and
+lets the test control when each player ends. The bas7 gap was proving rotation
+by calling the scheduler directly while the loop looped one file; here every
+assertion is on what the loop actually spawned -- a *different* file on
+track-end, no generation at 12, the current player surviving a vibe change.
+"""
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Sequence
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
+from music.conftest import FakeTrackStore
+from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.loop import _MUSIC_MAX_RETRIES, MusicLoop
+from punt_vox.voxd.music.loop import MusicLoop
 from punt_vox.voxd.music.scheduler import MusicScheduler
+
+if TYPE_CHECKING:
+    import pytest
 
 __all__: list[str] = []
 
-
-def _make_loop(tmp_path: Path) -> tuple[MusicScheduler, MusicLoop]:
-    """Build a MusicScheduler and MusicLoop writing to tmp_path."""
-    gen = TrackGenerator(tmp_path)
-    scheduler = MusicScheduler(gen)
-    loop = MusicLoop(scheduler)
-    return scheduler, loop
+_PROVIDER = "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider.generate_track"
+_SUBPROCESS = "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec"
+_CHOICE = "punt_vox.voxd.music.pool.secrets.choice"
 
 
-class TestMaxRetriesDisablesMusic:
-    """After _MUSIC_MAX_RETRIES generation failures, mode should be 'off'."""
+def _first_candidate(seq: Sequence[Path]) -> Path:
+    """Deterministic stand-in for secrets.choice: pick the first candidate."""
+    return seq[0]
 
-    def test_max_retries_disables_music(self, tmp_path: Path) -> None:
-        """Consecutive generation failures during playback disable music."""
-        scheduler, loop = _make_loop(tmp_path)
-        scheduler._mode = "on"
-        scheduler._owner = "test-session"
-        scheduler._vibe = ("focused", "[calm]")
-        scheduler._changed.set()
 
-        generation_count = 0
+class _FakeProc:
+    """A fake player subprocess whose end the test controls."""
 
-        async def always_fail_after_first(
-            self: object,
-            prompt: str,
-            duration_ms: int,
-            output_path: Path,
-        ) -> Path:
-            nonlocal generation_count
-            generation_count += 1
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.stderr = None
+        self._ended = asyncio.Event()
 
-            if generation_count == 1:
-                output_path.write_bytes(b"fake-music-data")
-                return output_path
+    async def wait(self) -> int:
+        await self._ended.wait()
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
 
-            msg = f"generation failed (attempt {generation_count})"
-            raise RuntimeError(msg)
+    def kill(self) -> None:
+        self.returncode = -9
+        self._ended.set()
 
-        async def fake_subprocess(*args: object, **kwargs: object) -> MagicMock:
-            proc = MagicMock()
-            proc.returncode = None
+    def end(self) -> None:
+        """Signal a natural end (rc 0)."""
+        self.returncode = 0
+        self._ended.set()
 
-            async def _wait() -> int:
-                if proc.returncode is not None:
-                    return int(proc.returncode)
-                await asyncio.sleep(5.0)
-                proc.returncode = 0
-                return 0
 
-            proc.wait = _wait
-            proc.kill = MagicMock(
-                side_effect=lambda: setattr(proc, "returncode", -9),
-            )
-            return proc
+class _FakePlayers:
+    """Record spawned player commands and hand back controllable procs."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+        self.procs: list[_FakeProc] = []
+        self._spawned = asyncio.Event()
+
+    async def spawn(self, *cmd: str, **_kwargs: Any) -> _FakeProc:
+        self.commands.append(list(cmd))
+        proc = _FakeProc()
+        self.procs.append(proc)
+        self._spawned.set()
+        return proc
+
+    async def wait_for(self, count: int) -> None:
+        """Block until at least ``count`` players have been spawned."""
+        while len(self.commands) < count:
+            self._spawned.clear()
+            if len(self.commands) >= count:
+                return
+            await asyncio.wait_for(self._spawned.wait(), timeout=2.0)
+
+    def track_of(self, index: int) -> str:
+        """Return the basename of the track the ``index``-th spawn played."""
+        return Path(self.commands[index][-1]).name
+
+    def end(self, index: int) -> None:
+        """End the ``index``-th player naturally."""
+        self.procs[index].end()
+
+
+def _scheduler(store: FakeTrackStore) -> MusicScheduler:
+    return MusicScheduler(TrackGenerator(store))
+
+
+def _seed_pool(store: FakeTrackStore, vibe: str, style: str, count: int) -> str:
+    """Register ``count`` tracks for one pool; return the prefix."""
+    prefix = TrackGenerator.pool_prefix((vibe, style))
+    for i in range(count):
+        store.add(f"{prefix}{i:02d}")
+    return prefix
+
+
+async def _settle() -> None:
+    """Yield to the loop a few times so it can process a control signal."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def _stop(task: asyncio.Task[None]) -> None:
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+class TestAutoAdvance:
+    """Track-end advances to a DIFFERENT track with no skip and no generation."""
+
+    def test_track_end_advances_to_different_track(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        _seed_pool(store, "calm", "jazz", 12)  # full -> no fill
+        sched = _scheduler(store)
+        players = _FakePlayers()
 
         async def _drive() -> None:
             with (
-                patch(
-                    "punt_vox.providers.elevenlabs_music."
-                    "ElevenLabsMusicProvider.generate_track",
-                    always_fail_after_first,
-                ),
-                patch(
-                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
-                    fake_subprocess,
-                ),
-                patch.object(
-                    MusicLoop,
-                    "_backoff_sleep",
-                    new=AsyncMock(),
-                ),
+                patch(_SUBPROCESS, players.spawn),
+                patch(_PROVIDER, AsyncMock()) as gen_track,
             ):
-                task = asyncio.create_task(loop.run())
-
-                # Wait for initial generation + playback to start.
-                for _ in range(100):
-                    await asyncio.sleep(0.01)
-                    if scheduler.proc is not None:
-                        break
-
-                # Trigger vibe change to start parallel generation.
-                scheduler._vibe = ("happy", "[warm]")
-                scheduler._changed.set()
-
-                # Wait for max retries to disable music.
-                for _ in range(100):
-                    await asyncio.sleep(0.01)
-                    if scheduler.mode == "off":
-                        break
-
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)
+                first = players.track_of(0)
+                players.end(0)  # natural end, no skip_next call
+                await players.wait_for(2)
+                second = players.track_of(1)
+                await _stop(task)
+                assert second != first  # auto-advanced to a different file
+                gen_track.assert_not_called()  # advance never generates
 
         asyncio.run(_drive())
 
-        assert scheduler.mode == "off"
-        assert scheduler.state == "idle"
-        # 1 successful initial + _MUSIC_MAX_RETRIES failures.
-        assert generation_count == 1 + _MUSIC_MAX_RETRIES
+
+class TestRotateAtTwelve:
+    """A full pool rotates across advances with zero provider calls."""
+
+    def test_full_pool_rotates_without_generation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        _seed_pool(store, "calm", "jazz", 12)
+        sched = _scheduler(store)
+        players = _FakePlayers()
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch(_PROVIDER, AsyncMock()) as gen_track,
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)
+                players.end(0)
+                await players.wait_for(2)
+                players.end(1)
+                await players.wait_for(3)
+                await _stop(task)
+                gen_track.assert_not_called()
+                # Consecutive tracks never repeat the just-played one.
+                assert players.track_of(0) != players.track_of(1)
+                assert players.track_of(1) != players.track_of(2)
+
+        asyncio.run(_drive())
+
+
+class TestVibeChangeFinishesThenSwitches:
+    """A vibe change does not interrupt; the next track comes from the new pool."""
+
+    def test_current_survives_then_switches_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        _seed_pool(store, "calm", "jazz", 12)  # pool A
+        _seed_pool(store, "bright", "jazz", 12)  # pool B (style stays jazz)
+        sched = _scheduler(store)
+        players = _FakePlayers()
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch(_PROVIDER, AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)
+                assert players.track_of(0).startswith("calm_jazz_")
+
+                sched.update_vibe("u1", ("bright", ""))
+                await _settle()
+                # Finish-current-first: the playing proc is NOT killed.
+                assert players.procs[0].returncode is None
+
+                players.end(0)  # current song finishes
+                await players.wait_for(2)
+                await _stop(task)
+                assert players.procs[0].returncode == 0  # ended, not killed (-9)
+                assert players.track_of(1).startswith("bright_jazz_")
+
+        asyncio.run(_drive())
+
+
+class TestOffCancelsFill:
+    """/music off cancels the background fill and stops playback."""
+
+    def test_off_cancels_fill_no_orphan(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = _seed_pool(store, "calm", "jazz", 1)  # partial -> fill runs
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        gen_started = asyncio.Event()
+        gen_calls = 0
+
+        async def blocking_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            nonlocal gen_calls
+            gen_calls += 1
+            gen_started.set()
+            await asyncio.Event().wait()  # blocks until the task is cancelled
+            return store.path_for("never"), "never"
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", blocking_generate),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)  # #00 playing
+                await asyncio.wait_for(gen_started.wait(), timeout=2.0)
+                assert sched.filling  # a fill task is live
+
+                await sched.turn_off()
+                await _settle()
+                assert not sched.filling  # fill cancelled synchronously
+                assert players.procs[0].returncode == -9  # player killed
+                assert len(store.tracks_for(prefix)) == 1  # no orphaned track
+                await _stop(task)
+
+        asyncio.run(_drive())
+        assert gen_calls == 1
+
+
+class TestSingleTrackLoopsThenAdvances:
+    """The sole-track transient loops #1 until #2 lands, then advances."""
+
+    def test_loops_then_advances_when_second_lands(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = _seed_pool(store, "calm", "jazz", 1)  # only #00
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await release.wait()
+            release.clear()  # one track per release
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)  # plays #00
+                players.end(0)
+                await players.wait_for(2)  # still only #00 -> loops #00
+                assert players.track_of(1) == players.track_of(0)
+
+                release.set()  # let #01 land
+                await _settle()
+                players.end(1)
+                await players.wait_for(3)  # now advances to #01
+                await _stop(task)
+                assert players.track_of(2) != players.track_of(0)
+                assert players.track_of(2) == f"{prefix}01.mp3"
+
+        asyncio.run(_drive())
+
+
+class TestGeneratingFirstThenPlays:
+    """An empty pool waits for track #1, then plays it (generating-first)."""
+
+    def test_empty_pool_awaits_first_track(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await release.wait()
+            release.clear()
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await _settle()
+                assert not players.commands  # nothing plays before #1 exists
+                assert sched.state == "generating"
+
+                release.set()  # #00 lands
+                await players.wait_for(1)
+                await _stop(task)
+                assert players.track_of(0) == f"{prefix}00.mp3"
+
+        asyncio.run(_drive())
+
+
+class TestSkipEmptyPoolIsNoOp:
+    """/music next while generating-first is a no-op (Z finding #1)."""
+
+    def test_skip_before_first_track_does_not_spawn_or_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await release.wait()
+            release.clear()
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await _settle()
+
+                result = sched.skip_next("u1")  # pool still empty
+                assert result.status == "ignored"
+                await _settle()
+                assert not players.commands  # no player spawned by the skip
+
+                release.set()  # #1 still lands normally afterward
+                await players.wait_for(1)
+                await _stop(task)
+
+        asyncio.run(_drive())
+
+
+class TestRestartResumesFromDisk:
+    """Restart (turn_on with tracks on disk) plays now and resumes fill."""
+
+    def test_partial_pool_plays_now_and_fills(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = _seed_pool(store, "calm", "jazz", 5)  # 5 on disk
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+        gen_calls = 0
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            nonlocal gen_calls
+            gen_calls += 1
+            await release.wait()
+            release.clear()
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)  # plays immediately from disk
+                assert sched.filling  # fill resumed
+                await _stop(task)
+
+        asyncio.run(_drive())
+        assert gen_calls >= 1  # fill resumed from the on-disk count

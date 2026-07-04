@@ -392,7 +392,7 @@
     "avg_lcom": 0.673
   },
   "src/punt_vox/voxd/daemon.py": {
-    "efferent_coupling": 20.0,
+    "efferent_coupling": 21.0,
     "public_names": 8.0,
     "circular_imports": 0.0,
     "max_lcom": 0.333,
