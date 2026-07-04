@@ -669,7 +669,7 @@ class TestNamedFirstNonMatchingStemDoesNotCrash:
         async def gen_first_then_fail(
             self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
         ) -> tuple[Any, str]:
-            if name:  # the named-first track: stem does not match the pool prefix
+            if name == "mysong":  # the named-first track (stem misses the prefix)
                 return store.add(name), name
             msg = "no pool member"  # every auto-named generation fails
             raise RuntimeError(msg)

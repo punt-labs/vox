@@ -19,12 +19,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from music.conftest import FakeTrackStore
-from punt_vox.voxd.music.filler import PoolFiller
+from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import POOL_SIZE
 from punt_vox.voxd.music.store import FilesystemTrackStore
 
 __all__: list[str] = []
+
+
+def _target(vibe_text: str, style: str, tags: str = "") -> FillTarget:
+    """Build a FillTarget for the (vibe, style) pool the way Playlist does."""
+    prefix = TrackGenerator.pool_prefix((vibe_text, style))
+    return FillTarget(prefix, (vibe_text, tags), style)
+
 
 # A patched TrackGenerator.generate: bound, so its first arg is the generator.
 GenerateFn = Callable[
@@ -85,7 +92,7 @@ class TestFillToPoolSize:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await _drain(filler)
 
         asyncio.run(_drive())
@@ -116,7 +123,7 @@ class TestRestartResumesFromDiskCount:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await _drain(filler)
 
         asyncio.run(_drive())
@@ -133,7 +140,7 @@ class TestRestartResumesFromDiskCount:
             nonlocal filler
             with patch.object(TrackGenerator, "generate", _registering_generate(calls)):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await asyncio.sleep(0)
 
         asyncio.run(_drive())
@@ -168,7 +175,7 @@ class TestCancelStopsGeneration:
             nonlocal filler
             with patch.object(TrackGenerator, "generate", blocking_generate):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await asyncio.wait_for(started.wait(), timeout=2.0)
                 task = filler._task
                 filler.cancel()
@@ -216,12 +223,12 @@ class TestRetargetCancelsOldTask:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await asyncio.wait_for(started_a.wait(), timeout=2.0)
                 old_task = filler._task
                 assert old_task is not None
                 old_task_holder.append(old_task)
-                filler.ensure_running(("bright", ""), "techno")  # retarget
+                filler.ensure_running(_target("bright", "techno"))  # retarget
                 await asyncio.sleep(0)
                 # The single-flight guard makes pool B wait for pool A's
                 # in-flight provider call to drain before it starts; release it.
@@ -233,6 +240,58 @@ class TestRetargetCancelsOldTask:
         assert old_task_holder[0].cancelled()  # pool A fill was cancelled
         techno = TrackGenerator.pool_prefix(("bright", "techno"))
         assert len(store.tracks_for(techno)) == POOL_SIZE  # pool B filled
+
+
+class TestTagChangeRestartsFill:
+    """A vibe *tags* change restarts the fill so new tracks use current tags."""
+
+    def test_tag_only_change_cancels_stale_fill(self) -> None:
+        # Finding #3: same (vibe text, style) -> same prefix, but a tags change
+        # must still restart the fill. Otherwise the live task keeps the OLD
+        # tags in its closure and every later track uses the stale prompt.
+        store = FakeTrackStore()
+        _seed(store, "calm", "jazz", 1)  # room to fill -> the task stays live
+        started = asyncio.Event()
+        release = asyncio.Event()
+        seen_tags: list[str] = []
+        prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
+
+        async def blocking_generate(
+            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[object, str]:
+            seen_tags.append(vibe[1])
+            if not started.is_set():
+                started.set()
+                await release.wait()  # hold the stale-tag generation open
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        old_holder: list[asyncio.Task[None]] = []
+
+        async def _drive() -> None:
+            with (
+                patch.object(TrackGenerator, "generate", blocking_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                filler = PoolFiller(TrackGenerator(store))
+                filler.ensure_running(_target("calm", "jazz", tags="[soft]"))
+                await asyncio.wait_for(started.wait(), timeout=2.0)
+                old = filler._task
+                assert old is not None
+                old_holder.append(old)
+                # Same prefix, NEW tags -> must cancel the stale-tag task.
+                filler.ensure_running(_target("calm", "jazz", tags="[intense]"))
+                await asyncio.sleep(0)
+                release.set()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await old
+                await _drain(filler)  # the retargeted (new-tag) fill completes
+
+        asyncio.run(_drive())
+
+        assert old_holder[0].cancelled()  # the stale-tag fill was cancelled
+        assert "[intense]" in seen_tags  # the new tags reached generation
 
 
 class TestFirstTrackHandshake:
@@ -249,7 +308,7 @@ class TestFirstTrackHandshake:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 result.append(await filler.await_first_track())
 
         asyncio.run(_drive())
@@ -272,7 +331,7 @@ class TestFirstTrackHandshake:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 with pytest.raises(RuntimeError, match="could not generate the first"):
                     await filler.await_first_track()
 
@@ -308,7 +367,7 @@ class TestGenerationFailureBackoff:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")
+                filler.ensure_running(_target("calm", "jazz"))
                 await _drain(filler)
 
         asyncio.run(_drive())
@@ -373,10 +432,10 @@ class TestSingleInFlightAcrossRetarget:
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
                 filler = PoolFiller(TrackGenerator(store))
-                filler.ensure_running(("calm", ""), "jazz")  # pool A starts
+                filler.ensure_running(_target("calm", "jazz"))  # pool A starts
                 await asyncio.wait_for(started.wait(), timeout=2.0)
 
-                filler.ensure_running(("bright", ""), "techno")  # retarget -> B
+                filler.ensure_running(_target("bright", "techno"))  # retarget -> B
                 await asyncio.sleep(0)  # let B reach the single-flight lock
                 assert concurrency == 1  # B is blocked; only A is in flight
 

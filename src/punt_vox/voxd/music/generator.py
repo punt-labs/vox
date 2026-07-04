@@ -117,7 +117,8 @@ class TrackGenerator:
 
         self._store.prepare()
         safe_name = self.slugify(
-            track_name or self.auto_track_name((vibe_text, style)), 60
+            track_name or self.auto_track_name(self.pool_prefix((vibe_text, style))),
+            60,
         )
         output_path = self._store.path_for(safe_name)
 
@@ -128,9 +129,9 @@ class TrackGenerator:
         )
         return output_path, safe_name
 
-    def auto_track_name(self, key: tuple[str, str]) -> str:
-        """Return a collision-free auto-name for a (vibe, style) pool."""
-        stem = f"{self.pool_prefix(key)}{time.strftime('%Y%m%d_%H%M')}"
+    def auto_track_name(self, pool_prefix: str) -> str:
+        """Return a collision-free auto-name within ``pool_prefix``."""
+        stem = f"{pool_prefix}{time.strftime('%Y%m%d_%H%M')}"
         counters = (f"{stem}_{n}" for n in itertools.count())
         return next(c for c in counters if not self._store.exists(c))
 

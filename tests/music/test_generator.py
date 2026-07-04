@@ -122,7 +122,7 @@ class TestPoolPrefix:
         prefix = gen.pool_prefix(("calm", "jazz"))
         names: list[str] = []
         for _ in range(20):
-            name = gen.auto_track_name(("calm", "jazz"))
+            name = gen.auto_track_name(gen.pool_prefix(("calm", "jazz")))
             names.append(name)
             (tmp_path / f"{name}.mp3").write_bytes(b"x")
 
@@ -183,7 +183,9 @@ class TestAutoTrackName:
     """auto_track_name derives <vibe>_<style>_YYYYMMDD_HHMM_<counter> (migrated)."""
 
     def test_with_vibe_and_style(self, tmp_path: Path) -> None:
-        name = _gen(tmp_path).auto_track_name(("happy", "techno"))
+        name = _gen(tmp_path).auto_track_name(
+            TrackGenerator.pool_prefix(("happy", "techno"))
+        )
         assert name.startswith("happy_techno_")
         parts = name.split("_")
         assert len(parts[-3]) == 8  # YYYYMMDD
@@ -191,10 +193,18 @@ class TestAutoTrackName:
         assert parts[-1] == "0"  # first free counter in an empty pool
 
     def test_no_vibe_uses_ambient(self, tmp_path: Path) -> None:
-        assert _gen(tmp_path).auto_track_name(("", "")).startswith("ambient_mix_")
+        assert (
+            _gen(tmp_path)
+            .auto_track_name(TrackGenerator.pool_prefix(("", "")))
+            .startswith("ambient_mix_")
+        )
 
     def test_no_style_uses_mix(self, tmp_path: Path) -> None:
-        assert _gen(tmp_path).auto_track_name(("chill", "")).startswith("chill_mix_")
+        assert (
+            _gen(tmp_path)
+            .auto_track_name(TrackGenerator.pool_prefix(("chill", "")))
+            .startswith("chill_mix_")
+        )
 
 
 class TestCanGenerate:

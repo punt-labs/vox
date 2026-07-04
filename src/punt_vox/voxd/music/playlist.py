@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self
 
-from punt_vox.voxd.music.filler import PoolFiller
+from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import TrackPool
 
@@ -78,8 +78,14 @@ class Playlist:
         return self._generator.can_generate()
 
     def ensure_fill(self, first_name: str = "") -> None:
-        """(Re)start the background fill for the current pool if not full."""
-        self._filler.ensure_running(self._vibe, self._style, first_name=first_name)
+        """(Re)start the background fill for the current pool if not full.
+
+        The fill is keyed on the same ``_pool_prefix`` selection uses, so a
+        replayed track's pool is filled -- not the session (vibe, style) pool
+        (findings #1/#7). Vibe and style still drive the provider prompt.
+        """
+        target = FillTarget(self._pool_prefix, self._vibe, self._style)
+        self._filler.ensure_running(target, first_name=first_name)
 
     def cancel_fill(self) -> None:
         """Cancel the background fill -- no orphaned generation."""

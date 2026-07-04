@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from music.conftest import FakeTrackStore
+from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import POOL_SIZE
 from punt_vox.voxd.music.scheduler import MusicScheduler
@@ -242,6 +243,42 @@ class TestPlayTrack:
         sched = _scheduler()
         with pytest.raises(ValueError, match="owner_id is required"):
             asyncio.run(sched.play_track("x", ""))
+
+
+class TestReplayFillTargeting:
+    """A named replay fills the replayed track's pool, not the session pool."""
+
+    def test_replay_fills_the_replayed_pool_not_the_session_pool(self) -> None:
+        # Findings #1/#7: play_track switches selection to the replayed track's
+        # pool but leaves the session (vibe, style) unchanged. The fill must key
+        # off the SAME prefix selection uses, so credits grow the pool being
+        # played -- not the session pool that ensure_fill used to key off.
+        store = FakeTrackStore()
+        store.add("happy_jazz_20260704_1200_0")  # a track from a DIFFERENT pool
+        sched = _scheduler(store)
+        sched._channel.activate()
+        sched._playlist.retune(("focused", ""), "techno")  # session pool differs
+
+        async def _generate(
+            self_gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Path, str]:
+            return store.add(name), name  # register under the requested name
+
+        with (
+            patch.object(TrackGenerator, "generate", _generate),
+            patch.object(PoolFiller, "_backoff", AsyncMock()),
+        ):
+
+            async def _run() -> None:
+                await sched.play_track("happy_jazz_20260704_1200_0", "u1")
+                task = sched._playlist._filler._task
+                if task is not None:
+                    await asyncio.wait_for(task, timeout=5.0)
+
+            asyncio.run(_run())
+
+        assert len(store.tracks_for("happy_jazz_")) == POOL_SIZE  # replayed pool grew
+        assert len(store.tracks_for("focused_techno_")) == 0  # session pool untouched
 
 
 class TestUpdateVibe:
