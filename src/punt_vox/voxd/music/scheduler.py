@@ -156,7 +156,11 @@ class MusicScheduler:
             if replayed is not None:
                 return replayed
         await self._adopt_new(req)
-        return self._begin_named(req) if name else self._request_next_track()
+        return (
+            self._begin_generation(req.safe_name)
+            if name
+            else self._request_next_track()
+        )
 
     async def turn_off(self) -> MusicResponse:
         """Stop music playback."""
@@ -187,12 +191,7 @@ class MusicScheduler:
         await self._kill_proc()
         self._mode = "on"
         self._owner = owner_id
-        self._track = track_path
-        self._track_name = safe_name
-        self._state = "playing"
-        self._replay = True
-        self._changed.set()
-        return MusicResponse(status="playing", track=str(track_path), name=safe_name)
+        return self._replay_track(track_path, safe_name)
 
     def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
         """Update vibe if sender is owner, then rotate or generate."""
@@ -276,14 +275,7 @@ class MusicScheduler:
                 raise ValueError(msg)
             return None
         await self._adopt_new(req)
-        self._track = track_path
-        self._track_name = req.safe_name
-        self._state = "playing"
-        self._replay = True
-        self._changed.set()
-        return MusicResponse(
-            status="playing", track=str(track_path), name=req.safe_name
-        )
+        return self._replay_track(track_path, req.safe_name)
 
     async def _adopt_new(self, req: MusicRequest) -> None:
         """Kill any foreign playback and adopt ownership for a new track."""
@@ -296,13 +288,22 @@ class MusicScheduler:
         self._owner = req.owner_id
         self._vibe = req.vibe
 
-    def _begin_named(self, req: MusicRequest) -> MusicResponse:
-        """Signal generation of a track carrying an explicit name."""
-        self._track_name = req.safe_name
+    def _begin_generation(self, name: str) -> MusicResponse:
+        """Signal the loop to generate a track carrying ``name`` (may be empty)."""
+        self._track_name = name
         self._replay = False
         self._state = "generating"
         self._changed.set()
         return MusicResponse(status="generating")
+
+    def _replay_track(self, track: Path, name: str) -> MusicResponse:
+        """Signal the loop to replay ``track`` with no generation."""
+        self._track = track
+        self._track_name = name
+        self._replay = True
+        self._state = "playing"
+        self._changed.set()
+        return MusicResponse(status="playing", track=str(track), name=name)
 
     def _request_next_track(self) -> MusicResponse:
         """Rotate an established pool with no API call, else signal generation.
@@ -314,18 +315,9 @@ class MusicScheduler:
             self._generator.tracks_for((self._vibe[0], self._style))
         )
         if not pool.is_full:
-            self._track_name = ""
-            self._replay = False
-            self._state = "generating"
-            self._changed.set()
-            return MusicResponse(status="generating")
+            return self._begin_generation("")
         chosen = pool.pick_next(self._track)
-        self._track = chosen
-        self._track_name = chosen.stem
-        self._replay = True
-        self._state = "playing"
-        self._changed.set()
-        return MusicResponse(status="playing", track=str(chosen), name=chosen.stem)
+        return self._replay_track(chosen, chosen.stem)
 
     async def _kill_proc(self) -> None:
         """Kill the current music subprocess if running."""
