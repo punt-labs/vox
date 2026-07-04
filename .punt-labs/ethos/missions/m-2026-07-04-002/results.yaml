@@ -1,0 +1,73 @@
+results:
+    - mission: m-2026-07-04-002
+      round: 1
+      created_at: "2026-07-04T01:18:54Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/client.py
+          added: 17
+          removed: 18
+        - path: src/punt_vox/server.py
+          added: 2
+          removed: 2
+        - path: tests/test_client.py
+          added: 27
+          removed: 0
+        - path: tests/test_server.py
+          added: 29
+          removed: 0
+      evidence:
+        - name: make check exits 0 (mypy, pyright, ruff, pytest, check-oo, check-coupling, suppressions)
+          status: pass
+        - name: 1726 tests pass (9 new); boundary tests daemon->client->MCP
+          status: pass
+        - name: MISS then identical HIT flips cached false->true; HIT does not re-synthesize (synth_calls == ["hello"])
+          status: pass
+        - name: different voice = different cache key = MISS (2 synth calls); per-call api_key bypass = MISS
+          status: pass
+        - name: OO ratchet - synthesis.py module_size 406->404 improved, no regressions; coupling unchanged; suppressions -2
+          status: pass
+      open_questions:
+        - 'Write-set is stale: it lists the pre-refactor monolith src/punt_vox/voxd.py, but voxd is now a package. The daemon changes landed in src/punt_vox/voxd/synthesis.py (return type + INFO HIT/MISS logs), a new module src/punt_vox/voxd/synthesis_result.py (SynthesisOutcome), and src/punt_vox/voxd/speech_handlers.py (emits `cached` on the ''playing'' response). cache.py and types.py were not needed. Boundary tests landed in tests/test_voxd_synthesis.py and tests/test_voxd_speech_handlers.py (write_set named tests/test_voxd.py/test_cache.py). Step 2 of docs/testing/manual-tests.md was updated per the contract body. files_changed here lists only the write_set-valid paths (client.py, server.py, test_client.py, test_server.py); the rest are on this branch under commits c27e10a / 9f29fee / 6bcb91d.'
+      prose: |
+        Made cache HIT vs MISS observable end to end without changing caching
+        behavior (key/hit-miss decision/audio unchanged).
+
+        Signal design (typed, minimal protocol change):
+        - New typed result: SynthesisOutcome(path: Path, cached: bool) in a
+          dedicated module src/punt_vox/voxd/synthesis_result.py. synthesize_to_file
+          now returns it instead of a bare Path.
+        - voxd logs distinct INFO lines on the synthesize path: "cache HIT: ...
+          file=<cache path>" and "cache MISS: ... file=<cache path>" (stderr-only,
+          no print). The MISS log also covers the former "synthesize done" line
+          (one INFO per synthesis). The api_key-bypass MISS notes "cache bypassed".
+        - The daemon carries the fact on the wire: SynthesizeHandler puts
+          "cached": <bool> on the 'playing' response (the terminal the client
+          returns on).
+        - client.py: SynthesizeResult gained a typed field `cached: bool = False`,
+          populated from the terminal response.
+        - server.py: the unmute MCP result entry carries "cached": result.cached,
+          so a caller/model can assert the hit directly.
+
+        Response field name/shape chosen: boolean `cached` -- wire key "cached" on
+        the 'playing' response; client SynthesizeResult.cached; MCP unmute result
+        entry["cached"].
+
+        Boundary tests exercise daemon-response -> client -> MCP, not just the
+        in-process cache:
+        - Pipeline (real temp cache, counting synth): MISS then identical HIT flips
+          cached false->true and the HIT does not re-synthesize; a different voice
+          (different key) is a MISS; per-call api_key bypass is a MISS.
+        - Handler: 'playing' response carries cached for hit and miss.
+        - Client: a 'playing' frame with cached=true/false surfaces as
+          SynthesizeResult.cached.
+        - Server: unmute result JSON carries cached=true/false.
+
+        make check exits 0. OO ratchet satisfied by improving synthesis.py
+        module_size (406->404) via extraction + log consolidation, with no
+        regressions; coupling offset by dropping the playback._monotonic edge for
+        stdlib time.monotonic. Did not run update-oo/rebaseline: the pass depends
+        on a pending improvement vs the committed baseline, which rebaselining
+        would erase -- baseline decisions belong to the leader at merge.

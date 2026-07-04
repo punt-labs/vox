@@ -1,0 +1,39 @@
+mission_id: m-2026-07-04-002
+status: closed
+type: implement
+created_at: "2026-07-04T00:21:45Z"
+updated_at: "2026-07-04T01:24:14Z"
+closed_at: "2026-07-04T01:24:14Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: kpz
+    pinned_at: "2026-07-04T00:21:45Z"
+    hash: 02e9ed19319b070f1fb6e2f34d26a3e2c6e422a7329bb5af677cb8b57c0b0560
+inputs:
+    ticket: vox-90vw
+write_set:
+    - src/punt_vox/voxd.py
+    - src/punt_vox/cache.py
+    - src/punt_vox/client.py
+    - src/punt_vox/server.py
+    - src/punt_vox/types.py
+    - tests/test_voxd.py
+    - tests/test_cache.py
+    - tests/test_server.py
+    - tests/test_client.py
+success_criteria:
+    - voxd logs a cache HIT and a cache MISS distinctly at INFO on the synthesize path, including the cache file path (stderr-only in daemon mode; no print()).
+    - The synthesize/unmute path surfaces a `cached` (hit/miss) boolean back through the client to the MCP unmute (and/or status) response, so a caller can programmatically confirm a cache hit. You choose the exact field name and which response(s) carry it; keep the daemon/client protocol change minimal and typed (update types.py, not an ad-hoc dict).
+    - 'Caching behavior is UNCHANGED: same cache key (text+voice+provider MD5), same hit/miss decision, same audio. This is observability only — no perf regression on the hot path.'
+    - 'Tests: a cache MISS then an identical cache HIT assert the `cached` flag flips false->true and the HIT does not re-synthesize; the boundary (daemon response -> client -> MCP result) is exercised, not just the in-process cache. Cover the miss path and a provider/voice difference (different key -> miss).'
+    - Update docs/testing/manual-tests.md Step 2 to use the new signal (assert the `cached` field / the INFO log) instead of the current 'grep for no new Synthesize line' heuristic.
+    - make check exits 0 (mypy, pyright, ruff, pytest, check-oo, check-coupling). OO ratchet not regressed on touched files; make update-oo (or --rebaseline only for a structural shift, documented).
+    - Commit incrementally — one commit per logical step (daemon+cache log, response-field plumbing, tests, docs). Each commit passes make check. Do NOT accumulate all changes uncommitted.
+    - Work on branch feat/cache-hit-observability off current main. Do NOT open a PR, bump the version, or edit CHANGELOG.md/DESIGN.md — the leader owns those.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    From a 2026-05-16 manual test: a second identical unmute call is served from the content-addressed cache (key = text+voice+provider), but the operator could not tell whether playback was actually cached vs re-synthesized — both sound identical, and there is no reliable audible/visual signal. This blocks the cache-hit step of the manual test flight (docs/testing/manual-tests.md, Step 2, which currently tells the tester to grep the daemon log for "no new Synthesize: line"). Goal: make a cache hit vs miss OBSERVABLE, cheaply and reliably, so a manual test (and the model driving it) can confirm caching happened. This is a daemon->client boundary-crossing change: the fact lives in voxd (where the cache lookup happens) and must reach whoever asked (the MCP unmute/status response and/or a clear log). You own the design of the signal. A sensible minimum: (1) voxd logs cache hit/miss at INFO with the cache key and the resolved cache file path on the synthesize path; (2) the synthesize/unmute RESPONSE carries a boolean like `cached` so the MCP tool result and the manual flight can assert it directly. Do NOT add the QA-only "cache chime" idea from the bead unless it is trivial AND behind an off-by-default flag — prefer the log + response-field approach. Do not change what gets cached or how the cache key is computed; this is observability only.
