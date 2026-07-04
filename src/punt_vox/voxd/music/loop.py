@@ -112,7 +112,13 @@ class MusicLoop:
             if control == "play":
                 return sched.take_pending_track()
             if control == "vibe":
-                sched.ensure_fill()  # re-race the new pool's first track
+                sched.ensure_fill()
+                if not sched.pool_empty:
+                    # The retarget landed on a pool with tracks on disk (partial
+                    # or full): play one now. Awaiting a first generation that a
+                    # full pool never starts would hang the loop forever.
+                    return sched.select_first()
+                # Genuinely empty -> loop and re-race the new pool's first track.
 
     async def _spawn(self, track: Path) -> asyncio.subprocess.Process:
         """Mark ``track`` playing and start its player subprocess."""

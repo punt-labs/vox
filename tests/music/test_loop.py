@@ -350,6 +350,53 @@ class TestGeneratingFirstThenPlays:
         asyncio.run(_drive())
 
 
+class TestVibeToNonEmptyPoolDuringGeneratingFirst:
+    """A vibe change to a pool with tracks on disk plays now, never hangs.
+
+    Regression for the generating-first hang: ``_await_first`` unconditionally
+    re-raced ``await_first_track()`` on a vibe retarget. If the new pool is
+    already full, no fill runs, so that wait never completes and the loop hangs.
+    The loop must play an on-disk track immediately when the retargeted pool is
+    non-empty.
+    """
+
+    def test_retarget_to_full_pool_plays_without_awaiting_generation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        _seed_pool(store, "bright", "jazz", 12)  # pool B full (style stays jazz)
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        never = asyncio.Event()  # pool A's first generation never lands
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await never.wait()  # empty pool A stays generating-first forever
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool A
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await _settle()
+                assert sched.state == "generating"  # awaiting A's first track
+                assert not players.commands
+
+                sched.update_vibe("u1", ("bright", ""))  # retarget to FULL pool B
+                await players.wait_for(1)  # plays from disk at once -- no hang
+                await _stop(task)
+                assert players.track_of(0).startswith("bright_jazz_")
+
+        asyncio.run(_drive())
+
+
 class TestSkipEmptyPoolIsNoOp:
     """/music next while generating-first is a no-op (Z finding #1)."""
 
