@@ -1,0 +1,100 @@
+results:
+    - mission: m-2026-07-04-011
+      round: 1
+      created_at: "2026-07-04T06:25:42Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/music.py
+          added: 30
+          removed: 40
+        - path: src/punt_vox/voxd/music/generator.py
+          added: 28
+          removed: 28
+        - path: src/punt_vox/voxd/music/scheduler.py
+          added: 92
+          removed: 55
+        - path: tests/test_music.py
+          added: 38
+          removed: 1
+      evidence:
+        - name: make check exit 0 (mypy, pyright, ruff, pytest 1753 passed, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: 'distinctness: 12 _VARIATION_DESCRIPTORS; vibe_to_prompt(variation) layer; variation=None reproduces prior prompt exactly (back-compat, tested)'
+          status: pass
+        - name: 'generate() passes variation=len(tracks_for): test asserts variations==range(12), pool grows to 12, ElevenLabs mocked (never hit)'
+          status: pass
+        - name: 'rotation no API: full pool (>=12) -> status=playing + _replay, gen.generate call count 0 (test_full_pool_rotates_without_generating)'
+          status: pass
+        - name: 'shuffle never repeats just-played self._track: pick_next excludes last (50 draws), scheduler no repeat across 30 rotations'
+          status: pass
+        - name: separate pool per (vibe,style); auto_track_name nonce prevents sub-minute collisions so pool reaches 12
+          status: pass
+        - name: 'OO: scheduler max_complexity 11->5, avg_complexity 1.88->1.73; generator avg_complexity 2.27->2.0, avg_lcom 0.666->0.643; music.py 7->4; pool.py new clean'
+          status: pass
+      open_questions:
+        - 'Scheduler structural cost of the decomposition+feature: module_size 256->287, classes 1->2 (MusicRequest), efferent 2->3 (imports pool), max_lcom 0.623->0.628 (+0.005, still 0.63 vs 0.80 threshold). Baseline was surgically updated for ONLY these scheduler entries (crediting the 11->5 complexity win); whole-tree --rebaseline was rejected because it stole synthesis.py/handler headroom. LCOM and cyclomatic-complexity trade off in a facade with 10 single-attr property getters -- decomposing further LOWERS complexity but RAISES LCOM. Flagged to leader for ruling.'
+      prose: |
+        Playlist rotation now replays the already-saved <vibe>-<style> pool instead
+        of calling ElevenLabs on every /music next. TrackPool (frozen value object)
+        owns is_full and shuffle-avoiding-last; the scheduler holds no rotation slot
+        because the just-played self._track is the avoid-repeat key. Twelve curated
+        variation descriptors make the lazily-generated fill genuinely distinct.
+
+        Deviations from the literal write set (all driven by the design/leader
+        directive): created src/punt_vox/voxd/music/pool.py (the leader-requested
+        TrackPool decomposition); added tests under tests/music/ (test_pool.py,
+        test_scheduler.py, test_generator.py) mirroring the existing music-test
+        layout rather than tests/test_music_scheduler.py / test_music_generator.py;
+        updated tests/test_voxd.py + tests/test_voxd_track_gen.py for the new track
+        naming; surgically updated .oo-baseline.json / .oo-coupling-baseline.json
+        scheduler entries for the documented structural shift.
+
+        Preserved: /music on --name replay, /music play, gapless handoff, off path,
+        and MusicLoop (untouched). Rotating an established pool makes no API call.
+    - mission: m-2026-07-04-011
+      round: 2
+      created_at: "2026-07-04T06:56:37Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/music/scheduler.py
+          added: 21
+          removed: 29
+        - path: tests/test_music.py
+          added: 6
+          removed: 9
+      evidence:
+        - name: make check exit 0 (mypy, pyright, ruff, pytest 1755 passed, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: 'item 1 (boundary proof): loop-level test fills a pool to POOL_SIZE, patches ElevenLabsMusicProvider.generate_track, drives rotation through MusicLoop, asserts provider NOT called while a pool member reaches playback'
+          status: pass
+        - name: 'item 1 sensitivity verified: a pool one short of POOL_SIZE drives the loop into generation and DOES call the provider -- so the full-pool test genuinely fails if rotation ever regresses to the API'
+          status: pass
+        - name: 'item 2 (DRY): _begin_generation(name) + _replay_track(track,name) are the single source; turn_on/play_track/_replay_named/_request_next_track delegate. module_size 287->278, avg_complexity 1.88->1.71, max_complexity holds 5'
+          status: pass
+        - name: 'item 3: TrackPool.pick_next raises ValueError on empty pool (secrets.choice(()) would IndexError); regression test added'
+          status: pass
+        - name: 'item 4: test asserts len(_VARIATION_DESCRIPTORS) >= POOL_SIZE so a pool-size bump cannot silently reuse descriptors via the modulo'
+          status: pass
+        - name: 'item 5: tests/test_music.py imports the real _LOOP_SUFFIX from music.py instead of a drift-prone local copy'
+          status: pass
+      open_questions:
+        - 'Item 2 tradeoff: the shared _replay_track helper is a net-new method on a facade with 10 single-attr getters, so avg_params ticked 0.50->0.55 and max_lcom 0.628->0.69 (both far under the 4.0/0.80 thresholds). I surgically updated only those two scheduler baseline entries (module_size/complexity gains still register as improvements). Per the vox rule against whole-tree --rebaseline collateral, I hand-edited the two entries rather than rebaselining. Flag if you prefer the playing transition kept inline (avoids the tick, keeps duplication).'
+        - 'Item 4 enforcement is a test, not a module-level assert: a src assert violates S101 and music.py importing POOL_SIZE from voxd.music.pool would invert the layering (music is below voxd.music). The CI test is the standards-compliant coupling.'
+      prose: |
+        Round 2 hardens the proof and polishes. The crux is the loop-level boundary
+        test: it patches the real provider and drives MusicLoop, so "zero API calls
+        on rotation" is asserted where generation actually lives (loop.py) -- the
+        scheduler-level call-count was vacuous because generation is decoupled. I
+        verified the test is sensitive: dropping the pool one below POOL_SIZE makes
+        the loop call the provider.
+
+        Deviations from the literal write set (same as round 1, all design/leader
+        directed): pool.py, tests/music/test_pool.py, tests/music/test_scheduler_loop.py,
+        and the two .oo baseline files are touched but not declared (they warn, not
+        reject). Five commits, one per item: 8fbff8c (DRY), cc51107 (boundary test),
+        50f80af (pick_next guard), e75a2fc (POOL_SIZE coupling), 649d6a5 (_LOOP_SUFFIX
+        import).
