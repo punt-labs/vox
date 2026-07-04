@@ -308,3 +308,76 @@ class TestSkipNext:
         scheduler = _make_scheduler(tmp_path)
         with pytest.raises(ValueError, match="owner_id is required"):
             scheduler.skip_next(owner_id="")
+
+
+def _fill_pool(tmp_path: Path, vibe: str, style: str, count: int) -> TrackGenerator:
+    """Write ``count`` saved tracks for one (vibe, style) pool."""
+    gen = TrackGenerator(tmp_path)
+    prefix = gen.pool_prefix((vibe, style))
+    for i in range(count):
+        (tmp_path / f"{prefix}{i:02d}.mp3").write_bytes(b"x")
+    return gen
+
+
+def _tuned(scheduler: MusicScheduler, vibe: str, style: str) -> MusicScheduler:
+    """Put a scheduler in the 'on' state for one (vibe, style)."""
+    scheduler._mode = "on"
+    scheduler._vibe = (vibe, "")
+    scheduler._style = style
+    return scheduler
+
+
+class TestPoolRotation:
+    """skip_next rotates a full pool with no generation, else generates."""
+
+    def test_full_pool_rotates_without_generating(self, tmp_path: Path) -> None:
+        real = _fill_pool(tmp_path, "calm", "jazz", 12)
+        gen = MagicMock(wraps=real)
+        gen.generate = AsyncMock()
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "playing"
+        assert scheduler.replay is True
+        assert scheduler.track in set(real.tracks_for(("calm", "jazz")))
+        gen.generate.assert_not_called()
+
+    def test_small_pool_generates(self, tmp_path: Path) -> None:
+        real = _fill_pool(tmp_path, "calm", "jazz", 11)
+        gen = MagicMock(wraps=real)
+        gen.generate = AsyncMock()
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "generating"
+        assert scheduler.replay is False
+        gen.generate.assert_not_called()
+
+    def test_rotation_never_repeats_previous(self, tmp_path: Path) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        previous: Path | None = None
+        for _ in range(30):
+            scheduler.skip_next(owner_id="sess-1")
+            assert scheduler.track != previous
+            previous = scheduler.track
+
+    def test_separate_pool_per_style(self, tmp_path: Path) -> None:
+        # Pool is full for jazz but empty for techno -> techno must generate.
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "techno")
+
+        assert scheduler.skip_next(owner_id="sess-1").status == "generating"
+
+    def test_update_vibe_into_full_pool_rotates(self, tmp_path: Path) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "restless", "jazz")
+        scheduler._owner = "sess-1"
+
+        result = scheduler.update_vibe(owner_id="sess-1", vibe=("calm", ""))
+
+        assert result.status == "playing"
+        assert scheduler.replay is True
