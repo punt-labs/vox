@@ -15,7 +15,7 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Self
 
-from punt_vox.cache import CACHE_DIR, CacheKey, cache_get, cache_put
+from punt_vox.cache import CacheKey, cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
@@ -303,11 +303,8 @@ class SynthesisPipeline:
                     len(text),
                 )
                 return SynthesisOutcome(path=cached, cached=True)
-        else:
-            logger.debug(
-                "Per-call api_key set; bypassing cache for this request (id=%s)",
-                request_id,
-            )
+        # Per-call api_key scopes skip the lookup; the MISS log below records
+        # the bypass ("not cached (per-call api_key)") so no separate log here.
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
@@ -348,13 +345,11 @@ class SynthesisPipeline:
                     )
                     raise RuntimeError(msg)
 
-                # Cache verified-good output on the anonymous path only; the
-                # MISS log doubles as the synthesized-event record.
-                if api_key is None:
-                    cache_put(key, output_path)
-                    cache_note = f"cached={key.path_in(CACHE_DIR)}"
-                else:
-                    cache_note = "cache bypassed (per-call api_key)"
+                # Anonymous path only; log the real cache_put path, never a
+                # CACHE_DIR snapshot and never file= when the bytes weren't cached
+                # (per-call api_key scopes and refused writes both yield None).
+                cached_path = cache_put(key, output_path) if api_key is None else None
+                location = f"file={cached_path}" if cached_path else "not cached"
                 logger.info(
                     "cache MISS: id=%s provider=%s voice=%s size=%d chars_in=%d %s",
                     request_id,
@@ -362,7 +357,7 @@ class SynthesisPipeline:
                     resolved_voice,
                     synth_size,
                     len(text),
-                    cache_note,
+                    location,
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
 

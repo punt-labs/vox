@@ -825,6 +825,42 @@ class TestSynthesizeCacheObservability:
         assert outcomes[1].cached is False
         assert len(synth_calls) == 2
 
+    def test_miss_and_cached_logs_the_real_cache_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        spec = _default_spec(provider="openai")
+        with caplog.at_level(logging.INFO, logger="punt_vox.voxd"):
+            outcomes, _ = self._run(tmp_path, monkeypatch, [("hello", spec)])
+
+        assert outcomes[0].cached is False
+        miss = [m for r in caplog.records if "cache MISS" in (m := r.getMessage())]
+        assert len(miss) == 1
+        # The log points at the file cache_put actually wrote (under the
+        # monkeypatched cache dir), not a CACHE_DIR snapshot.
+        assert f"file={tmp_path}" in miss[0]
+        assert "not cached" not in miss[0]
+
+    def test_miss_not_cached_logs_no_bogus_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        spec = _default_spec(provider="openai", api_key="sk-scope")
+        with caplog.at_level(logging.INFO, logger="punt_vox.voxd"):
+            outcomes, _ = self._run(tmp_path, monkeypatch, [("hello", spec)])
+
+        assert outcomes[0].cached is False
+        # A non-anonymous request is NOT cached: the log must not claim a
+        # file that does not exist.
+        miss = [m for r in caplog.records if "cache MISS" in (m := r.getMessage())]
+        assert len(miss) == 1
+        assert "not cached" in miss[0]
+        assert "file=" not in miss[0]
+
 
 class TestModelSupportsExpressiveTags:
     """model_supports_expressive_tags lookup for vibe-tag gating."""
