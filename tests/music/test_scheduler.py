@@ -26,17 +26,6 @@ __all__: list[str] = []
 _CHOICE = "punt_vox.voxd.music.pool.secrets.choice"
 
 
-@pytest.fixture(autouse=True)
-def _music_api_key(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
-    """turn_on preflights a provider key; assume one is present unless cleared.
-
-    The generating path now refuses to start without ELEVENLABS_API_KEY, so
-    the domain tests that reach it need a key. Tests that assert the
-    missing-key behaviour clear it explicitly.
-    """
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-music-key")
-
-
 def _scheduler(store: FakeTrackStore | None = None) -> MusicScheduler:
     """Build a scheduler over an in-memory store."""
     return MusicScheduler(TrackGenerator(store or FakeTrackStore()))

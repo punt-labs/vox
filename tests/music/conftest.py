@@ -66,6 +66,18 @@ class FakeTrackStore:
         """No-op: an in-memory store needs no directory."""
 
 
+@pytest.fixture(autouse=True)
+def _music_api_key(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Supply an ElevenLabs key by default for every music test.
+
+    ``MusicScheduler.turn_on`` preflights the provider key and refuses to
+    start generation without it. CI runs with ``ELEVENLABS_API_KEY`` unset, so
+    without this fixture every ``turn_on``-driven test would raise. Tests that
+    assert the missing-key behaviour clear it explicitly with ``monkeypatch``.
+    """
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-music-key")
+
+
 def _make_mock_websocket() -> MagicMock:
     """Return a mock WebSocket with an async send_json."""
     ws: MagicMock = MagicMock(spec=WebSocket)
