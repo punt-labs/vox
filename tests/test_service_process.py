@@ -155,6 +155,17 @@ def test_find_pid_on_port_macos_multiple(
     assert mgr.find_pid_on_port(8421) == [12345, 67890]
 
 
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_find_pid_on_port_ignores_non_decimal_digits(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    """Superscript digits pass str.isdigit but break int(); isdecimal drops them."""
+    # "²" (superscript two): isdigit() is True, isdecimal() is False.
+    mock_run.return_value = MagicMock(returncode=0, stdout="123\n²\n456\n")
+    assert ProcessManager().find_pid_on_port(8421) == [123, 456]
+
+
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
 @patch("punt_vox.service.process.subprocess.run")
 def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:

@@ -73,13 +73,12 @@ class ProcessManager:
                 "Could not probe port %d for PIDs via %s: %s", port, cmd[0], exc
             )
             return []
-        if result.returncode != 0 or not result.stdout.strip():
+        out = result.stdout.strip()
+        if result.returncode != 0 or not out:
             return []  # tool ran cleanly, found nothing -- port genuinely empty
-        return [
-            int(token)
-            for token in re.split(r"[\s:]+", result.stdout.strip())
-            if token.isdigit()
-        ]
+        # isdecimal (not isdigit) is the strict subset int() always accepts:
+        # it rejects superscripts like "²" that isdigit would pass.
+        return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
 
     def is_vox_daemon_process(self, pid: int) -> bool:
         """Check whether *pid* is a voxd daemon process.
