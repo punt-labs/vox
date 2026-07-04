@@ -709,6 +709,28 @@ def test_uninstall_macos_clean_when_survivor_is_not_voxd(
     assert "uninstalled" in msg
 
 
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_uninstall_macos_raises_when_survivor_not_first_pid(
+    _mock_platform: MagicMock,
+) -> None:
+    """A voxd survivor behind a client PID must still be found (any(), not [0])."""
+    inst = ServiceInstaller()
+    with (
+        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
+        patch.object(ProcessManager, "find_pid_on_port", return_value=[1111, 4321]),
+        # First PID is a connected client, second is the surviving daemon.
+        patch.object(
+            ProcessManager, "is_vox_daemon_process", side_effect=[False, True]
+        ) as mock_is_vox,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        inst.uninstall()
+
+    assert "still running" in str(excinfo.value)
+    assert mock_is_vox.call_count == 2
+
+
 @patch.object(ServiceInstaller, "detect_platform", return_value="linux")
 def test_uninstall_linux_raises_when_daemon_survives(
     _mock_platform: MagicMock,
