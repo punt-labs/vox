@@ -62,7 +62,7 @@ class TrackStore(Protocol):
 class FilesystemTrackStore:
     """Store tracks as ``.mp3`` files under a single output directory.
 
-    This is the production :class:`~punt_vox.voxd.music.types.TrackStore`.
+    This is the production :class:`~punt_vox.voxd.music.store.TrackStore`.
     All glob, stat, and directory access lives here; the rest of the music
     domain depends on the protocol and never on ``pathlib``.
     """

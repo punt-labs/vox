@@ -63,7 +63,7 @@ _MUSIC_DURATION_MS = 120_000
 class TrackGenerator:
     """Generate, name, and list music tracks through an injected store.
 
-    Disk access is delegated to a :class:`~punt_vox.voxd.music.types.TrackStore`
+    Disk access is delegated to a :class:`~punt_vox.voxd.music.store.TrackStore`
     (Amendment A): this class holds no ``pathlib`` logic of its own.
     """
 
