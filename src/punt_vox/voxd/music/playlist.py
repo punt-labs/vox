@@ -102,6 +102,18 @@ class Playlist:
         return len(self._pool()) == 0
 
     @property
+    def can_advance(self) -> bool:
+        """Return whether a skip/advance has somewhere to go.
+
+        False only in generating-first: nothing has played yet and the pool
+        holds no member. Once a track is playing -- even a custom-named one
+        whose stem does not match the (vibe, style) prefix -- or a pool member
+        exists, advancing either rotates to another track or loops the current
+        one, so the guard keys off the playing track, not the session prefix.
+        """
+        return self._track is not None or not self.is_empty
+
+    @property
     def current_track(self) -> Path | None:
         """Return the currently-playing (avoid-repeat) track."""
         return self._track

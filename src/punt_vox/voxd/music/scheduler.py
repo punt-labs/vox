@@ -1,11 +1,10 @@
-"""Music scheduling -- session state, domain commands, and the control channel.
+"""Music scheduling -- session state and the handler-facing domain commands.
 
-The scheduler owns the session state (mode, owner, playback subprocess), the
-control channel the loop reads, and the handler-facing domain commands. It
-delegates the pool -- its background fill and the next-track selection -- to a
-:class:`~punt_vox.voxd.music.playlist.Playlist`. It never plays audio: the loop
-(:class:`~punt_vox.voxd.music.loop.MusicLoop`) owns the subprocess and the
-advance-on-track-end wiring.
+Ownership and the loop control signal live in a
+:class:`~punt_vox.voxd.music.control.MusicControlChannel`; the pool (background
+fill and next-track selection) lives in a
+:class:`~punt_vox.voxd.music.playlist.Playlist`. The scheduler never plays audio
+-- the loop (:class:`~punt_vox.voxd.music.loop.MusicLoop`) owns the subprocess.
 """
 
 from __future__ import annotations
@@ -14,8 +13,9 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
+from punt_vox.voxd.music.control import MusicControl, MusicControlChannel
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.playlist import Playlist
 from punt_vox.voxd.music.types import MusicResponse
@@ -25,9 +25,6 @@ __all__ = ["MusicRequest", "MusicScheduler"]
 _NAME_MAX_LEN = 60
 
 _NO_KEY_MSG = "Background music requires an ElevenLabs API key (set ELEVENLABS_API_KEY)"
-
-# The pending playback action the loop reads at the next control point.
-MusicControl = Literal["none", "off", "skip", "play", "vibe"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,23 +38,17 @@ class MusicRequest:
 
 
 class MusicScheduler:
-    """Session state, domain commands, and the loop control channel."""
+    """Session state and the handler-facing domain commands."""
 
     __slots__ = (
-        "_changed",
-        "_control",
-        "_mode",
-        "_owner",
+        "_channel",
         "_pending_track",
         "_playlist",
         "_proc",
         "_state",
     )
 
-    _changed: asyncio.Event
-    _control: MusicControl
-    _mode: str
-    _owner: str
+    _channel: MusicControlChannel
     _pending_track: Path | None
     _playlist: Playlist
     _proc: asyncio.subprocess.Process | None
@@ -66,19 +57,16 @@ class MusicScheduler:
     def __new__(cls, track_generator: TrackGenerator) -> Self:
         self = super().__new__(cls)
         self._playlist = Playlist(track_generator)
-        self._mode = "off"
-        self._owner = ""
+        self._channel = MusicControlChannel()
         self._pending_track = None
         self._proc = None
         self._state = "idle"
-        self._changed = asyncio.Event()
-        self._control = "none"
         return self
 
     @property
     def mode(self) -> str:
         """Return the current music mode ('off' or 'on')."""
-        return self._mode
+        return "on" if self._channel.active else "off"
 
     @property
     def style(self) -> str:
@@ -88,7 +76,7 @@ class MusicScheduler:
     @property
     def owner(self) -> str:
         """Return the current music owner session ID."""
-        return self._owner
+        return self._channel.owner
 
     @property
     def vibe(self) -> tuple[str, str]:
@@ -113,7 +101,7 @@ class MusicScheduler:
     @property
     def changed(self) -> asyncio.Event:
         """Return the control-signal event the loop races against playback."""
-        return self._changed
+        return self._channel.changed
 
     @property
     def filling(self) -> bool:
@@ -151,22 +139,17 @@ class MusicScheduler:
         await self._adopt(req)
         first_name = TrackGenerator.slugify(name, _NAME_MAX_LEN) if name else ""
         self._playlist.ensure_fill(first_name=first_name)
-        # A retarget queues no track: signal "vibe", not "play" -- "play" stays
-        # paired with a queued track (_queue_named), never taken from an empty queue.
-        self._signal("vibe")
+        # A retarget queues no track: signal "vibe", not "play" (which is paired
+        # with a queued track in _queue_named, never taken from an empty queue).
+        self._channel.signal("vibe")
         return self._enter_ack()
 
     async def turn_off(self) -> MusicResponse:
         """Stop playback and cancel the fill synchronously (no orphaned gen)."""
         self._playlist.cancel_fill()
-        await self._kill_proc()
-        self._mode = "off"
-        self._state = "idle"
-        self._pending_track = None
-        # The avoid-repeat key must clear (PY-EN-5): a stopped track is not
-        # "just played", so the next rotation should not exclude it.
-        self._playlist.clear_current()
-        self._signal("off")
+        await self.kill_proc()
+        self._reset_session()
+        self._channel.signal("off")
         return MusicResponse(status="stopped")
 
     async def play_track(self, name: str, owner_id: str) -> MusicResponse:
@@ -186,51 +169,52 @@ class MusicScheduler:
             msg = f"track not found: {safe_name}"
             raise ValueError(msg)
 
-        await self._kill_proc()
-        self._mode = "on"
-        self._owner = owner_id
+        await self.kill_proc()
+        self._channel.activate()
+        self._channel.claim(owner_id)
         return self._switch_to_replayed_pool(track_path, safe_name)
 
     def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
-        """Update the vibe if the sender owns music; retarget fill immediately.
+        """Update the vibe if the owner drives *playing* music; retarget fill now.
 
-        The playback switch is deferred to the current song's natural end
-        (finish-current-first); the fill retargets now so the new pool is
-        ready, bounding credit spend to a single pool.
+        The playback switch defers to the current song's natural end; the fill
+        retargets now so the new pool is ready. ``mode == "on"`` gates it -- a
+        forwarded vibe while music is off must not spend credits (finding #4).
         """
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-        if owner_id != self._owner or vibe == self._playlist.vibe:
+        if (
+            not self._channel.active
+            or not self._channel.owned_by(owner_id)
+            or vibe == self._playlist.vibe
+        ):
             return MusicResponse(status="ignored")
         self._playlist.retune(vibe, self._playlist.style)
         self._playlist.ensure_fill()
-        self._signal("vibe")
+        self._channel.signal("vibe")
         return self._enter_ack()
 
     def skip_next(self, owner_id: str) -> MusicResponse:
-        """Advance to the next track. A no-op while the pool is still empty."""
+        """Advance to the next track. A no-op only in generating-first."""
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-        if self._mode != "on" or self._playlist.is_empty:
-            # Z finding #1: skip in generating-first must not pick from an
-            # empty pool -- there is nothing to advance to until #1 lands.
+        if not self._channel.active or not self._playlist.can_advance:
+            # No-op only in generating-first (Z finding #1). ``can_advance`` keys
+            # off the playing track, not the (vibe, style) glob, so a custom-named
+            # track still advances even though its stem misses the glob (finding #2).
             return MusicResponse(status="ignored")
-        self._signal("skip")
+        self._channel.signal("skip")
         return MusicResponse(status="playing")
 
     async def wait_active(self) -> None:
         """Block until music is turned on."""
-        while self._mode != "on":
-            await self._changed.wait()
-            self._changed.clear()
+        await self._channel.wait_active()
 
     def take_control(self) -> MusicControl:
         """Return the pending control action and reset it to 'none'."""
-        control = self._control
-        self._control = "none"
-        return control
+        return self._channel.take()
 
     def ensure_fill(self) -> None:
         """(Re)start the background fill for the current pool if not full."""
@@ -275,20 +259,29 @@ class MusicScheduler:
         """Record the player subprocess the loop just spawned."""
         self._proc = proc
 
-    async def kill_proc(self) -> None:
-        """Kill the current music subprocess if running."""
-        await self._kill_proc()
-
     def disable(self) -> None:
         """Turn music off after an unrecoverable failure (no track to play)."""
         self._playlist.cancel_fill()
-        self._mode = "off"
+        self._reset_session()
+
+    def _reset_session(self) -> None:
+        """Return to the idle, unowned state, leaving nothing to act on later.
+
+        Shared by ``turn_off`` and ``disable``: clears the mode/state machine,
+        releases ownership (so a stale forwarded vibe is not accepted), drops any
+        queued replay, and clears the avoid-repeat key (PY-EN-5) -- a stopped
+        track is not "just played" and must not be excluded from the next pool.
+        """
+        self._channel.deactivate()
         self._state = "idle"
+        self._pending_track = None
+        self._channel.release()
+        self._playlist.clear_current()
 
     async def shutdown(self) -> None:
         """Daemon lifespan cleanup: cancel fill, kill proc, reset state."""
         self._playlist.cancel_fill()
-        await self._kill_proc()
+        await self.kill_proc()
         self._state = "idle"
 
     async def _replay_named(self, req: MusicRequest) -> MusicResponse | None:
@@ -305,22 +298,20 @@ class MusicScheduler:
 
     async def _adopt(self, req: MusicRequest) -> None:
         """Kill any foreign playback and adopt ownership for a new pool."""
-        is_already_playing = self._mode == "on" and self._proc is not None
-        if not is_already_playing or self._owner != req.owner_id:
-            await self._kill_proc()
-        self._mode = "on"
-        self._owner = req.owner_id
+        is_already_playing = self._channel.active and self._proc is not None
+        if not is_already_playing or not self._channel.owned_by(req.owner_id):
+            await self.kill_proc()
+        self._channel.activate()
+        self._channel.claim(req.owner_id)
         self._playlist.retune(req.vibe, req.style)
 
     def _switch_to_replayed_pool(self, track: Path, name: str) -> MusicResponse:
         """Retarget selection and fill to a replayed track's pool, then queue it.
 
-        Named replay (``/music play`` and ``/music on --name`` for a saved
-        track) retargets both playback selection and the background fill to the
-        track's pool (DES-039). The old fill is cancelled and a fresh one starts
-        for the target pool when it holds < POOL_SIZE tracks -- ``ensure_fill``
-        no-ops on a full pool -- so the pool keeps growing toward 12 after a
-        replay. Cancelling before restarting preserves the single-fill invariant.
+        Named replay retargets both selection and fill to the track's pool
+        (DES-039): the old fill is cancelled and a fresh one starts (a no-op on a
+        full pool), so the replayed pool keeps growing toward POOL_SIZE. Fill and
+        selection share the pool prefix, so credits go to the pool being played.
         """
         self._playlist.cancel_fill()
         self._playlist.set_prefix(TrackGenerator.pool_prefix_of(track))
@@ -331,7 +322,7 @@ class MusicScheduler:
         """Queue ``track`` as the next thing to play (a named replay)."""
         self._pending_track = track
         self._state = "playing"
-        self._signal("play")
+        self._channel.signal("play")
         return MusicResponse(status="playing", track=str(track), name=name)
 
     def _enter_ack(self) -> MusicResponse:
@@ -340,12 +331,7 @@ class MusicScheduler:
             return MusicResponse(status="generating")
         return MusicResponse(status="playing")
 
-    def _signal(self, control: MusicControl) -> None:
-        """Record a control action and wake the loop."""
-        self._control = control
-        self._changed.set()
-
-    async def _kill_proc(self) -> None:
+    async def kill_proc(self) -> None:
         """Kill the current music subprocess if running."""
         proc = self._proc
         if proc is not None and proc.returncode is None:

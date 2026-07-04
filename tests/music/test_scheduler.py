@@ -46,8 +46,8 @@ def _first(seq: Sequence[Path]) -> Path:
 
 def _tuned(sched: MusicScheduler, vibe: str, style: str) -> MusicScheduler:
     """Put a scheduler in the 'on' state for one (vibe, style)."""
-    sched._mode = "on"
-    sched._owner = "u1"
+    sched._channel.activate()
+    sched._channel.claim("u1")
     sched._playlist.retune((vibe, ""), style)
     return sched
 
@@ -196,6 +196,15 @@ class TestTurnOff:
         proc.kill.assert_called_once()
         assert sched.proc is None
 
+    def test_turn_off_clears_owner(self) -> None:
+        # Finding #5: a stopped session must release ownership so a stale
+        # forwarded vibe from the old owner is not accepted after the stop.
+        store = FakeTrackStore()
+        _seed(store, "calm", "jazz", 3)
+        sched = _tuned(_scheduler(store), "calm", "jazz")
+        asyncio.run(sched.turn_off())
+        assert sched.owner == ""
+
 
 class TestPlayTrack:
     """play_track queues a named replay and switches to that track's pool."""
@@ -262,9 +271,17 @@ class TestUpdateVibe:
 
     def test_update_vibe_non_owner_ignored(self) -> None:
         sched = _tuned(_scheduler(), "old", "jazz")
-        sched._owner = "u1"
         result = sched.update_vibe("other", ("happy", "[warm]"))
         assert result == MusicResponse(status="ignored")
+
+    def test_update_vibe_when_off_is_ignored(self) -> None:
+        # Finding #4: a forwarded vibe while music is off must not retarget the
+        # fill -- that would spend credits generating a pool nobody is playing.
+        sched = _scheduler()
+        sched._channel.claim("u1")  # owner set, but mode stays "off"
+        result = sched.update_vibe("u1", ("happy", "[warm]"))
+        assert result == MusicResponse(status="ignored")
+        assert not sched.filling  # no background generation started while off
 
     def test_update_vibe_same_vibe_ignored(self) -> None:
         sched = _tuned(_scheduler(), "happy", "jazz")
@@ -297,9 +314,19 @@ class TestSkipNext:
         assert result == MusicResponse(status="ignored")
         assert not sched.changed.is_set()
 
+    def test_skip_next_during_custom_name_play_signals(self) -> None:
+        # Finding #2: a custom-named track is playing but its stem does not match
+        # the (vibe, style) prefix, so is_empty is True; skip must still advance
+        # -- the guard keys off the playing track, not the session glob.
+        sched = _tuned(_scheduler(), "focused", "techno")  # no matching-prefix files
+        sched.mark_playing(Path("/fake/tracks/my_custom.mp3"))  # custom track playing
+        result = sched.skip_next("u1")
+        assert result == MusicResponse(status="playing")
+        assert sched.changed.is_set()
+
     def test_skip_next_when_off_ignored(self) -> None:
         sched = _scheduler()
-        sched._mode = "off"
+        sched._channel.deactivate()
         assert sched.skip_next("u1") == MusicResponse(status="ignored")
 
     def test_skip_next_empty_owner(self) -> None:
@@ -358,6 +385,24 @@ class TestControlChannel:
         assert sched.take_control() == "none"  # reset after read
 
 
+class TestDisable:
+    """disable stops music and clears all ownership and transient state."""
+
+    def test_disable_clears_ownership_pending_and_avoid_key(self) -> None:
+        # Finding #6: an unrecoverable failure must leave nothing a later
+        # message could act on -- owner, queued replay, and avoid-repeat key.
+        store = FakeTrackStore()
+        prefix = _seed(store, "calm", "jazz", 2)
+        sched = _tuned(_scheduler(store), "calm", "jazz")
+        sched._pending_track = store.path_for(f"{prefix}00")
+        sched.mark_playing(store.path_for(f"{prefix}01"))
+        sched.disable()
+        assert sched.mode == "off"
+        assert sched.owner == ""  # ownership released
+        assert not sched.has_pending_track  # queued replay dropped
+        assert sched.track is None  # avoid-repeat key cleared (PY-EN-5)
+
+
 class TestConstructionDefaults:
     """A fresh scheduler starts idle (migrated from test_voxd_music)."""
 
@@ -378,9 +423,9 @@ class TestConstructionDefaults:
         # backing state. _replay and _track_name are gone under the new model;
         # style/vibe/track now delegate to the Playlist.
         sched = _scheduler()
-        sched._mode = "on"
+        sched._channel.activate()
         assert sched.mode == "on"
-        sched._owner = "sess-1"
+        sched._channel.claim("sess-1")
         assert sched.owner == "sess-1"
         sched._state = "playing"
         assert sched.state == "playing"
@@ -431,7 +476,7 @@ class TestWaitActive:
 
     def test_returns_immediately_when_already_on(self) -> None:
         sched = _scheduler()
-        sched._mode = "on"
+        sched._channel.activate()
 
         async def _run() -> None:
             await asyncio.wait_for(sched.wait_active(), timeout=1.0)
@@ -444,7 +489,7 @@ class TestWaitActive:
         async def _run() -> None:
             waiter = asyncio.create_task(sched.wait_active())
             await asyncio.sleep(0)
-            sched._mode = "on"
+            sched._channel.activate()
             sched.changed.set()
             await asyncio.wait_for(waiter, timeout=1.0)
 
