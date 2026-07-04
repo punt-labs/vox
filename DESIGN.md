@@ -1778,3 +1778,41 @@ having already retargeted the background fill so the new pool is ready. The
 the next track is prefetched by the fill task, so there is nothing to wait for at
 the handoff. Gapless-ness now comes from the pool being ahead, not from looping
 during generation.
+
+### Amendment A (operator, 2026-07-04): disk access behind an injected `TrackStore` protocol
+
+**Status:** SETTLED (operator directive during design review).
+
+The music subsystem must not hard-code filesystem access. All track storage and
+retrieval — pool enumeration (`tracks_for`), full listing, find-by-name,
+the existence checks the deterministic naming counter relies on, and the write
+target for a newly generated track — go through a **`TrackStore` protocol**
+(a structural interface, PY-TS-6 / PY-IC-9), **injected** into the components
+that need it. Domain code depends on the protocol, never on `Path.glob` /
+`pathlib` directly.
+
+- **`FilesystemTrackStore`** is the production implementation; the glob/dir logic
+  currently inside `TrackGenerator` moves behind it. The daemon wires it.
+- **Injection**: `TrackGenerator` (and, through the scheduler, `PoolFiller`)
+  receive the store via their constructor. `daemon.py` constructs the
+  `FilesystemTrackStore` and injects it.
+- **Tests use an in-memory fake store** — pool-enumeration, selection, fill, and
+  restart-from-count tests run with no `tmp_path`, no filesystem, no ffmpeg
+  round-trip. (The one place a real MP3 is produced — the provider write path —
+  still uses valid silent-MP3 bytes per `TESTING.md`; but the *domain* tests
+  that made bas7's suite slow and filesystem-coupled now inject a fake.)
+- **Write-set delta**: add the `TrackStore` protocol (in `types.py` per PY-IC-9)
+  and a `FilesystemTrackStore` implementation module; inject it through
+  `generator.py` → `scheduler.py`/`filler.py` → `daemon.py`. The exact protocol
+  surface (method signatures) is settled in implementation; the *contract* — an
+  injected, mockable, multi-implementation interface for all disk access — is
+  locked here.
+
+**Rationale.** Testability (mock the store: deterministic and fast, and the fill
+/ restart / selection paths become unit-testable with zero filesystem), swappable
+implementations (the operator's explicit requirement — e.g. an in-memory or
+remote store later), and correct dependency direction (PY-IC-8: the domain
+depends inward on a protocol, not outward on the filesystem). This also directly
+serves the two-goals-together bar: the seam that makes disk access mockable is
+the same seam that raises cohesion and testability on `generator.py` and the new
+`filler.py`.

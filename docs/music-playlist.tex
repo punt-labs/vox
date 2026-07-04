@@ -1,0 +1,309 @@
+%
+% music-playlist.tex
+%
+% Z Specification for the Vox self-driving music playlist (bead vox-1rxb)
+% Formal model of the eager-fill / auto-advance / rotate-at-12 state machine
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Self-Driving Music Playlist: A Z Specification}
+\author{Formal Model of vox-1rxb (eager fill, auto-advance, rotate-at-12)}
+\date{July 2026}
+\hypersetup{
+  pdftitle={Vox Self-Driving Music Playlist: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This specification pins the target behaviour of the vox background-music
+playlist for a single \emph{(vibe, style)} pool. On turn-on the daemon
+generates the first track and starts playing it, then generates the
+remaining tracks in the background (one at a time) up to a fixed pool
+size. Playback advances automatically as each track ends; once the pool
+is full, playback rotates among the saved tracks with no further
+generation. The model exists to make the transitions and invariants
+unambiguous before implementation, and to expose any underspecified or
+contradictory cases (see Section~\ref{sec:findings}).
+
+\section{Basic Types}
+
+A track is an opaque saved-audio identifier (in the implementation, the
+content-addressed filename within a pool).
+
+\begin{zed}
+  [TRACK]
+\end{zed}
+
+\section{Free Types}
+
+The playback mode is a four-state machine.
+
+\begin{zed}
+  Mode ::= off | generatingFirst | playingFilling | playingRotating
+\end{zed}
+
+A Z boolean (avoids the ProB/B keyword clash with \texttt{BOOL}).
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{Global Constants}
+
+The pool fills to \textbf{maxPool} distinct tracks, after which
+generation stops and playback rotates. The design value is 12.
+
+\begin{axdef}
+  maxPool : \nat
+  \where
+  maxPool = 12
+\end{axdef}
+
+\section{State}
+
+\texttt{playing} and \texttt{lastPlayed} are modelled as sets of at most
+one track (an ``optional track''): empty when nothing is playing / no
+track has yet been played.
+
+\begin{schema}{Playlist}
+  pool : \power TRACK \\
+  playing : \power TRACK \\
+  lastPlayed : \power TRACK \\
+  mode : Mode \\
+  filling : ZBOOL
+  \where
+  \# pool \leq maxPool \\
+  \# playing \leq 1 \\
+  \# lastPlayed \leq 1 \\
+  playing \subseteq pool \\
+  lastPlayed \subseteq pool \\
+  mode = off \implies (playing = \emptyset \land filling = zfalse) \\
+  mode = generatingFirst \implies \\
+  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = ztrue) \\
+  mode = playingFilling \implies \\
+  \quad~ (\# playing = 1 \land \# pool \geq 1 \\
+  \quad~ \land \# pool < maxPool \land filling = ztrue) \\
+  mode = playingRotating \implies \\
+  \quad~ (\# playing = 1 \land \# pool = maxPool \land filling = zfalse) \\
+  filling = ztrue \implies \\
+  \quad~ (mode = generatingFirst \lor mode = playingFilling)
+\end{schema}
+
+\section{Initialisation}
+
+The daemon starts idle with an empty pool. \texttt{InitFromDisk}
+models a restart where a pool of already-saved tracks is loaded (still
+idle until turned on).
+
+\begin{schema}{Init}
+  Playlist'
+  \where
+  pool' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse
+\end{schema}
+
+\begin{schema}{InitFromDisk}
+  Playlist' \\
+  diskPool? : \power TRACK
+  \where
+  \# diskPool? \leq maxPool \\
+  pool' = diskPool? \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse
+\end{schema}
+
+\section{Operations}
+
+\subsection{TurnOn}
+
+From \texttt{off}, enter the pool. An empty pool begins generating the
+first track; a partial pool starts playing and resumes the background
+fill; a full pool starts playing and rotates. (Restart is
+\texttt{InitFromDisk} followed by \texttt{TurnOn}.)
+
+\begin{schema}{TurnOn}
+  \Delta Playlist
+  \where
+  mode = off \\
+  pool' = pool \\
+  lastPlayed' = \emptyset \\
+  (pool = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \\
+  \quad~ \land filling' = ztrue)) \\
+  (\# pool \geq 1 \land \# pool < maxPool \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq pool \\
+  \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# pool = maxPool \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq pool \\
+  \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{FillProduces}
+
+The background fill delivers one fresh track. It is enabled only while
+\texttt{filling} and the pool is not yet full, and the track must be new
+(the deterministic collision-free naming from bas7 guarantees this). The
+first delivered track starts playback; reaching \texttt{maxPool} stops
+the fill and switches to rotation.
+
+\begin{schema}{FillProduces}
+  \Delta Playlist \\
+  newTrack? : TRACK
+  \where
+  filling = ztrue \\
+  \# pool < maxPool \\
+  newTrack? \notin pool \\
+  pool' = pool \cup \{ newTrack? \} \\
+  lastPlayed' = lastPlayed \\
+  (mode = generatingFirst \implies \\
+    \quad~ (playing' = \{ newTrack? \} \land mode' = playingFilling \\
+  \quad~ \land filling' = ztrue)) \\
+  (mode = playingFilling \implies \\
+    \quad~ (playing' = playing \\
+      \quad~ \land (\# pool' = maxPool \implies \\
+      \quad\quad~ (mode' = playingRotating \land filling' = zfalse)) \\
+      \quad~ \land (\# pool' < maxPool \implies \\
+  \quad\quad~ (mode' = playingFilling \land filling' = ztrue))))
+\end{schema}
+
+\subsection{Advance (auto-advance and manual skip)}
+
+When the current track ends, move to another track, avoiding an
+immediate repeat of the just-ended track when the pool holds more than
+one. With a single track (the transient state before the second track
+lands) it replays --- the only intended looping. This one transition
+serves both the automatic track-end advance and the manual
+\texttt{/music next}.
+
+\begin{schema}{Advance}
+  \Delta Playlist
+  \where
+  (mode = playingFilling \lor mode = playingRotating) \\
+  pool' = pool \\
+  mode' = mode \\
+  filling' = filling \\
+  lastPlayed' = playing \\
+  (\# pool \geq 2 \implies \\
+    \quad~ (playing' \subseteq pool \land \# playing' = 1 \\
+  \quad~ \land playing' \neq playing)) \\
+  (\# pool = 1 \implies playing' = playing)
+\end{schema}
+
+\begin{zed}
+  TrackEnds \defs Advance \\
+  Skip \defs Advance
+\end{zed}
+
+\subsection{VibeChange}
+
+A vibe/style change finishes the current song, then switches to the new
+pool (the tracks already saved on disk for the new key). The selection
+of initial mode/playing/filling mirrors \texttt{TurnOn} applied to the
+new pool. \texttt{newPool?} is the new key's on-disk track set.
+
+\begin{schema}{VibeChange}
+  \Delta Playlist \\
+  newPool? : \power TRACK
+  \where
+  mode \neq off \\
+  \# newPool? \leq maxPool \\
+  pool' = newPool? \\
+  lastPlayed' = \emptyset \\
+  (newPool? = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \\
+  \quad~ \land filling' = ztrue)) \\
+  (\# newPool? \geq 1 \land \# newPool? < maxPool \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq newPool? \\
+  \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# newPool? = maxPool \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq newPool? \\
+  \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{TurnOff}
+
+Cancel the background fill and stop playback. The pool remains on disk.
+
+\begin{schema}{TurnOff}
+  \Delta Playlist
+  \where
+  mode \neq off \\
+  mode' = off \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  filling' = zfalse \\
+  pool' = pool
+\end{schema}
+
+\section{Key Properties}
+
+The following hold by construction (state invariants) or as operation
+postconditions; they are the intended proof obligations for animation:
+
+\begin{itemize}
+  \item \textbf{Bounded pool}: $\# pool \leq maxPool$ always.
+  \item \textbf{Generation only below full}: \texttt{FillProduces} requires
+    $\# pool < maxPool$; at $\# pool = maxPool$ the mode is
+    \texttt{playingRotating} with $filling = zfalse$, so no generation
+    occurs.
+  \item \textbf{At most one fill}: $filling = ztrue$ implies
+    \texttt{mode} is \texttt{generatingFirst} or \texttt{playingFilling}.
+  \item \textbf{Playing is real}: when $mode \neq off$, $\# playing = 1$
+    and $playing \subseteq pool$.
+  \item \textbf{No immediate repeat}: \texttt{Advance} with $\# pool \geq 2$
+    gives $playing' \neq playing$ (equivalently $playing' \neq
+    lastPlayed'$).
+  \item \textbf{Sole looping case}: \texttt{Advance} replays only when
+    $\# pool = 1$, the transient before the second track lands.
+\end{itemize}
+
+\section{Findings from Formalisation}
+\label{sec:findings}
+
+Writing the model surfaced these decisions, which the informal design
+(mission m-2026-07-04-018) must resolve consistently:
+
+\begin{enumerate}
+  \item \textbf{Skip while generating the first track is undefined and is
+    excluded.} \texttt{Advance} requires \texttt{playingFilling} or
+    \texttt{playingRotating}; in \texttt{generatingFirst} nothing is
+    playing, so \texttt{/music next} must be a no-op until track \#1
+    lands.
+  \item \textbf{Auto-advance and manual skip are the same transition}
+    ($TrackEnds \defs Skip \defs Advance$). The implementation should
+    share one code path, not two.
+  \item \textbf{TurnOn, VibeChange, and restart share one ``enter a pool''
+    rule} keyed on $\# pool$ (empty $\to$ generate first; partial $\to$
+    play + fill; full $\to$ play + rotate). This is a natural single
+    unit to extract.
+  \item \textbf{VibeChange abstracts over ``finish current first.''} The
+    model captures the switch after the current song ends; the temporal
+    ``finish current'' is a refinement realised by deferring the switch
+    to the next track-end.
+  \item \textbf{The only looping is the single-track transient.} Any other
+    repeat (the shipped bug) violates the \emph{No immediate repeat}
+    property and is therefore a defect, not a mode.
+  \item \textbf{Fresh-track precondition ties to naming.}
+    \texttt{FillProduces} requires $newTrack? \notin pool$; this is only
+    safe because bas7's deterministic naming guarantees uniqueness.
+\end{enumerate}
+
+\end{document}
