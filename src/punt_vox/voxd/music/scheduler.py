@@ -132,10 +132,8 @@ class MusicScheduler:
     ) -> MusicResponse:
         """Start music or transfer ownership for one (vibe, style) pool.
 
-        A ``name`` matching a saved track replays it. Otherwise the pool is
-        adopted and the background fill (re)starts from the on-disk count;
-        an empty pool generates the first track (named when ``name`` is set),
-        a non-empty pool plays immediately.
+        A ``name`` matching a saved track replays it; otherwise the pool is
+        adopted and an empty pool generates its first track before playing.
         """
         if not owner_id:
             msg = "owner_id is required"
@@ -148,7 +146,9 @@ class MusicScheduler:
         await self._adopt(req)
         first_name = TrackGenerator.slugify(name, _NAME_MAX_LEN) if name else ""
         self._playlist.ensure_fill(first_name=first_name)
-        self._signal("play")
+        # A retarget queues no track: signal "vibe", not "play" -- "play" stays
+        # paired with a queued track (_queue_named), never taken from an empty queue.
+        self._signal("vibe")
         return self._enter_ack()
 
     async def turn_off(self) -> MusicResponse:

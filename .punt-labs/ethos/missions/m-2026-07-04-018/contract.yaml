@@ -1,0 +1,90 @@
+mission_id: m-2026-07-04-018
+status: closed
+type: design
+created_at: "2026-07-04T16:33:20Z"
+updated_at: "2026-07-04T16:46:15Z"
+closed_at: "2026-07-04T16:46:15Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-04T16:33:20Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-1rxb
+write_set:
+    - DESIGN.md
+    - .tmp/missions/results/vox-1rxb-design.md
+success_criteria:
+    - 'Deliver a written design (DESIGN.md ADR plus a design note in the result) that specifies: the target behavior as a state/flow model (idle -> generating #1 -> playing+filling -> full/rotating), how auto-advance is triggered on track-end, how the cancellable sequential background-fill task is owned and cancelled, how prefetch readiness is determined, and how vibe-change/off/restart transitions work. Cite the exact invariants above and show each is preserved.'
+    - 'Produce the WRITE-SET: the concrete list of modules to create/modify/split, with a one-line responsibility for each, and the decomposition rationale (which new class/module owns background fill, advance, prefetch). Justify any MusicLoop shape change.'
+    - Produce a TEST PLAN enumerating the experience-level tests listed under TEST COVERAGE above, mapped to the modules that will carry them, including the async/boundary paths (subprocess-end advance, task cancellation on off/vibe-change) and the sensitive assertions (e.g. rotate-at-12 asserts provider.assert_not_called; auto-advance asserts a DIFFERENT track than the just-played one).
+    - 'Produce an OO PLAN: current per-file scores for each module the design will touch (make report), the target deltas, and how the decomposition improves them. State explicitly that every touched file will hold-or-improve and how tests and decomposition reinforce.'
+    - Enumerate rejected alternatives (e.g. prefetch-one-ahead vs eager-fill-all; concurrent vs sequential fill; auto-advance in the loop vs a scheduler callback) with why the chosen design wins, for the DESIGN.md ADR.
+    - Do NOT write implementation code in this mission. Do NOT open a PR. Deliver the design artifact only; the leader reviews it and escalates open questions to the operator before the implementation mission is created.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    PROBLEM. bas7 (#291) shipped the wrong music UX. Today MusicLoop, on track-end, respawns the SAME file, and the pool only grows or rotates when the user runs /music next. Result: /music on plays one track that loops forever. Confirmed by smoke test (pool stuck at 1, same track repeating). The whole thing was built around the manual skip path and the listening experience was never validated.
+    TARGET BEHAVIOR (operator-locked). Put music on and forget it: 1. /music on (or a vibe change) generates track #1 and starts playing it the
+       instant it is ready.
+    2. Immediately, the remaining tracks for that (vibe, style) pool generate in
+       the BACKGROUND, one at a time (sequential), until the pool reaches
+       POOL_SIZE (12).
+    3. Playback AUTO-ADVANCES: when a track ends, the next one plays with NO
+       command. Because background fill runs far ahead of ~3-min playback, the
+       next track is already on disk (prefetch is a consequence, not separate
+       machinery). Only while just track #1 exists does it loop #1 until #2
+       lands, then advance.
+    4. Once the pool has 12, generation stops and playback AUTO-ROTATES (shuffle,
+       never the just-played track) among the 12 forever, at zero credits.
+    5. A vibe/style change FINISHES the current song, then switches to the new
+       pool: resume background fill if that pool has < 12, else rotate.
+
+    LOCKED DECISIONS (do not re-litigate; design AROUND these): - Sequential background fill (one generation at a time). Rationale: playback
+      is ~3 min/track, generation is seconds, so one-at-a-time stays ahead and
+      avoids the ElevenLabs rate-limits this project hit during bas7.
+    - Vibe change finishes the current song before switching. - Exactly one active background fill at a time (the currently-playing pool).
+      A vibe change cancels the old fill and starts the new pool's fill. This
+      bounds credit spend.
+    - Restart: turn_on reads the pool from disk. >= 12 rotates with no
+      generation; < 12 resumes fill from the current on-disk count. Pools are
+      already disk-backed (filename prefix per (vibe, style)).
+
+    INVARIANTS TO PRESERVE (breaking any is a design failure): - Daemon/client boundary: no business logic leaks into the client layer. - /music next stays as an optional manual skip (advance now). /music play
+      <name> stays as named replay. /music off cancels the background fill task
+      AND stops playback. Gapless handoff preserved.
+    - The cache key, the --name replay path, and the deterministic collision-free
+      naming from bas7 are unchanged.
+    - Reuse what bas7 already built where it fits: TrackPool (is_full, pick_next
+      shuffle-avoid-last), TrackGenerator (generation, pool_prefix keying,
+      pool_prefix_of, deterministic naming), the generate-vs-rotate decision.
+      This is a rebuild of the PLAYBACK LOOP behavior (auto-advance + a
+      cancellable background-fill task + advance-on-track-end wiring), not a
+      from-scratch rewrite.
+    - No print() in daemon code; logs to stderr only.
+    TWO GOALS THAT MUST WORK TOGETHER (operator priority, high bar): - TEST COVERAGE: the tests must cover the EXPERIENCE, not just mechanics.
+      bas7's failure was tests that proved rotation logic via direct scheduler
+      calls while the real loop looped one file. Required coverage includes:
+      auto-advance fires on track-end (drive the loop, assert it moves to a
+      DIFFERENT track with no skip); background fill generates up to 12 then
+      STOPS; rotate-at-12 makes zero provider calls; vibe change finishes current
+      then switches pool and resumes/rotates correctly; restart resumes from the
+      on-disk count; /music off cancels the fill task (no orphaned generation);
+      the only-one-track-exists loop-then-advance edge. Every new unit has a test
+      file; boundary/async paths (subprocess end, task cancellation) are
+      exercised, not just in-process state.
+    - OO REFACTORING: this rebuild is the opportunity to IMPROVE the OO scores on
+      the touched daemon modules, not just preserve them. Decompose the loop's
+      new responsibilities (playback advance, background fill lifecycle, prefetch
+      readiness) into cohesive, single-responsibility units with clear ownership
+      between MusicLoop and MusicScheduler. Per-file OO metrics must HOLD OR
+      IMPROVE on every touched file (make report before each commit); the
+      decomposition should reduce complexity/coupling, not add a god-loop. These
+      two goals reinforce each other: small single-responsibility units are what
+      make the async advance/fill/cancel paths individually testable. Say so in
+      the design.
+
+    THIS IS A DESIGN MISSION. Produce the design and the write-set; do NOT treat any module list above as prescriptive. You decide what to create, extract, or split (e.g. whether the background-fill lifecycle is its own class/module, where advance-on-end lives, how cancellation is owned). The design's output IS the write-set the implementation mission will use.

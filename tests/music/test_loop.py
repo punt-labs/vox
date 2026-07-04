@@ -394,6 +394,92 @@ class TestSkipEmptyPoolIsNoOp:
         asyncio.run(_drive())
 
 
+class TestTurnOnWhileActiveDoesNotCrash:
+    """turn_on while music is already active must never crash the loop.
+
+    Regression for the "play"-without-a-pending-track crash: a non-replay
+    turn_on used to signal "play", which drove the loop to call
+    take_pending_track() on an empty queue and raise RuntimeError, killing the
+    background MusicLoop task. A retarget must finish-current and enter the new
+    pool instead, and the loop task must stay alive and keep advancing.
+    """
+
+    def test_turn_on_while_playing_survives_and_switches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        _seed_pool(store, "calm", "jazz", 12)  # pool A, full -> no fill
+        _seed_pool(store, "bright", "jazz", 12)  # pool B (style stays jazz)
+        sched = _scheduler(store)
+        players = _FakePlayers()
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch(_PROVIDER, AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)
+                assert players.track_of(0).startswith("calm_jazz_")
+
+                # turn_on a NEW pool while the first track is still playing.
+                await sched.turn_on("u1", "jazz", ("bright", ""), "")
+                await _settle()
+                assert not task.done()  # the loop task survived (no crash)
+                assert players.procs[0].returncode is None  # current not killed
+
+                players.end(0)  # current song finishes -> enter the new pool
+                await players.wait_for(2)
+                await _stop(task)
+                assert players.track_of(1).startswith("bright_jazz_")
+
+        asyncio.run(_drive())
+
+    def test_turn_on_while_generating_first_survives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            await release.wait()
+            release.clear()
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await _settle()
+                assert sched.state == "generating"
+
+                # turn_on again while awaiting the first track: must not crash.
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await _settle()
+                assert not task.done()  # still alive, still generating-first
+
+                release.set()  # first track lands -> playback begins
+                await players.wait_for(1)
+                await _stop(task)
+                assert players.track_of(0) == f"{prefix}00.mp3"
+
+        asyncio.run(_drive())
+
+
 class TestRestartResumesFromDisk:
     """Restart (turn_on with tracks on disk) plays now and resumes fill."""
 

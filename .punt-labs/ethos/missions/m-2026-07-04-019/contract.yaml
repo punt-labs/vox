@@ -1,0 +1,67 @@
+mission_id: m-2026-07-04-019
+status: open
+type: implement
+created_at: "2026-07-04T16:58:54Z"
+updated_at: "2026-07-04T16:58:54Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-04T16:58:54Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-1rxb
+write_set:
+    - src/punt_vox/voxd/music/filler.py
+    - src/punt_vox/voxd/music/loop.py
+    - src/punt_vox/voxd/music/scheduler.py
+    - src/punt_vox/voxd/music/pool.py
+    - src/punt_vox/voxd/music/types.py
+    - src/punt_vox/voxd/music/store.py
+    - src/punt_vox/voxd/music/generator.py
+    - src/punt_vox/voxd/daemon.py
+    - tests/music/test_filler.py
+    - tests/music/test_loop.py
+    - tests/music/test_scheduler.py
+    - tests/music/test_store.py
+    - tests/music/test_generator.py
+success_criteria:
+    - 'Behavior matches DES-039 + the Z model: /music on generates track #1, plays it as soon as ready, and the scheduler-owned PoolFiller sequentially fills the (vibe,style) pool to POOL_SIZE=12 in the background; playback AUTO-ADVANCES on each natural track-end with NO command; at 12 the fill task exits and playback rotates (shuffle-avoid-last) with zero provider calls; vibe change finishes the current song then switches pool; /music off cancels the fill synchronously and stops playback; restart resumes from the on-disk count. The single-track transient loops #1 until #2 lands, then advances.'
+    - 'Amendment A implemented: a TrackStore Protocol with a FilesystemTrackStore production impl; all music-domain disk access goes through it; it is constructor-injected through generator -> scheduler/filler -> daemon; an in-memory fake store exists for tests. grep confirms no direct Path.glob / pathlib disk access remains in scheduler.py / filler.py / the generator''s domain methods (only FilesystemTrackStore touches the filesystem).'
+    - 'Empty-pool skip no-op: /music next in generating-first returns an ignored/no-op response and never calls pick_next on an empty pool. Regression test asserts this (no raise, no player spawned, fill unaffected).'
+    - 'EXPERIENCE-LEVEL tests (the bas7 gap), driving the REAL loop with a fake subprocess that records each argv and controls when each proc ends: (1) track-end advances to a DIFFERENT on-disk file with no skip_next call and no generate call; (2) PoolFiller fills to 12 then STOPS (exactly POOL_SIZE-N generate calls, task done not cancelled); (3) full pool rotates with generate_track.assert_not_called() across >=2 advances, consecutive tracks differ; (4) vibe change does NOT kill the current player, retargets fill to the new pool immediately, switches playback to a new-pool file at natural end; (5) restart: 5-on-disk -> 7 gens then stop, 12-on-disk -> 0 gens rotating; (6) /music off cancels the fill task (cancelled(), frozen generate count, player killed); (7) single-track loops then advances when #2 lands. Plus test_store.py for the fake + FilesystemTrackStore. Every new module has a test file; async/boundary paths (proc-end, task cancellation) are exercised via asyncio.Event handshakes, not sleep-polling.'
+    - 'OO hold-or-improve on every touched file (make report SRC=src/punt_vox/voxd/music/ before each commit): loop.py module_size 385->~200 and max_complexity 14-><=8 (two FAIL->PASS); scheduler.py <=260; filler.py and store.py all-PASS from birth; pool.py / types.py / generator.py hold. Run make update-oo after the modules are green; stage .oo-baseline.json + .oo-audit.jsonl.'
+    - 'make check exits 0. No print() in daemon code. No suppressions (no noqa/type:ignore/pylint-disable) added without operator approval. Fixture discipline per TESTING.md: silent-MP3 bytes only where a real file is produced; side_effect=lambda for per-call mocks; both success and generation-failure paths covered (fill backoff on error; loop disables if track #1 cannot be produced).'
+    - Commit incrementally — one commit per logical step (TrackStore protocol+impl; PoolFiller; scheduler rebuild; loop rebuild; wiring; each test module). Each commit passes make check. Do NOT accumulate more than 30 minutes of uncommitted changes — if a transient API rate-limit kills the session, committed steps are preserved and the leader can resume you cleanly.
+    - Do NOT open a PR, bump the version, or edit CHANGELOG.md / README.md / commands/music.md — the leader owns docs and opens the PR after the audio flight.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Implement the self-driving music playlist per the APPROVED design. Read it first, end to end:
+      - DESIGN.md DES-039 (the ADR) AND its "Amendment A" (injected TrackStore).
+      - Your design note: .tmp/missions/results/vox-1rxb-design.md (write-set,
+        test plan, OO plan).
+      - The Z formal model: docs/music-playlist.tex (the state machine + invariants
+        the implementation must satisfy; fuzz-clean).
+    Work on branch design/vox-1rxb-music-autoadvance (the ADR is already there; code + ADR ship in one PR). Do NOT open the PR — the leader does after a mandatory audio flight with the operator.
+    ALL FOUR OPERATOR-LOCKED DECISIONS (non-negotiable): 1. PoolFiller is SCHEDULER-OWNED. turn_off / update_vibe cancel or retarget the
+       single fill task synchronously — no orphaned generation after /music off.
+    2. Vibe/style change FINISHES the current song, then switches pool (supersedes
+       DES-033). Retarget the fill immediately on vibe-change; switch playback at
+       the current track's natural end. Do NOT kill the current player on vibe-change.
+    3. /music next (and any advance) while the pool is EMPTY (generating-first) is a
+       NO-OP — it must NOT call TrackPool.pick_next on an empty pool (that raises).
+       This is a real crash path the Z model exposed; it needs a regression test.
+    4. INJECTED TrackStore (Amendment A). No hard-coded filesystem in the music
+       domain. Define a TrackStore Protocol (in types.py per PY-IC-9) covering all
+       disk access — pool enumeration (tracks_for), listing, find-by-name, the
+       existence checks the naming counter needs, and the write target for a new
+       track. Provide FilesystemTrackStore (store.py) that absorbs the glob/dir
+       logic currently in TrackGenerator. Inject it: TrackGenerator (and via the
+       scheduler, PoolFiller) take the store through their constructor; daemon.py
+       wires FilesystemTrackStore. Tests inject an in-memory fake store.
+
+    Also: the turn_on / restart / vibe-switch "given the on-disk count, pick the entry state and start-or-skip the fill" decision must be ONE shared method, not duplicated three ways (Z finding #3 — DRY and the OO extraction the plan wants).
+    Auto-advance and manual skip share the pure select_next_track selection (Z: TrackEnds == Skip == Advance). Advance lives in the loop's proc-end branch; the scheduler exposes only the pure selection. The single-track loop-then-advance edge falls out of pick_next (no special-casing). Reuse TrackPool / TrackGenerator generation + deterministic naming verbatim.
