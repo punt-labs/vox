@@ -96,6 +96,73 @@ class TestRotationMakesNoApiCall:
         assert scheduler.track in set(gen.tracks_for(("calm", "jazz")))
 
 
+class TestSkipDuringFillRotatesFree:
+    """A skip during a fill that completes the pool rotates -- no 2nd generation."""
+
+    def test_skip_during_fill_completing_pool_does_not_regenerate(
+        self, tmp_path: Path
+    ) -> None:
+        gen = TrackGenerator(tmp_path)
+        prefix = gen.pool_prefix(("calm", "jazz"))
+        for i in range(POOL_SIZE - 1):  # one short of full
+            (tmp_path / f"{prefix}{i:02d}.mp3").write_bytes(b"x")
+
+        scheduler = MusicScheduler(gen)
+        scheduler._mode = "on"
+        scheduler._owner = "u1"
+        scheduler._vibe = ("calm", "")
+        scheduler._style = "jazz"
+
+        gen_started = asyncio.Event()
+        gen_release = asyncio.Event()
+        calls = 0
+
+        async def fake_generate_track(
+            self: object, prompt: str, dur: int, out: Path
+        ) -> Path:
+            nonlocal calls
+            calls += 1
+            gen_started.set()  # in flight -- pool still one short
+            await gen_release.wait()  # hold until the skip has fired
+            out.write_bytes(b"x")  # save the last track -> pool now full
+            return out
+
+        playback_started = False
+
+        async def _drive() -> None:
+            nonlocal playback_started
+            with (
+                patch(
+                    "punt_vox.providers.elevenlabs_music."
+                    "ElevenLabsMusicProvider.generate_track",
+                    fake_generate_track,
+                ),
+                patch(
+                    "punt_vox.voxd.music.loop.asyncio.create_subprocess_exec",
+                    _fake_player,
+                ),
+            ):
+                task = asyncio.create_task(MusicLoop(scheduler).run())
+                await asyncio.wait_for(gen_started.wait(), timeout=2.0)
+                # Skip while the fill is in flight -- pool not yet full.
+                assert scheduler.skip_next(owner_id="u1").status == "generating"
+                gen_release.set()  # let the fill finish -> pool reaches POOL_SIZE
+                for _ in range(200):
+                    await asyncio.sleep(0.01)
+                    if scheduler.proc is not None:
+                        playback_started = True
+                        break
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(_drive())
+
+        assert playback_started  # a pool member is playing
+        assert calls == 1  # only the fill -- the now-full pool rotated for free
+        assert scheduler.track in set(gen.tracks_for(("calm", "jazz")))
+
+
 class TestMaxRetriesDisablesMusic:
     """After _MUSIC_MAX_RETRIES generation failures, mode should be 'off'."""
 

@@ -233,6 +233,11 @@ class MusicScheduler:
         self._track = track
         self._track_name = track.stem
 
+    def reconsider_next(self) -> None:
+        """Consume a mid-fill signal and re-decide; a now-full pool rotates free."""
+        self._changed.clear()
+        self._request_next_track()
+
     def begin_playback(self, proc: asyncio.subprocess.Process) -> None:
         """Loop started a playback subprocess."""
         self._proc = proc

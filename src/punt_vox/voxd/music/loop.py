@@ -233,12 +233,12 @@ class MusicLoop:
         track = await sched.generate_track()
         sched.complete_generation(track)
 
-        # Vibe changed during initial generation -- caller should
-        # restart the cycle (no old track to keep looping).
+        # A skip/vibe-change arrived mid-fill -- restart the cycle. Re-decide
+        # first: the just-saved track may have filled the pool, so a now-full
+        # pool rotates for free instead of paying for another generation.
         if sched.changed.is_set():
-            logger.info(
-                "Vibe changed during initial generation, regenerating",
-            )
+            logger.info("Signal during initial generation, re-deciding")
+            sched.reconsider_next()
             return None
         return track
 
