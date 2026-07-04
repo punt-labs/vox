@@ -305,7 +305,34 @@ class TestVoxClientSynthesize:
         assert result.deduped is True
         assert result.original_played_at == 1700000000.0
         assert result.ttl_seconds_remaining == 550.0
+        assert result.cached is False
         assert mock_ws.recv.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_synthesize_reports_cache_hit_from_playing(self) -> None:
+        """A 'playing' response carrying cached=true surfaces as result.cached."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[json.dumps({"type": "playing", "id": "r", "cached": True})]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.synthesize("Hello world")
+        assert result.cached is True
+
+    @pytest.mark.asyncio
+    async def test_synthesize_reports_cache_miss_from_playing(self) -> None:
+        """A 'playing' response carrying cached=false surfaces as result.cached."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[json.dumps({"type": "playing", "id": "r", "cached": False})]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        result = await client.synthesize("Hello world")
+        assert result.cached is False
 
 
 class TestVoxClientChime:
