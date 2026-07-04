@@ -580,6 +580,73 @@ class TestTurnOnWhileActiveDoesNotCrash:
         asyncio.run(_drive())
 
 
+class TestNamedReplayResumesFill:
+    """Finding A: a named replay onto a < 12 pool resumes the background fill.
+
+    Before the fix, play_track/_replay_named cancelled the fill and never
+    restarted it, so after a named replay the pool stopped growing toward 12.
+    A replay must retarget selection AND restart the fill for the track's pool,
+    cancelling the old fill before starting the new one (single-fill invariant).
+    """
+
+    def test_replay_restarts_fill_toward_twelve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_CHOICE, _first_candidate)
+        store = FakeTrackStore()
+        prefix = _seed_pool(store, "calm", "jazz", 3)  # < 12 on disk
+        sched = _scheduler(store)
+        players = _FakePlayers()
+        release = asyncio.Event()
+        gen_calls = 0
+
+        async def gated_generate(
+            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        ) -> tuple[Any, str]:
+            nonlocal gen_calls
+            gen_calls += 1
+            await release.wait()
+            release.clear()  # one track per release
+            n = len(store.tracks_for(prefix))
+            stem = f"{prefix}{n:02d}"
+            return store.add(stem), stem
+
+        async def _drive() -> None:
+            with (
+                patch(_SUBPROCESS, players.spawn),
+                patch.object(TrackGenerator, "generate", gated_generate),
+                patch.object(PoolFiller, "_backoff", AsyncMock()),
+            ):
+                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                task = asyncio.create_task(MusicLoop(sched).run())
+                await players.wait_for(1)  # plays a disk member; fill running
+                assert sched.filling
+                old_fill = sched._playlist._filler._task
+
+                # Replay a named member of the same pool.
+                await sched.play_track(f"{prefix}00", "u1")
+                await _settle()
+                new_fill = sched._playlist._filler._task
+                assert new_fill is not None
+                assert old_fill is not None
+                assert old_fill is not new_fill  # a fresh fill for the replay
+                assert old_fill.done()  # the old fill was cancelled
+                assert not new_fill.done()  # exactly one live fill task
+                assert sched.filling
+
+                # The resumed fill actually generates toward 12 after the replay.
+                calls_before = gen_calls
+                release.set()  # release the in-flight (old) generation
+                await _settle()
+                release.set()  # let the resumed fill make one more
+                await _settle()
+                assert gen_calls > calls_before  # generate called after replay
+
+                await _stop(task)
+
+        asyncio.run(_drive())
+
+
 class TestRestartResumesFromDisk:
     """Restart (turn_on with tracks on disk) plays now and resumes fill."""
 

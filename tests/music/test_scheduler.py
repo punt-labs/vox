@@ -85,14 +85,38 @@ class TestTurnOn:
         store = FakeTrackStore()
         track = store.add("my_focus")
         sched = _scheduler(store)
-        result = asyncio.run(
-            sched.turn_on("u1", "jazz", ("happy", "[warm]"), "my focus")
-        )
+        with patch.object(TrackGenerator, "generate", AsyncMock()):
+
+            async def _run() -> MusicResponse:
+                result = await sched.turn_on(
+                    "u1", "jazz", ("happy", "[warm]"), "my focus"
+                )
+                await sched.shutdown()  # cancel the resumed fill task cleanly
+                return result
+
+            result = asyncio.run(_run())
         assert result.status == "playing"
         assert result.track == str(track)
         assert result.name == "my_focus"
         assert sched.mode == "on"
         assert sched.has_pending_track  # queued for the loop to replay
+
+    def test_turn_on_replay_resumes_fill(self) -> None:
+        # Finding A: a named replay onto a pool with < 12 tracks must restart
+        # the background fill so the pool keeps growing toward POOL_SIZE.
+        store = FakeTrackStore()
+        _seed(store, "happy", "jazz", 3)  # < 12 -> fill should resume
+        store.add("happy_jazz_replayme")
+        sched = _scheduler(store)
+        with patch.object(TrackGenerator, "generate", AsyncMock()):
+
+            async def _run() -> None:
+                await sched.turn_on("u1", "jazz", ("happy", ""), "happy_jazz_replayme")
+                await asyncio.sleep(0)  # let the resumed fill task start
+                assert sched.filling  # fill active for the replayed track's pool
+                await sched.shutdown()
+
+            asyncio.run(_run())
 
     def test_turn_on_invalid_track_name(self) -> None:
         sched = _scheduler()
@@ -133,7 +157,14 @@ class TestPlayTrack:
         store = FakeTrackStore()
         track = store.add("chill_vibes")
         sched = _scheduler(store)
-        result = asyncio.run(sched.play_track("chill vibes", "u1"))
+        with patch.object(TrackGenerator, "generate", AsyncMock()):
+
+            async def _run() -> MusicResponse:
+                result = await sched.play_track("chill vibes", "u1")
+                await sched.shutdown()  # cancel the resumed fill task cleanly
+                return result
+
+            result = asyncio.run(_run())
         assert result.status == "playing"
         assert result.track == str(track)
         assert result.name == "chill_vibes"

@@ -165,7 +165,7 @@ class MusicScheduler:
         return MusicResponse(status="stopped")
 
     async def play_track(self, name: str, owner_id: str) -> MusicResponse:
-        """Replay a saved track by name, switching to its pool (no fill)."""
+        """Replay a saved track by name, switching to its pool and resuming fill."""
         if not name:
             msg = "name is required"
             raise ValueError(msg)
@@ -182,11 +182,9 @@ class MusicScheduler:
             raise ValueError(msg)
 
         await self._kill_proc()
-        self._playlist.cancel_fill()  # leaving the filling pool -- no named fill
         self._mode = "on"
         self._owner = owner_id
-        self._playlist.set_prefix(TrackGenerator.pool_prefix_of(track_path))
-        return self._queue_named(track_path, safe_name)
+        return self._switch_to_replayed_pool(track_path, safe_name)
 
     def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
         """Update the vibe if the sender owns music; retarget fill immediately.
@@ -298,9 +296,7 @@ class MusicScheduler:
                 raise ValueError(msg)
             return None
         await self._adopt(req)
-        self._playlist.cancel_fill()
-        self._playlist.set_prefix(TrackGenerator.pool_prefix_of(track_path))
-        return self._queue_named(track_path, safe_name)
+        return self._switch_to_replayed_pool(track_path, safe_name)
 
     async def _adopt(self, req: MusicRequest) -> None:
         """Kill any foreign playback and adopt ownership for a new pool."""
@@ -310,6 +306,21 @@ class MusicScheduler:
         self._mode = "on"
         self._owner = req.owner_id
         self._playlist.retune(req.vibe, req.style)
+
+    def _switch_to_replayed_pool(self, track: Path, name: str) -> MusicResponse:
+        """Retarget selection and fill to a replayed track's pool, then queue it.
+
+        Named replay (``/music play`` and ``/music on --name`` for a saved
+        track) retargets both playback selection and the background fill to the
+        track's pool (DES-039). The old fill is cancelled and a fresh one starts
+        for the target pool when it holds < POOL_SIZE tracks -- ``ensure_fill``
+        no-ops on a full pool -- so the pool keeps growing toward 12 after a
+        replay. Cancelling before restarting preserves the single-fill invariant.
+        """
+        self._playlist.cancel_fill()
+        self._playlist.set_prefix(TrackGenerator.pool_prefix_of(track))
+        self._playlist.ensure_fill()
+        return self._queue_named(track, name)
 
     def _queue_named(self, track: Path, name: str) -> MusicResponse:
         """Queue ``track`` as the next thing to play (a named replay)."""
