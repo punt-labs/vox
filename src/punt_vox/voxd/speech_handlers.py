@@ -96,8 +96,7 @@ class SynthesizeHandler(MessageHandler):
         provider_name = spec.provider or ""
         resolved_voice = spec.voice or ""
 
-        # Opt-in dedup: only when the caller explicitly sets `once` to a
-        # positive TTL. With `once` absent, null, or 0, every request plays.
+        # Opt-in dedup: only when the caller sets `once` to a positive TTL.
         dedup_recorded = False
         if once is not None and once > 0:
             hit = self._once_dedup.check_and_record(text, float(once))
@@ -166,7 +165,7 @@ class SynthesizeHandler(MessageHandler):
                 return
 
         try:
-            output_path = await self._synthesis.synthesize_to_file(
+            outcome = await self._synthesis.synthesize_to_file(
                 text,
                 spec,
                 request_id=request_id,
@@ -179,12 +178,14 @@ class SynthesizeHandler(MessageHandler):
             )
             return
 
-        # Enqueue for playback
+        # `cached` rides the 'playing' response (the client's terminal).
         done_event = asyncio.Event()
         await self._playback.enqueue(
-            PlaybackItem(path=output_path, request_id=request_id, notify=done_event)
+            PlaybackItem(path=outcome.path, request_id=request_id, notify=done_event)
         )
-        await websocket.send_json({"type": "playing", "id": request_id})
+        await websocket.send_json(
+            {"type": "playing", "id": request_id, "cached": outcome.cached}
+        )
         await done_event.wait()
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):
             await websocket.send_json({"type": "done", "id": request_id})
@@ -267,7 +268,7 @@ class RecordHandler(MessageHandler):
         )
 
         try:
-            output_path = await self._synthesis.synthesize_to_file(
+            outcome = await self._synthesis.synthesize_to_file(
                 text,
                 spec,
                 request_id=request_id,
@@ -279,9 +280,8 @@ class RecordHandler(MessageHandler):
             )
             return
 
-        audio_data = output_path.read_bytes()
-        is_cache_owned = output_path.is_relative_to(_cache_module.CACHE_DIR)
-        if not is_cache_owned:
-            output_path.unlink(missing_ok=True)
+        audio_data = outcome.path.read_bytes()
+        if not outcome.path.is_relative_to(_cache_module.CACHE_DIR):
+            outcome.path.unlink(missing_ok=True)
         encoded = base64.b64encode(audio_data).decode("ascii")
         await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
