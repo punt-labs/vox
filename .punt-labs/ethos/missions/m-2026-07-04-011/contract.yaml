@@ -1,0 +1,46 @@
+mission_id: m-2026-07-04-011
+status: closed
+type: implement
+created_at: "2026-07-04T05:26:16Z"
+updated_at: "2026-07-04T14:04:58Z"
+closed_at: "2026-07-04T14:04:58Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-04T05:26:16Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-bas7
+write_set:
+    - src/punt_vox/music.py
+    - src/punt_vox/voxd/music/scheduler.py
+    - src/punt_vox/voxd/music/generator.py
+    - tests/test_music.py
+    - tests/test_music_scheduler.py
+    - tests/test_music_generator.py
+success_criteria:
+    - 'Distinctness: music.py defines a curated tuple of AT LEAST 12 music-variation descriptors that meaningfully span instrumentation / tempo / texture / mood-nuance (e.g. warm analog pads vs crisp arpeggios vs deep sub-bass groove vs airy plucks — draft real, musically-distinct phrases, not filler). vibe_to_prompt() takes a variation index and inserts the descriptor as a prompt layer. Empty/None variation must reproduce today''s prompt exactly (back-compat for existing callers/tests).'
+    - generate() passes variation = the current (vibe,style) pool size (0-based), so the Nth new track for a pool gets the Nth variation descriptor and the 12 fill distinct variations. Cycle (index % len) if the pool ever exceeds the descriptor count.
+    - 'Playlist rotation: a POOL_SIZE constant (=12). In skip_next() and the vibe-change / turn_on new-generation paths, group saved tracks by the <vibe_slug>-<style_slug>- prefix (add a generator method like tracks_for(vibe, style)). If pool size >= POOL_SIZE, select by shuffle a track != the last-played one, set _track + _replay so the loop plays it with ZERO ElevenLabs API calls; else generate a new track. Add a _last_pool_track (or index) scheduler slot to avoid back-to-back repeats. MusicLoop must NOT need changes.'
+    - 'Naming: generated track names must not collide at minute resolution (today''s auto_track_name is <vibe>-<style>-YYYYMMDD-HHMM, so 2 generations in one minute overwrite and the pool never grows). Include a short unique/variation suffix so a pool reliably grows to 12 distinct files.'
+    - 'Behavior preserved: /music on --name replay, /music play <name>, gapless handoff, and the off path are unchanged. Rotating an established pool makes no API call (assert this).'
+    - 'Tests (exercise the scheduler domain, not just helpers): pool fills to 12 with each generation using a distinct variation index; the 13th on/next ROTATES (no generate/API call — mock the generator/provider and assert call count 0 on rotation); shuffle never returns the immediately-previous track; a different vibe or style is a separate pool; <12 still generates. Mock the ElevenLabs provider — never hit the real API in tests.'
+    - make check exits 0 (mypy, pyright, ruff, pytest, check-oo, check-coupling). OO ratchet not regressed on touched files; make update-oo (or --rebaseline only for a structural shift, documented). No print() in daemon code.
+    - Commit incrementally — one commit per logical step (variation dimension; pool rotation; naming; tests). Each commit passes make check. Do NOT accumulate all changes uncommitted — commit each step as you finish it.
+    - Work on branch feat/music-playlist-rotation off current main. Do NOT open a PR, bump the version, or edit CHANGELOG.md/DESIGN.md/commands/music.md — the leader owns docs.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    Operator feedback: background music is too repetitive. Two root causes, confirmed by a codebase trace: (1) generated tracks ARE saved to ~/Music/vox/tracks/*.mp3 but nothing ever plays them back as a playlist — every /music next and vibe-change unconditionally calls the ElevenLabs API for a fresh track; a single track just loops until you skip. (2) the generation prompt is essentially fixed for a given (vibe, style): music.py vibe_to_prompt has 4 layers, but the work-intensity layer is fed a hardcoded signals=[] (always "steady working pace") and the time layer only shifts 4x/day — so every generated track lands in the same sonic territory. Operator-approved design (all four decisions made): - PLAYLIST ROTATION: treat the already-saved files, grouped by the existing
+      "<vibe_slug>-<style_slug>-" filename prefix, as the pool (NO new storage/index).
+      When the pool for the current (vibe,style) has >=12 tracks, pick one by SHUFFLE
+      (never the track that just played) and play it with NO API call; when the pool has
+      <12, generate a new one (LAZY fill). MusicLoop already handles the replay path, so
+      it should not need changes.
+    - DISTINCTNESS: add a curated variation dimension to the prompt so the 12 tracks are
+      genuinely different, not 12 near-clones. generate() passes a variation index =
+      current pool size, so the 1st..12th track each get a different descriptor.
+    You own the decomposition and the exact variation-descriptor wording. Keep the scheduler the domain facade (the loop stays agnostic); keep the generator the I/O helper. Do not change the cache key, the gapless-handoff invariant, or --name/replay and /music play behavior.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -308,3 +309,122 @@ class TestSkipNext:
         scheduler = _make_scheduler(tmp_path)
         with pytest.raises(ValueError, match="owner_id is required"):
             scheduler.skip_next(owner_id="")
+
+
+def _fill_pool(tmp_path: Path, vibe: str, style: str, count: int) -> TrackGenerator:
+    """Write ``count`` saved tracks with realistic stamped names for one pool."""
+    gen = TrackGenerator(tmp_path)
+    prefix = gen.pool_prefix((vibe, style))
+    for i in range(count):
+        (tmp_path / f"{prefix}20260101_0000_{i:02d}.mp3").write_bytes(b"x")
+    return gen
+
+
+def _tuned(scheduler: MusicScheduler, vibe: str, style: str) -> MusicScheduler:
+    """Put a scheduler in the 'on' state for one (vibe, style)."""
+    scheduler._mode = "on"
+    scheduler._vibe = (vibe, "")
+    scheduler._style = style
+    scheduler._pool_prefix = TrackGenerator.pool_prefix((vibe, style))
+    return scheduler
+
+
+def _first(seq: Sequence[Path]) -> Path:
+    """Deterministic stand-in for secrets.choice: pick the first candidate."""
+    return seq[0]
+
+
+class TestPoolRotation:
+    """skip_next rotates a full pool with no generation, else generates."""
+
+    def test_full_pool_rotates_without_generating(self, tmp_path: Path) -> None:
+        real = _fill_pool(tmp_path, "calm", "jazz", 12)
+        gen = MagicMock(wraps=real)
+        gen.generate = AsyncMock()
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "playing"
+        assert scheduler.replay is True
+        pool = real.tracks_for(real.pool_prefix(("calm", "jazz")))
+        assert scheduler.track in set(pool)
+        gen.generate.assert_not_called()
+
+    def test_small_pool_generates(self, tmp_path: Path) -> None:
+        real = _fill_pool(tmp_path, "calm", "jazz", 11)
+        gen = MagicMock(wraps=real)
+        gen.generate = AsyncMock()
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "generating"
+        assert scheduler.replay is False
+        gen.generate.assert_not_called()
+
+    def test_rotation_never_repeats_previous(self, tmp_path: Path) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+
+        previous: Path | None = None
+        for _ in range(30):
+            scheduler.skip_next(owner_id="sess-1")
+            assert scheduler.track != previous
+            previous = scheduler.track
+
+    def test_off_clears_stale_track_so_rotation_isnt_constrained(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
+        pool = sorted(gen.tracks_for(gen.pool_prefix(("calm", "jazz"))))
+        scheduler._track = pool[0]  # simulate pool[0] as the just-played track
+
+        asyncio.run(scheduler.turn_off())
+        assert scheduler.track is None  # PY-EN-5: stale avoid-repeat key cleared
+
+        # Resume and rotate. With the avoid key cleared, pool[0] is a candidate
+        # again; pick the first candidate to prove it is no longer excluded.
+        monkeypatch.setattr("punt_vox.voxd.music.pool.secrets.choice", _first)
+        scheduler._mode = "on"
+        result = scheduler.skip_next(owner_id="sess-1")
+        assert result.track == str(pool[0])  # pre-off track not permanently excluded
+
+    def test_separate_pool_per_style(self, tmp_path: Path) -> None:
+        # Pool is full for jazz but empty for techno -> techno must generate.
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "calm", "techno")
+
+        assert scheduler.skip_next(owner_id="sess-1").status == "generating"
+
+    def test_update_vibe_into_full_pool_rotates(self, tmp_path: Path) -> None:
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        scheduler = _tuned(MusicScheduler(gen), "restless", "jazz")
+        scheduler._owner = "sess-1"
+
+        result = scheduler.update_vibe(owner_id="sess-1", vibe=("calm", ""))
+
+        assert result.status == "playing"
+        assert scheduler.replay is True
+
+    def test_play_then_next_rotates_played_pool_not_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pool A (calm/jazz) is full; the session is a different, empty pool B.
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        prefix_a = gen.pool_prefix(("calm", "jazz"))
+        scheduler = _tuned(MusicScheduler(gen), "mellow", "techno")  # session = B
+        scheduler._owner = "sess-1"
+
+        # Play a track from pool A by name.
+        played = f"{prefix_a}20260101_0000_00"
+        asyncio.run(scheduler.play_track(name=played, owner_id="sess-1"))
+
+        # /music next must rotate pool A (the playing track's pool), not B.
+        monkeypatch.setattr("punt_vox.voxd.music.pool.secrets.choice", _first)
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "playing"  # B would be empty -> "generating"
+        assert result.track is not None
+        assert Path(result.track).name.startswith(prefix_a)  # rotated A, not B

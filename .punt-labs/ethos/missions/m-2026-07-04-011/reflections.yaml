@@ -1,0 +1,14 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-04T06:31:59Z"
+      author: claude
+      converging: true
+      signals:
+        - 'code-reviewer CLEAN: all 6 correctness claims confirmed — rotation makes ZERO API calls at the loop level (full branch sets replay + fires _changed; MusicLoop consume_replay never calls generate_track), lazy fill, avoid-repeat, back-compat, variation indexing all correct; MusicLoop untouched'
+        - 'type-design SOUND: turn_on complexity 12->5 (radon), TrackPool + MusicRequest are well-formed value objects; MusicRequest.safe_name DRYs a 3x-inline slugify; decomposition improved OO with no smell'
+        - 'code-simplifier: decomposition genuinely clean, not over-engineered; one DRY collapse recommended (extract _begin_generation + _replay_track, delete _begin_named to single-source the state transitions)'
+        - 'pr-test HIGH gap: the crux ''no API call on rotation'' assertion is VACUOUS — generation is decoupled to loop.py, so gen.generate.assert_not_called() passes in both rotate and generate branches. No test drives a full pool through MusicLoop asserting the provider is never invoked. The behavior is correct (code-reviewer confirms) but unproven by tests.'
+        - 'Low/polish: pick_next has an unstated non-empty-pool precondition (IndexError on empty); POOL_SIZE(12) and len(_VARIATION_DESCRIPTORS)(12) are coupled but unlinked; test_music.py copies _LOOP_SUFFIX locally instead of importing'
+        - make check green (1753 tests); scheduler.py max_complexity 5, module_size 287, all metrics under absolute thresholds; operator ruled to KEEP the decomposition (complexity win > cosmetic LCOM hold)
+      recommendation: continue
+      reason: Round 1 is correct and the OO decomposition is confirmed a net improvement; round 2 hardens the proof (a loop-level test that mocks the provider and asserts zero calls on full-pool rotation) and applies clean polish (DRY the state transitions, guard pick_next's empty precondition, couple POOL_SIZE to the descriptor count, import the real suffix constant).

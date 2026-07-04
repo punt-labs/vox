@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import time
@@ -46,26 +47,17 @@ class MusicTrack:
         if not path_str:
             msg = "MusicTrack.from_dict: missing required 'path' field"
             raise ValueError(msg)
-        try:
-            size_bytes = int(str(d.get("size_bytes", 0)))
-        except (ValueError, TypeError):
-            size_bytes = 0
-        try:
-            modified = float(str(d.get("modified", 0)))
-        except (ValueError, TypeError):
-            modified = 0.0
         return cls(
             name=str(d.get("name", "")),
             path=Path(path_str),
-            size_bytes=size_bytes,
-            modified=modified,
+            size_bytes=int(str(d.get("size_bytes", 0))),
+            modified=float(str(d.get("modified", 0))),
         )
 
     def display_line(self) -> str:
         """Return a human-readable summary line for this track."""
-        size_kb = self.size_bytes // 1024
         date_str = datetime.fromtimestamp(self.modified).strftime("%Y-%m-%d %H:%M")
-        return f"{self.name} ({size_kb} KB, {date_str})"
+        return f"{self.name} ({self.size_bytes // 1024} KB, {date_str})"
 
     def to_dict(self) -> dict[str, object]:
         """Serialize for WebSocket wire format (backward compat)."""
@@ -99,11 +91,14 @@ class TrackGenerator:
 
     def find_track(self, name: str) -> Path | None:
         """Return the path to an existing track by name, or None."""
-        safe_name = self.slugify(name, max_len=60)
-        if not safe_name:
+        if not (safe_name := self.slugify(name, max_len=60)):
             return None
         path = self._output_dir / f"{safe_name}.mp3"
         return path if path.exists() else None
+
+    def tracks_for(self, prefix: str) -> list[Path]:
+        """Return saved track paths sharing a pool prefix."""
+        return sorted(self._output_dir.glob(f"{prefix}*.mp3"))
 
     async def generate(
         self,
@@ -111,50 +106,52 @@ class TrackGenerator:
         style: str,
         track_name: str,
     ) -> tuple[Path, str]:
-        """Generate a music track and return (track_path, resolved_track_name).
-
-        Uses explicit vibe/style/track_name parameters rather than reading
-        from DaemonContext, keeping TrackGenerator decoupled from daemon state.
-        """
+        """Generate a track and return (track_path, resolved_track_name)."""
         vibe_text, vibe_tags = vibe
 
         from punt_vox.music import vibe_to_prompt
 
         hour = time.localtime().tm_hour
+        variation = len(self.tracks_for(self.pool_prefix((vibe_text, style))))
         prompt = vibe_to_prompt(
-            vibe_text or None, vibe_tags or None, style or None, hour, signals=[]
+            vibe_text or None, vibe_tags or None, style or None, hour, [], variation
         )
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
-
-        resolved_name = track_name or self.auto_track_name(vibe_text, style)
-        safe_name = self.slugify(resolved_name, max_len=60)
-        filename = f"{safe_name}.mp3"
-        output_path = self._output_dir / filename
+        safe_name = self.slugify(
+            track_name or self.auto_track_name(vibe_text, style), 60
+        )
+        output_path = self._output_dir / f"{safe_name}.mp3"
 
         from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 
-        provider = ElevenLabsMusicProvider()
-        await provider.generate_track(prompt, _MUSIC_DURATION_MS, output_path)
+        await ElevenLabsMusicProvider().generate_track(
+            prompt, _MUSIC_DURATION_MS, output_path
+        )
         return output_path, safe_name
 
     def auto_track_name(self, vibe: str, style: str) -> str:
-        """Derive a short auto-name from vibe + style + YYYYMMDD-HHMM."""
-        stamp = time.strftime("%Y%m%d-%H%M")
-        vibe_part = self.slugify(vibe, max_len=20) or "ambient"
-        style_part = self.slugify(style, max_len=20) or "mix"
-        return f"{vibe_part}-{style_part}-{stamp}"
+        """Return a collision-free auto-name at the lowest free counter."""
+        stem = f"{self.pool_prefix((vibe, style))}{time.strftime('%Y%m%d_%H%M')}"
+        counters = (f"{stem}_{n}" for n in itertools.count())
+        return next(c for c in counters if not (self._output_dir / f"{c}.mp3").exists())
+
+    @staticmethod
+    def pool_prefix(key: tuple[str, str]) -> str:
+        """Return the filename prefix shared by one (vibe, style) pool."""
+        vibe_part = TrackGenerator.slugify(key[0], max_len=20) or "ambient"
+        style_part = TrackGenerator.slugify(key[1], max_len=20) or "mix"
+        return f"{vibe_part}_{style_part}_"
+
+    @staticmethod
+    def pool_prefix_of(track: Path) -> str:
+        """Return the pool prefix a generated track belongs to, from its name."""
+        return re.sub(r"\d{8}_\d{4}_\d+$", "", track.stem) or track.stem
 
     def list_tracks(self) -> list[MusicTrack]:
         """Return metadata for all saved .mp3 tracks in the output directory."""
-        if not self._output_dir.exists():
-            return []
-        tracks: list[MusicTrack] = []
-        for mp3 in sorted(self._output_dir.glob("*.mp3")):
-            track = MusicTrack.from_stat(mp3)
-            if track is not None:
-                tracks.append(track)
-        return tracks
+        mp3s = sorted(self._output_dir.glob("*.mp3"))
+        return [t for mp3 in mp3s if (t := MusicTrack.from_stat(mp3)) is not None]
 
     @staticmethod
     def slugify(text: str, max_len: int = 40) -> str:

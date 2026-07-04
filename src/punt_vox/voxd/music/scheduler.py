@@ -5,17 +5,35 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
 from punt_vox.voxd.music.generator import TrackGenerator
+from punt_vox.voxd.music.pool import TrackPool
 from punt_vox.voxd.music.types import MusicResponse
 
 __all__ = [
+    "MusicRequest",
     "MusicScheduler",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class MusicRequest:
+    """A request to start or change music for one session."""
+
+    owner_id: str
+    style: str
+    vibe: tuple[str, str]
+    name: str
+
+    @property
+    def safe_name(self) -> str:
+        """Return the filesystem-safe form of the requested name."""
+        return TrackGenerator.slugify(self.name, max_len=60)
 
 
 class MusicScheduler:
@@ -26,6 +44,7 @@ class MusicScheduler:
         "_generator",
         "_mode",
         "_owner",
+        "_pool_prefix",
         "_proc",
         "_replay",
         "_state",
@@ -39,6 +58,7 @@ class MusicScheduler:
     _generator: TrackGenerator
     _mode: str
     _owner: str
+    _pool_prefix: str
     _proc: asyncio.subprocess.Process | None
     _replay: bool
     _state: str
@@ -54,6 +74,7 @@ class MusicScheduler:
         self._style = ""
         self._owner = ""
         self._vibe = ("", "")
+        self._pool_prefix = ""
         self._track = None
         self._track_name = ""
         self._proc = None
@@ -125,62 +146,35 @@ class MusicScheduler:
     ) -> MusicResponse:
         """Start music or transfer ownership.
 
-        If ``name`` is provided and a matching track exists, replays it
-        (status="playing"). If ``name`` is provided but no matching track
-        exists, generates a new track with that name (status="generating").
-        If ``name`` is empty, generates with an auto-derived name.
+        If ``name`` matches a saved track, replays it (status="playing").
+        Otherwise adopts ownership and either rotates an established pool or
+        generates a fresh track -- with the given name, or auto-named.
         """
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-
-        # If name provided, validate and check for existing track.
+        req = MusicRequest(owner_id, style, vibe, name)
         if name:
-            track_path = self._generator.find_track(name)
-            if track_path is None and not TrackGenerator.slugify(name, max_len=60):
-                msg = "invalid track name"
-                raise ValueError(msg)
-            if track_path is not None:
-                # Replay existing track.
-                await self._kill_proc()
-                self._mode = "on"
-                if style:
-                    self._style = style
-                self._owner = owner_id
-                self._vibe = vibe
-                self._track = track_path
-                self._track_name = TrackGenerator.slugify(name, max_len=60)
-                self._state = "playing"
-                self._replay = True
-                self._changed.set()
-                return MusicResponse(
-                    status="playing",
-                    track=str(track_path),
-                    name=self._track_name,
-                )
-
-        # New generation.
-        is_already_playing = self._mode == "on" and self._proc is not None
-        if not is_already_playing or self._owner != owner_id:
-            await self._kill_proc()
-
-        self._mode = "on"
-        if style:
-            self._style = style
-        self._owner = owner_id
-        self._vibe = vibe
-        self._track_name = TrackGenerator.slugify(name, max_len=60) if name else ""
-        self._replay = False
-        self._state = "generating"
-        self._changed.set()
-        return MusicResponse(status="generating")
+            replayed = await self._replay_named(req)
+            if replayed is not None:
+                return replayed
+        await self._adopt_new(req)
+        return (
+            self._begin_generation(req.safe_name)
+            if name
+            else self._request_next_track()
+        )
 
     async def turn_off(self) -> MusicResponse:
-        """Stop music playback."""
+        """Stop music playback and clear stale rotation state (PY-EN-5)."""
         await self._kill_proc()
         self._mode = "off"
         self._state = "idle"
         self._replay = False
+        # _track is the rotation avoid-repeat key; a stopped track is not
+        # "just played", so clear it or the next rotation wrongly excludes it.
+        self._track = None
+        self._track_name = ""
         self._changed.set()
         return MusicResponse(status="stopped")
 
@@ -204,37 +198,27 @@ class MusicScheduler:
         await self._kill_proc()
         self._mode = "on"
         self._owner = owner_id
-        self._track = track_path
-        self._track_name = safe_name
-        self._state = "playing"
-        self._replay = True
-        self._changed.set()
-        return MusicResponse(status="playing", track=str(track_path), name=safe_name)
+        return self._replay_track(track_path, safe_name)
 
     def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
-        """Update vibe if sender is owner."""
+        """Update vibe if sender is owner, then rotate or generate."""
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-        if owner_id != self._owner:
-            return MusicResponse(status="ignored")
-        if vibe == self._vibe:
+        if owner_id != self._owner or vibe == self._vibe:
             return MusicResponse(status="ignored")
         self._vibe = vibe
-        self._changed.set()
-        return MusicResponse(status="generating")
+        self._pool_prefix = TrackGenerator.pool_prefix((vibe[0], self._style))
+        return self._request_next_track()
 
     def skip_next(self, owner_id: str) -> MusicResponse:
-        """Skip to a new track."""
+        """Skip to the next track: rotate an established pool or generate."""
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
         if self._mode != "on":
             return MusicResponse(status="ignored")
-        self._track_name = ""
-        self._replay = False
-        self._changed.set()
-        return MusicResponse(status="generating")
+        return self._request_next_track()
 
     # -- Public methods --------------------------------------------------------
 
@@ -252,6 +236,11 @@ class MusicScheduler:
         """Loop finished generating; record the track."""
         self._track = track
         self._track_name = track.stem
+
+    def reconsider_next(self) -> None:
+        """Consume a mid-fill signal and re-decide; a now-full pool rotates free."""
+        self._changed.clear()
+        self._request_next_track()
 
     def begin_playback(self, proc: asyncio.subprocess.Process) -> None:
         """Loop started a playback subprocess."""
@@ -289,6 +278,55 @@ class MusicScheduler:
         return track_path
 
     # -- Private ---------------------------------------------------------------
+
+    async def _replay_named(self, req: MusicRequest) -> MusicResponse | None:
+        """Replay a saved track by name, or None if it must be generated."""
+        track_path = self._generator.find_track(req.name)
+        if track_path is None:
+            if not req.safe_name:
+                msg = "invalid track name"
+                raise ValueError(msg)
+            return None
+        await self._adopt_new(req)
+        return self._replay_track(track_path, req.safe_name)
+
+    async def _adopt_new(self, req: MusicRequest) -> None:
+        """Kill any foreign playback and adopt ownership for a new track."""
+        is_already_playing = self._mode == "on" and self._proc is not None
+        if not is_already_playing or self._owner != req.owner_id:
+            await self._kill_proc()
+        self._mode = "on"
+        if req.style:
+            self._style = req.style
+        self._owner = req.owner_id
+        self._vibe = req.vibe
+        self._pool_prefix = TrackGenerator.pool_prefix((self._vibe[0], self._style))
+
+    def _begin_generation(self, name: str) -> MusicResponse:
+        """Signal the loop to generate a track carrying ``name`` (may be empty)."""
+        self._track_name = name
+        self._replay = False
+        self._state = "generating"
+        self._changed.set()
+        return MusicResponse(status="generating")
+
+    def _replay_track(self, track: Path, name: str) -> MusicResponse:
+        """Signal the loop to replay ``track`` with no generation."""
+        self._track = track
+        self._track_name = name
+        self._pool_prefix = TrackGenerator.pool_prefix_of(track)
+        self._replay = True
+        self._state = "playing"
+        self._changed.set()
+        return MusicResponse(status="playing", track=str(track), name=name)
+
+    def _request_next_track(self) -> MusicResponse:
+        """Rotate the _pool_prefix pool with no API call, else signal generation."""
+        pool = TrackPool.from_paths(self._generator.tracks_for(self._pool_prefix))
+        if not pool.is_full:
+            return self._begin_generation("")
+        chosen = pool.pick_next(self._track)
+        return self._replay_track(chosen, chosen.stem)
 
     async def _kill_proc(self) -> None:
         """Kill the current music subprocess if running."""
