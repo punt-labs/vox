@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.music import _VARIATION_DESCRIPTORS, vibe_to_prompt
+from punt_vox.music import _LOOP_SUFFIX, _VARIATION_DESCRIPTORS, vibe_to_prompt
 
 # -- Layer 2: time-of-day parametrization -----------------------------------
 
@@ -61,12 +61,6 @@ _SIGNAL_CASES: list[tuple[list[str], str]] = [
         "steady working pace",
     ),
 ]
-
-_LOOP_SUFFIX = (
-    "Loopable, no distinct intro or outro, smooth ambient texture "
-    "that cycles naturally. Driving beat but not overwhelming \u2014 "
-    "background music for deep work."
-)
 
 
 class TestTimeOfDay:
