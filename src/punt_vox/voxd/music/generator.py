@@ -47,19 +47,11 @@ class MusicTrack:
         if not path_str:
             msg = "MusicTrack.from_dict: missing required 'path' field"
             raise ValueError(msg)
-        try:
-            size_bytes = int(str(d.get("size_bytes", 0)))
-        except (ValueError, TypeError):
-            size_bytes = 0
-        try:
-            modified = float(str(d.get("modified", 0)))
-        except (ValueError, TypeError):
-            modified = 0.0
         return cls(
             name=str(d.get("name", "")),
             path=Path(path_str),
-            size_bytes=size_bytes,
-            modified=modified,
+            size_bytes=int(str(d.get("size_bytes", 0))),
+            modified=float(str(d.get("modified", 0))),
         )
 
     def display_line(self) -> str:
@@ -104,9 +96,9 @@ class TrackGenerator:
         path = self._output_dir / f"{safe_name}.mp3"
         return path if path.exists() else None
 
-    def tracks_for(self, key: tuple[str, str]) -> list[Path]:
-        """Return saved track paths sharing the (vibe, style) pool prefix."""
-        return sorted(self._output_dir.glob(f"{self.pool_prefix(key)}*.mp3"))
+    def tracks_for(self, prefix: str) -> list[Path]:
+        """Return saved track paths sharing a pool prefix."""
+        return sorted(self._output_dir.glob(f"{prefix}*.mp3"))
 
     async def generate(
         self,
@@ -120,7 +112,7 @@ class TrackGenerator:
         from punt_vox.music import vibe_to_prompt
 
         hour = time.localtime().tm_hour
-        variation = len(self.tracks_for((vibe_text, style)))  # 0-based pool size
+        variation = len(self.tracks_for(self.pool_prefix((vibe_text, style))))
         prompt = vibe_to_prompt(
             vibe_text or None, vibe_tags or None, style or None, hour, [], variation
         )
@@ -150,6 +142,11 @@ class TrackGenerator:
         vibe_part = TrackGenerator.slugify(key[0], max_len=20) or "ambient"
         style_part = TrackGenerator.slugify(key[1], max_len=20) or "mix"
         return f"{vibe_part}_{style_part}_"
+
+    @staticmethod
+    def pool_prefix_of(track: Path) -> str:
+        """Return the pool prefix a generated track belongs to, from its name."""
+        return re.sub(r"\d{8}_\d{4}_\d+$", "", track.stem) or track.stem
 
     def list_tracks(self) -> list[MusicTrack]:
         """Return metadata for all saved .mp3 tracks in the output directory."""

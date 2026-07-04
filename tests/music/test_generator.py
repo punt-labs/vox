@@ -53,7 +53,7 @@ class TestGenerateFillsPool:
             asyncio.run(gen.generate(("calm", ""), "jazz", ""))
 
         assert variations == list(range(12))
-        assert len(gen.tracks_for(("calm", "jazz"))) == 12
+        assert len(gen.tracks_for(gen.pool_prefix(("calm", "jazz")))) == 12
 
 
 class TestFindTrack:
@@ -132,16 +132,16 @@ class TestTracksFor:
             path.write_bytes(b"x")
         (tmp_path / "happy_techno_1.mp3").write_bytes(b"x")
 
-        assert set(gen.tracks_for(("calm", "jazz"))) == matching
+        assert set(gen.tracks_for(gen.pool_prefix(("calm", "jazz")))) == matching
 
     def test_empty_when_dir_missing(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path / "missing")
-        assert gen.tracks_for(("calm", "jazz")) == []
+        assert gen.tracks_for(gen.pool_prefix(("calm", "jazz"))) == []
 
     def test_separate_pool_per_vibe_style(self, tmp_path: Path) -> None:
         gen = TrackGenerator(tmp_path)
         (tmp_path / f"{gen.pool_prefix(('calm', 'jazz'))}a.mp3").write_bytes(b"x")
         (tmp_path / f"{gen.pool_prefix(('calm', 'techno'))}a.mp3").write_bytes(b"x")
 
-        assert len(gen.tracks_for(("calm", "jazz"))) == 1
-        assert len(gen.tracks_for(("calm", "techno"))) == 1
+        assert len(gen.tracks_for(gen.pool_prefix(("calm", "jazz")))) == 1
+        assert len(gen.tracks_for(gen.pool_prefix(("calm", "techno")))) == 1

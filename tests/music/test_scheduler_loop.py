@@ -93,7 +93,7 @@ class TestRotationMakesNoApiCall:
 
         generate_track.assert_not_called()
         assert playback_started  # a pool member reached playback
-        assert scheduler.track in set(gen.tracks_for(("calm", "jazz")))
+        assert scheduler.track in set(gen.tracks_for(gen.pool_prefix(("calm", "jazz"))))
 
 
 class TestSkipDuringFillRotatesFree:
@@ -160,7 +160,7 @@ class TestSkipDuringFillRotatesFree:
 
         assert playback_started  # a pool member is playing
         assert calls == 1  # only the fill -- the now-full pool rotated for free
-        assert scheduler.track in set(gen.tracks_for(("calm", "jazz")))
+        assert scheduler.track in set(gen.tracks_for(gen.pool_prefix(("calm", "jazz"))))
 
 
 class TestMaxRetriesDisablesMusic:

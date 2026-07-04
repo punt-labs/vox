@@ -312,11 +312,11 @@ class TestSkipNext:
 
 
 def _fill_pool(tmp_path: Path, vibe: str, style: str, count: int) -> TrackGenerator:
-    """Write ``count`` saved tracks for one (vibe, style) pool."""
+    """Write ``count`` saved tracks with realistic stamped names for one pool."""
     gen = TrackGenerator(tmp_path)
     prefix = gen.pool_prefix((vibe, style))
     for i in range(count):
-        (tmp_path / f"{prefix}{i:02d}.mp3").write_bytes(b"x")
+        (tmp_path / f"{prefix}20260101_0000_{i:02d}.mp3").write_bytes(b"x")
     return gen
 
 
@@ -325,6 +325,7 @@ def _tuned(scheduler: MusicScheduler, vibe: str, style: str) -> MusicScheduler:
     scheduler._mode = "on"
     scheduler._vibe = (vibe, "")
     scheduler._style = style
+    scheduler._pool_prefix = TrackGenerator.pool_prefix((vibe, style))
     return scheduler
 
 
@@ -346,7 +347,8 @@ class TestPoolRotation:
 
         assert result.status == "playing"
         assert scheduler.replay is True
-        assert scheduler.track in set(real.tracks_for(("calm", "jazz")))
+        pool = real.tracks_for(real.pool_prefix(("calm", "jazz")))
+        assert scheduler.track in set(pool)
         gen.generate.assert_not_called()
 
     def test_small_pool_generates(self, tmp_path: Path) -> None:
@@ -376,7 +378,7 @@ class TestPoolRotation:
     ) -> None:
         gen = _fill_pool(tmp_path, "calm", "jazz", 12)
         scheduler = _tuned(MusicScheduler(gen), "calm", "jazz")
-        pool = sorted(gen.tracks_for(("calm", "jazz")))
+        pool = sorted(gen.tracks_for(gen.pool_prefix(("calm", "jazz"))))
         scheduler._track = pool[0]  # simulate pool[0] as the just-played track
 
         asyncio.run(scheduler.turn_off())
@@ -405,3 +407,24 @@ class TestPoolRotation:
 
         assert result.status == "playing"
         assert scheduler.replay is True
+
+    def test_play_then_next_rotates_played_pool_not_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pool A (calm/jazz) is full; the session is a different, empty pool B.
+        gen = _fill_pool(tmp_path, "calm", "jazz", 12)
+        prefix_a = gen.pool_prefix(("calm", "jazz"))
+        scheduler = _tuned(MusicScheduler(gen), "mellow", "techno")  # session = B
+        scheduler._owner = "sess-1"
+
+        # Play a track from pool A by name.
+        played = f"{prefix_a}20260101_0000_00"
+        asyncio.run(scheduler.play_track(name=played, owner_id="sess-1"))
+
+        # /music next must rotate pool A (the playing track's pool), not B.
+        monkeypatch.setattr("punt_vox.voxd.music.pool.secrets.choice", _first)
+        result = scheduler.skip_next(owner_id="sess-1")
+
+        assert result.status == "playing"  # B would be empty -> "generating"
+        assert result.track is not None
+        assert Path(result.track).name.startswith(prefix_a)  # rotated A, not B

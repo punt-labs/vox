@@ -44,6 +44,7 @@ class MusicScheduler:
         "_generator",
         "_mode",
         "_owner",
+        "_pool_prefix",
         "_proc",
         "_replay",
         "_state",
@@ -57,6 +58,7 @@ class MusicScheduler:
     _generator: TrackGenerator
     _mode: str
     _owner: str
+    _pool_prefix: str
     _proc: asyncio.subprocess.Process | None
     _replay: bool
     _state: str
@@ -72,6 +74,7 @@ class MusicScheduler:
         self._style = ""
         self._owner = ""
         self._vibe = ("", "")
+        self._pool_prefix = ""
         self._track = None
         self._track_name = ""
         self._proc = None
@@ -205,6 +208,7 @@ class MusicScheduler:
         if owner_id != self._owner or vibe == self._vibe:
             return MusicResponse(status="ignored")
         self._vibe = vibe
+        self._pool_prefix = TrackGenerator.pool_prefix((vibe[0], self._style))
         return self._request_next_track()
 
     def skip_next(self, owner_id: str) -> MusicResponse:
@@ -296,6 +300,7 @@ class MusicScheduler:
             self._style = req.style
         self._owner = req.owner_id
         self._vibe = req.vibe
+        self._pool_prefix = TrackGenerator.pool_prefix((self._vibe[0], self._style))
 
     def _begin_generation(self, name: str) -> MusicResponse:
         """Signal the loop to generate a track carrying ``name`` (may be empty)."""
@@ -309,20 +314,15 @@ class MusicScheduler:
         """Signal the loop to replay ``track`` with no generation."""
         self._track = track
         self._track_name = name
+        self._pool_prefix = TrackGenerator.pool_prefix_of(track)
         self._replay = True
         self._state = "playing"
         self._changed.set()
         return MusicResponse(status="playing", track=str(track), name=name)
 
     def _request_next_track(self) -> MusicResponse:
-        """Rotate an established pool with no API call, else signal generation.
-
-        The just-played ``self._track`` is the track to avoid, so shuffle
-        never repeats it back-to-back -- no separate last-played slot needed.
-        """
-        pool = TrackPool.from_paths(
-            self._generator.tracks_for((self._vibe[0], self._style))
-        )
+        """Rotate the _pool_prefix pool with no API call, else signal generation."""
+        pool = TrackPool.from_paths(self._generator.tracks_for(self._pool_prefix))
         if not pool.is_full:
             return self._begin_generation("")
         chosen = pool.pick_next(self._track)
