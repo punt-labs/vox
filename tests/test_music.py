@@ -1,10 +1,11 @@
 """Tests for vibe-to-prompt mapping."""
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
 import pytest
 
-from punt_vox.music import vibe_to_prompt
+from punt_vox.music import _VARIATION_DESCRIPTORS, vibe_to_prompt
 
 # -- Layer 2: time-of-day parametrization -----------------------------------
 
@@ -154,6 +155,42 @@ class TestFallbacks:
         result = vibe_to_prompt(None, None, "lo-fi", 22, [])
         assert "lo-fi music" in result
         assert "mood" not in result
+
+
+class TestVariation:
+    """Layer 4 — the distinctness descriptor keyed by variation index."""
+
+    def test_at_least_twelve_distinct_descriptors(self) -> None:
+        assert len(_VARIATION_DESCRIPTORS) >= 12
+        assert len(set(_VARIATION_DESCRIPTORS)) == len(_VARIATION_DESCRIPTORS)
+
+    def test_none_reproduces_four_layer_prompt(self) -> None:
+        """Empty/None variation must reproduce today's prompt exactly."""
+        base = vibe_to_prompt("happy", "[cheerful]", "techno", 14, ["git-commit"] * 3)
+        with_none = vibe_to_prompt(
+            "happy", "[cheerful]", "techno", 14, ["git-commit"] * 3, variation=None
+        )
+        assert with_none == base
+        for descriptor in _VARIATION_DESCRIPTORS:
+            assert descriptor not in base
+
+    def test_index_inserts_descriptor(self) -> None:
+        result = vibe_to_prompt(None, None, None, 14, [], variation=0)
+        assert _VARIATION_DESCRIPTORS[0] in result
+        assert result.endswith(_LOOP_SUFFIX)
+
+    def test_each_index_is_distinct(self) -> None:
+        prompts = [
+            vibe_to_prompt(None, None, None, 14, [], variation=i)
+            for i in range(len(_VARIATION_DESCRIPTORS))
+        ]
+        assert len(set(prompts)) == len(_VARIATION_DESCRIPTORS)
+
+    def test_index_cycles_modulo_length(self) -> None:
+        n = len(_VARIATION_DESCRIPTORS)
+        assert vibe_to_prompt(None, None, None, 14, [], variation=n) == vibe_to_prompt(
+            None, None, None, 14, [], variation=0
+        )
 
 
 class TestCombinedPrompt:
