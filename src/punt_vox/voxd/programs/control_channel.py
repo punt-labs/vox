@@ -7,9 +7,16 @@ that applies it to the Program. This realises the O2 concurrency contract: the Z
 state machine is sequential, so two clients firing ``next`` and ``vibe`` at once
 (or a fill completing mid-command) can never interleave or apply against a stale
 base. A command whose precondition no longer holds -- a lost race, e.g. a
-``rotate`` that arrives just after a ``turn_off`` -- raises the Z guard
-``ValueError``; the consumer logs it and moves on rather than dying, so one
-losing racer cannot take down the sole writer.
+``rotate`` that arrives just after a ``turn_off`` -- raises a
+:class:`GuardViolationError`; the consumer logs it at INFO and moves on rather than
+dying, so one losing racer cannot take down the sole writer.
+
+A *non-guard* failure is a different animal: a plain ``ValueError`` from a
+corrupt successor state, or any other unexpected exception, means a bug -- not a
+race. The consumer never swallows it as a lost race; it surfaces at ERROR
+(vox-ig52) through the ``serve`` guard, always sets ``changed`` first so the
+playback loop never blocks forever on a half-applied command, and keeps the sole
+writer alive (a full restart-supervisor lands in slice 5).
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.control_signal import ControlSignal
+from punt_vox.voxd.programs.program import GuardViolationError
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.filler import Filler, FillPlanSource
@@ -99,24 +107,56 @@ class ControlChannel:
         self._queue.put_nowait(signal)
 
     async def serve(self) -> None:
-        """Drain and apply commands forever -- the sole writer to the Program."""
+        """Drain and apply commands forever -- the sole writer to the Program.
+
+        The top-level guard is the last line of defence: a bug in ``apply``
+        (a corrupt-successor ``ValueError``, or anything else unexpected) is
+        logged at ERROR and the loop continues, so the sole writer never dies
+        silently on one bad command. ``apply_next`` has already set ``changed``
+        in its ``finally``, so the playback loop is never left blocked.
+        """
         while True:
-            await self.apply_next()
+            try:
+                await self.apply_next()
+            except Exception:
+                logger.exception("control writer: unexpected error applying a command")
 
     async def apply_next(self) -> None:
         """Apply exactly one queued command, serializing all mutation.
 
-        A guard ``ValueError`` (a lost race whose precondition no longer holds)
-        is logged and swallowed so the single writer survives it.
+        A :class:`GuardViolationError` (a lost race whose precondition no longer
+        holds) is logged and swallowed so the single writer survives it. Any
+        other failure propagates to the ``serve`` guard -- but the ``finally``
+        first drains the queue, reconciles the fill, and *always* sets
+        ``changed`` so a crash can never leave the loop blocked.
         """
         signal = await self._queue.get()
         try:
-            signal.apply(self._program)
-        except ValueError:
-            logger.info("control signal rejected as a lost race: %r", signal)
+            self._apply_one(signal)
         finally:
             self._queue.task_done()
-        self._reconcile_fill()
+            try:
+                self._reconcile_fill()
+            finally:
+                # The wake is unconditional: even a raising reconcile must not
+                # leave the playback loop blocked on ``changed``.
+                self._mark_applied(signal)
+
+    def _apply_one(self, signal: ControlSignal) -> None:
+        """Apply one command, swallowing only a benign lost-race guard."""
+        try:
+            signal.apply(self._program)
+        except GuardViolationError:
+            # A losing racer, not a bug -- log the mode + signal for the client
+            # trail (a per-command applied/rejected result lands in slice 4).
+            logger.info(
+                "control signal rejected as a lost race in mode %s: %r",
+                self._program.mode.value,
+                signal,
+            )
+
+    def _mark_applied(self, signal: ControlSignal) -> None:
+        """Wake the loop, interrupting the current track if the command demands it."""
         if signal.interrupts:
             self._interrupt.set()
         self._changed.set()

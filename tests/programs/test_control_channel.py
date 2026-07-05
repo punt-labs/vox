@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
 
+import pytest
+
 from punt_vox.voxd.programs import (
+    GuardViolationError,
     Mode,
     Part,
     PlaybackPolicy,
@@ -165,3 +170,73 @@ class TestFillReconciliation:
         channel.post(TurnOff())  # -> off -> filling False
         await channel.apply_next()
         assert not filler.is_running  # the consumer cancelled the fill
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class _Boom:
+    """A control signal whose ``apply`` raises -- a bug, not a lost race."""
+
+    error: Exception
+
+    @property
+    def interrupts(self) -> bool:
+        return False
+
+    def apply(self, program: Program) -> None:
+        raise self.error
+
+
+class TestWriterSurvivesFailures:
+    """F1/F2: a non-guard failure surfaces at ERROR, never masquerades as a race,
+    and always sets ``changed`` so the playback loop can never block forever."""
+
+    async def test_guard_violation_is_swallowed_and_logs_the_mode(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        with caplog.at_level(logging.INFO):
+            channel.post(_Boom(GuardViolationError("rotate after off")))
+            await channel.apply_next()  # a benign race -> does NOT raise
+        assert channel.changed.is_set()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("lost race" in m and "off" in m for m in messages)  # F7: mode logged
+
+    async def test_plain_valueerror_is_not_swallowed_as_a_race(
+        self, policy: PlaybackPolicy
+    ) -> None:
+        # F1: a corrupt-successor ValueError is a bug, not a race -- it propagates
+        # (to the serve guard), and is NOT logged as a lost race.
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel.post(_Boom(ValueError("S13: corrupt successor")))
+        with pytest.raises(ValueError, match="corrupt successor"):
+            await channel.apply_next()
+        assert channel.changed.is_set()  # F2: still woke the loop
+
+    async def test_unexpected_error_sets_changed_and_propagates(
+        self, policy: PlaybackPolicy
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel.post(_Boom(RuntimeError("kaboom")))
+        with pytest.raises(RuntimeError, match="kaboom"):
+            await channel.apply_next()
+        assert channel.changed.is_set()  # F2: the finally always wakes the loop
+
+    async def test_serve_survives_a_crash_and_applies_the_next_command(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        server = asyncio.create_task(channel.serve())
+        with caplog.at_level(logging.ERROR):
+            channel.post(_Boom(RuntimeError("kaboom")))  # crashes the apply
+            channel.post(TurnOn())  # the writer must still get here
+            await channel.join()
+        server.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server
+        # F2: the sole writer survived the crash and applied the next command.
+        assert channel.program.mode is Mode.GENERATING_FIRST
+        assert any(
+            "unexpected error" in r.getMessage() and r.levelno == logging.ERROR
+            for r in caplog.records
+        )

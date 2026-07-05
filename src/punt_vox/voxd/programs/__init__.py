@@ -20,7 +20,7 @@ from punt_vox.voxd.programs.playback_policy import (
     Complete,
     PlaybackPolicy,
 )
-from punt_vox.voxd.programs.program import Program
+from punt_vox.voxd.programs.program import GuardViolationError, Program
 from punt_vox.voxd.programs.state import Activation, ProgramState
 
 __all__ = [
@@ -32,6 +32,7 @@ __all__ = [
     "Complete",
     "Format",
     "FrozenParts",
+    "GuardViolationError",
     "Mode",
     "Part",
     "PartRef",

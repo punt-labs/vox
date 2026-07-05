@@ -2,7 +2,8 @@
 
 ``Program`` owns the current :class:`ProgramState` and the injected
 :class:`PlaybackPolicy`, exposing one method per Z operation. Each method checks
-the operation's precondition (raising ``ValueError`` -- the Z guard), computes
+the operation's precondition (raising :class:`GuardViolationError` -- the Z
+guard, a ``ValueError`` subtype the single writer treats as a lost race), computes
 the successor state through :meth:`ProgramState.with_updates` (which re-validates
 every invariant), and stores it. Mutators return ``None`` (PY-OP-8). No method
 takes or checks a session: ``voxd`` state is machine-universal (finding #6).
@@ -19,10 +20,22 @@ from punt_vox.voxd.programs.part import FrozenParts, Part
 from punt_vox.voxd.programs.playback_policy import Advance, PlaybackPolicy
 from punt_vox.voxd.programs.state import ProgramState
 
-__all__ = ["Program"]
+__all__ = ["GuardViolationError", "Program"]
 
 _PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
 """The modes in which the consume-only cursor may advance (finding #3)."""
+
+
+class GuardViolationError(ValueError):
+    """A command's Z precondition no longer holds -- a benign lost race.
+
+    Raised by :meth:`Program._reject` when a guard fails (e.g. a ``rotate`` that
+    arrives just after a ``turn_off``). It subclasses ``ValueError`` so callers
+    that only distinguish "illegal transition" keep working, but the single
+    writer catches *this* type alone: a plain ``ValueError`` from
+    :class:`StateInvariants` means a corrupt successor -- a bug, not a race --
+    and must surface at ERROR rather than be mislabeled as a losing racer.
+    """
 
 
 @final
@@ -309,5 +322,5 @@ class Program:
 
     @staticmethod
     def _reject(message: str) -> NoReturn:
-        """Raise a ``ValueError`` -- a violated Z precondition (guard)."""
-        raise ValueError(message)
+        """Raise a :class:`GuardViolationError` -- a violated Z precondition (guard)."""
+        raise GuardViolationError(message)
