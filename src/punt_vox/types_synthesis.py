@@ -6,6 +6,14 @@ from dataclasses import dataclass
 
 __all__ = ["SynthesisSpec"]
 
+DEFAULT_RATE = 90
+"""Client-side speech rate (percent) sent when a caller sets none.
+
+voxd forwards an absent rate to the provider unchanged, and ElevenLabs, Polly,
+and espeak all default to 100. Emitting 90 at the wire boundary keeps every
+CLI, MCP, and hook path at the historical speed instead of silently speeding up.
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class SynthesisSpec:
@@ -49,29 +57,22 @@ class SynthesisSpec:
 
         Omits fields whose value is ``None`` so the client method
         receives only explicitly-set parameters.  The ``once`` field
-        is included only when ``True``.
+        is never forwarded.  ``rate`` is the exception: an unset rate is
+        sent as :data:`DEFAULT_RATE` so the wire message always carries a
+        speed, preserving the historical 90% default.
         """
-        out: dict[str, object] = {}
-        if self.voice is not None:
-            out["voice"] = self.voice
-        if self.language is not None:
-            out["language"] = self.language
-        if self.rate is not None:
-            out["rate"] = self.rate
-        if self.provider is not None:
-            out["provider"] = self.provider
-        if self.model is not None:
-            out["model"] = self.model
-        if self.stability is not None:
-            out["stability"] = self.stability
-        if self.similarity is not None:
-            out["similarity"] = self.similarity
-        if self.style is not None:
-            out["style"] = self.style
-        if self.speaker_boost is not None:
-            out["speaker_boost"] = self.speaker_boost
-        if self.api_key is not None:
-            out["api_key"] = self.api_key
-        if self.vibe_tags is not None:
-            out["vibe_tags"] = self.vibe_tags
+        optional: tuple[tuple[str, object | None], ...] = (
+            ("voice", self.voice),
+            ("language", self.language),
+            ("provider", self.provider),
+            ("model", self.model),
+            ("stability", self.stability),
+            ("similarity", self.similarity),
+            ("style", self.style),
+            ("speaker_boost", self.speaker_boost),
+            ("api_key", self.api_key),
+            ("vibe_tags", self.vibe_tags),
+        )
+        out: dict[str, object] = {k: v for k, v in optional if v is not None}
+        out["rate"] = self.rate if self.rate is not None else DEFAULT_RATE
         return out

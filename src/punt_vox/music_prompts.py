@@ -46,7 +46,7 @@ class PromptSet:
         raises rather than silently degrading. Neither present returns ``None``
         -- no agent in the loop, so the pool falls back to a minimal prompt.
         """
-        base = str(msg.get("base_prompt", ""))
+        base = str(b) if (b := msg.get("base_prompt")) is not None else ""
         raw = msg.get("variations")
         items = cast("list[object]", raw) if isinstance(raw, list) else []
         variations = [str(v) for v in items]

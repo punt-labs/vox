@@ -127,3 +127,12 @@ class TestFromWire:
     def test_non_list_variations_treated_as_absent(self) -> None:
         # A malformed non-list variations with no base is "no agent prompts".
         assert PromptSet.from_wire({"variations": "not-a-list"}) is None
+
+    def test_null_base_prompt_treated_as_absent(self) -> None:
+        # JSON null (Python None) must not become the literal string "None".
+        assert PromptSet.from_wire({"base_prompt": None}) is None
+
+    def test_null_base_with_variations_raises(self) -> None:
+        # A null base alongside variations is malformed, not a silent fallback.
+        with pytest.raises(ValueError, match="base_prompt must be a non-empty"):
+            PromptSet.from_wire({"base_prompt": None, "variations": _variations()})

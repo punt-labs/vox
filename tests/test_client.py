@@ -181,8 +181,9 @@ class TestVoxClientSynthesize:
         sent = json.loads(sent_raw)
         assert sent["type"] == "synthesize"
         assert sent["text"] == "Hello world"
-        # No spec -> no rate override; voxd applies its own default.
-        assert "rate" not in sent
+        # No spec -> the wire still carries the historical 90% default so
+        # providers do not silently fall back to their own 100% speed.
+        assert sent["rate"] == 90
 
     @pytest.mark.asyncio
     async def test_synthesize_with_all_params(self) -> None:
