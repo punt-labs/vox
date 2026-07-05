@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.voxd.programs.control_signal import ControlSignal
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.programs.filler import Filler, FillPlanSource
     from punt_vox.voxd.programs.program import Program
 
 __all__ = ["ControlChannel"]
@@ -30,13 +31,29 @@ logger = logging.getLogger(__name__)
 
 @final
 class ControlChannel:
-    """Serialize every Program mutation through one consumer (single-writer)."""
+    """Serialize every Program mutation through one consumer (single-writer).
 
-    __slots__ = ("_changed", "_interrupt", "_program", "_queue")
+    The consumer is also the orchestration point: after each applied command it
+    reconciles the background fill to the Program's ``filling`` flag -- starting
+    the :class:`Filler` on the active plan when generation is wanted, cancelling
+    it otherwise -- so the fill lifecycle rides the single writer and never
+    races the Program's state.
+    """
+
+    __slots__ = (
+        "_changed",
+        "_filler",
+        "_interrupt",
+        "_plan_source",
+        "_program",
+        "_queue",
+    )
     _program: Program
     _queue: asyncio.Queue[ControlSignal]
     _changed: asyncio.Event
     _interrupt: asyncio.Event
+    _filler: Filler | None
+    _plan_source: FillPlanSource | None
 
     def __new__(cls, program: Program) -> Self:
         self = super().__new__(cls)
@@ -44,7 +61,18 @@ class ControlChannel:
         self._queue = asyncio.Queue()
         self._changed = asyncio.Event()
         self._interrupt = asyncio.Event()
+        self._filler = None
+        self._plan_source = None
         return self
+
+    def attach_fill(self, filler: Filler, plan_source: FillPlanSource) -> None:
+        """Wire the background fill so the consumer reconciles it after each apply.
+
+        Separate from construction because the Filler needs this channel to post
+        its outcomes -- the two are built, then joined here.
+        """
+        self._filler = filler
+        self._plan_source = plan_source
 
     @property
     def program(self) -> Program:
@@ -88,9 +116,19 @@ class ControlChannel:
             logger.info("control signal rejected as a lost race: %r", signal)
         finally:
             self._queue.task_done()
+        self._reconcile_fill()
         if signal.interrupts:
             self._interrupt.set()
         self._changed.set()
+
+    def _reconcile_fill(self) -> None:
+        """Match the background fill to the Program's ``filling`` flag."""
+        if self._filler is None or self._plan_source is None:
+            return
+        if self._program.state.filling:
+            self._filler.ensure_running(self._plan_source.current_plan())
+        else:
+            self._filler.cancel()
 
     async def join(self) -> None:
         """Block until every posted command has been applied."""

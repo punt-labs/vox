@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable
+from pathlib import Path
+from typing import Self, final
 
 from punt_vox.voxd.programs import (
     Mode,
@@ -15,11 +17,17 @@ from punt_vox.voxd.programs import (
 )
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
-from punt_vox.voxd.programs.lifecycle_signal import TurnOn, VibeStyleChange
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.filler import Filler, FillPlan
+from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
+from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
 from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.producer import PartSpec
+from punt_vox.voxd.programs.sleeper import Sleeper
 
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
+ManifestFactory = Callable[..., ProgramManifest]
 
 
 async def _drain(channel: ControlChannel) -> None:
@@ -109,3 +117,51 @@ class TestO2Concurrency:
 async def _post_soon(channel: ControlChannel, signal: ControlSignal) -> None:
     await asyncio.sleep(0)
     channel.post(signal)
+
+
+@final
+class _HoldingProducer:
+    """Never completes -- keeps the fill task alive so is_running stays True."""
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        await asyncio.Event().wait()  # blocks forever
+        return Part(target.name, spec.index)
+
+
+@final
+class _FixedPlanSource:
+    __slots__ = ("_plan",)
+    _plan: FillPlan
+
+    def __new__(cls, plan: FillPlan) -> Self:
+        self = super().__new__(cls)
+        self._plan = plan
+        return self
+
+    def current_plan(self) -> FillPlan:
+        return self._plan
+
+
+class TestFillReconciliation:
+    """The consumer starts/cancels the Filler to match program.filling."""
+
+    async def test_filling_starts_and_off_cancels_the_fill(
+        self,
+        tmp_path: Path,
+        policy: PlaybackPolicy,
+        sleeper: Sleeper,
+        manifest_of: ManifestFactory,
+    ) -> None:
+        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
+        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        filler = Filler(_HoldingProducer(), channel, sleeper)
+        channel.attach_fill(filler, _FixedPlanSource(plan))
+
+        channel.post(TurnOn())  # empty pool -> generating_first -> filling True
+        await channel.apply_next()
+        assert filler.is_running  # the consumer started the fill
+
+        channel.post(TurnOff())  # -> off -> filling False
+        await channel.apply_next()
+        assert not filler.is_running  # the consumer cancelled the fill

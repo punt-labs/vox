@@ -23,7 +23,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox.voxd.programs.fill_signal import (
     PermanentFailure,
@@ -47,11 +47,25 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.sleeper import Sleeper
     from punt_vox.voxd.programs.store import PartStore
 
-__all__ = ["FillPlan", "Filler"]
+__all__ = ["FillPlan", "FillPlanSource", "Filler"]
 
 logger = logging.getLogger(__name__)
 
 _BACKOFF_SECONDS = 2.0
+
+
+class FillPlanSource(Protocol):
+    """Yields the fill plan for the currently-active Program (single-method).
+
+    The daemon owns the active Program's manifest (its subject, store, and
+    prompts) and exposes it here; the ControlChannel's fill reconciliation asks
+    for the current plan whenever the Program wants filling, so a retune's new
+    subject/store flows through automatically.
+    """
+
+    def current_plan(self) -> FillPlan:
+        """Return the fill plan for the currently-active Program."""
+        ...
 
 
 @final
