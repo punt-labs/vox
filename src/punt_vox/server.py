@@ -20,7 +20,8 @@ from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import write_fields
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_prompts import PromptSet

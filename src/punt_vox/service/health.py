@@ -6,7 +6,8 @@ import ipaddress
 import os
 from typing import TYPE_CHECKING, Self, assert_never, final
 
-from punt_vox.client import VoxClientSync, read_token_file
+from punt_vox.client import read_token_file
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.systemd import SystemdBackend
 

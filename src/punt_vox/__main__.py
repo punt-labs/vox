@@ -17,7 +17,8 @@ import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import (
     read_config,
     write_field,

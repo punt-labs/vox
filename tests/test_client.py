@@ -11,13 +11,13 @@ import pytest
 
 from punt_vox.client import (
     VoxClient,
-    VoxClientSync,
     VoxdConnectionError,
     VoxdProtocolError,
     _run_dir,  # pyright: ignore[reportPrivateUsage]
     read_port_file,
     read_token_file,
 )
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.types_synthesis import SynthesisSpec
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,8 @@ from pathlib import Path
 
 import typer
 
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import (
     VoxConfig,
     read_config,
