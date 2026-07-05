@@ -92,6 +92,14 @@ You write the descriptions -- Python does not. Follow these rules:
 - **Genre-forward and literal.** Lead with the genre and let it dominate. Name
   the real instruments, mode/scale, and forms of the style. "Klezmer, freylekhs
   dance, clarinet and violin, in D freygish" -- not "upbeat happy music".
+- **Never name a specific artist, composer, band, or copyrighted work.**
+  ElevenLabs Music **rejects** these under its Terms of Service -- the request
+  fails with `bad_prompt` and no track is generated. Do NOT write "Chopin
+  nocturne", "in the style of Aphex Twin", "Clair de lune", or any named
+  person/title. Describe the music *itself* -- form, instruments, mode/scale,
+  era, tempo, key, mood -- so the description evokes the same sound without the
+  name: "romantic-era solo piano nocturne in E-flat major, lyrical right-hand
+  melody over rolling left-hand arpeggios" -- not "Chopin nocturne".
 - **Vary WITHIN the genre.** The 12 variations should be 12 distinct tracks of
   the *same* genre. Vary dance form, tempo (BPM), mode/key, lead-instrument
   emphasis, and mood shade. Do NOT drift toward genre-alien instruments or

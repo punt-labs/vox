@@ -1816,3 +1816,52 @@ depends inward on a protocol, not outward on the filesystem). This also directly
 serves the two-goals-together bar: the seam that makes disk access mockable is
 the same seam that raises cohesion and testability on `generator.py` and the new
 `filler.py`.
+
+---
+
+## DES-040: Daemon Failures Are Client-Observable Through the API, Not Logs
+
+**Date:** 2026-07-05
+**Status:** ACCEPTED (implementation tracked in vox-ig52)
+**Topic:** How `voxd` surfaces background-operation failures to clients
+
+### Problem
+
+Background music generation can fail, and when it did the failure was invisible
+to every client. Live 2026-07-05: a `/music on` prompt naming composers was
+rejected by ElevenLabs (`400 bad_prompt`/ToS). `voxd` logged `Music could not
+start; disabling` and raised; the user saw the panel say "generating…" then dead
+air. The only record of the reason was in `voxd-stderr.log` — which no MCP
+client, CLI caller, or user can read. A feature whose failure is invisible to its
+clients is indistinguishable from a hang.
+
+### Design
+
+Every state and failure a client cares about MUST be observable through the
+client interface — the MCP tool return value and the `status` tool — never only
+in the daemon log. The log is an operator debugging aid, not a client interface.
+For music: `status` carries a `music_state`
+(`off | generating | playing | rotating | retrying | failed`) plus a
+`music_last_error` with an actionable reason (for `bad_prompt`, include the
+provider's suggested rewrite so a calling agent can self-correct); permanent
+errors go to `failed`, transient ones to `retrying` with bounded backoff while
+the existing pool keeps playing. The silent disable is removed.
+
+### Why This Design
+
+This is the daemon-side corollary of the org's Phase-3 verification rule
+("observe via the project's introspection APIs"): the introspection surface
+(`status`) has to actually carry the failure. It also forces honest
+verification — you confirm a feature works by driving it and reading `status`,
+not by grepping a log. Operator, 2026-07-05: "Reading logs is not a strategy for
+our software clients."
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Log-only (status quo) | Invisible to clients — the failure above |
+| Silent disable + retry forever | Hides permanent errors (`bad_prompt`, auth) that never succeed; still tells the client nothing |
+| Push notification only, no queryable state | A client that missed the event can't learn current state; the queryable field is the contract, a notification is an optional nicety |
+
+Full spec, error taxonomy, and z-spec state machine: `docs/vox-ig52-music-resilience.md`.
