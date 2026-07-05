@@ -66,6 +66,22 @@ class CompletePolicy:
         return COMPLETE
 
 
+@final
+class FakeSleeper:
+    """A no-op Sleeper -- backoff is instant so retry paths run in microseconds."""
+
+    __slots__ = ("sleeps",)
+    sleeps: list[float]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.sleeps = []
+        return self
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+
 def make_part(index: int) -> Part:
     """Build a Part whose identity is derived from its 1-based index."""
     return Part(f"id{index:03d}", index)
@@ -98,6 +114,12 @@ def policy() -> AvoidRepeatPolicy:
 def reason() -> Reason:
     """Return a reusable diagnostic reason."""
     return Reason("boom")
+
+
+@pytest.fixture
+def sleeper() -> FakeSleeper:
+    """Return a no-op Sleeper so backoff paths run instantly."""
+    return FakeSleeper()
 
 
 def build_rotating(policy: PlaybackPolicy) -> Program:
