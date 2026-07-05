@@ -1,12 +1,16 @@
-"""The generation prompts one music pool draws from -- agent-authored or fallback.
+"""Shared music-pool prompt value object -- importable by client and daemon alike.
 
 Genre understanding lives in the calling agent (an LLM), never in vox. The agent
 authors a base prompt plus one literal, genre-accurate variation per pool slot
 and hands them to voxd; vox composes ``base + variation[i]`` for track ``i`` and
 pipes the string to the provider. When no agent is in the loop (a hook-driven
 vibe change), the pool falls back to a minimal literal prompt that names the
-genre and mood and nothing else -- no "background music for deep work" boilerplate,
-which homogenized every genre into the same mellow bed.
+genre and mood and nothing else -- no "background music for deep work"
+boilerplate, which homogenized every genre into the same mellow bed.
+
+This module is dependency-free (stdlib only) so the lightweight ``client`` layer
+can bundle prompts into a :class:`PromptSet` without importing the daemon's
+music subsystem.
 """
 
 from __future__ import annotations
@@ -15,9 +19,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self, cast
 
-from punt_vox.voxd.music.pool import POOL_SIZE
+__all__ = ["POOL_SIZE", "PromptSet"]
 
-__all__ = ["PromptSet"]
+POOL_SIZE = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +30,7 @@ class PromptSet:
 
     ``variations`` is empty for a fallback set (every track uses ``base``) and
     holds ``POOL_SIZE`` entries for an agent set (track ``i`` uses variation
-    ``i``). Frozen and hashable, so it can key a :class:`FillTarget`: swapping in
+    ``i``). Frozen and hashable, so it can key a ``FillTarget``: swapping in
     fresh agent prompts changes the target and restarts the background fill.
     """
 

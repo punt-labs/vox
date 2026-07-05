@@ -7,9 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from starlette.websockets import WebSocket
 
+from punt_vox.music_prompts import POOL_SIZE, PromptSet
 from punt_vox.voxd.music.on_handler import MusicOnHandler
-from punt_vox.voxd.music.pool import POOL_SIZE
-from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.types import MusicResponse
 
 __all__: list[str] = []

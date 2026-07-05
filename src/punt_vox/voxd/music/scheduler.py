@@ -21,7 +21,7 @@ from punt_vox.voxd.music.playlist import Playlist
 from punt_vox.voxd.music.types import MusicResponse
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.music.prompts import PromptSet
+    from punt_vox.music_prompts import PromptSet
 
 __all__ = ["MusicRequest", "MusicScheduler"]
 

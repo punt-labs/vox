@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
-from punt_vox.voxd.music.prompts import PromptSet
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.types import MessageHandler
 

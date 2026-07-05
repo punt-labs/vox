@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import TrackPool
-from punt_vox.voxd.music.prompts import PromptSet
 
 if TYPE_CHECKING:
     from pathlib import Path

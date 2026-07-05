@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from music.conftest import FakeTrackStore
+from punt_vox.music_prompts import POOL_SIZE
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.playlist import Playlist
-from punt_vox.voxd.music.pool import POOL_SIZE
 
 if TYPE_CHECKING:
     import pytest

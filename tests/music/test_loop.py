@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 from music.conftest import FakeTrackStore
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.loop import MusicLoop
-from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.scheduler import MusicScheduler
 
 if TYPE_CHECKING:

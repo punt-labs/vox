@@ -21,6 +21,7 @@ from typing import Any, Self
 import websockets
 import websockets.asyncio.client
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
 
 logger = logging.getLogger(__name__)
@@ -491,14 +492,13 @@ class VoxClient:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
-        base_prompt: str | None = None,
-        variations: list[str] | None = None,
+        prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback.
 
         On ``"on"``, forwards *style*, *vibe*, *vibe_tags*, *owner_id*, *name*,
-        and the agent-authored *base_prompt* + *variations* to voxd; on ``"off"``
-        only *owner_id* is sent.
+        and the agent-authored *prompts* (base + one variation per pool slot) to
+        voxd; on ``"off"`` only *owner_id* is sent.
         """
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
@@ -519,10 +519,9 @@ class VoxClient:
                 msg["vibe_tags"] = vibe_tags
             if name is not None:
                 msg["name"] = name
-            if base_prompt is not None:
-                msg["base_prompt"] = base_prompt
-            if variations is not None:
-                msg["variations"] = variations
+            if prompts is not None:
+                msg["base_prompt"] = prompts.base
+                msg["variations"] = list(prompts.variations)
         else:
             msg = {
                 "type": "music_off",
@@ -690,8 +689,7 @@ class VoxClientSync:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
-        base_prompt: str | None = None,
-        variations: list[str] | None = None,
+        prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback."""
         return self._run(  # type: ignore[no-any-return]
@@ -703,8 +701,7 @@ class VoxClientSync:
                 vibe_tags=vibe_tags,
                 owner_id=owner_id,
                 name=name,
-                base_prompt=base_prompt,
-                variations=variations,
+                prompts=prompts,
             )
         )
 

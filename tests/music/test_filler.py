@@ -19,10 +19,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from music.conftest import FakeTrackStore
+from punt_vox.music_prompts import POOL_SIZE, PromptSet
 from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.pool import POOL_SIZE
-from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.store import FilesystemTrackStore
 
 __all__: list[str] = []

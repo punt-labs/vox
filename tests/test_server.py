@@ -1049,14 +1049,14 @@ class TestMusicTool:
             vibe_tags="[calm]",
             owner_id=srv._session.session_id,
             name=None,
-            base_prompt=None,
-            variations=None,
+            prompts=None,
         )
 
     def test_music_on_forwards_agent_prompts(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import punt_vox.server as srv
+        from punt_vox.music_prompts import PromptSet
 
         mock_client = MagicMock()
         mock_client.music.return_value = {
@@ -1076,10 +1076,23 @@ class TestMusicTool:
             )
         )
 
-        call_kwargs = mock_client.music.call_args.kwargs
-        assert call_kwargs["base_prompt"] == "Klezmer, clarinet lead"
-        assert call_kwargs["variations"] == variations
+        prompts = mock_client.music.call_args.kwargs["prompts"]
+        assert prompts == PromptSet.from_agent("Klezmer, clarinet lead", variations)
         assert srv._session.music_mode == "on"
+
+    def test_music_on_invalid_prompt_shape_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="on", style="klezmer", base_prompt="k", variations=["only-one"])
+        )
+
+        assert "error" in result
+        assert "exactly 12" in result["error"]
+        mock_client.music.assert_not_called()
 
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Style present, no vibe."""

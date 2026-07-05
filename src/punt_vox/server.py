@@ -22,6 +22,7 @@ from websockets.exceptions import WebSocketException
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.logging_config import configure_logging
+from punt_vox.music_prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voices import VOICE_BLURBS
 from punt_vox.voxd.music.generator import MusicTrack
@@ -669,6 +670,11 @@ def music(
 
     client = _voxd_client()
     try:
+        prompts = (
+            PromptSet.from_agent(base_prompt or "", variations or [])
+            if base_prompt is not None or variations is not None
+            else None
+        )
         resp = client.music(
             mode=mode,
             style=style or "",
@@ -676,8 +682,7 @@ def music(
             vibe_tags=_session.vibe_tags or "",
             owner_id=_session.session_id,
             name=name,
-            base_prompt=base_prompt,
-            variations=variations,
+            prompts=prompts,
         )
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music tool; music off", exc_info=True)

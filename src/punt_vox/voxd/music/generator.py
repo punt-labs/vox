@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.music.prompts import PromptSet
+    from punt_vox.music_prompts import PromptSet
     from punt_vox.voxd.music.store import TrackStore
 
 __all__ = ["MusicTrack", "TrackGenerator"]

@@ -14,7 +14,7 @@ from punt_vox.voxd.music.pool import TrackPool
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from punt_vox.voxd.music.prompts import PromptSet
+    from punt_vox.music_prompts import PromptSet
 
 __all__ = ["FillTarget", "PoolFiller"]
 
