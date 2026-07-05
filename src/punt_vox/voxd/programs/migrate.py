@@ -93,29 +93,45 @@ class LegacyMigration:
         Refusing on a populated root (decision R1) makes a second run a safe
         no-op rather than a double migration -- the check is the idempotency
         guard. An absent or empty ``tracks/`` migrates nothing and reports so.
+        A filesystem error (``OSError``) or an unusable derived name
+        (``ValueError``) is wrapped as a :class:`MigrationError` so the one
+        command boundary reports every failure uniformly (finding F3).
         """
         if self._store.list_programs():
             msg = "programs/ is already populated; refusing to migrate again"
             raise MigrationError(msg)
         groups = self._grouped_by_program()
-        moved = sum(self._migrate_group(name, files) for name, files in groups.items())
+        try:
+            moved = sum(
+                self._migrate_group(name, files) for name, files in groups.items()
+            )
+        except (OSError, ValueError) as exc:
+            msg = f"migration failed: {exc}"
+            raise MigrationError(msg) from exc
         return MigrationReport(names=tuple(sorted(groups)), parts=moved)
 
     def _migrate_group(self, name: str, files: tuple[Path, ...]) -> int:
-        """Create Program ``name`` from ``files`` and move each into ``NNN.mp3``."""
-        entries = tuple(
-            PartEntry(index=index, file=f"{index:03d}.mp3", status=PartStatus.READY)
-            for index in range(1, len(files) + 1)
+        """Create Program ``name`` and move each file into place before recording it.
+
+        Crash-safety (finding F2): every Part is recorded *after* its audio is
+        moved onto disk, so the manifest never claims more ready Parts than
+        exist. A crash mid-migration leaves a manifest that under-claims (a safe
+        subset the operator can inspect) -- never one that over-claims, which
+        would misreport readiness and later reference a missing file (vox-ig52).
+        """
+        part_store = self._store.create(
+            ProgramManifest(
+                name=ProgramName(name),
+                fmt=Format.PLAYLIST,
+                subject=self._subject_for(name),
+                parts=(),
+            )
         )
-        manifest = ProgramManifest(
-            name=ProgramName(name),
-            fmt=Format.PLAYLIST,
-            subject=self._subject_for(name),
-            parts=entries,
-        )
-        part_store = self._store.create(manifest)
         for index, source in enumerate(files, start=1):
             source.replace(part_store.write_target(index))
+            part_store.record(
+                PartEntry(index=index, file=f"{index:03d}.mp3", status=PartStatus.READY)
+            )
         return len(files)
 
     def _grouped_by_program(self) -> dict[str, tuple[Path, ...]]:

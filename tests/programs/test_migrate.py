@@ -108,3 +108,100 @@ def test_summary_lists_programs(tmp_path: Path) -> None:
     assert "2 program(s)" in text
     assert "ambient_techno" in text
     assert "jazz_lounge" in text
+
+
+def _ready_count(root: Path, name: str) -> int:
+    """Return how many ready Parts the on-disk manifest for ``name`` claims."""
+    manifest = FilesystemProgramStore(root).resolve(ProgramName(name))
+    assert manifest is not None
+    return len(manifest.ready_parts())
+
+
+def test_crash_mid_move_never_over_claims_ready_parts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError mid-migration leaves a manifest that never over-claims (F2).
+
+    The manifest must never report more ready Parts than exist on disk: each
+    Part is recorded only after its file lands. A crash while moving the second
+    track leaves exactly one recorded, playable Part and one file.
+    """
+    legacy = _legacy(
+        tmp_path,
+        "ambient_techno_20250101_1200_0",
+        "ambient_techno_20250101_1200_1",
+        "ambient_techno_20250101_1200_2",
+    )
+    root = tmp_path / "programs"
+    real_replace = Path.replace
+
+    def flaky_replace(self: Path, target: Path) -> Path:
+        if target.name == "002.mp3":  # fail while moving the second track
+            msg = "disk full"
+            raise OSError(msg)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+
+    with pytest.raises(MigrationError, match="migration failed"):
+        LegacyMigration(legacy, root).run()
+
+    program_dir = root / "ambient_techno"
+    files_on_disk = len(list(program_dir.glob("[0-9]*.mp3")))
+    assert _ready_count(root, "ambient_techno") <= files_on_disk
+    assert _ready_count(root, "ambient_techno") == 1  # only the first Part landed
+
+
+def test_crash_mid_migration_leaves_playable_recovered_subset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every ready Part the aborted manifest claims points at a file on disk (F2)."""
+    legacy = _legacy(
+        tmp_path,
+        "ambient_techno_20250101_1200_0",
+        "ambient_techno_20250101_1200_1",
+    )
+    root = tmp_path / "programs"
+    real_replace = Path.replace
+
+    def flaky_replace(self: Path, target: Path) -> Path:
+        if target.name == "002.mp3":
+            msg = "permission denied"
+            raise OSError(msg)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+
+    with pytest.raises(MigrationError):
+        LegacyMigration(legacy, root).run()
+
+    manifest = FilesystemProgramStore(root).resolve(ProgramName("ambient_techno"))
+    assert manifest is not None
+    for part in manifest.ready_parts():
+        assert (root / "ambient_techno" / part.identity).is_file()
+
+
+def test_os_error_is_wrapped_as_migration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raw filesystem error surfaces as a clean MigrationError (F3)."""
+    legacy = _legacy(tmp_path, "ambient_techno_20250101_1200_0")
+    root = tmp_path / "programs"
+
+    def boom(self: Path, target: Path) -> Path:
+        msg = "cross-device link"
+        raise OSError(msg)
+
+    monkeypatch.setattr(Path, "replace", boom)
+
+    with pytest.raises(MigrationError, match="migration failed"):
+        LegacyMigration(legacy, root).run()
+
+
+def test_bad_derived_name_is_wrapped_as_migration_error(tmp_path: Path) -> None:
+    """A stem that reduces to an empty Program name is a clean MigrationError (F3)."""
+    legacy = _legacy(tmp_path, "_20250101_1200_5")  # whole stem is the pool suffix
+    root = tmp_path / "programs"
+
+    with pytest.raises(MigrationError, match="migration failed"):
+        LegacyMigration(legacy, root).run()
