@@ -425,14 +425,16 @@ def unmute(
     # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
-            if provider is not None or model is not None or vibe_tags is not None:
-                updates: dict[str, str] = {}
-                if provider is not None:
-                    updates["provider"] = provider
-                if model is not None:
-                    updates["model"] = model
-                if vibe_tags is not None:
-                    updates["vibe_tags"] = vibe_tags
+            updates = {
+                key: value
+                for key, value in (
+                    ("provider", provider),
+                    ("model", model),
+                    ("vibe_tags", vibe_tags),
+                )
+                if value is not None
+            }
+            if updates:
                 return json.dumps({"status": "config updated", **updates})
             return _error("Provide text or segments.")
         segments = [{"text": text}]
@@ -669,13 +671,13 @@ def music(
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
 
-    # Validate prompts before any daemon call: a malformed shape is caller input,
-    # not a daemon failure, so reject it without touching music_mode -- voxd and
-    # the session must never disagree about what is playing.
-    try:
-        prompts = PromptSet.from_tool_args(base_prompt, variations)
-    except ValueError as exc:
-        return _error(str(exc))
+    # Parse prompts only for "on"; an "off" stop must reach voxd even with stale args.
+    prompts: PromptSet | None = None
+    if mode == "on":
+        try:
+            prompts = PromptSet.from_tool_args(base_prompt, variations)
+        except ValueError as exc:
+            return _error(str(exc))
 
     client = _voxd_client()
     try:

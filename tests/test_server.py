@@ -1186,6 +1186,35 @@ class TestMusicTool:
         assert result["status"] == "stopped"
         assert srv._session.music_mode == "off"
 
+    def test_music_off_ignores_prompt_args_and_stops(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Finding #1: prompt args on a mode="off" request (e.g. a wrapper
+        # forwarding stale args) must not be validated. A malformed shape must
+        # never block the stop -- otherwise the daemon keeps playing while the
+        # session believes it asked to stop.
+        import punt_vox.server as srv
+
+        srv._session.music_mode = "on"
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_off",
+            "id": "abc",
+            "status": "stopped",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="off", base_prompt="stale", variations=["only-one"])
+        )
+
+        assert "error" not in result
+        assert result["status"] == "stopped"
+        mock_client.music.assert_called_once()
+        assert mock_client.music.call_args[1]["mode"] == "off"
+        assert mock_client.music.call_args[1]["prompts"] is None
+        assert srv._session.music_mode == "off"
+
     def test_music_invalid_mode(self) -> None:
         result = json.loads(music(mode="pause"))
         assert "error" in result

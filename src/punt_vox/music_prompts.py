@@ -45,8 +45,13 @@ class PromptSet:
         triggers validation via :meth:`from_agent`, so a half-supplied pair
         raises rather than silently degrading. Neither present returns ``None``
         -- no agent in the loop, so the pool falls back to a minimal prompt.
+
+        A missing or JSON-null ``base_prompt`` is treated as absent, not coerced
+        to the literal string ``"None"`` -- otherwise a null base would seed the
+        pool with garbage instead of falling back.
         """
-        base = str(msg.get("base_prompt", ""))
+        raw_base = msg.get("base_prompt")
+        base = str(raw_base) if raw_base is not None else ""
         raw = msg.get("variations")
         items = cast("list[object]", raw) if isinstance(raw, list) else []
         variations = [str(v) for v in items]
