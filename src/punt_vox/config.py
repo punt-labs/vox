@@ -45,16 +45,20 @@ DURABLE_KEYS: frozenset[str] = frozenset(
         "notify",
         "provider",
         "speak",
-        "vibe_mode",
         "voice",
     }
 )
 
+# The whole vibe cluster is session state, not a durable preference. Keeping
+# vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
+# "manual" mode while the gitignored mood lingered (vox-73m5). Mode, mood, tags,
+# and signals now live together in the ephemeral vox.local.md.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
         "vibe",
-        "vibe_tags",
+        "vibe_mode",
         "vibe_signals",
+        "vibe_tags",
     }
 )
 
@@ -139,26 +143,7 @@ def _read_single_field(path: Path, field: str) -> str | None:
 
 def _write_single(path: Path, key: str, value: str) -> None:
     """Write a single key-value pair to the YAML frontmatter in *path*."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    replacement = f'{key}: "{value}"'
-
-    if not path.exists():
-        path.write_text(f"---\n{replacement}\n---\n")
-        return
-
-    text = path.read_text()
-    field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
-
-    if field_re.search(text):
-        text = field_re.sub(replacement, text)
-    elif _CLOSING_FENCE_RE.search(text):
-        text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
-    else:
-        logger.warning("Malformed config (no closing ---): %s", path)
-        text = f"---\n{replacement}\n---\n"
-
-    path.write_text(text)
-    logger.info("Config: set %s = %r in %s", key, value, path)
+    _write_batch(path, {key: value})
 
 
 def _write_batch(path: Path, updates: dict[str, str]) -> None:
@@ -220,13 +205,18 @@ class ConfigStore:
         return self._dir
 
     def read(self) -> VoxConfig:
-        """Read all config fields, merging durable and ephemeral files."""
+        """Read all config fields, merging durable and ephemeral files.
+
+        Each file contributes only the keys it owns: durable prefs from
+        ``vox.md``, session state from ``vox.local.md``.  Filtering both
+        sides keeps the split drift-proof -- a stale ``vibe_mode`` left in a
+        committed ``vox.md`` is ignored rather than resurrected (vox-73m5).
+        """
         fields: dict[str, str] = {}
 
-        # Base layer: durable prefs
-        fields.update(_parse_frontmatter(self._durable_path))
+        durable = _parse_frontmatter(self._durable_path)
+        fields.update({k: v for k, v in durable.items() if k in DURABLE_KEYS})
 
-        # Overlay: ephemeral session state -- only EPHEMERAL_KEYS accepted
         local = _parse_frontmatter(self._ephemeral_path)
         fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
 

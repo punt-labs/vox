@@ -274,13 +274,13 @@ class TestReadConfigLegacy:
             {
                 "notify": "c",
                 "speak": "y",
-                "vibe_mode": "manual",
                 "voice": "charlie",
             },
         )
         _write_frontmatter(
             tmp_path / "vox.local.md",
             {
+                "vibe_mode": "manual",
                 "vibe_tags": "[happy] [calm]",
                 "vibe_signals": "tests-pass@14:00",
                 "vibe": "happy",
@@ -304,8 +304,30 @@ class TestReadConfigLegacy:
         assert read_config(config_dir=tmp_path).speak == "y"
 
     def test_invalid_vibe_mode_defaults_to_auto(self, tmp_path: Path) -> None:
-        _write_frontmatter(tmp_path / "vox.md", {"vibe_mode": "invalid"})
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "invalid"})
         assert read_config(config_dir=tmp_path).vibe_mode == "auto"
+
+    def test_committed_vibe_mode_in_durable_file_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale vibe_mode in the tracked vox.md never reaches the session.
+
+        Regression for vox-73m5: a committed ``vibe_mode: "manual"`` used to
+        resurrect after a git checkout. vibe_mode is ephemeral now, so the
+        durable file's copy is filtered out on read.
+        """
+        _write_frontmatter(
+            tmp_path / "vox.md", {"vibe_mode": "manual", "voice": "roger"}
+        )
+        result = read_config(config_dir=tmp_path)
+        assert result.vibe_mode == "auto"  # default -- durable copy ignored
+        assert result.voice == "roger"  # genuine durable pref still read
+
+    def test_ephemeral_vibe_mode_wins_over_durable(self, tmp_path: Path) -> None:
+        """vox.local.md is authoritative for vibe_mode even if vox.md has one."""
+        _write_frontmatter(tmp_path / "vox.md", {"vibe_mode": "manual"})
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "off"})
+        assert read_config(config_dir=tmp_path).vibe_mode == "off"
 
     def test_empty_signals_returns_none(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"

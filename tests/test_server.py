@@ -330,30 +330,30 @@ class TestWriteConfigFields:
             "vibe_mode": "manual",
         }
         write_fields(updates)
-        # vibe_mode is durable -> vox.md
+        # notify is the only durable pref here -> vox.md
         vox_text = vox_md.read_text()
-        assert 'vibe_mode: "manual"' in vox_text
         assert 'notify: "y"' in vox_text
-        # vibe, vibe_tags are ephemeral -> vox.local.md
+        assert "vibe_mode" not in vox_text
+        # the whole vibe cluster is ephemeral -> vox.local.md
         local_text = (_patch_config / "vox.local.md").read_text()
         assert 'vibe: "happy"' in local_text
         assert 'vibe_tags: "[cheerful]"' in local_text
+        assert 'vibe_mode: "manual"' in local_text
 
     def test_updates_existing_fields(self, _patch_config: Path) -> None:
-        vox_md = _patch_config / "vox.md"
-        vox_md.write_text('---\nvibe_mode: "off"\n---\n')
         local_md = _patch_config / "vox.local.md"
-        local_md.write_text('---\nvibe: "old"\nvibe_tags: "[old]"\n---\n')
+        local_md.write_text(
+            '---\nvibe_mode: "off"\nvibe: "old"\nvibe_tags: "[old]"\n---\n'
+        )
         updates = {
             "vibe": "new",
             "vibe_tags": "[new]",
             "vibe_mode": "manual",
         }
         write_fields(updates)
-        vox_text = vox_md.read_text()
-        assert 'vibe_mode: "manual"' in vox_text
-        assert "off" not in vox_text
         local_text = local_md.read_text()
+        assert 'vibe_mode: "manual"' in local_text
+        assert "off" not in local_text
         assert 'vibe: "new"' in local_text
         assert 'vibe_tags: "[new]"' in local_text
         assert "old" not in local_text
@@ -699,6 +699,31 @@ class TestVibeTool:
         assert updates["vibe"] == "happy"
         assert updates["vibe_tags"] == "[cheerful]"
         assert updates["vibe_mode"] == "manual"
+
+    def test_auto_clears_stale_mood(self) -> None:
+        """/vibe auto is authoritative: it wipes a lingering mood and tags."""
+        import punt_vox.server as srv
+
+        vibe(mood="sad", tags="[melancholy]", mode="manual")
+        updates = json.loads(vibe(tags="", mode="auto"))["vibe"]
+        assert updates["vibe"] == ""
+        assert updates["vibe_tags"] == ""
+        assert updates["vibe_mode"] == "auto"
+        assert srv._session._vibe is None
+        assert srv._session._vibe_tags is None
+        assert srv._session._vibe_signals == ""
+        assert srv._session._vibe_mode == "auto"
+
+    def test_off_clears_stale_mood(self) -> None:
+        """/vibe off also resets mood and tags, not just the mode."""
+        import punt_vox.server as srv
+
+        vibe(mood="sad", tags="[melancholy]", mode="manual")
+        updates = json.loads(vibe(tags="", mode="off"))["vibe"]
+        assert updates["vibe"] == ""
+        assert updates["vibe_mode"] == "off"
+        assert srv._session._vibe is None
+        assert srv._session._vibe_mode == "off"
 
 
 # ---------------------------------------------------------------------------
@@ -1688,16 +1713,15 @@ class TestRefreshFromConfig:
     def test_durable_fields_updated_from_config(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """notify, speak, vibe_mode always take config value."""
+        """notify, speak take the durable value; vibe_mode the ephemeral one."""
         import punt_vox.server as srv
 
         srv._session._notify = "n"
         srv._session._speak = "n"
         srv._session._vibe_mode = "off"
 
-        (_refresh_config / "vox.md").write_text(
-            '---\nnotify: "c"\nspeak: "y"\nvibe_mode: "auto"\n---\n'
-        )
+        (_refresh_config / "vox.md").write_text('---\nnotify: "c"\nspeak: "y"\n---\n')
+        (_refresh_config / "vox.local.md").write_text('---\nvibe_mode: "auto"\n---\n')
 
         srv._session.refresh_from_config()
 
