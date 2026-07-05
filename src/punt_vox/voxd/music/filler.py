@@ -14,6 +14,8 @@ from punt_vox.voxd.music.pool import TrackPool
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.music.prompts import PromptSet
+
 __all__ = ["FillTarget", "PoolFiller"]
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,7 @@ class FillTarget:
     prefix: str
     vibe: tuple[str, str]
     style: str
+    prompts: PromptSet
 
 
 class PoolFiller:
@@ -199,7 +202,9 @@ class PoolFiller:
         exactly one across an off/retarget boundary.
         """
         async with self._gen_lock:
-            return await self._generator.generate(target.vibe, target.style, track_name)
+            return await self._generator.generate(
+                target.vibe, target.style, track_name, target.prompts
+            )
 
     def _deliver_first(self, path: Path) -> None:
         """Record the first produced track and wake any waiter."""

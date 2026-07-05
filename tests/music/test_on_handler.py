@@ -40,7 +40,7 @@ class TestMusicOnHandler:
         asyncio.run(handler(msg, ws))
 
         scheduler.turn_on.assert_called_once_with(
-            "abc", "techno", ("focused", "[calm]"), ""
+            "abc", "techno", ("focused", "[calm]"), "", prompts=None
         )
         ws.send_json.assert_called_once()
         resp = ws.send_json.call_args[0][0]

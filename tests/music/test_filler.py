@@ -22,6 +22,7 @@ from music.conftest import FakeTrackStore
 from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import POOL_SIZE
+from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.store import FilesystemTrackStore
 
 __all__: list[str] = []
@@ -30,12 +31,13 @@ __all__: list[str] = []
 def _target(vibe_text: str, style: str, tags: str = "") -> FillTarget:
     """Build a FillTarget for the (vibe, style) pool the way Playlist does."""
     prefix = TrackGenerator.pool_prefix((vibe_text, style))
-    return FillTarget(prefix, (vibe_text, tags), style)
+    prompts = PromptSet.fallback(style, vibe_text)
+    return FillTarget(prefix, (vibe_text, tags), style, prompts)
 
 
 # A patched TrackGenerator.generate: bound, so its first arg is the generator.
 GenerateFn = Callable[
-    [TrackGenerator, tuple[str, str], str, str],
+    [TrackGenerator, tuple[str, str], str, str, PromptSet],
     Coroutine[Any, Any, tuple[Any, str]],
 ]
 
@@ -57,7 +59,11 @@ def _registering_generate(calls: list[tuple[str, str]]) -> GenerateFn:
     """
 
     async def generate(
-        self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+        self: TrackGenerator,
+        vibe: tuple[str, str],
+        style: str,
+        name: str,
+        prompts: PromptSet,
     ) -> tuple[Any, str]:
         calls.append((vibe[0], style))
         prefix = TrackGenerator.pool_prefix((vibe[0], style))
@@ -162,7 +168,11 @@ class TestCancelStopsGeneration:
         filler: PoolFiller | None = None
 
         async def blocking_generate(
-            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[object, str]:
             nonlocal calls
             calls += 1
@@ -205,7 +215,11 @@ class TestRetargetCancelsOldTask:
         old_task_holder: list[asyncio.Task[None]] = []
 
         async def blocking_generate(
-            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[object, str]:
             seen.append(style)
             if style == "jazz":
@@ -257,7 +271,11 @@ class TestTagChangeRestartsFill:
         prefix = TrackGenerator.pool_prefix(("calm", "jazz"))
 
         async def blocking_generate(
-            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[object, str]:
             seen_tags.append(vibe[1])
             if not started.is_set():
@@ -320,7 +338,11 @@ class TestFirstTrackHandshake:
         store = FakeTrackStore()
 
         async def always_fail(
-            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[object, str]:
             msg = "provider down"
             raise RuntimeError(msg)
@@ -348,7 +370,11 @@ class TestGenerationFailureBackoff:
         filler: PoolFiller | None = None
 
         async def fail_once(
-            gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[object, str]:
             nonlocal attempts
             attempts += 1
@@ -415,7 +441,11 @@ class TestSingleInFlightAcrossRetarget:
             return path, stem
 
         async def uncancellable_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             prefix = TrackGenerator.pool_prefix((vibe[0], style))
             n = len(self._store.tracks_for(prefix))

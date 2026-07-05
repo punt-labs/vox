@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.music.prompts import PromptSet
     from punt_vox.voxd.music.store import TrackStore
 
 __all__ = ["MusicTrack", "TrackGenerator"]
@@ -103,23 +104,23 @@ class TrackGenerator:
         vibe: tuple[str, str],
         style: str,
         track_name: str,
+        prompts: PromptSet,
     ) -> tuple[Path, str]:
-        """Generate a track and return (track_path, resolved_track_name)."""
-        vibe_text, vibe_tags = vibe
+        """Generate a track and return (track_path, resolved_track_name).
 
-        from punt_vox.music import vibe_to_prompt
-
-        hour = time.localtime().tm_hour
-        variation = len(self._store.tracks_for(self.pool_prefix((vibe_text, style))))
-        prompt = vibe_to_prompt(
-            vibe_text or None, vibe_tags or None, style or None, hour, [], variation
-        )
+        The final prompt text comes entirely from ``prompts`` -- the agent's
+        base plus the variation for this pool slot (``prompts.prompt_for(index)``)
+        or a minimal literal fallback. vox never composes a genre description of
+        its own; ``index`` is the count of tracks already in the pool, so track 0
+        draws variation 0, track 1 variation 1, and so on.
+        """
+        vibe_text, _ = vibe
+        prefix = self.pool_prefix((vibe_text, style))
+        index = len(self._store.tracks_for(prefix))
+        prompt = prompts.prompt_for(index)
 
         self._store.prepare()
-        safe_name = self.slugify(
-            track_name or self.auto_track_name(self.pool_prefix((vibe_text, style))),
-            60,
-        )
+        safe_name = self.slugify(track_name or self.auto_track_name(prefix), 60)
         output_path = self._store.path_for(safe_name)
 
         from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider

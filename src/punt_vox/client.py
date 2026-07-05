@@ -491,14 +491,17 @@ class VoxClient:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
+        base_prompt: str | None = None,
+        variations: list[str] | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback.
 
         *mode* is ``"on"`` or ``"off"``. When ``"on"``, optional *style*,
-        *vibe*, *vibe_tags*, *owner_id*, and *name* are forwarded to voxd.
-        When *name* is given and a track with that name already exists,
-        voxd replays it without generation.  When ``"off"``, only
-        *owner_id* is sent.
+        *vibe*, *vibe_tags*, *owner_id*, and *name* are forwarded to voxd, along
+        with the agent-authored *base_prompt* and *variations* (one literal,
+        genre-accurate description per pool slot). When *name* is given and a
+        track with that name already exists, voxd replays it without generation.
+        When ``"off"``, only *owner_id* is sent.
         """
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
@@ -519,6 +522,10 @@ class VoxClient:
                 msg["vibe_tags"] = vibe_tags
             if name is not None:
                 msg["name"] = name
+            if base_prompt is not None:
+                msg["base_prompt"] = base_prompt
+            if variations is not None:
+                msg["variations"] = variations
         else:
             msg = {
                 "type": "music_off",
@@ -686,6 +693,8 @@ class VoxClientSync:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
+        base_prompt: str | None = None,
+        variations: list[str] | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback."""
         return self._run(  # type: ignore[no-any-return]
@@ -697,6 +706,8 @@ class VoxClientSync:
                 vibe_tags=vibe_tags,
                 owner_id=owner_id,
                 name=name,
+                base_prompt=base_prompt,
+                variations=variations,
             )
         )
 

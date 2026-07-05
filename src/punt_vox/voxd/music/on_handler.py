@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.types import MessageHandler
 
@@ -42,8 +43,9 @@ class MusicOnHandler(MessageHandler):
         name = str(msg.get("name", ""))
 
         try:
+            prompts = self._parse_prompts(msg)
             response = await self._scheduler.turn_on(
-                owner_id, style, (vibe, vibe_tags), name
+                owner_id, style, (vibe, vibe_tags), name, prompts=prompts
             )
         except ValueError as exc:
             await websocket.send_json(
@@ -61,3 +63,19 @@ class MusicOnHandler(MessageHandler):
         if response.name is not None:
             payload["name"] = response.name
         await websocket.send_json(payload)
+
+    @staticmethod
+    def _parse_prompts(msg: dict[str, object]) -> PromptSet | None:
+        """Return the agent's validated prompt set, or None when none was sent.
+
+        The agent supplies ``base_prompt`` and ``variations`` together; either
+        one present triggers validation (:meth:`PromptSet.from_agent`), so a
+        half-supplied pair raises rather than silently degrading. Neither present
+        means no agent in the loop -- the pool falls back to a minimal prompt.
+        """
+        base = str(msg.get("base_prompt", ""))
+        raw = msg.get("variations")
+        variations = [str(v) for v in raw] if isinstance(raw, list) else []
+        if not base and not variations:
+            return None
+        return PromptSet.from_agent(base, variations)

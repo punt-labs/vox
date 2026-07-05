@@ -21,6 +21,7 @@ from music.conftest import FakeTrackStore
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.loop import MusicLoop
+from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.scheduler import MusicScheduler
 
 if TYPE_CHECKING:
@@ -232,7 +233,11 @@ class TestOffCancelsFill:
         gen_calls = 0
 
         async def blocking_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1
@@ -276,7 +281,11 @@ class TestSingleTrackLoopsThenAdvances:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()  # one track per release
@@ -322,7 +331,11 @@ class TestGeneratingFirstThenPlays:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -371,7 +384,11 @@ class TestVibeToNonEmptyPoolDuringGeneratingFirst:
         never = asyncio.Event()  # pool A's first generation never lands
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await never.wait()  # empty pool A stays generating-first forever
             msg = "unreachable"
@@ -411,7 +428,11 @@ class TestSkipEmptyPoolIsNoOp:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -463,7 +484,11 @@ class TestSkipDuringGeneratingFirstWithDiskTrack:
         never = asyncio.Event()  # the fill's first generation never lands
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await never.wait()  # await_first_track stays blocked forever
             msg = "unreachable"
@@ -548,7 +573,11 @@ class TestTurnOnWhileActiveDoesNotCrash:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -601,7 +630,11 @@ class TestNamedReplayResumesFill:
         gen_calls = 0
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1
@@ -667,7 +700,11 @@ class TestNamedFirstNonMatchingStemDoesNotCrash:
         players = _FakePlayers()
 
         async def gen_first_then_fail(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             if name == "mysong":  # the named-first track (stem misses the prefix)
                 return store.add(name), name
@@ -709,7 +746,11 @@ class TestRestartResumesFromDisk:
         gen_calls = 0
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1

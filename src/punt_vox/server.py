@@ -653,22 +653,39 @@ def music(
     mode: str,
     style: str | None = None,
     name: str | None = None,
+    base_prompt: str | None = None,
+    variations: list[str] | None = None,
 ) -> str:
     """Control background music generation.
 
-    When on, voxd generates instrumental tracks derived from the current
-    session vibe and loops them. Vibe changes automatically trigger new
-    track generation for the owning session.
+    vox never interprets a genre -- YOU, the calling agent, author the prompts.
+    On ``on`` (and on any style or vibe change) supply ``base_prompt`` plus 12
+    literal, genre-accurate ``variations`` (one per pool slot): voxd generates
+    track ``i`` from ``base_prompt`` + ``variations[i]`` and loops the pool. Omit
+    them only when you cannot author for the genre; voxd then falls back to a
+    minimal literal ``"<style> music, <mood>. instrumental, loopable."`` prompt.
+
+    Write genre-forward, literal prompts: real instruments, mode, and forms for
+    the style; vary WITHIN the genre (dance form, tempo, mode, lead instrument,
+    mood shade). Never add generic "background music for deep work / smooth
+    ambient texture / driving beat" boilerplate -- it homogenizes every genre.
 
     Args:
         mode: "on" to start music, "off" to stop.
-        style: Optional style modifier (e.g. "techno", "jazz").
+        style: Optional style modifier (e.g. "techno", "klezmer").
             Persists across calls -- subsequent ``on`` reuses the
             last-set style.
         name: Optional track name. When a saved track with this name
             exists, it is replayed without generation (zero credits).
             When no saved track exists, the generated track is saved
             under this name.
+        base_prompt: The genre-forward stem shared by every track in the
+            pool (e.g. "Klezmer, freylekhs and bulgar forms, clarinet and
+            violin lead, acoustic, instrumental, loopable"). Requires
+            ``variations``.
+        variations: Exactly 12 literal per-track descriptions, each varying
+            within the genre. voxd composes ``base_prompt`` + ``variations[i]``
+            for track ``i``. Requires ``base_prompt``.
 
     Returns:
         JSON string with a human-readable ``message`` field and
@@ -687,6 +704,8 @@ def music(
             vibe_tags=_session.vibe_tags or "",
             owner_id=_session.session_id,
             name=name,
+            base_prompt=base_prompt,
+            variations=variations,
         )
     except VoxdConnectionError:
         logger.warning("voxd unreachable in music tool; music off", exc_info=True)

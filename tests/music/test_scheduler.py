@@ -19,6 +19,7 @@ from music.conftest import FakeTrackStore
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import POOL_SIZE
+from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.scheduler import MusicScheduler
 from punt_vox.voxd.music.types import MusicResponse
 
@@ -260,7 +261,11 @@ class TestReplayFillTargeting:
         sched._playlist.retune(("focused", ""), "techno")  # session pool differs
 
         async def _generate(
-            self_gen: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self_gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Path, str]:
             return store.add(name), name  # register under the requested name
 

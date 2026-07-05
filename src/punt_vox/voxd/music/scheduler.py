@@ -13,12 +13,15 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.voxd.music.control import MusicControl, MusicControlChannel
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.playlist import Playlist
 from punt_vox.voxd.music.types import MusicResponse
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.music.prompts import PromptSet
 
 __all__ = ["MusicRequest", "MusicScheduler"]
 
@@ -29,12 +32,18 @@ _NO_KEY_MSG = "Background music requires an ElevenLabs API key (set ELEVENLABS_A
 
 @dataclass(frozen=True, slots=True)
 class MusicRequest:
-    """A request to start or change music for one session."""
+    """A request to start or change music for one session.
+
+    ``prompts`` carries the agent-authored generation prompts (a base plus one
+    variation per pool slot); ``None`` means no agent supplied them and the pool
+    falls back to a minimal literal prompt.
+    """
 
     owner_id: str
     style: str
     vibe: tuple[str, str]
     name: str
+    prompts: PromptSet | None = None
 
 
 class MusicScheduler:
@@ -119,16 +128,21 @@ class MusicScheduler:
         style: str,
         vibe: tuple[str, str],
         name: str,
+        *,
+        prompts: PromptSet | None = None,
     ) -> MusicResponse:
         """Start music or transfer ownership for one (vibe, style) pool.
 
         A ``name`` matching a saved track replays it; otherwise the pool is
-        adopted and an empty pool generates its first track before playing.
+        adopted, the agent's ``prompts`` are installed, and an empty pool
+        generates its first track before playing. ``prompts`` is ``None`` for a
+        hook-driven start with no agent in the loop -- the pool then falls back
+        to a minimal literal prompt.
         """
         if not owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-        req = MusicRequest(owner_id, style, vibe, name)
+        req = MusicRequest(owner_id, style, vibe, name, prompts)
         if name:
             replayed = await self._replay_named(req)
             if replayed is not None:
@@ -137,6 +151,7 @@ class MusicScheduler:
         if not self._playlist.can_generate():
             raise ValueError(_NO_KEY_MSG)
         await self._adopt(req)
+        self._playlist.set_prompts(req.prompts)
         first_name = TrackGenerator.slugify(name, _NAME_MAX_LEN) if name else ""
         self._playlist.ensure_fill(first_name=first_name)
         # A retarget queues no track: signal "vibe", not "play" (which is paired

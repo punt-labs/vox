@@ -1049,6 +1049,8 @@ class TestMusicTool:
             vibe_tags="[calm]",
             owner_id=srv._session.session_id,
             name=None,
+            base_prompt=None,
+            variations=None,
         )
 
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:

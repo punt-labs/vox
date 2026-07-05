@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Self
 from punt_vox.voxd.music.filler import FillTarget, PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.pool import TrackPool
+from punt_vox.voxd.music.prompts import PromptSet
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,11 +26,20 @@ __all__ = ["Playlist"]
 class Playlist:
     """One (vibe, style) pool: its fill supply and next-track selection."""
 
-    __slots__ = ("_filler", "_generator", "_pool_prefix", "_style", "_track", "_vibe")
+    __slots__ = (
+        "_filler",
+        "_generator",
+        "_pool_prefix",
+        "_prompts",
+        "_style",
+        "_track",
+        "_vibe",
+    )
 
     _filler: PoolFiller
     _generator: TrackGenerator
     _pool_prefix: str
+    _prompts: PromptSet | None
     _style: str
     _track: Path | None
     _vibe: tuple[str, str]
@@ -42,6 +52,7 @@ class Playlist:
         self._style = ""
         self._pool_prefix = ""
         self._track = None
+        self._prompts = None
         return self
 
     # -- Pool identity ---------------------------------------------------------
@@ -57,15 +68,27 @@ class Playlist:
         return self._style
 
     def retune(self, vibe: tuple[str, str], style: str) -> None:
-        """Point the playlist at the (vibe, style) pool."""
+        """Point the playlist at the (vibe, style) pool, dropping stale prompts.
+
+        A pool change invalidates any agent-authored prompts held for the old
+        pool; the caller re-installs fresh ones via :meth:`set_prompts` (an
+        agent-driven turn-on) or leaves them cleared so the fill falls back to a
+        minimal literal prompt (a hook-driven vibe change, no agent in the loop).
+        """
         self._vibe = vibe
         if style:
             self._style = style
         self._pool_prefix = TrackGenerator.pool_prefix((self._vibe[0], self._style))
+        self._prompts = None
 
     def set_prefix(self, prefix: str) -> None:
         """Point the playlist at a pool identified directly by prefix (replay)."""
         self._pool_prefix = prefix
+        self._prompts = None
+
+    def set_prompts(self, prompts: PromptSet | None) -> None:
+        """Install the agent-authored prompts for the current pool (or clear)."""
+        self._prompts = prompts
 
     def find(self, name: str) -> Path | None:
         """Return the path to a saved track by name, or None."""
@@ -82,9 +105,11 @@ class Playlist:
 
         The fill is keyed on the same ``_pool_prefix`` selection uses, so a
         replayed track's pool is filled -- not the session (vibe, style) pool
-        (findings #1/#7). Vibe and style still drive the provider prompt.
+        (findings #1/#7). The pool generates from the agent-authored prompts when
+        present, or a minimal literal fallback derived from style and mood.
         """
-        target = FillTarget(self._pool_prefix, self._vibe, self._style)
+        prompts = self._prompts or PromptSet.fallback(self._style, self._vibe[0])
+        target = FillTarget(self._pool_prefix, self._vibe, self._style, prompts)
         self._filler.ensure_running(target, first_name=first_name)
 
     def cancel_fill(self) -> None:
