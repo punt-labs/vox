@@ -13,7 +13,7 @@ import logging
 import random
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -289,24 +289,17 @@ def _error(message: str) -> str:
 
 def _process_segments(
     segments: list[dict[str, str]],
+    defaults: SynthesisSpec,
     *,
-    language: str | None,
-    effective_voice: str | None,
-    effective_provider: str | None,
-    effective_model: str | None,
-    effective_vibe_tags: str | None,
-    rate: int,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
     handler: Callable[[str, SynthesisSpec], dict[str, object]],
     error_label: str,
 ) -> str:
-    """Iterate segments, build a SynthesisSpec per segment, and delegate to *handler*.
+    """Synthesize each segment against *defaults* and delegate to *handler*.
 
-    Returns a JSON string: either a list of result dicts or an error dict.
-    The *handler* receives (seg_text, seg_spec) and returns one result dict.
+    *defaults* bundles the call-level synthesis parameters; each segment may
+    override ``voice``, ``language``, and ``vibe_tags``. Returns a JSON string:
+    a list of result dicts, or an error dict. The *handler* receives
+    (seg_text, seg_spec) and returns one result dict.
     """
     results: list[dict[str, object]] = []
     try:
@@ -314,21 +307,11 @@ def _process_segments(
             seg_text = seg.get("text", "")
             if not seg_text:
                 continue
-            seg_voice = seg.get("voice") or effective_voice
-            seg_language = seg.get("language") or language
-            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
-
-            seg_spec = SynthesisSpec(
-                voice=seg_voice,
-                language=seg_language,
-                rate=rate,
-                provider=effective_provider,
-                model=effective_model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
+            seg_spec = replace(
+                defaults,
+                voice=seg.get("voice") or defaults.voice,
+                language=seg.get("language") or defaults.language,
+                vibe_tags=seg.get("vibe_tags") or defaults.vibe_tags,
             )
             results.append(handler(seg_text, seg_spec))
     except VoxdConnectionError as exc:
@@ -451,20 +434,20 @@ def unmute(
                 entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
         return entry
 
-    return _process_segments(
-        segments,
+    defaults = SynthesisSpec(
+        voice=voice or _session.voice,
         language=language,
-        effective_voice=voice or _session.voice,
-        effective_provider=effective_provider,
-        effective_model=model or _session.model,
-        effective_vibe_tags=vibe_tags or _session.vibe_tags,
         rate=rate,
+        provider=effective_provider,
+        model=model or _session.model,
         stability=stability,
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        handler=_synth_handler,
-        error_label="Synthesis",
+        vibe_tags=vibe_tags or _session.vibe_tags,
+    )
+    return _process_segments(
+        segments, defaults, handler=_synth_handler, error_label="Synthesis"
     )
 
 
@@ -555,20 +538,20 @@ def record(
             "bytes": len(mp3_bytes),
         }
 
-    return _process_segments(
-        segments,
+    defaults = SynthesisSpec(
+        voice=voice or _session.voice,
         language=language,
-        effective_voice=voice or _session.voice,
-        effective_provider=effective_provider,
-        effective_model=_session.model,
-        effective_vibe_tags=_session.vibe_tags,
         rate=rate,
+        provider=effective_provider,
+        model=_session.model,
         stability=stability,
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        handler=_record_handler,
-        error_label="Record",
+        vibe_tags=_session.vibe_tags,
+    )
+    return _process_segments(
+        segments, defaults, handler=_record_handler, error_label="Record"
     )
 
 
