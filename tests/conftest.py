@@ -36,6 +36,63 @@ def tmp_output_dir(tmp_path: Path) -> Path:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Config hermeticity — belt-and-suspenders isolation from the real vox config
+# ---------------------------------------------------------------------------
+#
+# ``DEFAULT_CONFIG_DIR`` is a *relative* path (``.punt-labs/vox``) and
+# ``find_config_dir()`` walks up from the cwd.  Run from the repo root, both
+# resolve to the developer's *real* ``.punt-labs/vox/``.  Any test that drives a
+# config-writing path without redirecting the dir -- the ``vibe`` MCP tool, the
+# ``/vibe`` CLI command -- would clobber the live config (vox-73m5: the session
+# vibe "always reverts to sad" because test fixtures wrote into it).  The
+# autouse fixture below makes every *ambient* config resolution land in a
+# per-test tmp dir, so no test can read or write the real config through the
+# default path.
+
+
+@pytest.fixture(autouse=True)
+def hermetic_config(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect every default vox-config resolution to a per-test tmp dir.
+
+    Covers all three ways production code reaches the config with no explicit
+    directory:
+
+    * ``ConfigStore(None)`` and the module-level ``read_config`` /
+      ``read_field`` / ``write_field`` / ``write_fields`` wrappers, which fall
+      back to ``config.DEFAULT_CONFIG_DIR``;
+    * ``server._find_config_dir()``, which re-imports ``find_config_dir`` from
+      ``dirs`` at call time;
+    * the ``/vibe`` / ``notify`` / ``voice`` CLI commands, which read
+      ``__main__.find_config_dir``.
+
+    ``hooks.find_config_dir`` is *not* redirected: hooks always pass an explicit
+    ``cwd``, so they resolve relative to isolated payload directories and never
+    touch the real config.  Tests that exercise config-resolution walking
+    (``test_dirs``, ``test_config``) call ``find_config_dir`` through their own
+    module-level import, a binding captured before this patch, so their explicit
+    ``start=`` behaviour is preserved.
+
+    The redirect dir is minted from ``tmp_path_factory`` rather than the test's
+    own ``tmp_path`` so it never appears when a test enumerates ``tmp_path`` or
+    rebuilds ``tmp_path/.punt-labs/vox`` itself.
+    """
+    config_dir = tmp_path_factory.mktemp("vox-config") / ".punt-labs" / "vox"
+    config_dir.mkdir(parents=True)
+
+    def _resolve(_start: Path | None = None) -> Path:
+        """Stand-in for ``find_config_dir`` that never escapes the tmp dir."""
+        return config_dir
+
+    monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", config_dir)
+    monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
+    monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
+    return config_dir
+
+
 def _repo_free_base() -> Path:
     """Return a temp base directory with no ``.punt-labs/vox`` ancestor.
 

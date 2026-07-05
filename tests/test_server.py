@@ -663,6 +663,17 @@ class TestRecord:
 class TestVibeTool:
     """Tests for the vibe MCP tool."""
 
+    @pytest.fixture(autouse=True)
+    def _isolated(self, _patch_config: Path) -> Path:
+        """Pin the vibe tool's config writes to an isolated tmp dir.
+
+        The autouse ``hermetic_config`` fixture already redirects the default
+        path, but ``vibe`` writes through ``_find_config_dir()`` -> the config
+        default; requesting ``_patch_config`` states that dependency explicitly
+        rather than leaning on ambient redirect state.
+        """
+        return _patch_config
+
     def test_set_mood(self) -> None:
         import punt_vox.server as srv
 

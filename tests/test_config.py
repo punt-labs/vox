@@ -16,7 +16,7 @@ from punt_vox.config import (
     write_field,
     write_fields,
 )
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.dirs import find_config_dir
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -113,8 +113,21 @@ class TestReadConfig:
         cfg = read_config(config_dir=config_dir)
         assert cfg.repo_name == "my-repo"
 
-    def test_repo_name_none_when_config_dir_none(self) -> None:
-        """repo_name is None when no config_dir is provided."""
+    def test_repo_name_none_when_config_dir_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """repo_name is None for the shallow default (relative) config dir.
+
+        The autouse ``hermetic_config`` fixture points ``DEFAULT_CONFIG_DIR`` at
+        a deep tmp dir, so pin the *production* default (the relative
+        ``.punt-labs/vox``) here and ``chdir`` somewhere with no real config to
+        keep the read hermetic while still exercising the None path.
+        """
+        import punt_vox.config as config_mod
+
+        monkeypatch.chdir(tmp_path)
+        relative_default = Path(".punt-labs") / "vox"
+        monkeypatch.setattr(config_mod, "DEFAULT_CONFIG_DIR", relative_default)
         cfg = read_config(config_dir=None)
         assert cfg.repo_name is None
 
@@ -372,8 +385,15 @@ class TestConfigStoreConstruction:
     """ConfigStore construction and dir property."""
 
     def test_default_dir(self) -> None:
+        """A dir-less ConfigStore adopts the module's current DEFAULT_CONFIG_DIR.
+
+        Read the live attribute rather than the import-time binding so the
+        invariant holds under the autouse ``hermetic_config`` redirect.
+        """
+        import punt_vox.config as config_mod
+
         store = ConfigStore()
-        assert store.dir == DEFAULT_CONFIG_DIR
+        assert store.dir == config_mod.DEFAULT_CONFIG_DIR
 
     def test_custom_dir(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)
