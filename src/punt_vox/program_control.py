@@ -58,10 +58,6 @@ class CommandOutcome:
         """Return the daemon's reason, or ``applied_default`` when silent (F4/F7)."""
         return self.message or applied_default
 
-    def to_dict(self) -> dict[str, object]:
-        """Return the JSON object form for an MCP tool return."""
-        return {"applied": self.applied, "message": self.message}
-
 
 @final
 @dataclass(frozen=True, slots=True)

@@ -54,7 +54,6 @@ def test_command_outcome_applied_and_rejected() -> None:
     """ok/rejected build the two F7 results with the right applied flag."""
     assert CommandOutcome.ok("on") == CommandOutcome(applied=True, message="on")
     assert CommandOutcome.rejected("lost race").applied is False
-    assert CommandOutcome.ok("x").to_dict() == {"applied": True, "message": "x"}
 
 
 def test_start_request_defaults_to_fallback() -> None:
