@@ -8,9 +8,16 @@ from unittest.mock import AsyncMock, MagicMock
 from starlette.websockets import WebSocket
 
 from punt_vox.voxd.music.on_handler import MusicOnHandler
+from punt_vox.voxd.music.pool import POOL_SIZE
+from punt_vox.voxd.music.prompts import PromptSet
 from punt_vox.voxd.music.types import MusicResponse
 
 __all__: list[str] = []
+
+
+def _variations() -> list[str]:
+    """Return POOL_SIZE distinct variation strings."""
+    return [f"var{i}" for i in range(POOL_SIZE)]
 
 
 def _make_ws() -> MagicMock:
@@ -91,3 +98,47 @@ class TestMusicOnHandler:
         resp = ws.send_json.call_args[0][0]
         assert resp["type"] == "error"
         assert "owner_id is required" in resp["message"]
+
+    def test_forwards_agent_prompts(self) -> None:
+        scheduler = MagicMock()
+        scheduler.turn_on = AsyncMock(return_value=MusicResponse(status="generating"))
+        handler = MusicOnHandler(scheduler=scheduler)
+        ws = _make_ws()
+        msg: dict[str, object] = {
+            "id": "5",
+            "owner_id": "abc",
+            "style": "klezmer",
+            "vibe": "celebratory",
+            "vibe_tags": "",
+            "name": "",
+            "base_prompt": "Klezmer, clarinet lead",
+            "variations": _variations(),
+        }
+
+        asyncio.run(handler(msg, ws))
+
+        prompts = scheduler.turn_on.call_args.kwargs["prompts"]
+        assert prompts == PromptSet.from_agent("Klezmer, clarinet lead", _variations())
+
+    def test_reports_invalid_prompt_shape(self) -> None:
+        scheduler = MagicMock()
+        scheduler.turn_on = AsyncMock(return_value=MusicResponse(status="generating"))
+        handler = MusicOnHandler(scheduler=scheduler)
+        ws = _make_ws()
+        msg: dict[str, object] = {
+            "id": "6",
+            "owner_id": "abc",
+            "style": "klezmer",
+            "vibe": "",
+            "vibe_tags": "",
+            "name": "",
+            "base_prompt": "Klezmer",
+            "variations": _variations()[:-1],  # 11 -- wrong count
+        }
+
+        asyncio.run(handler(msg, ws))
+
+        scheduler.turn_on.assert_not_called()
+        resp = ws.send_json.call_args[0][0]
+        assert resp["type"] == "error"
+        assert f"exactly {POOL_SIZE}" in resp["message"]

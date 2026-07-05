@@ -90,3 +90,41 @@ class TestFallback:
         prompt = PromptSet.fallback("Klezmer", "sad").prompt_for(0)
         for banned in self._BANNED:
             assert banned not in prompt
+
+
+class TestFromWire:
+    """from_wire parses a wire message into a PromptSet or None."""
+
+    def test_full_message_builds_agent_set(self) -> None:
+        msg: dict[str, object] = {
+            "base_prompt": "Klezmer, clarinet lead",
+            "variations": _variations(),
+        }
+        ps = PromptSet.from_wire(msg)
+        assert ps is not None
+        assert ps.base == "Klezmer, clarinet lead"
+        assert len(ps.variations) == POOL_SIZE
+
+    def test_no_prompt_fields_returns_none(self) -> None:
+        assert PromptSet.from_wire({"style": "techno"}) is None
+
+    def test_coerces_non_string_variation_items(self) -> None:
+        msg: dict[str, object] = {
+            "base_prompt": "base",
+            "variations": [*_variations(POOL_SIZE - 1), 42],
+        }
+        ps = PromptSet.from_wire(msg)
+        assert ps is not None
+        assert ps.variations[-1] == "42"
+
+    def test_base_without_variations_raises(self) -> None:
+        with pytest.raises(ValueError, match=f"exactly {POOL_SIZE}"):
+            PromptSet.from_wire({"base_prompt": "base"})
+
+    def test_variations_without_base_raises(self) -> None:
+        with pytest.raises(ValueError, match="base_prompt must be a non-empty"):
+            PromptSet.from_wire({"variations": _variations()})
+
+    def test_non_list_variations_treated_as_absent(self) -> None:
+        # A malformed non-list variations with no base is "no agent prompts".
+        assert PromptSet.from_wire({"variations": "not-a-list"}) is None

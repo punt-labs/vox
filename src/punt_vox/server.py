@@ -659,37 +659,26 @@ def music(
     """Control background music generation.
 
     vox never interprets a genre -- YOU, the calling agent, author the prompts.
-    On ``on`` (and on any style or vibe change) supply ``base_prompt`` plus 12
-    literal, genre-accurate ``variations`` (one per pool slot): voxd generates
-    track ``i`` from ``base_prompt`` + ``variations[i]`` and loops the pool. Omit
-    them only when you cannot author for the genre; voxd then falls back to a
-    minimal literal ``"<style> music, <mood>. instrumental, loopable."`` prompt.
-
-    Write genre-forward, literal prompts: real instruments, mode, and forms for
-    the style; vary WITHIN the genre (dance form, tempo, mode, lead instrument,
-    mood shade). Never add generic "background music for deep work / smooth
-    ambient texture / driving beat" boilerplate -- it homogenizes every genre.
+    On ``on`` (and on any style/vibe change) supply ``base_prompt`` plus exactly
+    12 literal, genre-accurate ``variations`` (one per pool slot); voxd generates
+    track ``i`` from ``base_prompt`` + ``variations[i]``. Omit both to fall back
+    to ``"<style> music, <mood>. instrumental, loopable."``. Never add generic
+    "background music for deep work / smooth ambient texture / driving beat"
+    boilerplate -- it homogenizes every genre. See ``/music`` for a worked
+    example.
 
     Args:
         mode: "on" to start music, "off" to stop.
-        style: Optional style modifier (e.g. "techno", "klezmer").
-            Persists across calls -- subsequent ``on`` reuses the
-            last-set style.
-        name: Optional track name. When a saved track with this name
-            exists, it is replayed without generation (zero credits).
-            When no saved track exists, the generated track is saved
-            under this name.
-        base_prompt: The genre-forward stem shared by every track in the
-            pool (e.g. "Klezmer, freylekhs and bulgar forms, clarinet and
-            violin lead, acoustic, instrumental, loopable"). Requires
+        style: Optional style modifier (e.g. "techno", "klezmer"); persists.
+        name: Optional track name -- replays a saved track by that name, or
+            saves the generated track under it.
+        base_prompt: Genre-forward stem shared by every track. Requires
             ``variations``.
-        variations: Exactly 12 literal per-track descriptions, each varying
-            within the genre. voxd composes ``base_prompt`` + ``variations[i]``
-            for track ``i``. Requires ``base_prompt``.
+        variations: Exactly 12 literal per-track descriptions, varied within
+            the genre. Requires ``base_prompt``.
 
     Returns:
-        JSON string with a human-readable ``message`` field and
-        the raw voxd response fields.
+        JSON string with a ``message`` field and the raw voxd response.
     """
     _session.refresh_from_config()
     if mode not in ("on", "off"):

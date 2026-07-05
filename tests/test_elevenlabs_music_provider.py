@@ -354,6 +354,22 @@ class TestLogging:
         assert "120000" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_logs_full_prompt_and_path(
+        self,
+        music_provider: ElevenLabsMusicProvider,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The exact prompt sent to ElevenLabs must be visible in voxd.log."""
+        out = tmp_path / "logged_prompt.mp3"
+        prompt = "Klezmer, clarinet lead. freylekh at 120 BPM in D freygish"
+        with caplog.at_level(logging.INFO):
+            await music_provider.generate_track(prompt, 120_000, out)
+
+        assert prompt in caplog.text
+        assert "logged_prompt.mp3" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_logs_completion(
         self,
         music_provider: ElevenLabsMusicProvider,

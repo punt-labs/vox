@@ -496,12 +496,9 @@ class VoxClient:
     ) -> dict[str, Any]:
         """Start or stop music playback.
 
-        *mode* is ``"on"`` or ``"off"``. When ``"on"``, optional *style*,
-        *vibe*, *vibe_tags*, *owner_id*, and *name* are forwarded to voxd, along
-        with the agent-authored *base_prompt* and *variations* (one literal,
-        genre-accurate description per pool slot). When *name* is given and a
-        track with that name already exists, voxd replays it without generation.
-        When ``"off"``, only *owner_id* is sent.
+        On ``"on"``, forwards *style*, *vibe*, *vibe_tags*, *owner_id*, *name*,
+        and the agent-authored *base_prompt* + *variations* to voxd; on ``"off"``
+        only *owner_id* is sent.
         """
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"

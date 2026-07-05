@@ -1053,6 +1053,34 @@ class TestMusicTool:
             variations=None,
         )
 
+    def test_music_on_forwards_agent_prompts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "abc",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        variations = [f"var{i}" for i in range(12)]
+        json.loads(
+            music(
+                mode="on",
+                style="klezmer",
+                base_prompt="Klezmer, clarinet lead",
+                variations=variations,
+            )
+        )
+
+        call_kwargs = mock_client.music.call_args.kwargs
+        assert call_kwargs["base_prompt"] == "Klezmer, clarinet lead"
+        assert call_kwargs["variations"] == variations
+        assert srv._session.music_mode == "on"
+
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Style present, no vibe."""
         mock_client = MagicMock()
