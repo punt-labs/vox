@@ -1,0 +1,841 @@
+%
+% audio-programs.tex
+%
+% Z Specification for the Vox "Audio Programs" lifecycle.
+% Phase 1 (playlist format) modelled in full, with the shared Program state
+% and mode vocabulary that podcast and audiobook formats extend later.
+%
+% Generalises docs/music-playlist.tex (vox-1rxb) and folds in the failure /
+% observability state machine of docs/vox-ig52-music-resilience.md.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Audio Programs: A Z Specification}
+\author{Formal Model of the Program lifecycle --- Phase 1 (playlist)}
+\date{July 2026}
+\hypersetup{
+  pdftitle={Vox Audio Programs: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+A \emph{Program} is a named, ordered collection of \emph{Parts}: each Part is
+LLM-authored content plus generated audio. The three formats --- \emph{playlist},
+\emph{podcast}, \emph{audiobook} --- share one lifecycle: an agent authors a
+part, the daemon generates it in the background (which costs credits), the part
+is stored, and thereafter it plays, advances, and rotates for free. This
+specification pins that lifecycle for Phase~1, in which only the \emph{playlist}
+format exists, while fixing the shared state and mode vocabulary so that the
+later formats extend the same model rather than replacing it.
+
+The model does two things the informal concept could not. First, it
+generalises the four-state playlist machine of \texttt{music-playlist.tex}
+into a six-mode Program machine that carries the resilience states
+(\texttt{retrying}, \texttt{failed}) from \texttt{vox-ig52}, so that a
+generation failure is a \emph{modelled, observable} transition rather than a
+silent disable. Second, it adds the Phase-1 consume-only operations ---
+\texttt{PlayPart}, \texttt{Loop}, \texttt{StartFromDisk} --- that let the CLI
+drive an existing pool with no LLM and zero credits, and it proves, as
+preconditions and framing, that those operations generate nothing.
+
+Writing the model surfaced several transitions the concept left underspecified
+or contradictory; they are collected in Section~\ref{sec:findings}, which is
+the highest-value output of the exercise.
+
+\section{Basic Types}
+
+A \emph{Part} is an opaque saved-audio identifier (in the implementation, the
+content-addressed file within a Program's directory). A \emph{session}
+identifies an agent that turns a Program on --- the \emph{owner} whose
+forwarded vibe and skip commands the daemon honours. A \emph{reason} is a
+human-readable diagnostic string; the model treats it as opaque, but every
+inhabitant of \texttt{REASON} is understood to be non-empty (an empty reason is
+not a reason).
+
+\begin{zed}
+  [PART, SESSION, REASON]
+\end{zed}
+
+\section{Free Types}
+
+Three formats share one Program model. Only \texttt{playlist} is realised in
+Phase~1; the other two are named so that \texttt{poolSize} and the operations
+that branch on it are total from the start.
+
+\begin{zed}
+  Format ::= playlist | podcast | audiobook
+\end{zed}
+
+The Program mode is a six-state machine. The first four are the playlist modes
+of \texttt{music-playlist.tex}; \texttt{retrying} and \texttt{failed} are the
+resilience states of \texttt{vox-ig52}. The modes are format-general: for a
+finite format (podcast, audiobook) \texttt{playingRotating} denotes ``every
+Part generated, playing sequentially'', and the loop-versus-stop distinction at
+the end lives in the advance operation, not in a new mode.
+
+\begin{zed}
+  Mode ::= off | generatingFirst | playingFilling | playingRotating \\
+  \t2 | retrying | failed
+\end{zed}
+
+A Part passes through a lifecycle of its own. In Phase~1 a stored Part is either
+\texttt{ready} (in the pool, playable) or \texttt{failedPart} (a permanent
+generation error, with a retained reason); \texttt{pending} and
+\texttt{generating} are in-flight statuses that the atomic-delivery abstraction
+below represents by the \texttt{filling} flag rather than by a per-Part stored
+field. The free type is declared in full because the spoken formats, whose
+generation is long, will promote \texttt{pending}/\texttt{generating} to stored
+per-Part state.
+
+\begin{zed}
+  PartStatus ::= pending | generating | ready | failedPart
+\end{zed}
+
+A Z boolean (avoids the ProB/B keyword clash with \texttt{BOOL}).
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{Global Constants}
+
+\texttt{poolSize} fixes, per format, the number of Parts a full Program holds;
+for \texttt{playlist} the design value is 12. The podcast and audiobook values
+are provisional placeholders (concept: $\sim$6 chapters, a finite episode run);
+Phase~2/3 pin them, and nothing in Phase~1 exercises them. \texttt{maxRetry}
+bounds the transient-error backoff before an \emph{empty-pool} Program gives up.
+
+\begin{axdef}
+  poolSize : Format \fun \nat_1 \\
+  maxRetry : \nat_1
+  \where
+  poolSize~playlist = 12 \\
+  poolSize~podcast = 6 \\
+  poolSize~audiobook = 6 \\
+  maxRetry = 5
+\end{axdef}
+
+\section{State}
+\label{sec:state}
+
+\texttt{playing} and \texttt{lastPlayed} are ``optional Parts'' (sets of at most
+one Part): empty when nothing is playing / no Part has yet been played.
+\texttt{owner} is an optional session, and \texttt{lastError} an optional
+reason. \texttt{pool} is the set of \emph{ready} Parts --- the playable audio on
+disk --- and \texttt{failedParts} records the Parts that hit a permanent
+generation error together with the retained reason; the two are disjoint (a
+Part is ready \emph{or} failed, never both). \texttt{attempts} counts transient
+retries in flight.
+
+The predicate carries every invariant. The mode implications
+(\texttt{S10}--\texttt{S16} in the prose below) tie each mode to the shape of
+the rest of the state, so that ``a full pool never hard-fails'' and ``entering
+\texttt{failed} sets an observable reason'' are consequences of the state
+schema, not of scattered defensive checks.
+
+\begin{schema}{Program}
+  format : Format \\
+  pool : \power PART \\
+  failedParts : PART \pfun REASON \\
+  playing : \power PART \\
+  lastPlayed : \power PART \\
+  owner : \power SESSION \\
+  mode : Mode \\
+  filling : ZBOOL \\
+  attempts : \nat \\
+  lastError : \power REASON
+  \where
+  \# pool \leq (poolSize~format) \\
+  \# playing \leq 1 \land \# lastPlayed \leq 1 \\
+  \# owner \leq 1 \land \# lastError \leq 1 \\
+  playing \subseteq pool \land lastPlayed \subseteq pool \\
+  (\dom failedParts) \cap pool = \emptyset \\
+  attempts \leq maxRetry \\
+  (attempts \geq 1 \iff mode = retrying) \\
+  filling = ztrue \implies \\
+  \quad~ (mode = generatingFirst \lor mode = playingFilling) \\
+  filling = ztrue \implies owner \neq \emptyset \\
+  \# lastError = 1 \implies (mode = retrying \lor mode = failed) \\
+  mode = failed \implies \# lastError = 1 \\
+  mode = off \implies \\
+  \quad~ (playing = \emptyset \land filling = zfalse \land owner = \emptyset \\
+  \quad~ \land lastError = \emptyset \land failedParts = \emptyset) \\
+  mode = generatingFirst \implies \\
+  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = ztrue) \\
+  mode = playingFilling \implies \\
+  \quad~ (\# playing = 1 \land \# pool \geq 1 \land \# pool < (poolSize~format)) \\
+  mode = playingRotating \implies \\
+  \quad~ (\# playing = 1 \land \# pool = (poolSize~format) \land filling = zfalse) \\
+  mode = retrying \implies \\
+  \quad~ (filling = zfalse \land (pool = \emptyset \iff playing = \emptyset)) \\
+  mode = failed \implies \\
+  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = zfalse) \\
+  (mode = generatingFirst \lor mode = retrying \lor mode = failed) \\
+  \quad~ \implies owner \neq \emptyset
+\end{schema}
+
+The ready pool and the failed set are the Phase-1 realisation of the Part
+status of Section~3: $p \in pool$ means $status(p) = ready$, and
+$p \in \dom failedParts$ means $status(p) = failedPart$ with reason
+$failedParts(p)$. The invariant $(\dom failedParts) \cap pool = \emptyset$ is
+exactly ``a Part is ready or failed, never both''.
+
+\section{Initialisation}
+
+The daemon starts idle with an empty \texttt{playlist} pool --- the only format
+realised in Phase~1. \texttt{RestartFromDisk} models a restart in which a pool
+of already-saved ready Parts is loaded --- still idle until turned on --- which
+is the state from which the CLI plays existing audio with no generation; it is
+parameterised by \texttt{fmt?} to show that the initialisation rule is
+format-general.
+
+\begin{schema}{Init}
+  Program'
+  \where
+  format' = playlist \\
+  pool' = \emptyset \\
+  failedParts' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse \\
+  attempts' = 0 \\
+  lastError' = \emptyset
+\end{schema}
+
+\begin{schema}{RestartFromDisk}
+  Program' \\
+  fmt? : Format \\
+  diskPool? : \power PART
+  \where
+  \# diskPool? \leq (poolSize~fmt?) \\
+  format' = fmt? \\
+  pool' = diskPool? \\
+  failedParts' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse \\
+  attempts' = 0 \\
+  lastError' = \emptyset
+\end{schema}
+
+\section{Agent Operations (generation path)}
+
+These operations run on the MCP path, where an agent authors content and the
+daemon spends credits generating it. Every one of them either sets or preserves
+a non-empty \texttt{owner}, so the generation-related modes
+(\texttt{generatingFirst}, \texttt{retrying}, \texttt{failed}) are always owned
+--- a fact the consume-only path (Section~8) relies on.
+
+\subsection{TurnOn}
+
+From \texttt{off}, an agent enters the pool. An empty pool begins generating the
+first Part; a partial pool starts playing and resumes the background fill; a
+full pool starts playing and rotates. \texttt{who?} becomes the owner.
+
+\begin{schema}{TurnOn}
+  \Delta Program \\
+  who? : SESSION
+  \where
+  mode = off \\
+  format' = format \\
+  pool' = pool \\
+  failedParts' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \{ who? \} \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  (pool = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \land filling' = ztrue)) \\
+  (\# pool \geq 1 \land \# pool < (poolSize~format) \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq pool \\
+    \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# pool = (poolSize~format) \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq pool \\
+    \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{FirstTrackOk}
+
+The generation of the first Part succeeds. It becomes the sole ready Part and
+starts playing; the fill continues (unless the format's pool is already full at
+one Part).
+
+\begin{schema}{FirstTrackOk}
+  \Delta Program \\
+  new? : PART
+  \where
+  mode = generatingFirst \\
+  new? \notin \dom failedParts \\
+  format' = format \\
+  owner' = owner \\
+  pool' = \{ new? \} \\
+  failedParts' = failedParts \\
+  playing' = \{ new? \} \\
+  lastPlayed' = \emptyset \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  ((poolSize~format) = 1 \implies (mode' = playingRotating \land filling' = zfalse)) \\
+  ((poolSize~format) > 1 \implies (mode' = playingFilling \land filling' = ztrue))
+\end{schema}
+
+\subsection{FirstTrackBadPrompt}
+
+The first Part hits a \emph{permanent} error (a \texttt{bad\_prompt} / ToS
+rejection, or a missing key). There is nothing playing and nothing to fall back
+to, so the Program enters \texttt{failed}: the attempted Part is recorded in
+\texttt{failedParts} with its reason, and \texttt{lastError} is set. This is an
+\emph{observable} transition --- \texttt{mode} flips and a reason appears ---
+never a silent disable.
+
+\begin{schema}{FirstTrackBadPrompt}
+  \Delta Program \\
+  bad? : PART \\
+  reason? : REASON
+  \where
+  mode = generatingFirst \\
+  bad? \notin \dom failedParts \\
+  format' = format \\
+  owner' = owner \\
+  pool' = \emptyset \\
+  failedParts' = failedParts \oplus \{ bad? \mapsto reason? \} \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  mode' = failed \\
+  filling' = zfalse \\
+  attempts' = 0 \\
+  lastError' = \{ reason? \}
+\end{schema}
+
+\subsection{FirstTrackTransient}
+
+The first Part hits a \emph{transient} error (429, quota, 5xx, timeout). The
+Program backs off in \texttt{retrying} with an empty pool; the reason is
+retained as advisory. No Part playing yet, so \texttt{RetryExhausted} may later
+force \texttt{failed}.
+
+\begin{schema}{FirstTrackTransient}
+  \Delta Program \\
+  reason? : REASON
+  \where
+  mode = generatingFirst \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  mode' = retrying \\
+  filling' = zfalse \\
+  attempts' = 1 \\
+  lastError' = \{ reason? \}
+\end{schema}
+
+\subsection{FillOk}
+
+The background fill delivers one fresh ready Part. Enabled only while a fill is
+actually running (\texttt{filling} true) and the pool is not yet full; the Part
+must be new (the deterministic collision-free naming guarantees this). Reaching
+\texttt{poolSize} stops the fill and switches to rotation.
+
+\begin{schema}{FillOk}
+  \Delta Program \\
+  new? : PART
+  \where
+  mode = playingFilling \\
+  filling = ztrue \\
+  new? \notin pool \\
+  new? \notin \dom failedParts \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \cup \{ new? \} \\
+  failedParts' = failedParts \\
+  playing' = playing \\
+  lastPlayed' = lastPlayed \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  (\# pool' = (poolSize~format) \implies \\
+    \quad~ (mode' = playingRotating \land filling' = zfalse)) \\
+  (\# pool' < (poolSize~format) \implies \\
+    \quad~ (mode' = playingFilling \land filling' = ztrue))
+\end{schema}
+
+\subsection{FillBadPart}
+
+A \emph{permanent} error on a background Part while the Program is already
+playing. The offending Part is recorded in \texttt{failedParts}, but the pool
+is not burned and playback continues: the Program stays healthy
+(\texttt{lastError} empty) and keeps filling. The failure is observable
+\emph{per Part} --- via \texttt{failedParts} --- not as a program-level error.
+This is the second observability surface (finding~\#5).
+
+\begin{schema}{FillBadPart}
+  \Delta Program \\
+  bad? : PART \\
+  reason? : REASON
+  \where
+  mode = playingFilling \\
+  filling = ztrue \\
+  bad? \notin pool \\
+  bad? \notin \dom failedParts \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \oplus \{ bad? \mapsto reason? \} \\
+  playing' = playing \\
+  lastPlayed' = lastPlayed \\
+  mode' = playingFilling \\
+  filling' = ztrue \\
+  attempts' = 0 \\
+  lastError' = \emptyset
+\end{schema}
+
+\subsection{FillTransient}
+
+A \emph{transient} error on a background Part while playing. The Program backs
+off in \texttt{retrying} but keeps playing the existing pool (which is
+non-empty), so it can never fall through to \texttt{failed} (finding~\#4).
+
+\begin{schema}{FillTransient}
+  \Delta Program \\
+  reason? : REASON
+  \where
+  mode = playingFilling \\
+  filling = ztrue \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  playing' = playing \\
+  lastPlayed' = lastPlayed \\
+  mode' = retrying \\
+  filling' = zfalse \\
+  attempts' = 1 \\
+  lastError' = \{ reason? \}
+\end{schema}
+
+\subsection{RetryFails}
+
+Another transient error fires during backoff, below the cap. Only the counter
+and the advisory reason move; the pool and playback are untouched.
+
+\begin{schema}{RetryFails}
+  \Delta Program \\
+  reason? : REASON
+  \where
+  mode = retrying \\
+  attempts < maxRetry \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  playing' = playing \\
+  lastPlayed' = lastPlayed \\
+  mode' = retrying \\
+  filling' = zfalse \\
+  attempts' = attempts + 1 \\
+  lastError' = \{ reason? \}
+\end{schema}
+
+\subsection{RetryExhausted}
+
+The backoff cap is reached \emph{and the pool is empty} --- there is nothing to
+play and no prospect of a Part --- so the Program gives up into \texttt{failed}
+with an observable reason. The empty-pool precondition is what confines
+hard-failure to the first-track case: a non-empty pool has no
+\texttt{RetryExhausted} enabled (finding~\#4).
+
+\begin{schema}{RetryExhausted}
+  \Delta Program \\
+  reason? : REASON
+  \where
+  mode = retrying \\
+  attempts = maxRetry \\
+  pool = \emptyset \\
+  format' = format \\
+  owner' = owner \\
+  pool' = \emptyset \\
+  failedParts' = failedParts \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  mode' = failed \\
+  filling' = zfalse \\
+  attempts' = 0 \\
+  lastError' = \{ reason? \}
+\end{schema}
+
+\subsection{Recover}
+
+The backoff clears and generation resumes. From an empty pool the Program
+returns to \texttt{generatingFirst} (retry the first Part); from a non-empty
+pool it returns to \texttt{playingFilling} with playback intact. In both cases
+the advisory reason and the counter are cleared and the fill is re-armed.
+
+\begin{schema}{Recover}
+  \Delta Program
+  \where
+  mode = retrying \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  lastPlayed' = lastPlayed \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  filling' = ztrue \\
+  (pool = \emptyset \implies (mode' = generatingFirst \land playing' = \emptyset)) \\
+  (pool \neq \emptyset \implies (mode' = playingFilling \land playing' = playing))
+\end{schema}
+
+\subsection{VibeStyleChange}
+
+The owner retunes to a new \emph{(vibe, style)} key, whose already-saved ready
+Parts are \texttt{newPool?}. The selection of mode/playing/filling mirrors
+\texttt{TurnOn} applied to the new pool; the old failed Parts, advisory reason,
+and avoid-repeat key are discarded. Only the owner may retune, and only while
+the Program is not \texttt{off} --- a forwarded vibe while off is refused, so it
+spends no generation credits. Reaching this operation from \texttt{failed} (the
+owner re-authoring after a \texttt{bad\_prompt}) is the intended recovery path.
+
+\begin{schema}{VibeStyleChange}
+  \Delta Program \\
+  newPool? : \power PART \\
+  who? : SESSION
+  \where
+  mode \neq off \\
+  who? \in owner \\
+  \# newPool? \leq (poolSize~format) \\
+  format' = format \\
+  owner' = owner \\
+  pool' = newPool? \\
+  failedParts' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  (newPool? = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \land filling' = ztrue)) \\
+  (\# newPool? \geq 1 \land \# newPool? < (poolSize~format) \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq newPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# newPool? = (poolSize~format) \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq newPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+\subsection{TurnOff}
+
+Cancel the fill and stop playback. Ownership is released and every session-local
+field is cleared, so a later forwarded vibe from the old owner is refused. The
+ready pool remains on disk for the CLI to play.
+
+\begin{schema}{TurnOff}
+  \Delta Program
+  \where
+  mode \neq off \\
+  format' = format \\
+  pool' = pool \\
+  failedParts' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  owner' = \emptyset \\
+  mode' = off \\
+  filling' = zfalse \\
+  attempts' = 0 \\
+  lastError' = \emptyset
+\end{schema}
+
+\section{Consume-only Operations (no generation)}
+
+These operations drive an existing pool. None of them generates a Part or
+spends a credit: each leaves \texttt{pool}, \texttt{failedParts}, and
+\texttt{filling} exactly as it found them (or, for \texttt{StartFromDisk},
+leaves \texttt{filling} false). The CLI is a legitimate external player, so the
+consume operations require \emph{no} ownership; they only move the playback
+cursor over ready Parts, which spends nothing and changes no
+\emph{(vibe, style)} key (finding~\#6).
+
+\subsection{Rotate --- auto-advance, loop, and skip}
+
+When the current Part ends, move to another ready Part, avoiding an immediate
+repeat when the pool holds more than one. With a single Part it replays --- the
+only intended looping. \texttt{Rotate} is enabled in every playing mode,
+\emph{including} \texttt{retrying}: during a transient backoff the existing pool
+must keep playing and advancing (finding~\#3). Generation state
+(\texttt{mode}, \texttt{filling}, \texttt{attempts}, \texttt{lastError}) is
+untouched.
+
+\begin{schema}{Rotate}
+  \Delta Program
+  \where
+  (mode = playingFilling \lor mode = playingRotating \lor mode = retrying) \\
+  \# pool \geq 1 \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  mode' = mode \\
+  filling' = filling \\
+  attempts' = attempts \\
+  lastError' = lastError \\
+  lastPlayed' = playing \\
+  (\# pool \geq 2 \implies \\
+    \quad~ (playing' \subseteq pool \land \# playing' = 1 \land playing' \neq playing)) \\
+  (\# pool = 1 \implies playing' = playing)
+\end{schema}
+
+The automatic track-end advance and the CLI \texttt{loop}/\texttt{next} are the
+same transition; a manual agent \texttt{Skip} is that transition additionally
+gated on ownership.
+
+\begin{zed}
+  TrackEnds \defs Rotate
+\end{zed}
+
+\begin{zed}
+  Loop \defs Rotate
+\end{zed}
+
+\begin{schema}{Skip}
+  Rotate \\
+  who? : SESSION
+  \where
+  who? \in owner
+\end{schema}
+
+\subsection{PlayPart --- replay a specific Part by index}
+
+The CLI selects a specific ready Part (\texttt{vox music playlist playlist:2}).
+Unlike \texttt{Rotate}, there is \emph{no} anti-repeat constraint: the user
+asked for that Part, so it plays even if it equals the current or just-played
+Part. The precondition $target? \in pool$ is exactly ``the addressed index must
+resolve to a \texttt{ready} Part''; the CLI resolves the 1-based index to a Part
+against a stable numbering of \texttt{pool} (finding~\#7). Nothing is generated.
+
+\begin{schema}{PlayPart}
+  \Delta Program \\
+  target? : PART
+  \where
+  (mode = playingFilling \lor mode = playingRotating \lor mode = retrying) \\
+  target? \in pool \\
+  format' = format \\
+  owner' = owner \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  mode' = mode \\
+  filling' = filling \\
+  attempts' = attempts \\
+  lastError' = lastError \\
+  lastPlayed' = playing \\
+  playing' = \{ target? \}
+\end{schema}
+
+\subsection{StartFromDisk --- CLI cold play with no generation}
+
+From \texttt{off} with a saved pool (after \texttt{RestartFromDisk}), the CLI
+starts playback at a chosen ready Part without generating anything. A full pool
+enters \texttt{playingRotating}; a partial pool enters \texttt{playingFilling}
+\emph{with the fill inactive} (\texttt{filling} false) --- this is the one place
+the model relies on decoupling \texttt{filling} from the playing mode
+(finding~\#2). No owner is claimed: a CLI-started Program is agent-unowned until
+an agent claims it with \texttt{TurnOn} (finding~\#6).
+
+\begin{schema}{StartFromDisk}
+  \Delta Program \\
+  target? : PART
+  \where
+  mode = off \\
+  target? \in pool \\
+  format' = format \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  owner' = \emptyset \\
+  playing' = \{ target? \} \\
+  lastPlayed' = \emptyset \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  filling' = zfalse \\
+  (\# pool = (poolSize~format) \implies mode' = playingRotating) \\
+  (\# pool < (poolSize~format) \implies mode' = playingFilling)
+\end{schema}
+
+\section{Key Properties}
+
+The following hold by construction (state invariants) or as operation
+postconditions; they are the intended proof obligations for animation.
+
+\begin{itemize}
+  \item \textbf{Bounded pool}: $\# pool \leq (poolSize~format)$ always; for
+    \texttt{playlist}, $\# pool \leq 12$.
+  \item \textbf{Generation only below full}: \texttt{FillOk} requires
+    $\# pool < (poolSize~format)$; at $\# pool = (poolSize~format)$ the mode is
+    \texttt{playingRotating} with $filling = zfalse$, so no fill runs.
+  \item \textbf{At most one fill}: \texttt{filling} is a single flag, and
+    $filling = ztrue$ implies \texttt{mode} is \texttt{generatingFirst} or
+    \texttt{playingFilling}.
+  \item \textbf{Playing is ready}: whenever $\# playing = 1$,
+    $playing \subseteq pool$, and every member of \texttt{pool} is a
+    \texttt{ready} Part; so the playing Part is always ready.
+  \item \textbf{Failed is observable}: $mode = failed \implies \# lastError = 1$,
+    and the two operations that reach \texttt{failed}
+    (\texttt{FirstTrackBadPrompt}, \texttt{RetryExhausted}) set both
+    \texttt{mode} and \texttt{lastError} --- there is no silent disable.
+  \item \textbf{Full pool never hard-fails}: \texttt{failed} requires
+    $pool = \emptyset$, and no operation empties a non-empty pool, so a
+    Program with $\# pool \geq 1$ can never reach \texttt{failed}. In
+    particular a full ($\# pool = poolSize$) pool rotates from disk forever.
+  \item \textbf{Two failure surfaces}: a \emph{program-level} failure sets
+    \texttt{lastError} (in \texttt{retrying}/\texttt{failed}); a
+    \emph{per-Part} permanent failure is recorded in \texttt{failedParts} while
+    the Program stays healthy (\texttt{FillBadPart}). Both are queryable; the
+    log is never a client interface.
+  \item \textbf{Replay generates nothing}: \texttt{PlayPart}, \texttt{Loop},
+    \texttt{Rotate}, \texttt{StartFromDisk} all leave \texttt{pool} and
+    \texttt{failedParts} unchanged and never set \texttt{filling} true; their
+    precondition forces the target to be a \texttt{ready} Part. The CLI can
+    drive them with no LLM and zero credits.
+  \item \textbf{No immediate repeat}: \texttt{Rotate} with $\# pool \geq 2$
+    gives $playing' \neq playing$; \texttt{PlayPart} deliberately does not, as
+    it honours an explicit index.
+  \item \textbf{Retry cap bounds only the empty-pool case}:
+    \texttt{RetryExhausted} requires $pool = \emptyset$, so the cap forces
+    \texttt{failed} only when nothing is playing; a non-empty pool tolerates
+    transient errors indefinitely, recovering via \texttt{Recover} while
+    playback continues.
+  \item \textbf{Off releases ownership}: $mode = off \implies owner = \emptyset$
+    (and \texttt{playing}, \texttt{filling}, \texttt{lastError},
+    \texttt{failedParts} all cleared), so a stopped Program cannot be driven by
+    a stale forwarded message.
+  \item \textbf{Generation modes are owned}:
+    $mode \in \{generatingFirst, retrying, failed\} \implies owner \neq
+    \emptyset$, so the recovery path \texttt{VibeStyleChange} (which needs
+    $who? \in owner$) is always available from \texttt{failed}.
+\end{itemize}
+
+\section{Findings from Formalisation}
+\label{sec:findings}
+
+Writing the model surfaced these decisions, which the Phase-1 code design must
+realise consistently. Each is a place where the informal concept was silent,
+underspecified, or self-contradictory.
+
+\begin{enumerate}
+  \item \textbf{The six modes are format-general; only \texttt{poolSize} and
+    the end-of-list behaviour differ.} \texttt{playingRotating} means ``full
+    pool'' for every format --- looping for playlist, ``all Parts generated,
+    playing to the end'' for podcast/audiobook. The loop-versus-stop choice
+    lives in \texttt{Rotate} (which for a finite format would additionally test
+    ``is this the last Part''), not in a new mode. This is what lets podcast and
+    audiobook extend the model by supplying a \texttt{poolSize} and a
+    format-specific \texttt{Rotate}, not a new state machine.
+
+  \item \textbf{\texttt{filling} must be decoupled from \texttt{playingFilling}.}
+    The old four-state model conflated ``pool not yet full'' with ``a fill is
+    running''. The moment the CLI can play a partial pool without generating
+    (\texttt{StartFromDisk}), and the moment a transient error pauses the fill
+    while a partial pool keeps playing, that conflation is contradictory: a
+    playing partial pool with no active fill has no mode. The model therefore
+    makes \texttt{playingFilling} mean ``playing, pool $<$ full'' and lets
+    \texttt{filling} be an orthogonal flag constrained by
+    $filling = ztrue \implies mode \in \{generatingFirst, playingFilling\}$.
+    Without this decoupling the CLI cold-start and the transient-recovery paths
+    cannot be expressed.
+
+  \item \textbf{Playback must remain enabled in \texttt{retrying}.} A transient
+    backoff pauses \emph{generation}, not \emph{playback}. \texttt{Rotate},
+    \texttt{Loop}, and \texttt{PlayPart} are therefore enabled in
+    \texttt{retrying} (with a non-empty pool); only \texttt{FillOk} is not.
+    The original model, which lacked \texttt{retrying}, enabled advance only in
+    the two playing modes; the resilience generalisation had to widen that
+    guard, or a track ending during backoff would have no legal transition.
+
+  \item \textbf{Hard-failure is confined to the empty-pool case, structurally.}
+    \texttt{failed} carries $pool = \emptyset$ in the state invariant, and the
+    only two operations that reach it require an empty pool
+    (\texttt{FirstTrackBadPrompt} from \texttt{generatingFirst};
+    \texttt{RetryExhausted} which tests $pool = \emptyset$). A transient error
+    on a non-empty pool (\texttt{FillTransient}) enters \texttt{retrying} but can
+    only leave via \texttt{Recover} --- never \texttt{RetryExhausted} --- so
+    ``a full pool never hard-fails'' (\texttt{vox-ig52} acceptance criterion~3)
+    is a theorem of the state schema, not a runtime check. The corner the
+    concept left open --- ``what happens when fill on a non-empty pool exhausts
+    its retries?'' --- is answered: it does not exhaust; it plays on and keeps
+    trying at the capped backoff.
+
+  \item \textbf{There are two failure surfaces, and both must be observable.}
+    A \emph{program-level} failure (nothing can play) sets \texttt{lastError}
+    and shows as \texttt{mode = failed} or \texttt{retrying}. A \emph{per-Part}
+    permanent failure while the Program plays on (\texttt{FillBadPart}) is
+    recorded in \texttt{failedParts} with a reason, and the program-level
+    \texttt{lastError} stays empty because the Program is healthy. The
+    invariant $\# lastError = 1 \implies mode \in \{retrying, failed\}$ forbids a
+    healthy playing Program from carrying a program-level error, which forced
+    the per-Part surface to exist. \texttt{vox-ig52}'s silent-failure defect is
+    closed only if \emph{both} surfaces are exposed through the \texttt{status}
+    tool; a design that surfaces only \texttt{lastError} would silently drop the
+    \texttt{FillBadPart} case.
+
+  \item \textbf{Consume-only operations require no ownership.} The CLI is an
+    external player, not an agent session, and \texttt{PlayPart}, \texttt{Loop},
+    and \texttt{StartFromDisk} neither generate nor change the
+    \emph{(vibe, style)} key --- they only move the playback cursor over ready
+    Parts. Requiring ownership would make the CLI unable to play a pool it did
+    not turn on (the common case after a daemon restart). The consequence,
+    which the design must accept, is asymmetric: an agent \emph{cannot}
+    \texttt{Skip} or \texttt{VibeStyleChange} a CLI-started, agent-unowned
+    Program ($owner = \emptyset$) --- it must claim it with \texttt{TurnOn}
+    first. The invariant was relaxed from the old
+    $owner = \emptyset \iff mode = off$ to
+    $mode = off \implies owner = \emptyset$ to admit an owner-less playing
+    Program.
+
+  \item \textbf{Part indexing is a resolved surface parameter, not modelled
+    state.} \texttt{PlayPart} takes a Part, with precondition
+    $target? \in pool$; the CLI's 1-based index (\texttt{playlist:2}) is
+    resolved to a Part against a stable numbering of \texttt{pool} before the
+    operation runs. The model deliberately abstracts the numbering away: the
+    property worth proving is ``the addressed Part must be ready and nothing is
+    generated'', and that is exactly the precondition plus the framing. The
+    design owns the ordering (concept: Programs are an \emph{ordered} list); an
+    out-of-range index is a resolution failure the CLI reports before any
+    operation is attempted, so no ``index out of range'' transition appears
+    here.
+
+  \item \textbf{\texttt{failed} retains ownership; only \texttt{off} releases
+    it.} The original model released ownership on its terminal
+    \texttt{Disable}. Here \texttt{failed} is not terminal --- it is a
+    recoverable, queryable state the owner re-authors out of via
+    \texttt{VibeStyleChange} --- so it must keep its owner. This is why the
+    ``owned exactly when on'' equivalence of the playlist model becomes the
+    weaker $mode = off \implies owner = \emptyset$ plus ``generation modes are
+    owned''. A design that cleared the owner on entering \texttt{failed} would
+    strand the Program: no session could retune it, and the observable failure
+    would be unrecoverable except by a full \texttt{TurnOff}/\texttt{TurnOn}.
+
+  \item \textbf{The atomic-delivery abstraction hides \texttt{pending} and
+    \texttt{generating}.} Phase-1 generation is modelled as an atomic step
+    (\texttt{FillOk} produces a ready Part; there is no observable half-generated
+    Part), so per-Part \texttt{pending}/\texttt{generating} statuses collapse
+    into the single \texttt{filling} flag. This is sound for music, whose Parts
+    are short, but the spoken formats generate for minutes; Phase~2/3 will need
+    to promote those statuses to stored per-Part state and add the corresponding
+    transitions. The \texttt{PartStatus} free type is declared now so that
+    extension does not disturb the state signature.
+\end{enumerate}
+
+\end{document}
