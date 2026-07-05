@@ -55,6 +55,19 @@ class PromptSet:
         return cls.from_agent(base, variations)
 
     @classmethod
+    def from_tool_args(
+        cls, base_prompt: str | None, variations: list[str] | None
+    ) -> Self | None:
+        """Build a prompt set from the MCP tool's args, or None when both unset.
+
+        Raises ``ValueError`` (via :meth:`from_agent`) on a malformed shape, so
+        the tool surfaces the error at the MCP boundary rather than the daemon.
+        """
+        if base_prompt is None and variations is None:
+            return None
+        return cls.from_agent(base_prompt or "", variations or [])
+
+    @classmethod
     def from_agent(cls, base: str, variations: Sequence[str]) -> Self:
         """Build a validated agent prompt set: a base plus ``POOL_SIZE`` variations.
 

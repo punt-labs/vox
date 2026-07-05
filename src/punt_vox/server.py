@@ -191,6 +191,28 @@ class SessionConfig:
             raise ValueError(msg)
         self._vibe_mode = mode
 
+    def music_message(
+        self, resp: dict[str, object], mode: str, style: str | None, name: str | None
+    ) -> str:
+        """Return the human-readable status line for a music tool response."""
+        if resp.get("status") == "playing" and name:
+            return f"♪ Playing saved track: {name}"
+        if mode == "on":
+            return self._music_on_message(style)
+        return "♪ Music off."
+
+    def _music_on_message(self, style: str | None) -> str:
+        """Build the music-on message from ``style`` and the session vibe."""
+        prefix = "♪ Music on — generating"
+        vibe = self._vibe
+        if style and vibe:
+            return f"{prefix} a {style} track for your {vibe} mood..."
+        if style:
+            return f"{prefix} a {style} track..."
+        if vibe:
+            return f"{prefix} a track for your {vibe} mood..."
+        return f"{prefix} ambient music..."
+
     @classmethod
     def from_config(cls, config_dir: Path | None) -> SessionConfig:
         """Read per-repo config once and return a SessionConfig."""
@@ -620,42 +642,6 @@ def vibe(
     return json.dumps({"vibe": updates})
 
 
-def _agent_prompts(
-    base_prompt: str | None, variations: list[str] | None
-) -> PromptSet | None:
-    """Build the agent's validated prompt set from tool args, or None when unset.
-
-    Raises ``ValueError`` (via :meth:`PromptSet.from_agent`) on a malformed shape
-    so the tool surfaces the error at the MCP boundary rather than the daemon.
-    """
-    if base_prompt is None and variations is None:
-        return None
-    return PromptSet.from_agent(base_prompt or "", variations or [])
-
-
-def _music_message(
-    resp: dict[str, object], mode: str, style: str | None, name: str | None
-) -> str:
-    """Return the human-readable status line for a music tool response."""
-    if resp.get("status") == "playing" and name:
-        return f"\u266a Playing saved track: {name}"
-    if mode == "on":
-        return _music_on_message(style, _session.vibe)
-    return "\u266a Music off."
-
-
-def _music_on_message(style: str | None, vibe: str | None) -> str:
-    """Build the human-readable message for music-on."""
-    prefix = "\u266a Music on \u2014 generating"
-    if style and vibe:
-        return f"{prefix} a {style} track for your {vibe} mood..."
-    if style:
-        return f"{prefix} a {style} track..."
-    if vibe:
-        return f"{prefix} a track for your {vibe} mood..."
-    return f"{prefix} ambient music..."
-
-
 @mcp.tool()
 def music(
     mode: str,
@@ -685,7 +671,7 @@ def music(
 
     client = _voxd_client()
     try:
-        prompts = _agent_prompts(base_prompt, variations)
+        prompts = PromptSet.from_tool_args(base_prompt, variations)
         resp = client.music(
             mode=mode,
             style=style or "",
@@ -715,7 +701,7 @@ def music(
         )
 
     _session.music_mode = mode
-    message = _music_message(resp, mode, style, name)
+    message = _session.music_message(resp, mode, style, name)
     return json.dumps({"message": message, **resp})
 
 
