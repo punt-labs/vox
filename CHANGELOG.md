@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`/music` prompt authoring now forbids named artists/composers/titles**: ElevenLabs Music rejects prompts that reference a specific artist, composer, band, or copyrighted work under its Terms of Service (`bad_prompt`, no track generated). The `/music` command guidance now bans them explicitly and shows how to evoke the same sound by describing form/instruments/mode/era instead ("romantic-era nocturne in E-flat" not "Chopin nocturne"). Prevents the silent "music won't start" failure hit when a classical-piano pool named composers. The systemic fix — surfacing generation failures through the `status` API instead of only the daemon log — is specced in `docs/vox-ig52-music-resilience.md` (vox-ig52).
+
 ### Fixed
 
 - **The test suite no longer overwrites the developer's real vox config**: `DEFAULT_CONFIG_DIR` is a *relative* path (`.punt-labs/vox`) and `find_config_dir()` walks up from the cwd, so tests that drove a config-writing path without redirecting the dir — the `vibe` MCP tool, the `/vibe` CLI command — clobbered the live `.punt-labs/vox/vox.local.md` on every `make test`, silently resetting the session vibe (the "always reverts to sad" symptom, since fixtures wrote `vibe: "sad"` / empty into it). An autouse `hermetic_config` fixture now redirects every *ambient* config resolution — `ConfigStore(None)`, the module-level `read_config`/`write_field`/`write_fields` wrappers, `server._find_config_dir()`, and the `__main__` CLI commands — to a per-test tmp dir, so no test can read or write the real config through the default path. A `test_suite_does_not_touch_real_config` regression guard asserts the redirect stays active and that the real config bytes are untouched after driving the default read/write paths.
