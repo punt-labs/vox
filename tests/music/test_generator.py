@@ -49,9 +49,7 @@ class TestGenerateFillsPool:
             FakeProvider,
         )
 
-        prompts = PromptSet.from_agent(
-            "BASE", [f"var{i}" for i in range(POOL_SIZE)]
-        )
+        prompts = PromptSet.from_agent("BASE", [f"var{i}" for i in range(POOL_SIZE)])
         gen = _gen(tmp_path)
         for _ in range(POOL_SIZE):
             asyncio.run(gen.generate(("calm", ""), "jazz", "", prompts))

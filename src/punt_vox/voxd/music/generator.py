@@ -108,11 +108,9 @@ class TrackGenerator:
     ) -> tuple[Path, str]:
         """Generate a track and return (track_path, resolved_track_name).
 
-        The final prompt text comes entirely from ``prompts`` -- the agent's
-        base plus the variation for this pool slot (``prompts.prompt_for(index)``)
-        or a minimal literal fallback. vox never composes a genre description of
-        its own; ``index`` is the count of tracks already in the pool, so track 0
-        draws variation 0, track 1 variation 1, and so on.
+        The prompt text comes entirely from ``prompts`` -- vox composes none of
+        its own. ``index`` is the current pool count, so track ``i`` draws
+        ``prompts.prompt_for(i)`` (the agent's variation ``i`` or the fallback).
         """
         vibe_text, _ = vibe
         prefix = self.pool_prefix((vibe_text, style))

@@ -11,9 +11,9 @@ which homogenized every genre into the same mellow bed.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, cast
 
 from punt_vox.voxd.music.pool import POOL_SIZE
 
@@ -34,6 +34,23 @@ class PromptSet:
     variations: tuple[str, ...]
 
     @classmethod
+    def from_wire(cls, msg: Mapping[str, object]) -> Self | None:
+        """Return the agent's prompt set parsed from a wire message, or None.
+
+        ``base_prompt`` and ``variations`` are supplied together; either present
+        triggers validation via :meth:`from_agent`, so a half-supplied pair
+        raises rather than silently degrading. Neither present returns ``None``
+        -- no agent in the loop, so the pool falls back to a minimal prompt.
+        """
+        base = str(msg.get("base_prompt", ""))
+        raw = msg.get("variations")
+        items = cast("list[object]", raw) if isinstance(raw, list) else []
+        variations = [str(v) for v in items]
+        if not base and not variations:
+            return None
+        return cls.from_agent(base, variations)
+
+    @classmethod
     def from_agent(cls, base: str, variations: Sequence[str]) -> Self:
         """Build a validated agent prompt set: a base plus ``POOL_SIZE`` variations.
 
@@ -47,7 +64,9 @@ class PromptSet:
             raise ValueError(msg)
         cleaned = tuple(v.strip() for v in variations)
         if len(cleaned) != POOL_SIZE:
-            msg = f"variations must have exactly {POOL_SIZE} entries, got {len(cleaned)}"
+            msg = (
+                f"variations must have exactly {POOL_SIZE} entries, got {len(cleaned)}"
+            )
             raise ValueError(msg)
         if any(not v for v in cleaned):
             msg = "every variation must be a non-empty string"
