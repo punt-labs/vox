@@ -58,6 +58,13 @@ class JsonObject:
             raise self._wrong(field, "an integer")
         return value
 
+    def require_bool(self, field: str) -> bool:
+        """Return a required boolean field, raising if absent or wrong-typed."""
+        value = self._require(field)
+        if not isinstance(value, bool):
+            raise self._wrong(field, "a boolean")
+        return value
+
     def require_object(self, field: str) -> JsonObject:
         """Return a required nested object as a :class:`JsonObject`."""
         return JsonObject.coerce(self._require(field), f"{self._where}.{field}")
@@ -68,6 +75,18 @@ class JsonObject:
         if not isinstance(value, list):
             raise self._wrong(field, "a list")
         return tuple(cast("list[object]", value))
+
+    def opt_object(self, field: str) -> JsonObject | None:
+        """Return a nested object field, or ``None`` when the key is absent or null.
+
+        ``None`` is the documented "field not present" contract (a nullable wire
+        object such as ``now_playing``), not a parse failure -- a present,
+        non-null, non-object value still raises.
+        """
+        value = self._data.get(field)
+        if value is None:
+            return None
+        return JsonObject.coerce(value, f"{self._where}.{field}")
 
     def opt_int(self, field: str) -> int | None:
         """Return an integer field, or ``None`` when the key is absent.

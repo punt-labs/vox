@@ -22,6 +22,12 @@ from punt_vox.voxd.programs.playback_policy import (
 )
 from punt_vox.voxd.programs.program import GuardViolationError, Program
 from punt_vox.voxd.programs.state import Activation, ProgramState
+from punt_vox.voxd.programs.status import ProgramStatus
+from punt_vox.voxd.programs.status_views import (
+    FailedPartView,
+    GenerationStatus,
+    NowPlaying,
+)
 
 __all__ = [
     "COMPLETE",
@@ -30,10 +36,13 @@ __all__ = [
     "Advance",
     "AdvanceResult",
     "Complete",
+    "FailedPartView",
     "Format",
     "FrozenParts",
+    "GenerationStatus",
     "GuardViolationError",
     "Mode",
+    "NowPlaying",
     "Part",
     "PartRef",
     "PartStatus",
@@ -42,5 +51,6 @@ __all__ = [
     "Program",
     "ProgramName",
     "ProgramState",
+    "ProgramStatus",
     "Reason",
 ]
