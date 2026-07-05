@@ -56,31 +56,24 @@ class SynthesisSpec:
         """Build a kwargs dict for ``VoxClientSync.synthesize`` / ``record``.
 
         Omits fields whose value is ``None`` so the client method
-        receives only explicitly-set parameters.  The ``once`` field
-        is included only when ``True``.  ``rate`` is the exception: an
-        unset rate is sent as :data:`DEFAULT_RATE` so the wire message
-        always carries a speed, preserving the historical 90% default.
+        receives only explicitly-set parameters.  ``rate`` is the exception:
+        an unset rate is sent as :data:`DEFAULT_RATE` so the wire message
+        always carries a speed, preserving the historical 90% default.  The
+        ``once`` field is not a wire parameter here -- callers pass it
+        separately to :meth:`VoxClientSync.synthesize`.
         """
-        out: dict[str, object] = {}
-        if self.voice is not None:
-            out["voice"] = self.voice
-        if self.language is not None:
-            out["language"] = self.language
+        optional: dict[str, object | None] = {
+            "voice": self.voice,
+            "language": self.language,
+            "provider": self.provider,
+            "model": self.model,
+            "stability": self.stability,
+            "similarity": self.similarity,
+            "style": self.style,
+            "speaker_boost": self.speaker_boost,
+            "api_key": self.api_key,
+            "vibe_tags": self.vibe_tags,
+        }
+        out: dict[str, object] = {k: v for k, v in optional.items() if v is not None}
         out["rate"] = self.rate if self.rate is not None else DEFAULT_RATE
-        if self.provider is not None:
-            out["provider"] = self.provider
-        if self.model is not None:
-            out["model"] = self.model
-        if self.stability is not None:
-            out["stability"] = self.stability
-        if self.similarity is not None:
-            out["similarity"] = self.similarity
-        if self.style is not None:
-            out["style"] = self.style
-        if self.speaker_boost is not None:
-            out["speaker_boost"] = self.speaker_boost
-        if self.api_key is not None:
-            out["api_key"] = self.api_key
-        if self.vibe_tags is not None:
-            out["vibe_tags"] = self.vibe_tags
         return out
