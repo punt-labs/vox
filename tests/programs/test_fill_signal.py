@@ -141,3 +141,10 @@ class TestTransientFailure:
         assert prog.state.attempts == MAX_RETRY
         TransientFailure(reason).apply(prog)  # at the cap, empty pool -> give up
         assert prog.mode is Mode.FAILED
+
+
+def test_fill_signals_never_interrupt(mk: PartFactory) -> None:
+    # Fill outcomes join the pool / record a failure; they never cut off playback.
+    assert Produced(mk(1)).interrupts is False
+    assert PermanentFailure(mk(1), Reason("x")).interrupts is False
+    assert TransientFailure(Reason("x")).interrupts is False

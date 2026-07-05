@@ -22,6 +22,11 @@ __all__ = ["PlayPart", "Rotate", "StartFromDisk"]
 class Rotate:
     """Advance to another ready Part (Z ``Rotate`` = skip = next = loop = end)."""
 
+    @property
+    def interrupts(self) -> bool:
+        """A user skip acts now; the loop's own track-end advance sees no player."""
+        return True
+
     def apply(self, program: Program) -> None:
         """Apply the advance transition."""
         program.rotate()
@@ -34,6 +39,11 @@ class PlayPart:
 
     target: Part
 
+    @property
+    def interrupts(self) -> bool:
+        """Playing a named Part starts it now."""
+        return True
+
     def apply(self, program: Program) -> None:
         """Apply the explicit-play transition."""
         program.play_part(self.target)
@@ -45,6 +55,11 @@ class StartFromDisk:
     """Cold-start playback from a saved pool with no fill (Z ``StartFromDisk``)."""
 
     target: Part
+
+    @property
+    def interrupts(self) -> bool:
+        """Cold-start begins from ``off`` -- there is no playback to interrupt."""
+        return False
 
     def apply(self, program: Program) -> None:
         """Apply the cold-start transition."""

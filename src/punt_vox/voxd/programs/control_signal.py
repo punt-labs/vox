@@ -22,6 +22,16 @@ __all__ = ["ControlSignal"]
 class ControlSignal(Protocol):
     """A single command applied to the Program by the sole control consumer."""
 
+    @property
+    def interrupts(self) -> bool:
+        """Whether applying this command should stop current playback at once.
+
+        ``True`` for skip / next / play-a-part / off (act now); ``False`` for a
+        retune (finish the current track first) and for fill outcomes (they
+        never cut off what is playing).
+        """
+        ...
+
     def apply(self, program: Program) -> None:
         """Apply this command's transition to ``program`` (one serialized write)."""
         ...

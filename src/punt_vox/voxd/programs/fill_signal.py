@@ -32,6 +32,11 @@ class Produced:
 
     part: Part
 
+    @property
+    def interrupts(self) -> bool:
+        """A produced Part joins the pool; it never cuts off what is playing."""
+        return False
+
     def apply(self, program: Program) -> None:
         """Admit the Part via the mode-appropriate success transition."""
         if program.mode is Mode.RETRYING:
@@ -52,6 +57,11 @@ class PermanentFailure:
     part: Part
     reason: Reason
 
+    @property
+    def interrupts(self) -> bool:
+        """A per-Part failure is recorded silently; playback is not interrupted."""
+        return False
+
     def apply(self, program: Program) -> None:
         """Record the permanent failure via the mode-appropriate transition."""
         if program.mode is Mode.RETRYING:
@@ -70,6 +80,11 @@ class TransientFailure:
     """A Part hit a transient generation error (429 / quota / 5xx / timeout)."""
 
     reason: Reason
+
+    @property
+    def interrupts(self) -> bool:
+        """A transient backoff pauses generation, never the existing playback."""
+        return False
 
     def apply(self, program: Program) -> None:
         """Drive the modeled retry machine by the Program's current mode."""

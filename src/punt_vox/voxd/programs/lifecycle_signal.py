@@ -22,6 +22,11 @@ __all__ = ["TurnOff", "TurnOn", "VibeStyleChange"]
 class TurnOn:
     """Enter the pool from ``off`` (Z ``TurnOn``)."""
 
+    @property
+    def interrupts(self) -> bool:
+        """Turn-on starts from ``off`` -- there is no playback to interrupt."""
+        return False
+
     def apply(self, program: Program) -> None:
         """Apply the turn-on transition."""
         program.turn_on()
@@ -31,6 +36,11 @@ class TurnOn:
 @dataclass(frozen=True, slots=True)
 class TurnOff:
     """Cancel the fill and stop playback (Z ``TurnOff``)."""
+
+    @property
+    def interrupts(self) -> bool:
+        """Turn-off stops playback now."""
+        return True
 
     def apply(self, program: Program) -> None:
         """Apply the turn-off transition."""
@@ -43,6 +53,11 @@ class VibeStyleChange:
     """Retune to a new (vibe, style) key's saved pool (Z ``VibeStyleChange``)."""
 
     new_pool: frozenset[Part]
+
+    @property
+    def interrupts(self) -> bool:
+        """A retune finishes the current track first, then switches pools."""
+        return False
 
     def apply(self, program: Program) -> None:
         """Apply the retune transition against the new pool."""

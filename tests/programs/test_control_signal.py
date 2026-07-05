@@ -63,3 +63,17 @@ class TestPlaybackSignals:
         assert prog.mode is Mode.PLAYING_FILLING
         assert prog.playing == mk(2)
         assert prog.state.filling is False
+
+
+class TestInterrupts:
+    def test_interrupting_commands(self, mk: PartFactory) -> None:
+        assert TurnOff().interrupts is True
+        assert Rotate().interrupts is True
+        assert PlayPart(mk(1)).interrupts is True
+
+    def test_non_interrupting_commands(
+        self, mk: PartFactory, pool_of: PoolFactory
+    ) -> None:
+        assert TurnOn().interrupts is False
+        assert VibeStyleChange(pool_of(1)).interrupts is False
+        assert StartFromDisk(mk(1)).interrupts is False

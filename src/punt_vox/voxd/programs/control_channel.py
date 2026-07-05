@@ -32,16 +32,18 @@ logger = logging.getLogger(__name__)
 class ControlChannel:
     """Serialize every Program mutation through one consumer (single-writer)."""
 
-    __slots__ = ("_changed", "_program", "_queue")
+    __slots__ = ("_changed", "_interrupt", "_program", "_queue")
     _program: Program
     _queue: asyncio.Queue[ControlSignal]
     _changed: asyncio.Event
+    _interrupt: asyncio.Event
 
     def __new__(cls, program: Program) -> Self:
         self = super().__new__(cls)
         self._program = program
         self._queue = asyncio.Queue()
         self._changed = asyncio.Event()
+        self._interrupt = asyncio.Event()
         return self
 
     @property
@@ -53,6 +55,16 @@ class ControlChannel:
     def changed(self) -> asyncio.Event:
         """Return the event set after each applied command (the loop races it)."""
         return self._changed
+
+    @property
+    def interrupt(self) -> asyncio.Event:
+        """Return the event set when an interrupting command is applied.
+
+        Set by skip / next / play-a-part / off, not by a retune or a fill
+        outcome -- so the loop stops the current track at once for the former
+        and finishes it first for the latter.
+        """
+        return self._interrupt
 
     def post(self, signal: ControlSignal) -> None:
         """Enqueue a command for the single consumer to apply."""
@@ -76,6 +88,8 @@ class ControlChannel:
             logger.info("control signal rejected as a lost race: %r", signal)
         finally:
             self._queue.task_done()
+        if signal.interrupts:
+            self._interrupt.set()
         self._changed.set()
 
     async def join(self) -> None:
