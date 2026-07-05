@@ -152,10 +152,10 @@ def _write_batch(path: Path, updates: dict[str, str]) -> None:
 
     if not path.exists():
         lines = [f'{k}: "{v}"' for k, v in updates.items()]
-        path.write_text("---\n" + "\n".join(lines) + "\n---\n")
+        path.write_text("---\n" + "\n".join(lines) + "\n---\n", encoding="utf-8")
         return
 
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for key, value in updates.items():
         replacement = f'{key}: "{value}"'
         field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)

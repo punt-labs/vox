@@ -452,3 +452,26 @@ class TestConfigStoreWrite:
     def test_write_fields_rejects_unknown_key(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Unknown config key"):
             ConfigStore(tmp_path).write_fields({"bad_key": "val"})
+
+    def test_non_ascii_value_round_trips(self, tmp_path: Path) -> None:
+        """A non-ASCII mood survives write+read via symmetric UTF-8 I/O.
+
+        Regression guard for the config-write encoding fix: ``_write_batch``
+        must encode as UTF-8 so a mood written on one platform reads back
+        identically regardless of the filesystem's default encoding.
+        """
+        store = ConfigStore(tmp_path)
+        mood = "café-résumé-你好-\U0001f60a"
+        store.write_field("vibe", mood)
+        assert store.read_field("vibe") == mood
+        assert (tmp_path / "vox.local.md").read_text(encoding="utf-8").count(mood) == 1
+
+    def test_non_ascii_value_survives_update_in_place(self, tmp_path: Path) -> None:
+        """Rewriting an existing file preserves non-ASCII content on both keys."""
+        store = ConfigStore(tmp_path)
+        first = "こんにちは"  # konnichiwa
+        second = "ça-va"  # ça-va
+        store.write_field("vibe", first)
+        store.write_field("vibe_tags", second)
+        assert store.read_field("vibe") == first
+        assert store.read_field("vibe_tags") == second
