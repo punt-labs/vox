@@ -226,6 +226,29 @@ def test_next_advances() -> None:
     assert fake.verbs() == ["advance"]
 
 
+def test_next_rejected_surfaces_reason(_programs_dir: Path) -> None:
+    """A rejected advance shows the daemon's reason, not a canned line (F4/F7)."""
+    fake = FakeProgramGateway(applied=False, reason="nothing is playing")
+    cli, formatter = _cli(fake)
+
+    cli.advance()
+
+    payload, text = _emitted(formatter)
+    assert payload["applied"] is False  # type: ignore[index]
+    assert text == "nothing is playing"
+
+
+def test_play_applied_without_message_uses_default(_programs_dir: Path) -> None:
+    """An applied play with no daemon message renders the surface line, not blank."""
+    fake = FakeProgramGateway()  # applied, empty daemon message
+    cli, formatter = _cli(fake)
+
+    cli.play("ambient_techno")
+
+    _, text = _emitted(formatter)
+    assert text == "Playing ambient_techno."
+
+
 def test_status_renders_now_playing_and_failures() -> None:
     program = Program(ProgramState.initial(), _AvoidRepeat())
     program.turn_on()

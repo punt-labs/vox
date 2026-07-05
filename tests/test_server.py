@@ -1149,6 +1149,21 @@ class TestMusicTool:
 
         assert result["applied"] is False
 
+    def test_rejected_on_surfaces_reason_not_success_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rejected 'on' shows the daemon's reason, not the generating line (F4)."""
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(applied=False, reason="already generating"),
+        )
+
+        result = json.loads(music(mode="on", style="techno"))
+
+        assert result["applied"] is False
+        assert "already generating" in result["message"]
+        assert "generating a techno track" not in result["message"]
+
     def test_daemon_error_reports_and_resets(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1250,6 +1265,21 @@ class TestMusicNextTool:
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
         result = json.loads(music_next())
         assert result["applied"] is False
+
+    def test_next_rejected_surfaces_reason_not_skip_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A next-after-off shows the reason, not a misleading skip line (F4/F7)."""
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(applied=False, reason="nothing is playing"),
+        )
+
+        result = json.loads(music_next())
+
+        assert result["applied"] is False
+        assert "nothing is playing" in result["message"]
+        assert "Skipping" not in result["message"]
 
     def test_next_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv

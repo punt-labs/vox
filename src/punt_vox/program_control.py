@@ -58,6 +58,19 @@ class CommandOutcome:
         """Return a rejected (lost-race) outcome carrying ``message``."""
         return cls(applied=False, message=message)
 
+    def display(self, applied_default: str) -> str:
+        """Return the line to show for this outcome (findings F4/F7).
+
+        Prefer the daemon's own ``message``: on a rejected command it is the
+        reason the command was refused, and returning a canned success line
+        would hide it. Fall back to the caller's ``applied_default`` only when
+        the command applied and the daemon reported no message of its own; a
+        rejection with no message is a defensive ``"command rejected"``.
+        """
+        if self.message:
+            return self.message
+        return applied_default if self.applied else "command rejected"
+
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form for an MCP tool return."""
         return {"applied": self.applied, "message": self.message}

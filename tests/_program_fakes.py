@@ -33,10 +33,11 @@ class GatewayCall:
 class FakeProgramGateway:
     """A stateful, filesystem-free ``ProgramGateway`` for surface tests."""
 
-    __slots__ = ("_applied", "_catalog", "_status", "calls")
+    __slots__ = ("_applied", "_catalog", "_reason", "_status", "calls")
     _status: ProgramStatus
     _catalog: tuple[ProgramSummary, ...]
     _applied: bool
+    _reason: str | None
     calls: list[GatewayCall]
 
     def __new__(
@@ -45,11 +46,13 @@ class FakeProgramGateway:
         catalog: tuple[ProgramSummary, ...] = (),
         *,
         applied: bool = True,
+        reason: str | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._status = status if status is not None else ProgramStatus.idle()
         self._catalog = catalog
         self._applied = applied
+        self._reason = reason
         self.calls = []
         return self
 
@@ -58,7 +61,18 @@ class FakeProgramGateway:
         self._status = status
 
     def _outcome(self, message: str) -> CommandOutcome:
-        return CommandOutcome(applied=self._applied, message=message)
+        """Model the daemon's F7 reply shape.
+
+        An applied command reports no reason of its own -- the surface authors
+        the success line (a personalised ``generating`` message, ``Music off.``,
+        etc.); a rejected command carries the reason it was refused. Mirroring
+        that here keeps the surface tests honest about which line comes from
+        where (findings F4/F7). A test may pin the daemon's ``reason`` to assert
+        it reaches the caller instead of a canned line.
+        """
+        if self._applied:
+            return CommandOutcome.ok("")
+        return CommandOutcome.rejected(self._reason or message)
 
     def status(self) -> ProgramStatus:
         self.calls.append(GatewayCall("status"))

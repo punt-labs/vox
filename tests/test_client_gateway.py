@@ -133,6 +133,25 @@ def test_missing_applied_defaults_to_applied() -> None:
     assert outcome.applied is True
 
 
+def test_rejection_without_message_gets_a_non_empty_reason() -> None:
+    """A rejected reply with no message never surfaces a blank line (F4/F7)."""
+    client = MagicMock()
+    client.program_next.return_value = {"applied": False}
+
+    outcome = ClientProgramGateway(client).advance()
+
+    assert outcome.applied is False
+    assert outcome.message  # non-empty: the surfaces must have something to show
+
+
+def test_command_outcome_display_prefers_reason_over_default() -> None:
+    """display() shows the daemon reason on rejection, the default only when silent."""
+    assert CommandOutcome.rejected("no track").display("Playing.") == "no track"
+    assert CommandOutcome.ok("").display("Playing.") == "Playing."
+    assert CommandOutcome.ok("live line").display("Playing.") == "live line"
+    assert CommandOutcome(applied=False, message="").display("x") == "command rejected"
+
+
 def test_play_forwards_part_index() -> None:
     """play() forwards the resolved 1-based part index to the wire."""
     client = MagicMock()

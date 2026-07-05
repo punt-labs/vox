@@ -1,13 +1,9 @@
 """The consume-only ``vox music`` CLI -- play and manage saved audio Programs.
 
-The CLI never authors (no LLM, no generation): it lists saved Programs, plays or
-loops one from disk, advances the active one, shows the daemon's authoritative
-status, and runs the one-time legacy migration. :class:`MusicCli` owns that
-behaviour as a humble object -- each method is directly testable with an
-in-memory gateway and formatter, no ``CliRunner`` -- and :func:`build_music_app`
-wires the methods onto a Typer group. Playback control crosses to ``voxd`` via a
-:class:`ProgramGateway`; listing, part resolution, and migration read the
-filesystem store directly (design section 4).
+The CLI never authors (no LLM, no generation): it lists, plays, loops, advances,
+shows status, and runs the one-time legacy migration. :class:`MusicCli` is a
+humble object testable with an in-memory gateway and formatter; playback crosses
+to ``voxd`` via a :class:`ProgramGateway`, other reads hit the store (design §4).
 """
 
 from __future__ import annotations
@@ -32,10 +28,8 @@ from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
 
-# A client error (unreachable/misbehaving daemon), a raw WebSocket failure (a
-# stale token's handshake, a mid-request close), or a bad Program name (a
-# ValueError from ProgramName) becomes a clean, non-zero CLI failure -- the MCP
-# tools already catch WebSocketException, so the CLI must too (finding F1).
+# A client error, a raw WebSocket failure (stale-token handshake / mid-request
+# close -- matching the MCP tools, F1), or a bad name (ValueError) fails cleanly.
 _GATEWAY_ERRORS = (
     VoxdConnectionError,
     VoxdProtocolError,
@@ -86,10 +80,9 @@ class MusicCli:
             self._formatter.emit({"programs": []}, "No saved programs.")
             return
         rows = [(m.name.value, len(m.ready_parts()), len(m.parts)) for m in programs]
-        payload = {
-            "programs": [{"name": n, "ready": r, "total": t} for n, r, t in rows]
-        }
+        entries = [{"name": n, "ready": r, "total": t} for n, r, t in rows]
         listing = "\n".join(f"  {n} — {r}/{t} part(s)" for n, r, t in rows)
+        payload = {"programs": entries}
         self._formatter.emit(payload, f"{len(rows)} saved program(s):\n{listing}")
 
     def play(
@@ -108,7 +101,7 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(
             {"music": "play", "name": name, "applied": outcome.applied},
-            outcome.message,
+            outcome.display(f"Playing {name}."),
         )
 
     def loop(
@@ -122,7 +115,7 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(
             {"music": "loop", "name": name, "applied": outcome.applied},
-            outcome.message,
+            outcome.display(f"Looping {name}."),
         )
 
     def advance(self) -> None:
@@ -132,7 +125,8 @@ class MusicCli:
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
         self._formatter.emit(
-            {"music": "next", "applied": outcome.applied}, outcome.message
+            {"music": "next", "applied": outcome.applied},
+            outcome.display("Advancing to another part."),
         )
 
     def status(self) -> None:
@@ -155,31 +149,25 @@ class MusicCli:
         )
 
     def _resolve_part(self, name: str, token: str | None) -> PartRef | None:
-        """Resolve an optional ``playlist:N`` token against the saved manifest.
+        """Resolve an optional ``playlist:N`` token, or ``None`` when none is given.
 
-        A malformed token, an unknown Program, or an out-of-range index is a
-        clean CLI error reported *before* any transition -- finding #7 (no such
-        transition exists). Returns ``None`` when no token is given.
+        A bad token/program/format/index fails cleanly before any transition (#7).
         """
         if token is None:
             return None
+        store = FilesystemProgramStore(self._programs_root())
         try:
             ref = PartRef.parse(token)
-        except ValueError as exc:
+            manifest = store.open(ProgramName(name)).manifest()
+            if ref.format is not manifest.format:
+                raise ValueError(f"{name} is not a {ref.format.value} program")
+            ready = manifest.ready_parts()
+            if not 1 <= ref.index <= len(ready):
+                raise ValueError(
+                    f"{name} has {len(ready)} parts; {ref.index} is out of range"
+                )
+        except (ValueError, LookupError) as exc:
             self._fail(str(exc))
-        manifest = FilesystemProgramStore(self._programs_root()).resolve(
-            ProgramName(name)
-        )
-        if manifest is None:
-            self._fail(f"no saved program named {name!r}")
-        if ref.format is not manifest.format:
-            self._fail(
-                f"{name} is a {manifest.format.label}; "
-                f"cannot address it as {ref.format.value}"
-            )
-        ready = manifest.ready_parts()
-        if not 1 <= ref.index <= len(ready):
-            self._fail(f"{name} has {len(ready)} parts; {ref.index} is out of range")
         return ref
 
     @staticmethod
@@ -198,11 +186,7 @@ class MusicCli:
 
 
 def build_music_app(formatter: OutputFormatter) -> typer.Typer:
-    """Return the ``vox music`` Typer group wired to a :class:`MusicCli`.
-
-    Registers the bound methods directly, so there are no throwaway wrapper
-    functions -- Typer reads each method's own ``Annotated`` argument metadata.
-    """
+    """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
     cli = MusicCli(formatter)
     app = typer.Typer(
         help="Play and manage saved audio Programs (consume-only).",

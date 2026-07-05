@@ -208,12 +208,12 @@ class SessionConfig:
         return updates
 
     def generating_message(self, style: str | None) -> str:
-        """Return the ♪ line for a music-on request.
+        """Return the music-on success line (the caller adds the ♪ marker).
 
         Reads the session vibe (``self._vibe``) only to *personalise the display*
         -- it is never fed back as an input to a Program transition (vox-73m5).
         """
-        prefix = "♪ Music on — generating"
+        prefix = "Music on — generating"
         vibe = self._vibe
         if style and vibe:
             return f"{prefix} a {style} track for your {vibe} mood..."
@@ -672,11 +672,11 @@ def music(
                 StartRequest(style=style, name=name, prompts=prompts)
             )
             _session.music_mode = "on"
-            message = _session.generating_message(style)
+            message = f"\u266a {outcome.display(_session.generating_message(style))}"
         else:
             outcome = _program_tools.stop()
             _session.music_mode = "off"
-            message = "\u266a Music off."
+            message = f"\u266a {outcome.display('Music off.')}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
@@ -703,9 +703,8 @@ def music_play(name: str) -> str:
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
     _session.music_mode = "on"
-    return json.dumps(
-        {"message": f"\u266a {outcome.message}", "applied": outcome.applied}
-    )
+    message = f"\u266a {outcome.display(f'Playing {name}.')}"
+    return json.dumps({"message": message, "applied": outcome.applied})
 
 
 @mcp.tool()
@@ -745,7 +744,7 @@ def music_next() -> str:
         outcome = _program_tools.advance()
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    message = "♪ Skipping — generating next track..."
+    message = f"♪ {outcome.display('Skipping — generating next track...')}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 

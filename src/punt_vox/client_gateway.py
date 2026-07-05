@@ -77,14 +77,17 @@ class ClientProgramGateway:
 
         A reply omitting ``applied`` is treated as applied -- the daemon only
         writes ``applied: false`` to flag a lost race (PY-EH-8: absence is the
-        documented "it went through" contract), and ``message`` defaults empty.
+        documented "it went through" contract). A rejection is guaranteed a
+        non-empty ``message`` so the surfaces never render a blank line for a
+        refused command (finding F4/F7); an applied command may carry none.
         """
         obj = JsonObject.coerce(resp, "command")
         applied = obj.opt_bool("applied")
-        return CommandOutcome(
-            applied=True if applied is None else applied,
-            message=obj.opt_str("message") or "",
-        )
+        applied = True if applied is None else applied
+        message = obj.opt_str("message") or ""
+        if not applied and not message:
+            message = "command rejected"
+        return CommandOutcome(applied=applied, message=message)
 
     @staticmethod
     def _summary(obj: JsonObject) -> ProgramSummary:
