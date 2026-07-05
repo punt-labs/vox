@@ -1,11 +1,10 @@
 """The request and result value objects the surfaces exchange with the daemon.
 
-These are the vocabulary of the :class:`~punt_vox.program_gateway.ProgramGateway`
-seam: what a client asks for (:class:`StartRequest`), what it learns happened
-(:class:`CommandOutcome` -- the per-command applied/rejected result, design F7),
-and the catalogue entry a ``list`` renders (:class:`ProgramSummary`). They are
-plain value objects with no I/O, so both the CLI and the MCP tools -- and their
-in-memory test fakes -- speak the same types without importing the daemon.
+The vocabulary of the :class:`~punt_vox.program_gateway.ProgramGateway` seam:
+the authoring request (:class:`StartRequest`), the applied/rejected result
+(:class:`CommandOutcome`, F7), and a catalogue entry (:class:`ProgramSummary`).
+Plain value objects with no I/O, so the CLI, the MCP tools, and their test fakes
+share the types without importing the daemon.
 """
 
 from __future__ import annotations
@@ -23,11 +22,9 @@ __all__ = ["CommandOutcome", "ProgramSummary", "StartRequest"]
 class StartRequest:
     """The authoring input for turning a Program on (the ``music on`` command).
 
-    Every field is optional: ``style`` is a display modifier that persists across
-    calls, ``name`` replays or saves a named track, and ``prompts`` carries the
-    agent-authored base + per-slot variations. ``prompts is None`` means no agent
-    is in the loop, so the pool falls back to a minimal literal prompt -- absence
-    is the documented contract (PY-TS-14), not a missing value.
+    All fields optional: ``style`` persists across calls, ``name`` replays or
+    saves a track, ``prompts`` carries the agent base + per-slot variations
+    (``None`` => a minimal literal fallback -- absence is the contract, PY-TS-14).
     """
 
     style: str | None = None
@@ -38,11 +35,10 @@ class StartRequest:
 @final
 @dataclass(frozen=True, slots=True)
 class CommandOutcome:
-    """Whether the daemon applied a command, and a human-readable line about it.
+    """Whether the daemon applied a command, and a line about it (design F7).
 
-    The ``applied`` flag is design F7: a command whose Z precondition no longer
-    held (a lost race -- e.g. ``next`` arriving just after ``off``) is *rejected*,
-    not an error. The caller observes which happened rather than reading a log.
+    A command whose Z precondition no longer held (a lost race -- ``next`` just
+    after ``off``) is *rejected*, not an error; the caller observes which.
     """
 
     applied: bool
@@ -57,6 +53,10 @@ class CommandOutcome:
     def rejected(cls, message: str) -> Self:
         """Return a rejected (lost-race) outcome carrying ``message``."""
         return cls(applied=False, message=message)
+
+    def display(self, applied_default: str) -> str:
+        """Return the daemon's reason, or ``applied_default`` when silent (F4/F7)."""
+        return self.message or applied_default
 
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form for an MCP tool return."""
@@ -75,5 +75,5 @@ class ProgramSummary:
 
     def display_line(self) -> str:
         """Return a human-readable one-line summary grouped under its Program."""
-        parts = self.total or self.ready
+        parts = max(self.total, self.ready)  # total counts ready+failed, or 0 unset
         return f"{self.name} — {self.ready}/{parts} part(s) [{self.format}]"

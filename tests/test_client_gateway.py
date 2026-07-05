@@ -149,6 +149,13 @@ def test_rejection_without_message_gets_a_non_empty_reason() -> None:
     assert outcome.message  # non-empty: the surfaces must have something to show
 
 
+def test_command_outcome_display_prefers_reason_over_default() -> None:
+    """display() shows the daemon reason when present, the default when silent."""
+    assert CommandOutcome.rejected("no track").display("Playing.") == "no track"
+    assert CommandOutcome.ok("").display("Playing.") == "Playing."
+    assert CommandOutcome.ok("live line").display("Playing.") == "live line"
+
+
 def test_play_forwards_part_index() -> None:
     """play() forwards the resolved 1-based part index to the wire."""
     client = MagicMock()
