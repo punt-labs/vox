@@ -169,7 +169,7 @@ def _write_batch(path: Path, updates: dict[str, str]) -> None:
             text = "---\n" + "\n".join(lines) + "\n---\n"
             break
 
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     for key, value in updates.items():
         logger.info("Config: set %s = %r in %s", key, value, path)
 
