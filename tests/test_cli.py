@@ -935,31 +935,37 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "excited"])
         assert result.exit_code == 0
         assert "excited" in result.output
+        assert 'vibe: "excited"' in (tmp_path / "vox.local.md").read_text()
 
     def test_vibe_auto(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
         assert result.exit_code == 0
         assert "auto" in result.output
+        assert 'vibe_mode: "auto"' in (tmp_path / "vox.local.md").read_text()
 
     def test_vibe_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
         assert result.exit_code == 0
         assert "off" in result.output
+        assert 'vibe_mode: "off"' in (tmp_path / "vox.local.md").read_text()
 
 
 # ---------------------------------------------------------------------------
