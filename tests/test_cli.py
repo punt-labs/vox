@@ -69,7 +69,7 @@ class TestUnmuteCommand:
 
         assert result.exit_code == 0
         call_kwargs = mock_instance.synthesize.call_args
-        assert call_kwargs[1]["voice"] == "hans"
+        assert call_kwargs.args[1].voice == "hans"
 
     def test_unmute_no_text_fails(self) -> None:
         runner = CliRunner()
@@ -118,8 +118,8 @@ class TestUnmuteCommand:
 
         assert result.exit_code == 0
         mock_instance.synthesize.assert_called_once()
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_project_a"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_project_a"
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_api_key_not_echoed_to_output(
@@ -179,8 +179,8 @@ class TestUnmuteCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert "api_key" not in call_kwargs
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key is None
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_no_api_key_omits_kwarg(
@@ -203,8 +203,8 @@ class TestUnmuteCommand:
         result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert "api_key" not in call_kwargs
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key is None
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_unmute_preserves_vibe_tags(
@@ -275,8 +275,8 @@ class TestApiKeyInputPaths:
         result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_env_var_test"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_env_var_test"
         assert "warning: --api-key on the command line" not in result.stderr
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -303,8 +303,8 @@ class TestApiKeyInputPaths:
         result = runner.invoke(app, ["unmute", "hello", "--api-key", "sk_argv_direct"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_argv_direct"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_argv_direct"
         assert "warning: --api-key on the command line" in result.stderr
         assert "VOX_API_KEY" in result.stderr
         assert "--api-key-file" in result.stderr
@@ -339,8 +339,8 @@ class TestApiKeyInputPaths:
         )
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_file_test"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_file_test"
         assert "warning: --api-key on the command line" not in result.stderr
         assert "accessible to group or other" not in result.stderr
 
@@ -394,8 +394,8 @@ class TestApiKeyInputPaths:
         )
 
         assert result.exit_code == 0, f"{label}: cli exited {result.exit_code}"
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_mode_test"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_mode_test"
         if should_warn:
             assert "accessible to group or other" in result.stderr, (
                 f"{label} (mode {oct(mode)}): expected permission warning, "
@@ -473,8 +473,8 @@ class TestApiKeyInputPaths:
         )
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_stdin_test"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_stdin_test"
         assert "warning: --api-key on the command line" not in result.stderr
 
     def test_api_key_stdin_rejects_tty(
@@ -637,8 +637,8 @@ class TestApiKeyInputPaths:
         result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert "api_key" not in call_kwargs
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key is None
         assert "warning: --api-key on the command line" not in result.stderr
 
     # ------------------------------------------------------------------
@@ -684,8 +684,8 @@ class TestApiKeyInputPaths:
         )
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_file_from_empty_env"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_file_from_empty_env"
         assert "cannot be empty" not in result.output
         assert "mutually exclusive" not in result.output
 
@@ -712,8 +712,8 @@ class TestApiKeyInputPaths:
         )
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert call_kwargs["api_key"] == "sk_stdin_from_empty_env"
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key == "sk_stdin_from_empty_env"
         assert "cannot be empty" not in result.output
         assert "mutually exclusive" not in result.output
 
@@ -739,8 +739,8 @@ class TestApiKeyInputPaths:
         result = runner.invoke(app, ["unmute", "hello"])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert "api_key" not in call_kwargs
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key is None
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_explicit_empty_argv_api_key_also_normalized(
@@ -769,8 +769,8 @@ class TestApiKeyInputPaths:
         result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_instance.synthesize.call_args[1]
-        assert "api_key" not in call_kwargs
+        spec = mock_instance.synthesize.call_args.args[1]
+        assert spec.api_key is None
 
 
 # ---------------------------------------------------------------------------
@@ -807,7 +807,7 @@ class TestRecordCommand:
 
         assert result.exit_code == 0
         call_kwargs = mock_instance.record.call_args
-        assert call_kwargs[1]["voice"] == "hans"
+        assert call_kwargs.args[1].voice == "hans"
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_from_file(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
@@ -854,11 +854,11 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.record.call_args[1]
-        assert call_kwargs["stability"] == 0.5
-        assert call_kwargs["similarity"] == 0.7
-        assert call_kwargs["style"] == 0.3
-        assert call_kwargs["speaker_boost"] is True
+        spec = mock_instance.record.call_args.args[1]
+        assert spec.stability == 0.5
+        assert spec.similarity == 0.7
+        assert spec.style == 0.3
+        assert spec.speaker_boost is True
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_with_language(
@@ -878,8 +878,8 @@ class TestRecordCommand:
         )
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.record.call_args[1]
-        assert call_kwargs["language"] == "de"
+        spec = mock_instance.record.call_args.args[1]
+        assert spec.language == "de"
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_connection_error(
@@ -1170,8 +1170,8 @@ class TestMainGroup:
             ["record", "hello", "--provider", "polly", "-o", str(out)],
         )
         assert result.exit_code == 0
-        call_kwargs = mock_instance.record.call_args[1]
-        assert call_kwargs["provider"] == "polly"
+        spec = mock_instance.record.call_args.args[1]
+        assert spec.provider == "polly"
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import logging
 import random
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -22,6 +22,7 @@ from websockets.exceptions import WebSocketException
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
 from punt_vox.logging_config import configure_logging
+from punt_vox.music_prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voices import VOICE_BLURBS
 from punt_vox.voxd.music.generator import MusicTrack
@@ -190,6 +191,28 @@ class SessionConfig:
             raise ValueError(msg)
         self._vibe_mode = mode
 
+    def music_message(
+        self, resp: dict[str, object], mode: str, style: str | None, name: str | None
+    ) -> str:
+        """Return the human-readable status line for a music tool response.
+
+        The "on" case reads the session vibe (``self._vibe``) to personalize the
+        generating message.
+        """
+        if resp.get("status") == "playing" and name:
+            return f"♪ Playing saved track: {name}"
+        if mode != "on":
+            return "♪ Music off."
+        prefix = "♪ Music on — generating"
+        vibe = self._vibe
+        if style and vibe:
+            return f"{prefix} a {style} track for your {vibe} mood..."
+        if style:
+            return f"{prefix} a {style} track..."
+        if vibe:
+            return f"{prefix} a track for your {vibe} mood..."
+        return f"{prefix} ambient music..."
+
     @classmethod
     def from_config(cls, config_dir: Path | None) -> SessionConfig:
         """Read per-repo config once and return a SessionConfig."""
@@ -289,24 +312,17 @@ def _error(message: str) -> str:
 
 def _process_segments(
     segments: list[dict[str, str]],
+    defaults: SynthesisSpec,
     *,
-    language: str | None,
-    effective_voice: str | None,
-    effective_provider: str | None,
-    effective_model: str | None,
-    effective_vibe_tags: str | None,
-    rate: int,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
     handler: Callable[[str, SynthesisSpec], dict[str, object]],
     error_label: str,
 ) -> str:
-    """Iterate segments, build a SynthesisSpec per segment, and delegate to *handler*.
+    """Synthesize each segment against *defaults* and delegate to *handler*.
 
-    Returns a JSON string: either a list of result dicts or an error dict.
-    The *handler* receives (seg_text, seg_spec) and returns one result dict.
+    *defaults* bundles the call-level synthesis parameters; each segment may
+    override ``voice``, ``language``, and ``vibe_tags``. Returns a JSON string:
+    a list of result dicts, or an error dict. The *handler* receives
+    (seg_text, seg_spec) and returns one result dict.
     """
     results: list[dict[str, object]] = []
     try:
@@ -314,21 +330,11 @@ def _process_segments(
             seg_text = seg.get("text", "")
             if not seg_text:
                 continue
-            seg_voice = seg.get("voice") or effective_voice
-            seg_language = seg.get("language") or language
-            seg_vibe_tags = seg.get("vibe_tags") or effective_vibe_tags
-
-            seg_spec = SynthesisSpec(
-                voice=seg_voice,
-                language=seg_language,
-                rate=rate,
-                provider=effective_provider,
-                model=effective_model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                vibe_tags=str(seg_vibe_tags) if seg_vibe_tags is not None else None,
+            seg_spec = replace(
+                defaults,
+                voice=seg.get("voice") or defaults.voice,
+                language=seg.get("language") or defaults.language,
+                vibe_tags=seg.get("vibe_tags") or defaults.vibe_tags,
             )
             results.append(handler(seg_text, seg_spec))
     except VoxdConnectionError as exc:
@@ -419,14 +425,16 @@ def unmute(
     # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
-            if provider is not None or model is not None or vibe_tags is not None:
-                updates: dict[str, str] = {}
-                if provider is not None:
-                    updates["provider"] = provider
-                if model is not None:
-                    updates["model"] = model
-                if vibe_tags is not None:
-                    updates["vibe_tags"] = vibe_tags
+            updates = {
+                key: value
+                for key, value in (
+                    ("provider", provider),
+                    ("model", model),
+                    ("vibe_tags", vibe_tags),
+                )
+                if value is not None
+            }
+            if updates:
                 return json.dumps({"status": "config updated", **updates})
             return _error("Provide text or segments.")
         segments = [{"text": text}]
@@ -435,7 +443,7 @@ def unmute(
     client = _voxd_client()
 
     def _synth_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        result = client.synthesize(seg_text, **seg_spec.to_client_kwargs())
+        result = client.synthesize(seg_text, seg_spec)
         entry: dict[str, object] = {
             "id": result.request_id,
             "text": seg_text,
@@ -451,20 +459,20 @@ def unmute(
                 entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
         return entry
 
-    return _process_segments(
-        segments,
+    defaults = SynthesisSpec(
+        voice=voice or _session.voice,
         language=language,
-        effective_voice=voice or _session.voice,
-        effective_provider=effective_provider,
-        effective_model=model or _session.model,
-        effective_vibe_tags=vibe_tags or _session.vibe_tags,
         rate=rate,
+        provider=effective_provider,
+        model=model or _session.model,
         stability=stability,
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        handler=_synth_handler,
-        error_label="Synthesis",
+        vibe_tags=vibe_tags or _session.vibe_tags,
+    )
+    return _process_segments(
+        segments, defaults, handler=_synth_handler, error_label="Synthesis"
     )
 
 
@@ -532,7 +540,7 @@ def record(
     client = _voxd_client()
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        mp3_bytes = client.record(seg_text, **seg_spec.to_client_kwargs())
+        mp3_bytes = client.record(seg_text, seg_spec)
 
         # Determine output file path.
         if output_path and len(segments) == 1:
@@ -555,20 +563,20 @@ def record(
             "bytes": len(mp3_bytes),
         }
 
-    return _process_segments(
-        segments,
+    defaults = SynthesisSpec(
+        voice=voice or _session.voice,
         language=language,
-        effective_voice=voice or _session.voice,
-        effective_provider=effective_provider,
-        effective_model=_session.model,
-        effective_vibe_tags=_session.vibe_tags,
         rate=rate,
+        provider=effective_provider,
+        model=_session.model,
         stability=stability,
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        handler=_record_handler,
-        error_label="Record",
+        vibe_tags=_session.vibe_tags,
+    )
+    return _process_segments(
+        segments, defaults, handler=_record_handler, error_label="Record"
     )
 
 
@@ -636,47 +644,40 @@ def vibe(
     return json.dumps({"vibe": updates})
 
 
-def _music_on_message(style: str | None, vibe: str | None) -> str:
-    """Build the human-readable message for music-on."""
-    prefix = "\u266a Music on \u2014 generating"
-    if style and vibe:
-        return f"{prefix} a {style} track for your {vibe} mood..."
-    if style:
-        return f"{prefix} a {style} track..."
-    if vibe:
-        return f"{prefix} a track for your {vibe} mood..."
-    return f"{prefix} ambient music..."
-
-
 @mcp.tool()
 def music(
     mode: str,
     style: str | None = None,
     name: str | None = None,
+    base_prompt: str | None = None,
+    variations: list[str] | None = None,
 ) -> str:
     """Control background music generation.
 
-    When on, voxd generates instrumental tracks derived from the current
-    session vibe and loops them. Vibe changes automatically trigger new
-    track generation for the owning session.
+    vox never interprets a genre -- YOU, the calling agent, author the prompts.
+    On ``on`` (and on any style/vibe change) supply ``base_prompt`` plus exactly
+    12 literal, genre-accurate ``variations`` (one per pool slot); voxd generates
+    track ``i`` from ``base_prompt`` + ``variations[i]``. Omit both to fall back
+    to ``"<style> music, <mood>. instrumental, loopable."``. Never add generic
+    "background music for deep work / smooth ambient texture / driving beat"
+    boilerplate -- it homogenizes every genre. See ``/music`` for a worked
+    example.
 
-    Args:
-        mode: "on" to start music, "off" to stop.
-        style: Optional style modifier (e.g. "techno", "jazz").
-            Persists across calls -- subsequent ``on`` reuses the
-            last-set style.
-        name: Optional track name. When a saved track with this name
-            exists, it is replayed without generation (zero credits).
-            When no saved track exists, the generated track is saved
-            under this name.
-
-    Returns:
-        JSON string with a human-readable ``message`` field and
-        the raw voxd response fields.
+    ``mode`` is "on"/"off"; ``style`` persists across calls; ``name`` replays or
+    saves a track; ``base_prompt`` + the 12 ``variations`` require each other.
+    Returns a JSON string with a ``message`` field and the raw voxd response.
     """
     _session.refresh_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
+
+    # Parse prompts only for "on"; an "off" stop must reach voxd even with stale args.
+    prompts: PromptSet | None = None
+    if mode == "on":
+        try:
+            prompts = PromptSet.from_tool_args(base_prompt, variations)
+        except ValueError as exc:
+            return _error(str(exc))
 
     client = _voxd_client()
     try:
@@ -687,35 +688,20 @@ def music(
             vibe_tags=_session.vibe_tags or "",
             owner_id=_session.session_id,
             name=name,
+            prompts=prompts,
         )
-    except VoxdConnectionError:
-        logger.warning("voxd unreachable in music tool; music off", exc_info=True)
-        _session.music_mode = "off"
-        return json.dumps(
-            {
-                "message": "\u266a Daemon unreachable \u2014 music off.",
-                "error": "daemon unreachable",
-            }
-        )
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
         _session.music_mode = "off"
-        return json.dumps(
-            {
-                "message": f"\u266a Music error: {exc}",
-                "error": str(exc),
-            }
-        )
+        if isinstance(exc, VoxdConnectionError):
+            message = "\u266a Daemon unreachable \u2014 music off."
+            error = "daemon unreachable"
+        else:
+            message, error = f"\u266a Music error: {exc}", str(exc)
+        return json.dumps({"message": message, "error": error})
 
     _session.music_mode = mode
-
-    # Replay of existing track — status is "playing", not "generating".
-    if resp.get("status") == "playing" and name:
-        message = f"\u266a Playing saved track: {name}"
-    elif mode == "on":
-        message = _music_on_message(style, _session.vibe)
-    else:
-        message = "\u266a Music off."
+    message = _session.music_message(resp, mode, style, name)
     return json.dumps({"message": message, **resp})
 
 

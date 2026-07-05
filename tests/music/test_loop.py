@@ -18,10 +18,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 from music.conftest import FakeTrackStore
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.loop import MusicLoop
-from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.scheduler import MusicRequest, MusicScheduler
 
 if TYPE_CHECKING:
     import pytest
@@ -135,7 +136,7 @@ class TestAutoAdvance:
                 patch(_SUBPROCESS, players.spawn),
                 patch(_PROVIDER, AsyncMock()) as gen_track,
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)
                 first = players.track_of(0)
@@ -166,7 +167,7 @@ class TestRotateAtTwelve:
                 patch(_SUBPROCESS, players.spawn),
                 patch(_PROVIDER, AsyncMock()) as gen_track,
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)
                 players.end(0)
@@ -200,7 +201,7 @@ class TestVibeChangeFinishesThenSwitches:
                 patch(_SUBPROCESS, players.spawn),
                 patch(_PROVIDER, AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)
                 assert players.track_of(0).startswith("calm_jazz_")
@@ -232,7 +233,11 @@ class TestOffCancelsFill:
         gen_calls = 0
 
         async def blocking_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1
@@ -245,7 +250,7 @@ class TestOffCancelsFill:
                 patch(_SUBPROCESS, players.spawn),
                 patch.object(TrackGenerator, "generate", blocking_generate),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)  # #00 playing
                 await asyncio.wait_for(gen_started.wait(), timeout=2.0)
@@ -276,7 +281,11 @@ class TestSingleTrackLoopsThenAdvances:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()  # one track per release
@@ -290,7 +299,7 @@ class TestSingleTrackLoopsThenAdvances:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)  # plays #00
                 players.end(0)
@@ -322,7 +331,11 @@ class TestGeneratingFirstThenPlays:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -336,7 +349,7 @@ class TestGeneratingFirstThenPlays:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await _settle()
                 assert not players.commands  # nothing plays before #1 exists
@@ -371,7 +384,11 @@ class TestVibeToNonEmptyPoolDuringGeneratingFirst:
         never = asyncio.Event()  # pool A's first generation never lands
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await never.wait()  # empty pool A stays generating-first forever
             msg = "unreachable"
@@ -383,7 +400,9 @@ class TestVibeToNonEmptyPoolDuringGeneratingFirst:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool A
+                await sched.turn_on(
+                    MusicRequest("u1", "jazz", ("calm", ""), "")
+                )  # empty pool A
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await _settle()
                 assert sched.state == "generating"  # awaiting A's first track
@@ -411,7 +430,11 @@ class TestSkipEmptyPoolIsNoOp:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -425,7 +448,7 @@ class TestSkipEmptyPoolIsNoOp:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await _settle()
 
@@ -463,7 +486,11 @@ class TestSkipDuringGeneratingFirstWithDiskTrack:
         never = asyncio.Event()  # the fill's first generation never lands
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await never.wait()  # await_first_track stays blocked forever
             msg = "unreachable"
@@ -475,7 +502,9 @@ class TestSkipDuringGeneratingFirstWithDiskTrack:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool
+                await sched.turn_on(
+                    MusicRequest("u1", "jazz", ("calm", ""), "")
+                )  # empty pool
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await _settle()
                 assert sched.state == "generating"  # awaiting the first track
@@ -519,13 +548,13 @@ class TestTurnOnWhileActiveDoesNotCrash:
                 patch(_SUBPROCESS, players.spawn),
                 patch(_PROVIDER, AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)
                 assert players.track_of(0).startswith("calm_jazz_")
 
                 # turn_on a NEW pool while the first track is still playing.
-                await sched.turn_on("u1", "jazz", ("bright", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("bright", ""), ""))
                 await _settle()
                 assert not task.done()  # the loop task survived (no crash)
                 assert players.procs[0].returncode is None  # current not killed
@@ -548,7 +577,11 @@ class TestTurnOnWhileActiveDoesNotCrash:
         release = asyncio.Event()
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             await release.wait()
             release.clear()
@@ -562,13 +595,15 @@ class TestTurnOnWhileActiveDoesNotCrash:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")  # empty pool
+                await sched.turn_on(
+                    MusicRequest("u1", "jazz", ("calm", ""), "")
+                )  # empty pool
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await _settle()
                 assert sched.state == "generating"
 
                 # turn_on again while awaiting the first track: must not crash.
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 await _settle()
                 assert not task.done()  # still alive, still generating-first
 
@@ -601,7 +636,11 @@ class TestNamedReplayResumesFill:
         gen_calls = 0
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1
@@ -617,7 +656,7 @@ class TestNamedReplayResumesFill:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)  # plays a disk member; fill running
                 assert sched.filling
@@ -667,7 +706,11 @@ class TestNamedFirstNonMatchingStemDoesNotCrash:
         players = _FakePlayers()
 
         async def gen_first_then_fail(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             if name == "mysong":  # the named-first track (stem misses the prefix)
                 return store.add(name), name
@@ -680,7 +723,7 @@ class TestNamedFirstNonMatchingStemDoesNotCrash:
                 patch.object(TrackGenerator, "generate", gen_first_then_fail),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "mysong")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), "mysong"))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)  # plays the named-first track
                 assert players.track_of(0) == "mysong.mp3"
@@ -709,7 +752,11 @@ class TestRestartResumesFromDisk:
         gen_calls = 0
 
         async def gated_generate(
-            self: TrackGenerator, vibe: tuple[str, str], style: str, name: str
+            self: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
         ) -> tuple[Any, str]:
             nonlocal gen_calls
             gen_calls += 1
@@ -725,7 +772,7 @@ class TestRestartResumesFromDisk:
                 patch.object(TrackGenerator, "generate", gated_generate),
                 patch.object(PoolFiller, "_backoff", AsyncMock()),
             ):
-                await sched.turn_on("u1", "jazz", ("calm", ""), "")
+                await sched.turn_on(MusicRequest("u1", "jazz", ("calm", ""), ""))
                 task = asyncio.create_task(MusicLoop(sched).run())
                 await players.wait_for(1)  # plays immediately from disk
                 assert sched.filling  # fill resumed

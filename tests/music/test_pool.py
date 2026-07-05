@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.voxd.music.pool import POOL_SIZE, TrackPool
+from punt_vox.music_prompts import POOL_SIZE
+from punt_vox.voxd.music.pool import TrackPool
 
 __all__: list[str] = []
 

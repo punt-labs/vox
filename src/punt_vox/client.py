@@ -21,7 +21,9 @@ from typing import Any, Self
 import websockets
 import websockets.asyncio.client
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
+from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
 
@@ -330,52 +332,23 @@ class VoxClient:
     async def synthesize(
         self,
         text: str,
+        spec: SynthesisSpec | None = None,
         *,
-        voice: str | None = None,
-        provider: str | None = None,
-        model: str | None = None,
-        rate: int = 90,
-        language: str | None = None,
-        vibe_tags: str | None = None,
-        stability: float | None = None,
-        similarity: float | None = None,
-        style: float | None = None,
-        speaker_boost: bool | None = None,
-        api_key: str | None = None,
         once: int | None = None,
     ) -> SynthesizeResult:
         """Send synthesize request. Audio plays on server.
 
-        Returns a ``SynthesizeResult`` carrying the request id, ``cached``
-        (cache-hit signal), and any dedup status. See :class:`SynthesizeResult`.
+        *spec* bundles the voice/provider/rate parameters; *once* is the dedup
+        TTL window (seconds). Returns a ``SynthesizeResult`` carrying the request
+        id, ``cached`` (cache-hit signal), and any dedup status.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "synthesize",
             "id": request_id,
             "text": text,
-            "rate": rate,
+            **(spec or SynthesisSpec()).to_client_kwargs(),
         }
-        if voice is not None:
-            msg["voice"] = voice
-        if provider is not None:
-            msg["provider"] = provider
-        if model is not None:
-            msg["model"] = model
-        if language is not None:
-            msg["language"] = language
-        if vibe_tags is not None:
-            msg["vibe_tags"] = vibe_tags
-        if stability is not None:
-            msg["stability"] = stability
-        if similarity is not None:
-            msg["similarity"] = similarity
-        if style is not None:
-            msg["style"] = style
-        if speaker_boost is not None:
-            msg["speaker_boost"] = speaker_boost
-        if api_key is not None:
-            msg["api_key"] = api_key
         if once is not None:
             msg["once"] = once
 
@@ -413,50 +386,18 @@ class VoxClient:
             msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
         )
 
-    async def record(
-        self,
-        text: str,
-        *,
-        voice: str | None = None,
-        provider: str | None = None,
-        model: str | None = None,
-        rate: int = 90,
-        language: str | None = None,
-        vibe_tags: str | None = None,
-        stability: float | None = None,
-        similarity: float | None = None,
-        style: float | None = None,
-        speaker_boost: bool | None = None,
-        api_key: str | None = None,
-    ) -> bytes:
-        """Synthesize and return MP3 bytes (no playback)."""
+    async def record(self, text: str, spec: SynthesisSpec | None = None) -> bytes:
+        """Synthesize and return MP3 bytes (no playback).
+
+        *spec* bundles the voice/provider/rate parameters.
+        """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "record",
             "id": request_id,
             "text": text,
-            "rate": rate,
+            **(spec or SynthesisSpec()).to_client_kwargs(),
         }
-        if voice is not None:
-            msg["voice"] = voice
-        if provider is not None:
-            msg["provider"] = provider
-        if model is not None:
-            msg["model"] = model
-        if language is not None:
-            msg["language"] = language
-        if vibe_tags is not None:
-            msg["vibe_tags"] = vibe_tags
-        if stability is not None:
-            msg["stability"] = stability
-        if similarity is not None:
-            msg["similarity"] = similarity
-        if style is not None:
-            msg["style"] = style
-        if speaker_boost is not None:
-            msg["speaker_boost"] = speaker_boost
-        if api_key is not None:
-            msg["api_key"] = api_key
 
         resp = await self._send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
         if resp.get("type") != "audio":
@@ -491,14 +432,13 @@ class VoxClient:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
+        prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback.
 
-        *mode* is ``"on"`` or ``"off"``. When ``"on"``, optional *style*,
-        *vibe*, *vibe_tags*, *owner_id*, and *name* are forwarded to voxd.
-        When *name* is given and a track with that name already exists,
-        voxd replays it without generation.  When ``"off"``, only
-        *owner_id* is sent.
+        On ``"on"``, forwards *style*, *vibe*, *vibe_tags*, *owner_id*, *name*,
+        and the agent-authored *prompts* (base + one variation per pool slot) to
+        voxd; on ``"off"`` only *owner_id* is sent.
         """
         if mode not in ("on", "off"):
             err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
@@ -519,6 +459,9 @@ class VoxClient:
                 msg["vibe_tags"] = vibe_tags
             if name is not None:
                 msg["name"] = name
+            if prompts is not None:
+                msg["base_prompt"] = prompts.base
+                msg["variations"] = list(prompts.variations)
         else:
             msg = {
                 "type": "music_off",
@@ -649,25 +592,27 @@ class VoxClientSync:
         finally:
             await client.close()
 
-    def synthesize(self, text: str, **kwargs: Any) -> SynthesizeResult:
+    def synthesize(
+        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
+    ) -> SynthesizeResult:
         """Send synthesize request. Audio plays on server.
 
-        See :class:`SynthesizeResult` for the returned fields — in
-        particular the ``deduped`` flag that surfaces when the caller
-        passed ``once=<ttl>`` and the server found an identical text
-        already played within the window.
+        *spec* bundles the voice/provider/rate parameters; *once* is the dedup
+        TTL. See :class:`SynthesizeResult` for the returned fields -- in
+        particular the ``deduped`` flag that surfaces when ``once=<ttl>`` matches
+        an identical text already played within the window.
         """
         return self._run(  # type: ignore[no-any-return]
-            self._call("synthesize", text, **kwargs)
+            self._call("synthesize", text, spec, once=once)
         )
 
     def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
         self._run(self._call("chime", signal))
 
-    def record(self, text: str, **kwargs: Any) -> bytes:
+    def record(self, text: str, spec: SynthesisSpec | None = None) -> bytes:
         """Synthesize and return MP3 bytes (no playback)."""
-        return self._run(self._call("record", text, **kwargs))  # type: ignore[no-any-return]
+        return self._run(self._call("record", text, spec))  # type: ignore[no-any-return]
 
     def voices(self, provider: str | None = None) -> list[str]:
         """List available voices."""
@@ -686,6 +631,7 @@ class VoxClientSync:
         vibe_tags: str | None = None,
         owner_id: str | None = None,
         name: str | None = None,
+        prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
         """Start or stop music playback."""
         return self._run(  # type: ignore[no-any-return]
@@ -697,6 +643,7 @@ class VoxClientSync:
                 vibe_tags=vibe_tags,
                 owner_id=owner_id,
                 name=name,
+                prompts=prompts,
             )
         )
 

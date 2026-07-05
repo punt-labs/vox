@@ -61,9 +61,11 @@ class ElevenLabsMusicProvider(MusicProvider):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            "Generating music track: duration_ms=%d, format=%s",
+            "Generating music track: path=%s, duration_ms=%d, format=%s, prompt=%r",
+            output_path,
             duration_ms,
             self._output_format,
+            prompt,
         )
 
         try:

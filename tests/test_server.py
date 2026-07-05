@@ -582,8 +582,8 @@ class TestUnmute:
 
         unmute(text="Guten Tag", language="de")
 
-        call_kwargs = mock_client.synthesize.call_args
-        assert call_kwargs[1]["language"] == "de"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.language == "de"
 
     def test_per_segment_language_overrides_default(
         self, monkeypatch: pytest.MonkeyPatch
@@ -598,8 +598,8 @@ class TestUnmute:
             segments=[{"text": "Bonjour", "language": "fr"}],
         )
 
-        call_kwargs = mock_client.synthesize.call_args
-        assert call_kwargs[1]["language"] == "fr"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.language == "fr"
 
 
 # ---------------------------------------------------------------------------
@@ -1049,7 +1049,73 @@ class TestMusicTool:
             vibe_tags="[calm]",
             owner_id=srv._session.session_id,
             name=None,
+            prompts=None,
         )
+
+    def test_music_on_forwards_agent_prompts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+        from punt_vox.music_prompts import PromptSet
+
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_on",
+            "id": "abc",
+            "status": "generating",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        variations = [f"var{i}" for i in range(12)]
+        json.loads(
+            music(
+                mode="on",
+                style="klezmer",
+                base_prompt="Klezmer, clarinet lead",
+                variations=variations,
+            )
+        )
+
+        prompts = mock_client.music.call_args.kwargs["prompts"]
+        assert prompts == PromptSet.from_agent("Klezmer, clarinet lead", variations)
+        assert srv._session.music_mode == "on"
+
+    def test_music_on_invalid_prompt_shape_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="on", style="klezmer", base_prompt="k", variations=["only-one"])
+        )
+
+        assert "error" in result
+        assert "exactly 12" in result["error"]
+        mock_client.music.assert_not_called()
+
+    def test_music_on_bad_prompts_while_playing_stays_consistent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Finding #2: a ValueError from PromptSet.from_tool_args is caller input,
+        # raised BEFORE any daemon call. It must not flip music_mode to "off"
+        # while voxd keeps playing -- that desyncs the session from the daemon.
+        # Reject it as an input error and leave the running state untouched, so
+        # voxd and the MCP session still agree that music is on.
+        import punt_vox.server as srv
+
+        srv._session.music_mode = "on"  # music already playing on voxd
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="on", style="jazz", base_prompt="j", variations=["only-one"])
+        )
+
+        assert "error" in result
+        assert "exactly 12" in result["error"]
+        mock_client.music.assert_not_called()  # voxd never told to stop or change
+        assert srv._session.music_mode == "on"  # session still agrees with voxd
 
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Style present, no vibe."""
@@ -1118,6 +1184,35 @@ class TestMusicTool:
 
         assert result["message"] == "\u266a Music off."
         assert result["status"] == "stopped"
+        assert srv._session.music_mode == "off"
+
+    def test_music_off_ignores_prompt_args_and_stops(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Finding #1: prompt args on a mode="off" request (e.g. a wrapper
+        # forwarding stale args) must not be validated. A malformed shape must
+        # never block the stop -- otherwise the daemon keeps playing while the
+        # session believes it asked to stop.
+        import punt_vox.server as srv
+
+        srv._session.music_mode = "on"
+        mock_client = MagicMock()
+        mock_client.music.return_value = {
+            "type": "music_off",
+            "id": "abc",
+            "status": "stopped",
+        }
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="off", base_prompt="stale", variations=["only-one"])
+        )
+
+        assert "error" not in result
+        assert result["status"] == "stopped"
+        mock_client.music.assert_called_once()
+        assert mock_client.music.call_args[1]["mode"] == "off"
+        assert mock_client.music.call_args[1]["prompts"] is None
         assert srv._session.music_mode == "off"
 
     def test_music_invalid_mode(self) -> None:
@@ -1759,8 +1854,8 @@ class TestRefreshIntegrationWithTools:
 
         unmute(text="Hello")
 
-        call_kwargs = mock_client.synthesize.call_args[1]
-        assert call_kwargs["voice"] == "roger"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.voice == "roger"
 
     def test_unmute_preserves_inmemory_provider_when_config_empty(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1779,5 +1874,5 @@ class TestRefreshIntegrationWithTools:
 
         unmute(text="Hello")
 
-        call_kwargs = mock_client.synthesize.call_args[1]
-        assert call_kwargs["provider"] == "openai"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.provider == "openai"

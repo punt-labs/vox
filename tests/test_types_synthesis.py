@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis import DEFAULT_RATE, SynthesisSpec
 
 
 class TestSynthesisSpecValidate:
@@ -55,9 +55,21 @@ class TestSynthesisSpecValidate:
 class TestSynthesisSpecToClientKwargs:
     """SynthesisSpec.to_client_kwargs omits None values."""
 
-    def test_empty_spec_returns_empty(self) -> None:
+    def test_empty_spec_carries_default_rate(self) -> None:
+        # rate is the one field always present: an unset rate falls back to
+        # DEFAULT_RATE so the wire message never omits speed (regression: a
+        # missing rate let providers default to 100 instead of 90).
         spec = SynthesisSpec()
-        assert spec.to_client_kwargs() == {}
+        assert spec.to_client_kwargs() == {"rate": DEFAULT_RATE}
+
+    def test_unset_rate_defaults_to_90(self) -> None:
+        spec = SynthesisSpec(voice="roger")
+        assert spec.to_client_kwargs()["rate"] == 90
+        assert DEFAULT_RATE == 90
+
+    def test_explicit_rate_overrides_default(self) -> None:
+        spec = SynthesisSpec(rate=120)
+        assert spec.to_client_kwargs()["rate"] == 120
 
     def test_includes_non_none_values(self) -> None:
         spec = SynthesisSpec(voice="matilda", provider="elevenlabs", rate=90)

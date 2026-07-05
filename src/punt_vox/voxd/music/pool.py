@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-__all__ = ["POOL_SIZE", "TrackPool"]
+from punt_vox.music_prompts import POOL_SIZE
 
-POOL_SIZE = 12
+__all__ = ["TrackPool"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,6 +10,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from punt_vox.music_prompts import POOL_SIZE, PromptSet
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.store import FilesystemTrackStore
 
@@ -25,25 +26,15 @@ def _gen(output_dir: Path) -> TrackGenerator:
 
 
 class TestGenerateFillsPool:
-    """generate() lazily fills a pool, passing variation = current pool size."""
+    """generate() fills a pool, drawing variation i for the i-th track."""
 
-    def test_twelve_generations_use_distinct_variation_indices(
+    def test_twelve_generations_use_variation_i_for_track_i(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        variations: list[int | None] = []
-
-        def fake_prompt(
-            vibe: str | None,
-            vibe_tags: str | None,
-            style: str | None,
-            hour: int,
-            signals: list[str],
-            variation: int | None = None,
-        ) -> str:
-            variations.append(variation)
-            return "prompt"
+        sent: list[str] = []
 
         async def fake_generate_track(prompt: str, dur: int, out: Path) -> None:
+            sent.append(prompt)
             out.write_bytes(b"x")  # never hits the real ElevenLabs API
 
         class FakeProvider:
@@ -52,18 +43,45 @@ class TestGenerateFillsPool:
 
             generate_track = staticmethod(fake_generate_track)
 
-        monkeypatch.setattr("punt_vox.music.vibe_to_prompt", fake_prompt)
         monkeypatch.setattr(
             "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider",
             FakeProvider,
         )
 
+        prompts = PromptSet.from_agent("BASE", [f"var{i}" for i in range(POOL_SIZE)])
         gen = _gen(tmp_path)
-        for _ in range(12):
-            asyncio.run(gen.generate(("calm", ""), "jazz", ""))
+        for _ in range(POOL_SIZE):
+            asyncio.run(gen.generate(("calm", ""), "jazz", "", prompts))
 
-        assert variations == list(range(12))
-        assert len(gen.tracks_for(gen.pool_prefix(("calm", "jazz")))) == 12
+        assert sent == [f"BASE var{i}" for i in range(POOL_SIZE)]
+        assert len(set(sent)) == POOL_SIZE
+        assert len(gen.tracks_for(gen.pool_prefix(("calm", "jazz")))) == POOL_SIZE
+
+    def test_fallback_prompt_used_when_no_agent_prompts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[str] = []
+
+        async def fake_generate_track(prompt: str, dur: int, out: Path) -> None:
+            sent.append(prompt)
+            out.write_bytes(b"x")
+
+        class FakeProvider:
+            def __new__(cls) -> FakeProvider:
+                return super().__new__(cls)
+
+            generate_track = staticmethod(fake_generate_track)
+
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_music.ElevenLabsMusicProvider",
+            FakeProvider,
+        )
+
+        fallback = PromptSet.fallback("jazz", "calm")
+        gen = _gen(tmp_path)
+        asyncio.run(gen.generate(("calm", ""), "jazz", "", fallback))
+
+        assert sent == ["jazz music, calm. instrumental, loopable."]
 
 
 class TestFindTrack:

@@ -13,12 +13,15 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.voxd.music.control import MusicControl, MusicControlChannel
 from punt_vox.voxd.music.generator import TrackGenerator
 from punt_vox.voxd.music.playlist import Playlist
 from punt_vox.voxd.music.types import MusicResponse
+
+if TYPE_CHECKING:
+    from punt_vox.music_prompts import PromptSet
 
 __all__ = ["MusicRequest", "MusicScheduler"]
 
@@ -29,12 +32,17 @@ _NO_KEY_MSG = "Background music requires an ElevenLabs API key (set ELEVENLABS_A
 
 @dataclass(frozen=True, slots=True)
 class MusicRequest:
-    """A request to start or change music for one session."""
+    """A request to start or change music for one session.
+
+    ``prompts`` is the agent-authored generation prompts, or ``None`` to fall
+    back to a minimal literal prompt.
+    """
 
     owner_id: str
     style: str
     vibe: tuple[str, str]
     name: str
+    prompts: PromptSet | None = None
 
 
 class MusicScheduler:
@@ -113,23 +121,17 @@ class MusicScheduler:
         """Return whether a named track is queued to play (a /music play)."""
         return self._pending_track is not None
 
-    async def turn_on(
-        self,
-        owner_id: str,
-        style: str,
-        vibe: tuple[str, str],
-        name: str,
-    ) -> MusicResponse:
+    async def turn_on(self, req: MusicRequest) -> MusicResponse:
         """Start music or transfer ownership for one (vibe, style) pool.
 
-        A ``name`` matching a saved track replays it; otherwise the pool is
-        adopted and an empty pool generates its first track before playing.
+        A ``req.name`` matching a saved track replays it; otherwise the pool is
+        adopted, the agent's ``req.prompts`` (or the fallback when ``None``) are
+        installed, and an empty pool generates its first track before playing.
         """
-        if not owner_id:
+        if not req.owner_id:
             msg = "owner_id is required"
             raise ValueError(msg)
-        req = MusicRequest(owner_id, style, vibe, name)
-        if name:
+        if req.name:
             replayed = await self._replay_named(req)
             if replayed is not None:
                 return replayed
@@ -137,8 +139,9 @@ class MusicScheduler:
         if not self._playlist.can_generate():
             raise ValueError(_NO_KEY_MSG)
         await self._adopt(req)
-        first_name = TrackGenerator.slugify(name, _NAME_MAX_LEN) if name else ""
-        self._playlist.ensure_fill(first_name=first_name)
+        self._playlist.set_prompts(req.prompts)
+        first = TrackGenerator.slugify(req.name, _NAME_MAX_LEN) if req.name else ""
+        self._playlist.ensure_fill(first_name=first)
         # A retarget queues no track: signal "vibe", not "play" (which is paired
         # with a queued track in _queue_named, never taken from an empty queue).
         self._channel.signal("vibe")
@@ -172,7 +175,7 @@ class MusicScheduler:
         await self.kill_proc()
         self._channel.activate()
         self._channel.claim(owner_id)
-        return self._switch_to_replayed_pool(track_path, safe_name)
+        return self._switch_to_replayed_pool(track_path, safe_name, prompts=None)
 
     def update_vibe(self, owner_id: str, vibe: tuple[str, str]) -> MusicResponse:
         """Update the vibe if the owner drives *playing* music; retarget fill now.
@@ -294,7 +297,7 @@ class MusicScheduler:
                 raise ValueError(msg)
             return None
         await self._adopt(req)
-        return self._switch_to_replayed_pool(track_path, safe_name)
+        return self._switch_to_replayed_pool(track_path, safe_name, req.prompts)
 
     async def _adopt(self, req: MusicRequest) -> None:
         """Kill any foreign playback and adopt ownership for a new pool."""
@@ -305,16 +308,24 @@ class MusicScheduler:
         self._channel.claim(req.owner_id)
         self._playlist.retune(req.vibe, req.style)
 
-    def _switch_to_replayed_pool(self, track: Path, name: str) -> MusicResponse:
+    def _switch_to_replayed_pool(
+        self, track: Path, name: str, prompts: PromptSet | None
+    ) -> MusicResponse:
         """Retarget selection and fill to a replayed track's pool, then queue it.
 
         Named replay retargets both selection and fill to the track's pool
         (DES-039): the old fill is cancelled and a fresh one starts (a no-op on a
         full pool), so the replayed pool keeps growing toward POOL_SIZE. Fill and
         selection share the pool prefix, so credits go to the pool being played.
+
+        ``prompts`` is the agent-authored :class:`PromptSet` for the replayed pool
+        (an agent-driven ``/music on --name X``) or ``None`` for a plain replay
+        (``/music play``). It is installed after ``set_prefix`` clears the stale
+        set, so the fill uses the authored base + variations, not the fallback.
         """
         self._playlist.cancel_fill()
         self._playlist.set_prefix(TrackGenerator.pool_prefix_of(track))
+        self._playlist.set_prompts(prompts)
         self._playlist.ensure_fill()
         return self._queue_named(track, name)
 
