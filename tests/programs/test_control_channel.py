@@ -13,16 +13,19 @@ from typing import Self, final
 import pytest
 
 from punt_vox.voxd.programs import (
+    MAX_RETRY,
     GuardViolationError,
     Mode,
     Part,
     PlaybackPolicy,
     Program,
     ProgramState,
+    Reason,
 )
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.fill_signal import TransientFailure
 from punt_vox.voxd.programs.filler import Filler, FillPlan
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
@@ -181,6 +184,67 @@ class _BoomProducer:
         raise OSError(msg)
 
 
+@final
+class _CountingHoldingProducer:
+    """Count each generation, then block forever so a single call stays in flight."""
+
+    __slots__ = ("calls",)
+    calls: int
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.calls = 0
+        return self
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        self.calls += 1
+        await asyncio.Event().wait()  # never completes
+        return Part(target.name, spec.index)
+
+
+class TestTerminalStateCancelsFill:
+    """F6: reaching a terminal, non-filling state cancels the fill so a Program
+    that has given up makes no further provider calls -- no leftover window."""
+
+    async def test_retry_exhausted_to_failed_cancels_the_fill(
+        self,
+        tmp_path: Path,
+        policy: PlaybackPolicy,
+        sleeper: Sleeper,
+        manifest_of: ManifestFactory,
+    ) -> None:
+        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
+        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        # Drive a Program to retrying at the cap with an empty pool.
+        prog = Program(ProgramState.initial(), policy)
+        prog.turn_on()
+        prog.first_track_transient(Reason("boom"))  # retrying, attempts 1, empty
+        for _ in range(MAX_RETRY - 1):
+            prog.retry_fails(Reason("boom"))
+        assert prog.state.attempts == MAX_RETRY
+
+        channel = ControlChannel(prog)
+        producer = _CountingHoldingProducer()
+        filler = Filler(producer, channel, sleeper)
+        channel.attach_fill(filler, _FixedPlanSource(plan))
+        filler.ensure_running(plan)  # model a fill still live as the Program gives up
+        await _until(lambda: producer.calls == 1)  # one generation in flight, running
+
+        # At the cap with an empty pool, one more transient exhausts -> failed.
+        channel.post(TransientFailure(Reason("boom")))
+        await channel.apply_next()
+        assert prog.mode is Mode.FAILED
+        assert (
+            not filler.is_running
+        )  # reconcile cancelled the fill on the terminal state
+
+        # The single in-flight generation is uncancellable (its output is
+        # discarded), but the cancelled loop starts NO new one: calls stay at 1.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert producer.calls == 1
+
+
 class TestUnexpectedFillErrorIsObservable:
     """F3 + F6: an unexpected fill error drives the Program to an observable
     failed state through the posted outcome, and the reconcile then cancels the
@@ -217,6 +281,14 @@ async def _reach(channel: ControlChannel, mode: Mode, *, spins: int = 500) -> No
     """Spin the event loop until the Program reaches ``mode`` (or give up)."""
     for _ in range(spins):
         if channel.program.mode is mode:
+            return
+        await asyncio.sleep(0)
+
+
+async def _until(predicate: Callable[[], bool], *, spins: int = 50) -> None:
+    """Spin the event loop until ``predicate`` holds (or give up)."""
+    for _ in range(spins):
+        if predicate():
             return
         await asyncio.sleep(0)
 

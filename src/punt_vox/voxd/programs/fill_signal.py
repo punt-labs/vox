@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
+from punt_vox.voxd.programs.fill_outcome import RecoveringFillOutcome
 from punt_vox.voxd.programs.format import MAX_RETRY
 from punt_vox.voxd.programs.mode import Mode
 
@@ -27,51 +28,31 @@ __all__ = ["PermanentFailure", "Produced", "TransientFailure"]
 
 @final
 @dataclass(frozen=True, slots=True)
-class Produced:
+class Produced(RecoveringFillOutcome):
     """A Part was generated and is ready to join the pool."""
 
     part: Part
 
-    @property
-    def interrupts(self) -> bool:
-        """A produced Part joins the pool; it never cuts off what is playing."""
-        return False
+    def _on_generating_first(self, program: Program) -> None:
+        program.first_track_ok(self.part)
 
-    def apply(self, program: Program) -> None:
-        """Admit the Part via the mode-appropriate success transition."""
-        if program.mode is Mode.RETRYING:
-            program.recover()
-        mode = program.mode
-        if mode is Mode.GENERATING_FIRST:
-            program.first_track_ok(self.part)
-        elif mode is Mode.PLAYING_FILLING:
-            program.fill_ok(self.part)
-        # else: the pool no longer wants this Part (off/rotating) -- drop it.
+    def _on_playing_filling(self, program: Program) -> None:
+        program.fill_ok(self.part)
 
 
 @final
 @dataclass(frozen=True, slots=True)
-class PermanentFailure:
+class PermanentFailure(RecoveringFillOutcome):
     """A Part hit a permanent generation error (bad prompt / ToS / missing key)."""
 
     part: Part
     reason: Reason
 
-    @property
-    def interrupts(self) -> bool:
-        """A per-Part failure is recorded silently; playback is not interrupted."""
-        return False
+    def _on_generating_first(self, program: Program) -> None:
+        program.first_track_bad_prompt(self.part, self.reason)
 
-    def apply(self, program: Program) -> None:
-        """Record the permanent failure via the mode-appropriate transition."""
-        if program.mode is Mode.RETRYING:
-            program.recover()
-        mode = program.mode
-        if mode is Mode.GENERATING_FIRST:
-            program.first_track_bad_prompt(self.part, self.reason)
-        elif mode is Mode.PLAYING_FILLING:
-            program.fill_bad_part(self.part, self.reason)
-        # else: drop -- the Program moved on from wanting this Part.
+    def _on_playing_filling(self, program: Program) -> None:
+        program.fill_bad_part(self.part, self.reason)
 
 
 @final
