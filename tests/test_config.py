@@ -274,13 +274,13 @@ class TestReadConfigLegacy:
             {
                 "notify": "c",
                 "speak": "y",
-                "vibe_mode": "manual",
                 "voice": "charlie",
             },
         )
         _write_frontmatter(
             tmp_path / "vox.local.md",
             {
+                "vibe_mode": "manual",
                 "vibe_tags": "[happy] [calm]",
                 "vibe_signals": "tests-pass@14:00",
                 "vibe": "happy",
@@ -304,8 +304,30 @@ class TestReadConfigLegacy:
         assert read_config(config_dir=tmp_path).speak == "y"
 
     def test_invalid_vibe_mode_defaults_to_auto(self, tmp_path: Path) -> None:
-        _write_frontmatter(tmp_path / "vox.md", {"vibe_mode": "invalid"})
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "invalid"})
         assert read_config(config_dir=tmp_path).vibe_mode == "auto"
+
+    def test_committed_vibe_mode_in_durable_file_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale vibe_mode in the tracked vox.md never reaches the session.
+
+        Regression for vox-73m5: a committed ``vibe_mode: "manual"`` used to
+        resurrect after a git checkout. vibe_mode is ephemeral now, so the
+        durable file's copy is filtered out on read.
+        """
+        _write_frontmatter(
+            tmp_path / "vox.md", {"vibe_mode": "manual", "voice": "roger"}
+        )
+        result = read_config(config_dir=tmp_path)
+        assert result.vibe_mode == "auto"  # default -- durable copy ignored
+        assert result.voice == "roger"  # genuine durable pref still read
+
+    def test_ephemeral_vibe_mode_wins_over_durable(self, tmp_path: Path) -> None:
+        """vox.local.md is authoritative for vibe_mode even if vox.md has one."""
+        _write_frontmatter(tmp_path / "vox.md", {"vibe_mode": "manual"})
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "off"})
+        assert read_config(config_dir=tmp_path).vibe_mode == "off"
 
     def test_empty_signals_returns_none(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"
@@ -430,3 +452,26 @@ class TestConfigStoreWrite:
     def test_write_fields_rejects_unknown_key(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Unknown config key"):
             ConfigStore(tmp_path).write_fields({"bad_key": "val"})
+
+    def test_non_ascii_value_round_trips(self, tmp_path: Path) -> None:
+        """A non-ASCII mood survives write+read via symmetric UTF-8 I/O.
+
+        Regression guard for the config-write encoding fix: ``_write_batch``
+        must encode as UTF-8 so a mood written on one platform reads back
+        identically regardless of the filesystem's default encoding.
+        """
+        store = ConfigStore(tmp_path)
+        mood = "café-résumé-你好-\U0001f60a"
+        store.write_field("vibe", mood)
+        assert store.read_field("vibe") == mood
+        assert (tmp_path / "vox.local.md").read_text(encoding="utf-8").count(mood) == 1
+
+    def test_non_ascii_value_survives_update_in_place(self, tmp_path: Path) -> None:
+        """Rewriting an existing file preserves non-ASCII content on both keys."""
+        store = ConfigStore(tmp_path)
+        first = "こんにちは"  # konnichiwa
+        second = "ça-va"  # ça-va
+        store.write_field("vibe", first)
+        store.write_field("vibe_tags", second)
+        assert store.read_field("vibe") == first
+        assert store.read_field("vibe_tags") == second

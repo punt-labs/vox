@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call, patch
 
-from punt_vox.config import VoxConfig
+from punt_vox.config import VoxConfig, read_config, write_fields
 from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
@@ -236,6 +236,61 @@ class TestHandleStop:
         assert result["decision"] == "block"
         # Vibe off — must not write tags to config
         mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# vibe authoritative-over-hooks boundary tests (regression: vox-73m5)
+# ---------------------------------------------------------------------------
+
+
+class TestVibeAuthoritativeBoundary:
+    """A vibe change through config must survive hook write-backs.
+
+    Exercises the real config/hook boundary: an authoritative ``/vibe auto``
+    clears the whole cluster, then a post-bash signal write and a stop-hook
+    tag write land on top. Neither may resurrect the cleared mood or flip
+    the mode away from auto.
+    """
+
+    @staticmethod
+    def _set_vibe_auto(config_dir: Path) -> None:
+        """Persist an authoritative ``/vibe auto`` to disk (notify on)."""
+        write_fields(
+            {
+                "notify": "y",
+                "vibe": "",
+                "vibe_tags": "",
+                "vibe_signals": "",
+                "vibe_mode": "auto",
+            },
+            config_dir=config_dir,
+        )
+
+    def test_cleared_mood_stays_cleared_after_write_backs(self, tmp_path: Path) -> None:
+        self._set_vibe_auto(tmp_path)
+        # A Bash signal write-back (e.g. during make check) accumulates a signal.
+        handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
+        # The stop hook then resolves tags from that signal and writes them.
+        handle_stop(_stop(), read_config(config_dir=tmp_path), tmp_path)
+        # The mood the user cleared must not come back.
+        assert read_config(config_dir=tmp_path).vibe is None
+
+    def test_auto_mode_survives_hook_write_backs(self, tmp_path: Path) -> None:
+        self._set_vibe_auto(tmp_path)
+        handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
+        handle_stop(_stop(), read_config(config_dir=tmp_path), tmp_path)
+        assert read_config(config_dir=tmp_path).vibe_mode == "auto"
+
+    def test_committed_manual_does_not_resurrect_stale_mood(
+        self, tmp_path: Path
+    ) -> None:
+        # Simulate a tracked vox.md carrying a stale vibe_mode after a checkout,
+        # while the session holds a cleared, auto vibe in vox.local.md.
+        (tmp_path / "vox.md").write_text('---\nvibe_mode: "manual"\nnotify: "y"\n---\n')
+        (tmp_path / "vox.local.md").write_text('---\nvibe_mode: "auto"\n---\n')
+        config = read_config(config_dir=tmp_path)
+        assert config.vibe_mode == "auto"  # ephemeral wins; durable copy inert
+        assert config.vibe is None
 
 
 # ---------------------------------------------------------------------------

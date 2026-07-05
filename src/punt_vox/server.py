@@ -21,9 +21,11 @@ from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
 from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
+from punt_vox.config import write_fields
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.vibe import VibeChange
 from punt_vox.voices import VOICE_BLURBS
 from punt_vox.voxd.music.generator import MusicTrack
 
@@ -48,7 +50,6 @@ mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 _VALID_NOTIFY_MODES = frozenset({"y", "n", "c"})
 _VALID_SPEAK_MODES = frozenset({"y", "n"})
-_VALID_VIBE_MODES = frozenset({"auto", "manual", "off"})
 
 
 # ---------------------------------------------------------------------------
@@ -184,12 +185,23 @@ class SessionConfig:
             self._vibe_tags = tags
             self._vibe_signals = ""
 
-    def set_vibe_mode(self, mode: str) -> None:
-        """Set vibe detection mode with validation."""
-        if mode not in _VALID_VIBE_MODES:
-            msg = f"invalid vibe mode: {mode!r}"
-            raise ValueError(msg)
-        self._vibe_mode = mode
+    def change_vibe(self, change: VibeChange) -> dict[str, str]:
+        """Apply an authoritative vibe change; return the fields to persist.
+
+        The transition rules live on ``VibeChange``; this method mirrors the
+        resolved updates into the in-memory session (an empty string clears
+        the field back to ``None``).  Raises ``ValueError`` for a bad mode.
+        """
+        updates = change.resolve()
+        if "vibe" in updates:
+            self._vibe = updates["vibe"] or None
+        if "vibe_tags" in updates:
+            self._vibe_tags = updates["vibe_tags"] or None
+        if "vibe_signals" in updates:
+            self._vibe_signals = updates["vibe_signals"]
+        if "vibe_mode" in updates:
+            self._vibe_mode = updates["vibe_mode"]
+        return updates
 
     def music_message(
         self, resp: dict[str, object], mode: str, style: str | None, name: str | None
@@ -604,25 +616,15 @@ def vibe(
         JSON string with the updated vibe state.
     """
     _session.refresh_from_config()
-    updates: dict[str, str] = {}
-    if mood is not None:
-        updates["vibe"] = mood
-    if tags is not None:
-        updates["vibe_tags"] = tags
-        updates["vibe_signals"] = ""
-    _session.set_vibe(mood=mood, tags=tags)
-    if mode is not None:
-        if mode not in _VALID_VIBE_MODES:
-            return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
-        updates["vibe_mode"] = mode
-        _session.set_vibe_mode(mode)
+    try:
+        updates = _session.change_vibe(VibeChange(mood=mood, tags=tags, mode=mode))
+    except ValueError:
+        return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
 
     if not updates:
         return _error("Provide at least one of: mood, tags, mode.")
 
     # Persist to disk so hooks (which read config independently) see the change
-    from punt_vox.config import write_fields
-
     write_fields(updates, _find_config_dir())
 
     # Propagate vibe change to music loop if this session owns music.
@@ -912,8 +914,6 @@ def notify(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    from punt_vox.config import write_fields
-
     write_fields(updates, _find_config_dir())
 
     return json.dumps({"notify": updates})
@@ -946,8 +946,6 @@ def speak(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    from punt_vox.config import write_fields
-
     write_fields(updates, _find_config_dir())
 
     return json.dumps(updates)
