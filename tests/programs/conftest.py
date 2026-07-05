@@ -22,6 +22,7 @@ from punt_vox.voxd.programs import (
     AdvanceResult,
     Format,
     Part,
+    PlaybackPolicy,
     Program,
     ProgramState,
     Reason,
@@ -99,15 +100,26 @@ def reason() -> Reason:
     return Reason("boom")
 
 
-@pytest.fixture
-def rotating() -> Program:
-    """Return a Program driven to ``playing_rotating`` with a full 12-Part pool."""
-    prog = Program(ProgramState.initial(), AvoidRepeatPolicy())
+def build_rotating(policy: PlaybackPolicy) -> Program:
+    """Drive a fresh Program to ``playing_rotating`` with a full 12-Part pool."""
+    prog = Program(ProgramState.initial(), policy)
     prog.turn_on()
     prog.first_track_ok(make_part(1))
     for i in range(2, Format.PLAYLIST.pool_size + 1):
         prog.fill_ok(make_part(i))
     return prog
+
+
+@pytest.fixture
+def rotating() -> Program:
+    """Return a Program driven to ``playing_rotating`` with a full 12-Part pool."""
+    return build_rotating(AvoidRepeatPolicy())
+
+
+@pytest.fixture
+def make_rotating() -> Callable[[PlaybackPolicy], Program]:
+    """Return the factory that builds a fresh full-pool rotating Program."""
+    return build_rotating
 
 
 # ---------------------------------------------------------------------------
