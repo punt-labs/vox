@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import final
+from pathlib import Path
+from typing import Self, final
 
 import pytest
 
@@ -25,6 +26,13 @@ from punt_vox.voxd.programs import (
     ProgramState,
     Reason,
 )
+from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.voxd.programs.manifest import (
+    PartEntry,
+    PlaylistSubject,
+    ProgramManifest,
+)
+from punt_vox.voxd.programs.part import PartStatus
 
 
 @final
@@ -100,3 +108,118 @@ def rotating() -> Program:
     for i in range(2, Format.PLAYLIST.pool_size + 1):
         prog.fill_ok(make_part(i))
     return prog
+
+
+# ---------------------------------------------------------------------------
+# In-memory persistence fakes -- structural PartStore/ProgramStore doubles.
+# They generalize today's FakeTrackStore: dict-backed, filesystem-free, so the
+# domain and (slice-3) loop tests never touch the disk. Parity with the
+# filesystem impls is asserted in test_store.py.
+# ---------------------------------------------------------------------------
+
+
+def ready_entry(index: int, duration_ms: int = 120_000) -> PartEntry:
+    """Build a ready manifest entry addressing ``NNN.mp3`` at ``index``."""
+    return PartEntry(
+        index=index,
+        file=f"{index:03d}.mp3",
+        status=PartStatus.READY,
+        duration_ms=duration_ms,
+    )
+
+
+def make_manifest(name: str = "ambient_techno", *indices: int) -> ProgramManifest:
+    """Build a playlist manifest named ``name`` with ready Parts at ``indices``."""
+    return ProgramManifest(
+        name=ProgramName(name),
+        fmt=Format.PLAYLIST,
+        subject=PlaylistSubject(vibe="ambient", style="techno"),
+        parts=tuple(ready_entry(i) for i in indices),
+    )
+
+
+@final
+class InMemoryPartStore:
+    """A dict-backed PartStore: holds one Program's manifest in memory."""
+
+    __slots__ = ("_manifest",)
+    _manifest: ProgramManifest
+
+    def __new__(cls, manifest: ProgramManifest) -> Self:
+        self = super().__new__(cls)
+        self._manifest = manifest
+        return self
+
+    def ready_parts(self) -> tuple[Part, ...]:
+        return self._manifest.ready_parts()
+
+    def next_index(self) -> int:
+        return self._manifest.next_index()
+
+    def write_target(self, index: int) -> Path:
+        # Synthetic path -- a faked Producer never writes it.
+        return Path(f"{index:03d}.mp3")
+
+    def record(self, entry: PartEntry) -> None:
+        self._manifest = self._manifest.with_part(entry)
+
+    def manifest(self) -> ProgramManifest:
+        return self._manifest
+
+    def prepare(self) -> None:
+        return None
+
+
+@final
+class InMemoryProgramStore:
+    """A dict-backed ProgramStore keyed by Program name."""
+
+    __slots__ = ("_stores",)
+    _stores: dict[str, InMemoryPartStore]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._stores = {}
+        return self
+
+    def list_programs(self) -> tuple[ProgramManifest, ...]:
+        return tuple(
+            sorted(
+                (store.manifest() for store in self._stores.values()),
+                key=lambda m: m.name.value,
+            )
+        )
+
+    def resolve(self, name: ProgramName) -> ProgramManifest | None:
+        store = self._stores.get(name.value)
+        return None if store is None else store.manifest()
+
+    def open(self, name: ProgramName) -> InMemoryPartStore:
+        store = self._stores.get(name.value)
+        if store is None:
+            msg = f"no saved program named {name.value!r}"
+            raise LookupError(msg)
+        return store
+
+    def create(self, manifest: ProgramManifest) -> InMemoryPartStore:
+        store = InMemoryPartStore(manifest)
+        self._stores[manifest.name.value] = store
+        return store
+
+
+@pytest.fixture
+def program_store() -> InMemoryProgramStore:
+    """Return an empty in-memory program store."""
+    return InMemoryProgramStore()
+
+
+@pytest.fixture
+def manifest_of() -> Callable[..., ProgramManifest]:
+    """Return the playlist-manifest factory."""
+    return make_manifest
+
+
+@pytest.fixture
+def entry_of() -> Callable[..., PartEntry]:
+    """Return the ready-entry factory."""
+    return ready_entry
