@@ -17,6 +17,7 @@ import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
+from punt_vox.cli_music import build_music_app
 from punt_vox.client import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import (
@@ -29,7 +30,6 @@ from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voxd.music.generator import MusicTrack
 
 logger = logging.getLogger(__name__)
 
@@ -979,139 +979,10 @@ def mcp() -> None:
 
 
 # ---------------------------------------------------------------------------
-# music subcommand group
+# music subcommand group (consume-only; implementation in cli_music)
 # ---------------------------------------------------------------------------
 
-music_app = typer.Typer(
-    help="Control background music generation.",
-    no_args_is_help=True,
-)
-app.add_typer(music_app, name="music")
-
-
-@music_app.command("on")
-def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
-    style: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--style",
-            help="Style modifier for music generation (e.g. techno, jazz).",
-        ),
-    ] = None,
-    name: Annotated[
-        str | None,
-        typer.Option(
-            "--name",
-            help="Track name. Replays if exists, otherwise saves.",
-        ),
-    ] = None,
-) -> None:
-    """Start background music generation via voxd."""
-    style_str = " ".join(style) if style else None
-    client = VoxClientSync()
-    try:
-        result = client.music("on", style=style_str, name=name)
-        status = result.get("status", "unknown")
-        payload: dict[str, object] = {"music": "on", "status": status}
-        if style_str:
-            payload["style"] = style_str
-        if name:
-            payload["name"] = name
-        text = f"Music on ({status})"
-        if name and status == "playing":
-            text = f"Playing saved track: {name}"
-        elif style_str:
-            text += f" — style: {style_str}"
-        _formatter.emit(payload, text)
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("off")
-def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Stop background music generation."""
-    client = VoxClientSync()
-    try:
-        result = client.music("off")
-        status = result.get("status", "stopped")
-        _formatter.emit({"music": "off", "status": status}, f"Music off ({status})")
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("play")
-def music_play_cmd(  # pyright: ignore[reportUnusedFunction]
-    name: Annotated[
-        str,
-        typer.Argument(help="Name of saved track to play."),
-    ],
-) -> None:
-    """Replay a saved music track by name."""
-    client = VoxClientSync()
-    try:
-        result = client.music_play(name)
-        track_name = result.get("name", name)
-        _formatter.emit(
-            {"music": "play", "name": track_name, "status": "playing"},
-            f"Playing: {track_name}",
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("list")
-def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """List saved music tracks."""
-    client = VoxClientSync()
-    try:
-        result = client.music_list()
-        raw_tracks: list[dict[str, object]] = result.get("tracks", [])
-        tracks = [MusicTrack.from_dict(t) for t in raw_tracks]
-        if not tracks:
-            _formatter.emit({"tracks": []}, "No saved tracks.")
-            return
-        lines = [f"  {track.display_line()}" for track in tracks]
-        _formatter.emit(
-            {"tracks": raw_tracks},
-            f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("next")
-def music_next_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Skip to a new generated track (gapless)."""
-    client = VoxClientSync()
-    try:
-        result = client.music_next()
-        status = result.get("status", "unknown")
-        _formatter.emit(
-            {"music": "next", "status": status},
-            f"Music next ({status})",
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+app.add_typer(build_music_app(_formatter), name="music")
 
 
 # ---------------------------------------------------------------------------
