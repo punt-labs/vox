@@ -83,7 +83,14 @@ class MusicCli:
         listing = "\n".join(f"  {n} — {r}/{t} part(s)" for n, r, t in rows)
         self._formatter.emit(payload, f"{len(rows)} saved program(s):\n{listing}")
 
-    def play(self, name: str, part: str | None = None) -> None:
+    def play(
+        self,
+        name: Annotated[str, typer.Argument(help="Saved Program name to play.")],
+        part: Annotated[
+            str | None,
+            typer.Argument(help="Optional part address, e.g. 'playlist:2'."),
+        ] = None,
+    ) -> None:
         """Play a saved Program from disk, optionally at a specific part."""
         ref = self._resolve_part(name, part)
         try:
@@ -95,7 +102,10 @@ class MusicCli:
             outcome.message,
         )
 
-    def loop(self, name: str) -> None:
+    def loop(
+        self,
+        name: Annotated[str, typer.Argument(help="Saved Program name to loop.")],
+    ) -> None:
         """Play a saved Program and rotate on every track end."""
         try:
             outcome = self._gateway_factory().loop(ProgramName(name))
@@ -174,43 +184,20 @@ class MusicCli:
 
 
 def build_music_app(formatter: OutputFormatter) -> typer.Typer:
-    """Return the ``vox music`` Typer group wired to a :class:`MusicCli`."""
+    """Return the ``vox music`` Typer group wired to a :class:`MusicCli`.
+
+    Registers the bound methods directly, so there are no throwaway wrapper
+    functions -- Typer reads each method's own ``Annotated`` argument metadata.
+    """
     cli = MusicCli(formatter)
     app = typer.Typer(
         help="Play and manage saved audio Programs (consume-only).",
         no_args_is_help=True,
     )
-
-    @app.command("list")
-    def _list() -> None:
-        cli.list_programs()
-
-    @app.command("play")
-    def _play(
-        name: Annotated[str, typer.Argument(help="Saved Program name to play.")],
-        part: Annotated[
-            str | None,
-            typer.Argument(help="Optional part address, e.g. 'playlist:2'."),
-        ] = None,
-    ) -> None:
-        cli.play(name, part)
-
-    @app.command("loop")
-    def _loop(
-        name: Annotated[str, typer.Argument(help="Saved Program name to loop.")],
-    ) -> None:
-        cli.loop(name)
-
-    @app.command("next")
-    def _next() -> None:
-        cli.advance()
-
-    @app.command("status")
-    def _status() -> None:
-        cli.status()
-
-    @app.command("migrate")
-    def _migrate() -> None:
-        cli.migrate()
-
+    app.command("list")(cli.list_programs)
+    app.command("play")(cli.play)
+    app.command("loop")(cli.loop)
+    app.command("next")(cli.advance)
+    app.command("status")(cli.status)
+    app.command("migrate")(cli.migrate)
     return app

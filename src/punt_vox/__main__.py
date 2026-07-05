@@ -76,40 +76,15 @@ def _configure_logging(*, verbose: bool) -> None:
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
 
 
-def _build_synthesis_spec(
-    *,
-    voice: str | None,
-    language: str | None,
-    rate: int | None,
-    provider: str | None,
-    model: str | None,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
-    api_key: str | None = None,
-    vibe_tags: str | None = None,
-    once: bool = False,
-) -> SynthesisSpec:
-    """Build a SynthesisSpec and validate at the CLI boundary.
+def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
+    """Validate a spec at the CLI boundary, returning it for chaining.
 
     Translates ``ValueError`` from :meth:`SynthesisSpec.validate` into
-    ``typer.BadParameter`` so the CLI displays a user-friendly message.
+    ``typer.BadParameter`` so the CLI displays a user-friendly message. The
+    caller builds the :class:`SynthesisSpec` (the bundle already names every
+    field), so this stays a one-argument boundary check rather than re-listing
+    a dozen parameters.
     """
-    spec = SynthesisSpec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        api_key=api_key,
-        vibe_tags=vibe_tags,
-        once=once,
-    )
     try:
         spec.validate()
     except ValueError as exc:
@@ -364,17 +339,19 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     ).resolve()
 
     boost = speaker_boost if speaker_boost else None
-    spec = _build_synthesis_spec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
-        api_key=resolved_api_key,
+    spec = _validated_spec(
+        SynthesisSpec(
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=boost,
+            api_key=resolved_api_key,
+        )
     )
 
     segments = _resolve_text_segments(text, from_file)
@@ -424,16 +401,18 @@ def record(  # pyright: ignore[reportUnusedFunction]
     from punt_vox.types import generate_filename
 
     boost = speaker_boost if speaker_boost else None
-    spec = _build_synthesis_spec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
+    spec = _validated_spec(
+        SynthesisSpec(
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=boost,
+        )
     )
 
     segments = _resolve_text_segments(text, from_file)

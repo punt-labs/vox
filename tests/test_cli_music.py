@@ -38,7 +38,9 @@ class _AvoidRepeat:
 
 
 @pytest.fixture(autouse=True)
-def _programs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _programs_dir(  # pyright: ignore[reportUnusedFunction]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
     """Point the saved-Programs root at an isolated tmp dir."""
     monkeypatch.setenv("VOX_OUTPUT_DIR", str(tmp_path))
     return tmp_path / "programs"
