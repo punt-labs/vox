@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs import (
     Format,
@@ -41,6 +42,9 @@ from punt_vox.voxd.programs.producer import (
 )
 from punt_vox.voxd.programs.sleeper import Sleeper
 from punt_vox.voxd.programs.store import PartStore
+
+if TYPE_CHECKING:
+    import pytest
 
 _FULL = Format.PLAYLIST.pool_size
 
@@ -307,3 +311,67 @@ class TestFailureHandling:
         assert len(store.ready_parts()) == _FULL
         failed = [e for e in store.manifest().parts if not e.is_ready]
         assert len(failed) == 1
+
+    async def test_unexpected_error_records_failed_and_continues(
+        self, tmp_path: Path, policy: PlaybackPolicy, sleeper: Sleeper
+    ) -> None:
+        # An error that is NEITHER a ProducerBadInputError NOR a
+        # ProducerTransientError (a bug, an OSError writing the target) must not
+        # kill the fill task silently: _produce_one records the Part failed with
+        # an "unexpected:" reason, posts a permanent outcome, and the loop goes on.
+        store = _seeded_store(tmp_path, _FULL - 1)
+        seen: list[int] = []
+
+        @final
+        class BoomOnceProducer:
+            async def produce(self, spec: PartSpec, target: Path) -> Part:
+                seen.append(spec.index)
+                if len(seen) == 1:
+                    msg = "disk gone"
+                    raise OSError(msg)  # not a Producer* error -- unexpected
+                target.write_bytes(b"x")
+                return Part(target.name, spec.index)
+
+        filler = Filler(BoomOnceProducer(), _channel(policy), sleeper)
+        filler.ensure_running(_plan(store))
+        await _drain(filler)
+        assert len(store.ready_parts()) == _FULL
+        failed = [e for e in store.manifest().parts if not e.is_ready]
+        assert len(failed) == 1
+        assert failed[0].reason is not None
+        assert failed[0].reason.startswith("unexpected:")
+
+    async def test_done_callback_logs_an_escaped_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A fill task should only ever finish cleanly or by cancellation, but if
+        # an error escapes it (a store read, a bug), the done-callback surfaces
+        # it at ERROR instead of letting the task die with no trace.
+        async def _boom() -> None:
+            msg = "upstream boom"
+            raise RuntimeError(msg)
+
+        task: asyncio.Task[None] = asyncio.ensure_future(_boom())
+        with contextlib.suppress(RuntimeError):
+            await task
+        with caplog.at_level(logging.ERROR):
+            Filler._on_fill_done(task)
+        assert any(
+            "fill task died" in r.getMessage() and r.levelno == logging.ERROR
+            for r in caplog.records
+        )
+
+    async def test_done_callback_stays_quiet_on_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def _hang() -> None:
+            await asyncio.Event().wait()
+
+        task: asyncio.Task[None] = asyncio.ensure_future(_hang())
+        await asyncio.sleep(0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        with caplog.at_level(logging.ERROR):
+            Filler._on_fill_done(task)  # a normal cancel is not an error
+        assert not any(r.levelno == logging.ERROR for r in caplog.records)

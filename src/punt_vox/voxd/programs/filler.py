@@ -147,7 +147,9 @@ class Filler:
         plan.store.prepare()
         if self._is_full(plan):
             return
-        self._task = asyncio.create_task(self._fill(plan))
+        task = asyncio.create_task(self._fill(plan))
+        task.add_done_callback(self._on_fill_done)
+        self._task = task
 
     def cancel(self) -> None:
         """Cancel the fill task and forget the plan -- no orphaned generation."""
@@ -191,6 +193,15 @@ class Filler:
             self._channel.post(TransientFailure(self._reason(exc, "transient")))
             await self._sleeper.sleep(_BACKOFF_SECONDS)
             return
+        except Exception as exc:
+            # An unexpected error (OSError on the target, an unwrapped timeout, a
+            # bug) is neither known-permanent nor known-transient. Record the Part
+            # failed and post a permanent outcome so the Program reaches an
+            # OBSERVABLE failed/retry state (vox-ig52) instead of a dead filler
+            # with filling still True and the loop hung waiting on it.
+            logger.exception("fill: unexpected error producing part %d", index)
+            self._record_and_post(store, self._unexpected(index, target, exc))
+            return
         finally:
             if self._inflight is inflight:
                 self._inflight = None
@@ -224,7 +235,19 @@ class Filler:
     def _permanent(
         index: int, target: Path, exc: ProducerBadInputError
     ) -> tuple[PartEntry, PermanentFailure]:
-        reason = Filler._reason(exc, "permanent")
+        return Filler._failed(index, target, Filler._reason(exc, "permanent"))
+
+    @staticmethod
+    def _unexpected(
+        index: int, target: Path, exc: Exception
+    ) -> tuple[PartEntry, PermanentFailure]:
+        """Build a permanent outcome tagged as an unexpected (buggy) failure."""
+        return Filler._failed(index, target, Reason(f"unexpected: {exc}"))
+
+    @staticmethod
+    def _failed(
+        index: int, target: Path, reason: Reason
+    ) -> tuple[PartEntry, PermanentFailure]:
         part = Part(target.name, index)
         entry = PartEntry(
             index=index,
@@ -233,6 +256,21 @@ class Filler:
             reason=reason.text,
         )
         return entry, PermanentFailure(part, reason)
+
+    @staticmethod
+    def _on_fill_done(task: asyncio.Task[None]) -> None:
+        """Surface any error that escaped the fill task instead of losing it.
+
+        ``_produce_one`` posts an outcome for every generation error, so the fill
+        task should only ever finish cleanly or by cancellation. A retrieved
+        exception here means something upstream (a store read, a bug) killed the
+        task; logging it at ERROR keeps the task from dying with no trace.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("fill task died with an unexpected error", exc_info=exc)
 
     def _cancel_task(self) -> None:
         """Cancel the live fill task and abandon any in-flight generation."""

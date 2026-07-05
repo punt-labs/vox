@@ -173,6 +173,55 @@ class TestFillReconciliation:
 
 
 @final
+class _BoomProducer:
+    """Raise an unexpected (non-Producer) error on every generation."""
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        msg = "disk gone"
+        raise OSError(msg)
+
+
+class TestUnexpectedFillErrorIsObservable:
+    """F3 + F6: an unexpected fill error drives the Program to an observable
+    failed state through the posted outcome, and the reconcile then cancels the
+    dead-ended fill -- never a silent hang with filling still True."""
+
+    async def test_generating_first_unexpected_error_fails_the_program(
+        self,
+        tmp_path: Path,
+        policy: PlaybackPolicy,
+        sleeper: Sleeper,
+        manifest_of: ManifestFactory,
+    ) -> None:
+        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
+        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        filler = Filler(_BoomProducer(), channel, sleeper)
+        channel.attach_fill(filler, _FixedPlanSource(plan))
+
+        server = asyncio.create_task(channel.serve())
+        channel.post(TurnOn())  # empty pool -> generating_first -> starts the fill
+        await _reach(channel, Mode.FAILED)
+        server.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server
+
+        assert channel.program.mode is Mode.FAILED  # OBSERVABLE, not a silent hang
+        assert not filler.is_running  # F6: reconcile cancelled the dead-ended fill
+        failed = [e for e in store.manifest().parts if not e.is_ready]
+        assert failed and failed[0].reason is not None
+        assert failed[0].reason.startswith("unexpected:")
+
+
+async def _reach(channel: ControlChannel, mode: Mode, *, spins: int = 500) -> None:
+    """Spin the event loop until the Program reaches ``mode`` (or give up)."""
+    for _ in range(spins):
+        if channel.program.mode is mode:
+            return
+        await asyncio.sleep(0)
+
+
+@final
 @dataclass(frozen=True, slots=True)
 class _Boom:
     """A control signal whose ``apply`` raises -- a bug, not a lost race."""
