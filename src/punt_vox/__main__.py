@@ -378,13 +378,10 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
 
     segments = _resolve_text_segments(text, from_file)
     client = VoxClientSync()
-    kwargs = spec.to_client_kwargs()
-    if once is not None:
-        kwargs["once"] = once
 
     for seg_text in segments:
         try:
-            result = client.synthesize(seg_text, **kwargs)
+            result = client.synthesize(seg_text, spec, once=once)
             payload: dict[str, object] = {"id": result.request_id}
             if result.deduped:
                 payload["deduped"] = True
@@ -442,8 +439,6 @@ def record(  # pyright: ignore[reportUnusedFunction]
     out_dir = output_dir if output_dir is not None else default_output_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     client = VoxClientSync()
-    kwargs = spec.to_client_kwargs()
-
     for i, seg_text in enumerate(segments):
         # Determine output path
         if output is not None and len(segments) == 1:
@@ -456,7 +451,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
             out_path = out_dir / generate_filename(seg_text)
 
         try:
-            mp3_bytes = client.record(seg_text, **kwargs)
+            mp3_bytes = client.record(seg_text, spec)
         except VoxdConnectionError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc

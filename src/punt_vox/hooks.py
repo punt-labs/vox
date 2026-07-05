@@ -56,6 +56,7 @@ from punt_vox.quips import (
     SUBAGENT_STOP_PHRASES,
 )
 from punt_vox.signal import Signal, SignalLog
+from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
 
@@ -165,12 +166,10 @@ def _speak_via_voxd(
     """
     try:
         client = _make_client()
-        kwargs: dict[str, str] = {}
-        if config.voice:
-            kwargs["voice"] = config.voice
-        if config.provider:
-            kwargs["provider"] = config.provider
-        client.synthesize(text, **kwargs)
+        spec = SynthesisSpec(
+            voice=config.voice or None, provider=config.provider or None, rate=90
+        )
+        client.synthesize(text, spec)
     except (VoxdConnectionError, VoxdProtocolError):
         logger.warning("voxd not running, skipping speech")
 

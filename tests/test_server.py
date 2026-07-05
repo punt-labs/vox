@@ -582,8 +582,8 @@ class TestUnmute:
 
         unmute(text="Guten Tag", language="de")
 
-        call_kwargs = mock_client.synthesize.call_args
-        assert call_kwargs[1]["language"] == "de"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.language == "de"
 
     def test_per_segment_language_overrides_default(
         self, monkeypatch: pytest.MonkeyPatch
@@ -598,8 +598,8 @@ class TestUnmute:
             segments=[{"text": "Bonjour", "language": "fr"}],
         )
 
-        call_kwargs = mock_client.synthesize.call_args
-        assert call_kwargs[1]["language"] == "fr"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.language == "fr"
 
 
 # ---------------------------------------------------------------------------
@@ -1802,8 +1802,8 @@ class TestRefreshIntegrationWithTools:
 
         unmute(text="Hello")
 
-        call_kwargs = mock_client.synthesize.call_args[1]
-        assert call_kwargs["voice"] == "roger"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.voice == "roger"
 
     def test_unmute_preserves_inmemory_provider_when_config_empty(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1822,5 +1822,5 @@ class TestRefreshIntegrationWithTools:
 
         unmute(text="Hello")
 
-        call_kwargs = mock_client.synthesize.call_args[1]
-        assert call_kwargs["provider"] == "openai"
+        spec = mock_client.synthesize.call_args.args[1]
+        assert spec.provider == "openai"

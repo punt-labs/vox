@@ -18,6 +18,7 @@ from punt_vox.client import (
     read_port_file,
     read_token_file,
 )
+from punt_vox.types_synthesis import SynthesisSpec
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -180,7 +181,8 @@ class TestVoxClientSynthesize:
         sent = json.loads(sent_raw)
         assert sent["type"] == "synthesize"
         assert sent["text"] == "Hello world"
-        assert sent["rate"] == 90
+        # No spec -> no rate override; voxd applies its own default.
+        assert "rate" not in sent
 
     @pytest.mark.asyncio
     async def test_synthesize_with_all_params(self) -> None:
@@ -196,17 +198,19 @@ class TestVoxClientSynthesize:
 
         await client.synthesize(
             "Test",
-            voice="drew",
-            provider="elevenlabs",
-            model="eleven_turbo_v2_5",
-            rate=100,
-            language="en",
-            vibe_tags="calm",
-            stability=0.5,
-            similarity=0.8,
-            style=0.3,
-            speaker_boost=True,
-            api_key="sk-test",
+            SynthesisSpec(
+                voice="drew",
+                provider="elevenlabs",
+                model="eleven_turbo_v2_5",
+                rate=100,
+                language="en",
+                vibe_tags="calm",
+                stability=0.5,
+                similarity=0.8,
+                style=0.3,
+                speaker_boost=True,
+                api_key="sk-test",
+            ),
         )
 
         sent = json.loads(mock_ws.send.call_args[0][0])
@@ -878,9 +882,9 @@ class TestVoxClientSync:
     def test_synthesize_forwards_api_key(self) -> None:
         """Sync wrapper forwards api_key through to the WebSocket message.
 
-        The CLI --api-key flag calls VoxClientSync.synthesize(api_key=...),
-        so this is the load-bearing wiring that carries the billing key
-        from the command line into the ``synthesize`` JSON envelope.
+        The CLI --api-key flag builds a SynthesisSpec(api_key=...), so this is
+        the load-bearing wiring that carries the billing key from the command
+        line into the ``synthesize`` JSON envelope.
         """
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
@@ -896,7 +900,9 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            sync_client.synthesize("Bill to project A", api_key="sk_project_a")
+            sync_client.synthesize(
+                "Bill to project A", SynthesisSpec(api_key="sk_project_a")
+            )
 
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["api_key"] == "sk_project_a"

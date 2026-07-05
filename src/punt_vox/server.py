@@ -419,7 +419,7 @@ def unmute(
     client = _voxd_client()
 
     def _synth_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        result = client.synthesize(seg_text, **seg_spec.to_client_kwargs())
+        result = client.synthesize(seg_text, seg_spec)
         entry: dict[str, object] = {
             "id": result.request_id,
             "text": seg_text,
@@ -516,7 +516,7 @@ def record(
     client = _voxd_client()
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        mp3_bytes = client.record(seg_text, **seg_spec.to_client_kwargs())
+        mp3_bytes = client.record(seg_text, seg_spec)
 
         # Determine output file path.
         if output_path and len(segments) == 1:
