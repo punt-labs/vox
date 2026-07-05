@@ -82,11 +82,8 @@ class ClientProgramGateway:
         refused command (finding F4/F7); an applied command may carry none.
         """
         obj = JsonObject.coerce(resp, "command")
-        applied = obj.opt_bool("applied")
-        applied = True if applied is None else applied
-        message = obj.opt_str("message") or ""
-        if not applied and not message:
-            message = "command rejected"
+        applied = obj.opt_bool("applied") is not False
+        message = obj.opt_str("message") or ("" if applied else "command rejected")
         return CommandOutcome(applied=applied, message=message)
 
     @staticmethod

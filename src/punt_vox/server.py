@@ -672,11 +672,11 @@ def music(
                 StartRequest(style=style, name=name, prompts=prompts)
             )
             _session.music_mode = "on"
-            message = f"\u266a {outcome.display(_session.generating_message(style))}"
+            message = f"\u266a {outcome.message or _session.generating_message(style)}"
         else:
             outcome = _program_tools.stop()
             _session.music_mode = "off"
-            message = f"\u266a {outcome.display('Music off.')}"
+            message = f"\u266a {outcome.message or 'Music off.'}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
@@ -703,7 +703,7 @@ def music_play(name: str) -> str:
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
     _session.music_mode = "on"
-    message = f"\u266a {outcome.display(f'Playing {name}.')}"
+    message = f"\u266a {outcome.message or f'Playing {name}.'}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 
@@ -744,7 +744,7 @@ def music_next() -> str:
         outcome = _program_tools.advance()
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    message = f"♪ {outcome.display('Skipping — generating next track...')}"
+    message = f"♪ {outcome.message or 'Skipping — generating next track...'}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 

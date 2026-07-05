@@ -101,7 +101,7 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(
             {"music": "play", "name": name, "applied": outcome.applied},
-            outcome.display(f"Playing {name}."),
+            outcome.message or f"Playing {name}.",
         )
 
     def loop(
@@ -115,7 +115,7 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(
             {"music": "loop", "name": name, "applied": outcome.applied},
-            outcome.display(f"Looping {name}."),
+            outcome.message or f"Looping {name}.",
         )
 
     def advance(self) -> None:
@@ -126,7 +126,7 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(
             {"music": "next", "applied": outcome.applied},
-            outcome.display("Advancing to another part."),
+            outcome.message or "Advancing to another part.",
         )
 
     def status(self) -> None:

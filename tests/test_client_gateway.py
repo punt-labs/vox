@@ -134,7 +134,12 @@ def test_missing_applied_defaults_to_applied() -> None:
 
 
 def test_rejection_without_message_gets_a_non_empty_reason() -> None:
-    """A rejected reply with no message never surfaces a blank line (F4/F7)."""
+    """A rejected reply with no message never surfaces a blank line (F4/F7).
+
+    The surfaces render ``outcome.message or <canned>``, so a rejection must
+    carry its own reason -- otherwise a refused command would show a success
+    line. The gateway guarantees it.
+    """
     client = MagicMock()
     client.program_next.return_value = {"applied": False}
 
@@ -142,14 +147,6 @@ def test_rejection_without_message_gets_a_non_empty_reason() -> None:
 
     assert outcome.applied is False
     assert outcome.message  # non-empty: the surfaces must have something to show
-
-
-def test_command_outcome_display_prefers_reason_over_default() -> None:
-    """display() shows the daemon reason on rejection, the default only when silent."""
-    assert CommandOutcome.rejected("no track").display("Playing.") == "no track"
-    assert CommandOutcome.ok("").display("Playing.") == "Playing."
-    assert CommandOutcome.ok("live line").display("Playing.") == "live line"
-    assert CommandOutcome(applied=False, message="").display("x") == "command rejected"
 
 
 def test_play_forwards_part_index() -> None:
