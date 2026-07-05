@@ -1094,6 +1094,29 @@ class TestMusicTool:
         assert "exactly 12" in result["error"]
         mock_client.music.assert_not_called()
 
+    def test_music_on_bad_prompts_while_playing_stays_consistent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Finding #2: a ValueError from PromptSet.from_tool_args is caller input,
+        # raised BEFORE any daemon call. It must not flip music_mode to "off"
+        # while voxd keeps playing -- that desyncs the session from the daemon.
+        # Reject it as an input error and leave the running state untouched, so
+        # voxd and the MCP session still agree that music is on.
+        import punt_vox.server as srv
+
+        srv._session.music_mode = "on"  # music already playing on voxd
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(
+            music(mode="on", style="jazz", base_prompt="j", variations=["only-one"])
+        )
+
+        assert "error" in result
+        assert "exactly 12" in result["error"]
+        mock_client.music.assert_not_called()  # voxd never told to stop or change
+        assert srv._session.music_mode == "on"  # session still agrees with voxd
+
     def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Style present, no vibe."""
         mock_client = MagicMock()

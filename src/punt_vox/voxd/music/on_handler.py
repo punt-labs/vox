@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
 from punt_vox.music_prompts import PromptSet
-from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.scheduler import MusicRequest, MusicScheduler
 from punt_vox.voxd.types import MessageHandler
 
 __all__ = ["MusicOnHandler"]
@@ -44,9 +44,8 @@ class MusicOnHandler(MessageHandler):
 
         try:
             prompts = PromptSet.from_wire(msg)
-            response = await self._scheduler.turn_on(
-                owner_id, style, (vibe, vibe_tags), name, prompts=prompts
-            )
+            req = MusicRequest(owner_id, style, (vibe, vibe_tags), name, prompts)
+            response = await self._scheduler.turn_on(req)
         except ValueError as exc:
             await websocket.send_json(
                 {"type": "error", "id": request_id, "message": str(exc)}

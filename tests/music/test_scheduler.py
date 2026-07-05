@@ -19,7 +19,7 @@ from music.conftest import FakeTrackStore
 from punt_vox.music_prompts import POOL_SIZE, PromptSet
 from punt_vox.voxd.music.filler import PoolFiller
 from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.scheduler import MusicScheduler
+from punt_vox.voxd.music.scheduler import MusicRequest, MusicScheduler
 from punt_vox.voxd.music.types import MusicResponse
 
 __all__: list[str] = []
@@ -60,7 +60,7 @@ class TestTurnOn:
         sched = _scheduler()
         with patch.object(TrackGenerator, "generate", AsyncMock()):
             result = asyncio.run(
-                sched.turn_on("u1", "techno", ("focused", "[calm]"), "")
+                sched.turn_on(MusicRequest("u1", "techno", ("focused", "[calm]"), ""))
             )
         assert result == MusicResponse(status="generating")
         assert sched.mode == "on"
@@ -74,13 +74,15 @@ class TestTurnOn:
         _seed(store, "focused", "techno", 3)
         sched = _scheduler(store)
         with patch.object(TrackGenerator, "generate", AsyncMock()):
-            result = asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+            result = asyncio.run(
+                sched.turn_on(MusicRequest("u1", "techno", ("focused", ""), ""))
+            )
         assert result.status == "playing"  # a member is on disk to play now
 
     def test_turn_on_rejects_empty_owner(self) -> None:
         sched = _scheduler()
         with pytest.raises(ValueError, match="owner_id is required"):
-            asyncio.run(sched.turn_on("", "techno", ("focused", ""), ""))
+            asyncio.run(sched.turn_on(MusicRequest("", "techno", ("focused", ""), "")))
 
     def test_turn_on_replay_existing_track(self) -> None:
         store = FakeTrackStore()
@@ -90,7 +92,7 @@ class TestTurnOn:
 
             async def _run() -> MusicResponse:
                 result = await sched.turn_on(
-                    "u1", "jazz", ("happy", "[warm]"), "my focus"
+                    MusicRequest("u1", "jazz", ("happy", "[warm]"), "my focus")
                 )
                 await sched.shutdown()  # cancel the resumed fill task cleanly
                 return result
@@ -112,7 +114,9 @@ class TestTurnOn:
         with patch.object(TrackGenerator, "generate", AsyncMock()):
 
             async def _run() -> None:
-                await sched.turn_on("u1", "jazz", ("happy", ""), "happy_jazz_replayme")
+                await sched.turn_on(
+                    MusicRequest("u1", "jazz", ("happy", ""), "happy_jazz_replayme")
+                )
                 await asyncio.sleep(0)  # let the resumed fill task start
                 assert sched.filling  # fill active for the replayed track's pool
                 await sched.shutdown()
@@ -122,7 +126,7 @@ class TestTurnOn:
     def test_turn_on_invalid_track_name(self) -> None:
         sched = _scheduler()
         with pytest.raises(ValueError, match="invalid track name"):
-            asyncio.run(sched.turn_on("u1", "", ("", ""), "---"))
+            asyncio.run(sched.turn_on(MusicRequest("u1", "", ("", ""), "---")))
 
 
 class TestKeyPreflight:
@@ -134,7 +138,9 @@ class TestKeyPreflight:
         monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
         sched = _scheduler()
         with pytest.raises(ValueError, match="requires an ElevenLabs API key"):
-            asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+            asyncio.run(
+                sched.turn_on(MusicRequest("u1", "techno", ("focused", ""), ""))
+            )
         assert sched.mode == "off"  # never entered the generating state
         assert not sched.filling  # no silent attempt-then-disable
 
@@ -144,14 +150,18 @@ class TestKeyPreflight:
         monkeypatch.setenv("ELEVENLABS_API_KEY", "   ")  # whitespace-only is empty
         sched = _scheduler()
         with pytest.raises(ValueError, match="requires an ElevenLabs API key"):
-            asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+            asyncio.run(
+                sched.turn_on(MusicRequest("u1", "techno", ("focused", ""), ""))
+            )
         assert sched.mode == "off"
 
     def test_present_key_starts_normally(self) -> None:
         # The autouse fixture supplies a key; the happy path acks generating.
         sched = _scheduler()
         with patch.object(TrackGenerator, "generate", AsyncMock()):
-            result = asyncio.run(sched.turn_on("u1", "techno", ("focused", ""), ""))
+            result = asyncio.run(
+                sched.turn_on(MusicRequest("u1", "techno", ("focused", ""), ""))
+            )
         assert result == MusicResponse(status="generating")
 
     def test_present_key_with_transient_error_is_not_a_key_error(self) -> None:
@@ -164,7 +174,9 @@ class TestKeyPreflight:
         with patch.object(TrackGenerator, "generate", quota):
 
             async def _run() -> MusicResponse:
-                result = await sched.turn_on("u1", "techno", ("focused", ""), "")
+                result = await sched.turn_on(
+                    MusicRequest("u1", "techno", ("focused", ""), "")
+                )
                 await sched.shutdown()  # cancel the retrying fill cleanly
                 return result
 
@@ -283,6 +295,59 @@ class TestReplayFillTargeting:
 
         assert len(store.tracks_for("happy_jazz_")) == POOL_SIZE  # replayed pool grew
         assert len(store.tracks_for("focused_techno_")) == 0  # session pool untouched
+
+
+class TestReplayInstallsAgentPrompts:
+    """A named ``turn_on`` fills the replayed pool from the agent's prompts."""
+
+    def test_named_replay_fills_with_authored_prompts_not_fallback(self) -> None:
+        # Finding #1: turn_on's named-replay path returned without installing the
+        # agent PromptSet, so background fill used PromptSet.fallback instead of
+        # the authored base + 12 variations sent on the wire.
+        store = FakeTrackStore()
+        store.add("happy_jazz_20260704_1200_0")  # seeds the "happy_jazz_" pool
+        sched = _scheduler(store)
+        authored = PromptSet.from_agent(
+            "warm upright-bass jazz trio, brushed drums",
+            [f"variation {i}" for i in range(POOL_SIZE)],
+        )
+        fallback = PromptSet.fallback("jazz", "happy").base
+        assert authored.base != fallback  # else the assertion below is vacuous
+        seen: list[str] = []
+
+        async def _generate(
+            self_gen: TrackGenerator,
+            vibe: tuple[str, str],
+            style: str,
+            name: str,
+            prompts: PromptSet,
+        ) -> tuple[Path, str]:
+            seen.append(prompts.base)
+            return store.add(name), name
+
+        with (
+            patch.object(TrackGenerator, "generate", _generate),
+            patch.object(PoolFiller, "_backoff", AsyncMock()),
+        ):
+
+            async def _run() -> None:
+                await sched.turn_on(
+                    MusicRequest(
+                        "u1",
+                        "jazz",
+                        ("happy", ""),
+                        "happy_jazz_20260704_1200_0",
+                        authored,
+                    )
+                )
+                task = sched._playlist._filler._task
+                if task is not None:
+                    await asyncio.wait_for(task, timeout=5.0)
+
+            asyncio.run(_run())
+
+        assert seen  # the fill generated at least one track
+        assert all(base == authored.base for base in seen)  # authored, not fallback
 
 
 class TestUpdateVibe:

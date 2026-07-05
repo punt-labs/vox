@@ -669,9 +669,17 @@ def music(
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
 
-    client = _voxd_client()
+    # Validate the agent's prompts before any daemon call. A malformed shape is
+    # caller input, not a daemon failure: reject it without touching music_mode
+    # so voxd and the session never disagree about what is playing.
     try:
         prompts = PromptSet.from_tool_args(base_prompt, variations)
+    except ValueError as exc:
+        logger.warning("malformed music prompts; running state unchanged")
+        return _error(str(exc))
+
+    client = _voxd_client()
+    try:
         resp = client.music(
             mode=mode,
             style=style or "",
