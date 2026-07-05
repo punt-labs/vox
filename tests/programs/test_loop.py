@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Callable
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs import (
     Mode,
@@ -27,6 +28,9 @@ from punt_vox.voxd.programs.fill_signal import Produced
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_signal import Rotate
+
+if TYPE_CHECKING:
+    import pytest
 
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
@@ -239,3 +243,149 @@ class TestConcurrentControlsStaySequential:
 async def _post(channel: ControlChannel, signal: ControlSignal) -> None:
     await asyncio.sleep(0)
     channel.post(signal)
+
+
+@final
+class _RaisingProcess:
+    """A process whose wait() raises -- a player error, not a clean track end."""
+
+    __slots__ = ("rc",)
+    rc: int | None
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.rc = None
+        return self
+
+    async def wait(self) -> int:
+        msg = "transport gone"
+        raise RuntimeError(msg)
+
+    async def kill(self) -> None:
+        self.rc = -9
+
+
+@final
+class _ErrThenBlockPlayer:
+    """Hand out a wait-raising process first, then a process that never ends."""
+
+    __slots__ = ("parts", "procs")
+    parts: list[Part]
+    procs: list[_RaisingProcess | FakeProcess]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.parts = []
+        self.procs = []
+        return self
+
+    async def play(self, part: Part) -> _RaisingProcess | FakeProcess:
+        self.parts.append(part)
+        proc: _RaisingProcess | FakeProcess = (
+            _RaisingProcess() if len(self.parts) == 1 else FakeProcess()
+        )
+        self.procs.append(proc)
+        return proc
+
+
+class TestPlayerWaitError:
+    """F8: a raised player wait() is a player error, never a clean advance."""
+
+    async def test_player_errored_flags_a_raised_wait(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def _boom() -> int:
+            msg = "transport gone"
+            raise RuntimeError(msg)
+
+        task: asyncio.Task[int] = asyncio.ensure_future(_boom())
+        with contextlib.suppress(RuntimeError):
+            await task
+        with caplog.at_level(logging.ERROR):
+            errored = ProgramLoop._player_errored(task)
+        assert errored is True
+        assert any("player wait failed" in r.getMessage() for r in caplog.records)
+
+    async def test_player_errored_passes_a_clean_wait(self) -> None:
+        async def _clean() -> int:
+            return 0
+
+        task: asyncio.Task[int] = asyncio.ensure_future(_clean())
+        await task
+        assert ProgramLoop._player_errored(task) is False
+
+    async def test_wait_error_kills_and_replays_without_advancing(
+        self, rotating: Program, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        player = _ErrThenBlockPlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+        with caplog.at_level(logging.ERROR):
+            for _ in range(500):
+                if len(player.parts) >= 2:
+                    break
+                await asyncio.sleep(0)
+        for task in (run, serve):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        assert player.procs[0].rc == -9  # the errored player was killed, not ended
+        assert (
+            player.parts[1] == player.parts[0]
+        )  # replayed, NOT advanced (no masquerade)
+        assert any("player wait failed" in r.getMessage() for r in caplog.records)
+
+
+@final
+class _FailFirstPlayer:
+    """Raise on the first play, then hand back a controllable process."""
+
+    __slots__ = ("_calls", "parts", "procs")
+    _calls: int
+    parts: list[Part]
+    procs: list[FakeProcess]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._calls = 0
+        self.parts = []
+        self.procs = []
+        return self
+
+    async def play(self, part: Part) -> FakeProcess:
+        self._calls += 1
+        if self._calls == 1:
+            msg = "boom"
+            raise RuntimeError(msg)
+        self.parts.append(part)
+        proc = FakeProcess()
+        self.procs.append(proc)
+        return proc
+
+
+class TestLoopSurvivesAFailingStep:
+    """The run() guard keeps playback alive when one step raises unexpectedly."""
+
+    async def test_run_survives_and_plays_after_a_failing_step(
+        self, rotating: Program, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        player = _FailFirstPlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+        with caplog.at_level(logging.ERROR):
+            for _ in range(500):
+                if player.parts:
+                    break
+                await asyncio.sleep(0)
+        for task in (run, serve):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        assert player.parts  # the loop recovered and played after the crash
+        assert any(
+            "unexpected error in a step" in r.getMessage() for r in caplog.records
+        )

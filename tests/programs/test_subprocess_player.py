@@ -42,6 +42,25 @@ class TestSubprocessHandle:
         await handle.kill()
         assert await handle.wait() != 0  # reaped after the kill
 
+    async def test_kill_tolerates_a_process_that_vanished_mid_kill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A natural exit can race the kill: the process is gone by the time
+        # kill() fires, so kill() raises ProcessLookupError. The suppress must
+        # now wrap kill() itself, so this is a safe no-op rather than a crash
+        # that would propagate through the loop and silently stop playback.
+        proc = await _spawn("sleep", "5")
+        real_kill = proc.kill
+
+        def _kill_then_vanish() -> None:
+            real_kill()  # actually stop the process so wait() can reap it
+            raise ProcessLookupError  # ...but report it as already gone
+
+        monkeypatch.setattr(proc, "kill", _kill_then_vanish)
+        handle = SubprocessHandle(proc)
+        await handle.kill()  # must not raise
+        assert proc.returncode is not None  # reaped despite the racing kill
+
 
 class TestSubprocessPlayer:
     def test_darwin_command_uses_afplay(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -46,9 +46,18 @@ class SubprocessHandle:
         return rc
 
     async def kill(self) -> None:
-        """Stop the player now and reap it."""
-        if self._proc.returncode is None:
-            self._proc.kill()
+        """Stop the player now and reap it.
+
+        A natural exit can race the kill: the process may exit between the
+        ``returncode`` check and ``kill()``, so ``kill()`` itself must be inside
+        a suppress -- otherwise its ``ProcessLookupError`` would propagate
+        through the loop's unguarded step and silently stop playback. The reap
+        gets its *own* suppress so a raised ``kill()`` never skips it -- an
+        already-exited process still has to be waited on to collect the zombie.
+        """
+        with contextlib.suppress(ProcessLookupError):
+            if self._proc.returncode is None:
+                self._proc.kill()
         with contextlib.suppress(ProcessLookupError):
             await self._proc.wait()
 

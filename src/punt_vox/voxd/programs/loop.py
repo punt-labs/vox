@@ -48,9 +48,17 @@ class ProgramLoop:
         return self
 
     async def run(self) -> None:
-        """Run the loop for the lifetime of the daemon."""
+        """Run the loop for the lifetime of the daemon.
+
+        The top-level guard is the last line of defence: an unexpected error in
+        one step (a raising player, a bug) is logged at ERROR and the loop
+        continues, so playback never stops on a silent task death.
+        """
         while True:
-            await self._step()
+            try:
+                await self._step()
+            except Exception:
+                logger.exception("playback loop: unexpected error in a step")
 
     async def _step(self) -> None:
         """Play the current Part, or wait until one becomes playable."""
@@ -77,18 +85,38 @@ class ProgramLoop:
             await self._advance_after(target)
 
     async def _interrupted(self, proc: PlayerProcess) -> bool:
-        """Return True if an interrupt fired before the player ended."""
+        """Return True if the track did not end cleanly (interrupt or player error).
+
+        A user interrupt wins outright. Otherwise the player's ``wait`` settled:
+        a clean exit is a natural end (advance), but a *raised* ``wait`` is a
+        player error -- retrieved and logged here so it never leaks as an
+        unretrieved exception nor masquerades as a normal advance.
+        """
         wait_task = asyncio.ensure_future(proc.wait())
         interrupt_task = asyncio.ensure_future(self._channel.interrupt.wait())
         done, pending = await asyncio.wait(
             {wait_task, interrupt_task}, return_when=asyncio.FIRST_COMPLETED
         )
-        interrupted = interrupt_task in done
-        for task in pending:
+        await self._cancel_all(pending)
+        player_errored = wait_task in done and self._player_errored(wait_task)
+        return interrupt_task in done or player_errored
+
+    @staticmethod
+    async def _cancel_all(tasks: set[asyncio.Task[int]]) -> None:
+        """Cancel and reap the losing tasks of the interrupt race."""
+        for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        return interrupted
+
+    @staticmethod
+    def _player_errored(wait_task: asyncio.Task[int]) -> bool:
+        """Retrieve the settled ``wait``; a raised one is an error, not a clean end."""
+        exc = wait_task.exception()
+        if exc is None:
+            return False
+        logger.error("player wait failed; not a clean track end", exc_info=exc)
+        return True
 
     async def _advance_after(self, target: Part) -> None:
         """After a natural track end, post the advance (or play the retune target).
