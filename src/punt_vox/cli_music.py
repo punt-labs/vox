@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, NoReturn, Self, final
 
 import typer
+from websockets.exceptions import WebSocketException
 
 from punt_vox.client import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
@@ -31,9 +32,17 @@ from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
 
-# A client error (unreachable/misbehaving daemon) or a bad Program name (a
-# ValueError from ProgramName) becomes a clean, non-zero CLI failure.
-_GATEWAY_ERRORS = (VoxdConnectionError, VoxdProtocolError, OSError, ValueError)
+# A client error (unreachable/misbehaving daemon), a raw WebSocket failure (a
+# stale token's handshake, a mid-request close), or a bad Program name (a
+# ValueError from ProgramName) becomes a clean, non-zero CLI failure -- the MCP
+# tools already catch WebSocketException, so the CLI must too (finding F1).
+_GATEWAY_ERRORS = (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    WebSocketException,
+    OSError,
+    ValueError,
+)
 
 
 @final
@@ -163,6 +172,11 @@ class MusicCli:
         )
         if manifest is None:
             self._fail(f"no saved program named {name!r}")
+        if ref.format is not manifest.format:
+            self._fail(
+                f"{name} is a {manifest.format.label}; "
+                f"cannot address it as {ref.format.value}"
+            )
         ready = manifest.ready_parts()
         if not 1 <= ref.index <= len(ready):
             self._fail(f"{name} has {len(ready)} parts; {ref.index} is out of range")

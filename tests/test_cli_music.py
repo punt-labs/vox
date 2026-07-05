@@ -17,6 +17,7 @@ import pytest
 import typer
 from _program_fakes import FakeProgramGateway
 from typer.testing import CliRunner
+from websockets.exceptions import WebSocketException
 
 from punt_vox.cli_music import MusicCli, build_music_app
 from punt_vox.output_formatter import OutputFormatter
@@ -168,6 +169,37 @@ def test_play_reports_rejected(_programs_dir: Path) -> None:
 
     payload, _ = _emitted(formatter)
     assert payload["applied"] is False  # type: ignore[index]
+
+
+def test_play_websocket_error_is_clean_error(_programs_dir: Path) -> None:
+    """A mid-request WebSocket close on play is a clean CLI error, not raw (F1)."""
+    gateway = MagicMock()
+    gateway.play.side_effect = WebSocketException("connection closed")
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.play("ambient_techno")
+
+
+def test_status_websocket_handshake_error_is_clean_error(_programs_dir: Path) -> None:
+    """A stale-token handshake failure on status surfaces cleanly, not raw (F1)."""
+    gateway = MagicMock()
+    gateway.status.side_effect = WebSocketException("invalid status 401")
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.status()
+
+
+def test_play_wrong_format_token_is_clean_error(_programs_dir: Path) -> None:
+    """A part token whose format differs from the manifest errors before any move."""
+    _save(_programs_dir, "ambient_techno", ready=3)
+    fake = FakeProgramGateway()
+    cli, _ = _cli(fake)
+
+    with pytest.raises(typer.Exit):
+        cli.play("ambient_techno", "podcast:2")
+    assert fake.calls == []  # rejected before crossing to the daemon
 
 
 # ---------------------------------------------------------------------------
