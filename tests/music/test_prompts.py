@@ -1,0 +1,92 @@
+"""Tests for PromptSet: agent-authored and fallback generation prompts."""
+
+from __future__ import annotations
+
+import pytest
+
+from punt_vox.voxd.music.pool import POOL_SIZE
+from punt_vox.voxd.music.prompts import PromptSet
+
+
+def _variations(n: int = POOL_SIZE) -> list[str]:
+    """Return ``n`` distinct variation strings."""
+    return [f"variation {i}" for i in range(n)]
+
+
+class TestFromAgent:
+    """The agent path validates shape and stores exactly what it was given."""
+
+    def test_accepts_base_and_pool_size_variations(self) -> None:
+        ps = PromptSet.from_agent("Klezmer, clarinet lead", _variations())
+        assert ps.base == "Klezmer, clarinet lead"
+        assert len(ps.variations) == POOL_SIZE
+
+    def test_strips_whitespace(self) -> None:
+        ps = PromptSet.from_agent("  base  ", ["  a  ", *_variations(POOL_SIZE - 1)])
+        assert ps.base == "base"
+        assert ps.variations[0] == "a"
+
+    def test_empty_base_rejected(self) -> None:
+        with pytest.raises(ValueError, match="base_prompt must be a non-empty"):
+            PromptSet.from_agent("   ", _variations())
+
+    def test_wrong_variation_count_rejected(self) -> None:
+        with pytest.raises(ValueError, match=f"exactly {POOL_SIZE} entries"):
+            PromptSet.from_agent("base", _variations(POOL_SIZE - 1))
+
+    def test_blank_variation_rejected(self) -> None:
+        variations = _variations()
+        variations[3] = "   "
+        with pytest.raises(ValueError, match="non-empty string"):
+            PromptSet.from_agent("base", variations)
+
+
+class TestPromptForAgentSet:
+    """Track i draws variation i, composed onto the shared base."""
+
+    def test_track_index_selects_variation(self) -> None:
+        ps = PromptSet.from_agent("BASE", _variations())
+        assert ps.prompt_for(0) == "BASE variation 0"
+        assert ps.prompt_for(5) == "BASE variation 5"
+
+    def test_twelve_indices_are_distinct(self) -> None:
+        ps = PromptSet.from_agent("BASE", _variations())
+        prompts = {ps.prompt_for(i) for i in range(POOL_SIZE)}
+        assert len(prompts) == POOL_SIZE
+
+    def test_index_wraps_past_pool_size(self) -> None:
+        ps = PromptSet.from_agent("BASE", _variations())
+        assert ps.prompt_for(POOL_SIZE) == ps.prompt_for(0)
+
+
+class TestFallback:
+    """The fallback is a minimal literal prompt, free of deep-work boilerplate."""
+
+    _BANNED = (
+        "background music for deep work",
+        "smooth ambient texture",
+        "driving beat",
+        "afternoon focus",
+        "steady working pace",
+    )
+
+    def test_shape(self) -> None:
+        ps = PromptSet.fallback("Klezmer", "sad")
+        assert ps.prompt_for(0) == "Klezmer music, sad. instrumental, loopable."
+
+    def test_every_track_uses_the_same_minimal_prompt(self) -> None:
+        ps = PromptSet.fallback("techno", "focused")
+        assert ps.prompt_for(0) == ps.prompt_for(7)
+
+    def test_empty_style_becomes_ambient(self) -> None:
+        ps = PromptSet.fallback("", "calm")
+        assert ps.prompt_for(0) == "ambient music, calm. instrumental, loopable."
+
+    def test_empty_mood_dropped(self) -> None:
+        ps = PromptSet.fallback("jazz", "")
+        assert ps.prompt_for(0) == "jazz music. instrumental, loopable."
+
+    def test_no_boilerplate(self) -> None:
+        prompt = PromptSet.fallback("Klezmer", "sad").prompt_for(0)
+        for banned in self._BANNED:
+            assert banned not in prompt
