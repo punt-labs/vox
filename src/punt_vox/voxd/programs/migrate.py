@@ -17,7 +17,6 @@ double migration.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
 
@@ -25,6 +24,7 @@ from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.format import Format
 from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.manifest import PartEntry, PlaylistSubject, ProgramManifest
+from punt_vox.voxd.programs.migration_report import MigrationReport
 from punt_vox.voxd.programs.part import PartStatus
 
 __all__ = ["LegacyMigration", "MigrationError", "MigrationReport"]
@@ -35,34 +35,6 @@ _POOL_SUFFIX = re.compile(r"_\d{8}_\d{4}_\d+$")
 
 class MigrationError(Exception):
     """The legacy layout cannot be migrated safely (e.g. ``programs/`` is populated)."""
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class MigrationReport:
-    """What a migration run moved: the Programs created and Parts relocated."""
-
-    names: tuple[str, ...]
-    parts: int
-
-    @property
-    def programs(self) -> int:
-        """Return the number of Programs the run created."""
-        return len(self.names)
-
-    @property
-    def is_empty(self) -> bool:
-        """Return whether the run had nothing to migrate."""
-        return not self.names
-
-    def summary(self) -> str:
-        """Return a human-readable one-line summary for the CLI."""
-        if self.is_empty:
-            return "nothing to migrate"
-        listed = ", ".join(self.names)
-        return (
-            f"migrated {self.parts} track(s) into {self.programs} program(s): {listed}"
-        )
 
 
 @final
@@ -101,14 +73,24 @@ class LegacyMigration:
             msg = "programs/ is already populated; refusing to migrate again"
             raise MigrationError(msg)
         groups = self._grouped_by_program()
+        return MigrationReport(
+            names=tuple(sorted(groups)), parts=self._migrate_all(groups)
+        )
+
+    def _migrate_all(self, groups: dict[str, tuple[Path, ...]]) -> int:
+        """Migrate every group, wrapping fs/name failures as MigrationError (F3).
+
+        ``OSError`` (a bad move: full disk, permission, cross-device) and
+        ``ValueError`` (a stem that reduces to an empty Program name) become a
+        clean :class:`MigrationError` so the CLI reports every failure uniformly.
+        """
         try:
-            moved = sum(
+            return sum(
                 self._migrate_group(name, files) for name, files in groups.items()
             )
         except (OSError, ValueError) as exc:
             msg = f"migration failed: {exc}"
             raise MigrationError(msg) from exc
-        return MigrationReport(names=tuple(sorted(groups)), parts=moved)
 
     def _migrate_group(self, name: str, files: tuple[Path, ...]) -> int:
         """Create Program ``name`` and move each file into place before recording it.
