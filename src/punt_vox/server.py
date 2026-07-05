@@ -194,15 +194,15 @@ class SessionConfig:
     def music_message(
         self, resp: dict[str, object], mode: str, style: str | None, name: str | None
     ) -> str:
-        """Return the human-readable status line for a music tool response."""
+        """Return the human-readable status line for a music tool response.
+
+        The "on" case reads the session vibe (``self._vibe``) to personalize the
+        generating message.
+        """
         if resp.get("status") == "playing" and name:
             return f"♪ Playing saved track: {name}"
-        if mode == "on":
-            return self._music_on_message(style)
-        return "♪ Music off."
-
-    def _music_on_message(self, style: str | None) -> str:
-        """Build the music-on message from ``style`` and the session vibe."""
+        if mode != "on":
+            return "♪ Music off."
         prefix = "♪ Music on — generating"
         vibe = self._vibe
         if style and vibe:
