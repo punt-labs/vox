@@ -58,15 +58,20 @@ the highest-value output of the exercise.
 \section{Basic Types}
 
 A \emph{Part} is an opaque saved-audio identifier (in the implementation, the
-content-addressed file within a Program's directory). A \emph{session}
-identifies an agent that turns a Program on --- the \emph{owner} whose
-forwarded vibe and skip commands the daemon honours. A \emph{reason} is a
+content-addressed file within a Program's directory). A \emph{reason} is a
 human-readable diagnostic string; the model treats it as opaque, but every
 inhabitant of \texttt{REASON} is understood to be non-empty (an empty reason is
 not a reason).
 
+There is no session or owner type. The daemon's Program state is
+machine-universal: any client --- an MCP agent session or the CLI, from any
+process --- may issue any command against it. An earlier draft gated control on
+the session that turned a Program on; the operator ruled that out
+(2026-07-05) as complex, bug-ridden, and unusable across sessions, so the model
+carries no notion of ownership at all.
+
 \begin{zed}
-  [PART, SESSION, REASON]
+  [PART, REASON]
 \end{zed}
 
 \section{Free Types}
@@ -133,8 +138,8 @@ bounds the transient-error backoff before an \emph{empty-pool} Program gives up.
 
 \texttt{playing} and \texttt{lastPlayed} are ``optional Parts'' (sets of at most
 one Part): empty when nothing is playing / no Part has yet been played.
-\texttt{owner} is an optional session, and \texttt{lastError} an optional
-reason. \texttt{pool} is the set of \emph{ready} Parts --- the playable audio on
+\texttt{lastError} is an optional reason. \texttt{pool} is the set of
+\emph{ready} Parts --- the playable audio on
 disk --- and \texttt{failedParts} records the Parts that hit a permanent
 generation error together with the retained reason; the two are disjoint (a
 Part is ready \emph{or} failed, never both). \texttt{attempts} counts transient
@@ -152,7 +157,6 @@ schema, not of scattered defensive checks.
   failedParts : PART \pfun REASON \\
   playing : \power PART \\
   lastPlayed : \power PART \\
-  owner : \power SESSION \\
   mode : Mode \\
   filling : ZBOOL \\
   attempts : \nat \\
@@ -160,18 +164,17 @@ schema, not of scattered defensive checks.
   \where
   \# pool \leq (poolSize~format) \\
   \# playing \leq 1 \land \# lastPlayed \leq 1 \\
-  \# owner \leq 1 \land \# lastError \leq 1 \\
+  \# lastError \leq 1 \\
   playing \subseteq pool \land lastPlayed \subseteq pool \\
   (\dom failedParts) \cap pool = \emptyset \\
   attempts \leq maxRetry \\
   (attempts \geq 1 \iff mode = retrying) \\
   filling = ztrue \implies \\
   \quad~ (mode = generatingFirst \lor mode = playingFilling) \\
-  filling = ztrue \implies owner \neq \emptyset \\
   \# lastError = 1 \implies (mode = retrying \lor mode = failed) \\
   mode = failed \implies \# lastError = 1 \\
   mode = off \implies \\
-  \quad~ (playing = \emptyset \land filling = zfalse \land owner = \emptyset \\
+  \quad~ (playing = \emptyset \land filling = zfalse \\
   \quad~ \land lastError = \emptyset \land failedParts = \emptyset) \\
   mode = generatingFirst \implies \\
   \quad~ (pool = \emptyset \land playing = \emptyset \land filling = ztrue) \\
@@ -182,9 +185,7 @@ schema, not of scattered defensive checks.
   mode = retrying \implies \\
   \quad~ (filling = zfalse \land (pool = \emptyset \iff playing = \emptyset)) \\
   mode = failed \implies \\
-  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = zfalse) \\
-  (mode = generatingFirst \lor mode = retrying \lor mode = failed) \\
-  \quad~ \implies owner \neq \emptyset
+  \quad~ (pool = \emptyset \land playing = \emptyset \land filling = zfalse)
 \end{schema}
 
 The ready pool and the failed set are the Phase-1 realisation of the Part
@@ -210,7 +211,6 @@ format-general.
   failedParts' = \emptyset \\
   playing' = \emptyset \\
   lastPlayed' = \emptyset \\
-  owner' = \emptyset \\
   mode' = off \\
   filling' = zfalse \\
   attempts' = 0 \\
@@ -228,37 +228,33 @@ format-general.
   failedParts' = \emptyset \\
   playing' = \emptyset \\
   lastPlayed' = \emptyset \\
-  owner' = \emptyset \\
   mode' = off \\
   filling' = zfalse \\
   attempts' = 0 \\
   lastError' = \emptyset
 \end{schema}
 
-\section{Agent Operations (generation path)}
+\section{Generation Operations}
 
 These operations run on the MCP path, where an agent authors content and the
-daemon spends credits generating it. Every one of them either sets or preserves
-a non-empty \texttt{owner}, so the generation-related modes
-(\texttt{generatingFirst}, \texttt{retrying}, \texttt{failed}) are always owned
---- a fact the consume-only path (Section~8) relies on.
+daemon spends credits generating it. They spend credits; the consume-only path
+(Section~8) does not. Neither path is gated on a session --- any client may
+drive either.
 
 \subsection{TurnOn}
 
-From \texttt{off}, an agent enters the pool. An empty pool begins generating the
+From \texttt{off}, a client enters the pool. An empty pool begins generating the
 first Part; a partial pool starts playing and resumes the background fill; a
-full pool starts playing and rotates. \texttt{who?} becomes the owner.
+full pool starts playing and rotates.
 
 \begin{schema}{TurnOn}
-  \Delta Program \\
-  who? : SESSION
+  \Delta Program
   \where
   mode = off \\
   format' = format \\
   pool' = pool \\
   failedParts' = \emptyset \\
   lastPlayed' = \emptyset \\
-  owner' = \{ who? \} \\
   attempts' = 0 \\
   lastError' = \emptyset \\
   (pool = \emptyset \implies \\
@@ -284,7 +280,6 @@ one Part).
   mode = generatingFirst \\
   new? \notin \dom failedParts \\
   format' = format \\
-  owner' = owner \\
   pool' = \{ new? \} \\
   failedParts' = failedParts \\
   playing' = \{ new? \} \\
@@ -312,7 +307,6 @@ never a silent disable.
   mode = generatingFirst \\
   bad? \notin \dom failedParts \\
   format' = format \\
-  owner' = owner \\
   pool' = \emptyset \\
   failedParts' = failedParts \oplus \{ bad? \mapsto reason? \} \\
   playing' = \emptyset \\
@@ -336,7 +330,6 @@ force \texttt{failed}.
   \where
   mode = generatingFirst \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   playing' = \emptyset \\
@@ -363,7 +356,6 @@ must be new (the deterministic collision-free naming guarantees this). Reaching
   new? \notin pool \\
   new? \notin \dom failedParts \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \cup \{ new? \} \\
   failedParts' = failedParts \\
   playing' = playing \\
@@ -395,7 +387,6 @@ This is the second observability surface (finding~\#5).
   bad? \notin pool \\
   bad? \notin \dom failedParts \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \oplus \{ bad? \mapsto reason? \} \\
   playing' = playing \\
@@ -419,7 +410,6 @@ non-empty), so it can never fall through to \texttt{failed} (finding~\#4).
   mode = playingFilling \\
   filling = ztrue \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   playing' = playing \\
@@ -442,7 +432,6 @@ and the advisory reason move; the pool and playback are untouched.
   mode = retrying \\
   attempts < maxRetry \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   playing' = playing \\
@@ -469,7 +458,6 @@ hard-failure to the first-track case: a non-empty pool has no
   attempts = maxRetry \\
   pool = \emptyset \\
   format' = format \\
-  owner' = owner \\
   pool' = \emptyset \\
   failedParts' = failedParts \\
   playing' = \emptyset \\
@@ -492,7 +480,6 @@ the advisory reason and the counter are cleared and the fill is re-armed.
   \where
   mode = retrying \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   lastPlayed' = lastPlayed \\
@@ -505,24 +492,22 @@ the advisory reason and the counter are cleared and the fill is re-armed.
 
 \subsection{VibeStyleChange}
 
-The owner retunes to a new \emph{(vibe, style)} key, whose already-saved ready
+A client retunes to a new \emph{(vibe, style)} key, whose already-saved ready
 Parts are \texttt{newPool?}. The selection of mode/playing/filling mirrors
 \texttt{TurnOn} applied to the new pool; the old failed Parts, advisory reason,
-and avoid-repeat key are discarded. Only the owner may retune, and only while
+and avoid-repeat key are discarded. Retuning is allowed only while
 the Program is not \texttt{off} --- a forwarded vibe while off is refused, so it
-spends no generation credits. Reaching this operation from \texttt{failed} (the
-owner re-authoring after a \texttt{bad\_prompt}) is the intended recovery path.
+spends no generation credits. Reaching this operation from \texttt{failed}
+(re-authoring after a \texttt{bad\_prompt}) is the intended recovery path, and
+because there is no ownership it is available to any client.
 
 \begin{schema}{VibeStyleChange}
   \Delta Program \\
-  newPool? : \power PART \\
-  who? : SESSION
+  newPool? : \power PART
   \where
   mode \neq off \\
-  who? \in owner \\
   \# newPool? \leq (poolSize~format) \\
   format' = format \\
-  owner' = owner \\
   pool' = newPool? \\
   failedParts' = \emptyset \\
   lastPlayed' = \emptyset \\
@@ -540,9 +525,9 @@ owner re-authoring after a \texttt{bad\_prompt}) is the intended recovery path.
 
 \subsection{TurnOff}
 
-Cancel the fill and stop playback. Ownership is released and every session-local
-field is cleared, so a later forwarded vibe from the old owner is refused. The
-ready pool remains on disk for the CLI to play.
+Cancel the fill and stop playback. Every generation-related field is cleared,
+so a later forwarded vibe is refused while \texttt{off}. The ready pool remains
+on disk for the CLI to play.
 
 \begin{schema}{TurnOff}
   \Delta Program
@@ -553,7 +538,6 @@ ready pool remains on disk for the CLI to play.
   failedParts' = \emptyset \\
   playing' = \emptyset \\
   lastPlayed' = \emptyset \\
-  owner' = \emptyset \\
   mode' = off \\
   filling' = zfalse \\
   attempts' = 0 \\
@@ -565,12 +549,13 @@ ready pool remains on disk for the CLI to play.
 These operations drive an existing pool. None of them generates a Part or
 spends a credit: each leaves \texttt{pool}, \texttt{failedParts}, and
 \texttt{filling} exactly as it found them (or, for \texttt{StartFromDisk},
-leaves \texttt{filling} false). The CLI is a legitimate external player, so the
-consume operations require \emph{no} ownership; they only move the playback
-cursor over ready Parts, which spends nothing and changes no
-\emph{(vibe, style)} key (finding~\#6).
+leaves \texttt{filling} false). They only move the playback cursor over ready
+Parts, which spends nothing and changes no \emph{(vibe, style)} key. Like every
+other operation, they are gated on \texttt{mode} alone, never on a session ---
+the CLI can play a pool it did not turn on, which is the common case after a
+daemon restart.
 
-\subsection{Rotate --- auto-advance, loop, and skip}
+\subsection{Rotate --- auto-advance, loop, next, and skip}
 
 When the current Part ends, move to another ready Part, avoiding an immediate
 repeat when the pool holds more than one. With a single Part it replays --- the
@@ -586,7 +571,6 @@ untouched.
   (mode = playingFilling \lor mode = playingRotating \lor mode = retrying) \\
   \# pool \geq 1 \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   mode' = mode \\
@@ -599,9 +583,12 @@ untouched.
   (\# pool = 1 \implies playing' = playing)
 \end{schema}
 
-The automatic track-end advance and the CLI \texttt{loop}/\texttt{next} are the
-same transition; a manual agent \texttt{Skip} is that transition additionally
-gated on ownership.
+The automatic track-end advance, the CLI \texttt{loop}/\texttt{next}, and an
+explicit \texttt{skip} are all the same transition. With ownership removed,
+there is no owner-gated variant: an automatic advance and a user-driven advance
+are indistinguishable, and any client may drive either. \texttt{Skip},
+\texttt{Next}, \texttt{Loop}, and \texttt{TrackEnds} are therefore all names for
+\texttt{Rotate}.
 
 \begin{zed}
   TrackEnds \defs Rotate
@@ -611,12 +598,13 @@ gated on ownership.
   Loop \defs Rotate
 \end{zed}
 
-\begin{schema}{Skip}
-  Rotate \\
-  who? : SESSION
-  \where
-  who? \in owner
-\end{schema}
+\begin{zed}
+  Next \defs Rotate
+\end{zed}
+
+\begin{zed}
+  Skip \defs Rotate
+\end{zed}
 
 \subsection{PlayPart --- replay a specific Part by index}
 
@@ -634,7 +622,6 @@ against a stable numbering of \texttt{pool} (finding~\#7). Nothing is generated.
   (mode = playingFilling \lor mode = playingRotating \lor mode = retrying) \\
   target? \in pool \\
   format' = format \\
-  owner' = owner \\
   pool' = pool \\
   failedParts' = failedParts \\
   mode' = mode \\
@@ -652,8 +639,8 @@ starts playback at a chosen ready Part without generating anything. A full pool
 enters \texttt{playingRotating}; a partial pool enters \texttt{playingFilling}
 \emph{with the fill inactive} (\texttt{filling} false) --- this is the one place
 the model relies on decoupling \texttt{filling} from the playing mode
-(finding~\#2). No owner is claimed: a CLI-started Program is agent-unowned until
-an agent claims it with \texttt{TurnOn} (finding~\#6).
+(finding~\#2). A client may later re-arm the fill by claiming the Program with
+\texttt{TurnOn}.
 
 \begin{schema}{StartFromDisk}
   \Delta Program \\
@@ -664,7 +651,6 @@ an agent claims it with \texttt{TurnOn} (finding~\#6).
   format' = format \\
   pool' = pool \\
   failedParts' = failedParts \\
-  owner' = \emptyset \\
   playing' = \{ target? \} \\
   lastPlayed' = \emptyset \\
   attempts' = 0 \\
@@ -717,14 +703,15 @@ postconditions; they are the intended proof obligations for animation.
     \texttt{failed} only when nothing is playing; a non-empty pool tolerates
     transient errors indefinitely, recovering via \texttt{Recover} while
     playback continues.
-  \item \textbf{Off releases ownership}: $mode = off \implies owner = \emptyset$
-    (and \texttt{playing}, \texttt{filling}, \texttt{lastError},
-    \texttt{failedParts} all cleared), so a stopped Program cannot be driven by
-    a stale forwarded message.
-  \item \textbf{Generation modes are owned}:
-    $mode \in \{generatingFirst, retrying, failed\} \implies owner \neq
-    \emptyset$, so the recovery path \texttt{VibeStyleChange} (which needs
-    $who? \in owner$) is always available from \texttt{failed}.
+  \item \textbf{Off clears generation state}: $mode = off \implies$
+    \texttt{playing}, \texttt{filling}, \texttt{lastError}, and
+    \texttt{failedParts} are all cleared, so a stopped Program carries no stale
+    fill, error, or per-Part failure into its next \texttt{TurnOn}.
+  \item \textbf{No session gate}: no operation takes or checks a session. Every
+    transition is enabled on \texttt{mode} (and pool shape) alone, so the same
+    command --- \texttt{next}, \texttt{skip}, \texttt{vibe}, \texttt{off} ---
+    succeeds from any client or process, and the recovery path
+    \texttt{VibeStyleChange} is always available from \texttt{failed}.
 \end{itemize}
 
 \section{Findings from Formalisation}
@@ -790,19 +777,21 @@ underspecified, or self-contradictory.
     tool; a design that surfaces only \texttt{lastError} would silently drop the
     \texttt{FillBadPart} case.
 
-  \item \textbf{Consume-only operations require no ownership.} The CLI is an
-    external player, not an agent session, and \texttt{PlayPart}, \texttt{Loop},
-    and \texttt{StartFromDisk} neither generate nor change the
-    \emph{(vibe, style)} key --- they only move the playback cursor over ready
-    Parts. Requiring ownership would make the CLI unable to play a pool it did
-    not turn on (the common case after a daemon restart). The consequence,
-    which the design must accept, is asymmetric: an agent \emph{cannot}
-    \texttt{Skip} or \texttt{VibeStyleChange} a CLI-started, agent-unowned
-    Program ($owner = \emptyset$) --- it must claim it with \texttt{TurnOn}
-    first. The invariant was relaxed from the old
-    $owner = \emptyset \iff mode = off$ to
-    $mode = off \implies owner = \emptyset$ to admit an owner-less playing
-    Program.
+  \item \textbf{No operation requires ownership --- there is no ownership.}
+    \emph{(Superseded by the operator ruling of 2026-07-05; retained as errata.)}
+    An earlier draft distinguished agent operations, which owned a Program, from
+    consume-only operations, which did not, and had to accept the asymmetric
+    consequence that an agent could not \texttt{Skip} or \texttt{VibeStyleChange}
+    a CLI-started, unowned Program without first claiming it. The operator ruled
+    ownership out entirely: it is complex, bug-ridden, and unusable across
+    sessions --- gating control on the turning-on session made music
+    uncontrollable from any other session. The \texttt{SESSION} type, the
+    \texttt{owner} state variable, the \texttt{who?} inputs, and every ownership
+    invariant are gone. Every operation is now enabled on \texttt{mode} (and
+    pool shape) alone; \texttt{voxd} state is machine-universal, and any client
+    from any process drives every command. The old worry this finding recorded
+    --- ``can the CLI play a pool it did not turn on?'' --- is answered
+    unconditionally yes.
 
   \item \textbf{Part indexing is a resolved surface parameter, not modelled
     state.} \texttt{PlayPart} takes a Part, with precondition
@@ -816,16 +805,18 @@ underspecified, or self-contradictory.
     operation is attempted, so no ``index out of range'' transition appears
     here.
 
-  \item \textbf{\texttt{failed} retains ownership; only \texttt{off} releases
-    it.} The original model released ownership on its terminal
-    \texttt{Disable}. Here \texttt{failed} is not terminal --- it is a
-    recoverable, queryable state the owner re-authors out of via
-    \texttt{VibeStyleChange} --- so it must keep its owner. This is why the
-    ``owned exactly when on'' equivalence of the playlist model becomes the
-    weaker $mode = off \implies owner = \emptyset$ plus ``generation modes are
-    owned''. A design that cleared the owner on entering \texttt{failed} would
-    strand the Program: no session could retune it, and the observable failure
-    would be unrecoverable except by a full \texttt{TurnOff}/\texttt{TurnOn}.
+  \item \textbf{\texttt{failed} is recoverable, and recovery is unconditional.}
+    \emph{(The ownership half of this finding is moot after the 2026-07-05
+    ruling; the recoverability half stands.)} \texttt{failed} is not terminal:
+    it is a queryable state that \texttt{VibeStyleChange} re-authors out of, so
+    no design may treat it as a permanent disable. The earlier draft added a
+    complication here --- \texttt{failed} had to \emph{retain} its owner, or no
+    session could retune it and the failure would be unrecoverable except by a
+    full \texttt{TurnOff}/\texttt{TurnOn}. With ownership removed that concern
+    evaporates: \texttt{VibeStyleChange} is gated only on $mode \neq off$, so any
+    client can retune a \texttt{failed} Program back into generation. The
+    recovery path is strictly \emph{more} available than the owned model made
+    it.
 
   \item \textbf{The atomic-delivery abstraction hides \texttt{pending} and
     \texttt{generating}.} Phase-1 generation is modelled as an atomic step
