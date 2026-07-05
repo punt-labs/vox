@@ -34,9 +34,8 @@ _NO_KEY_MSG = "Background music requires an ElevenLabs API key (set ELEVENLABS_A
 class MusicRequest:
     """A request to start or change music for one session.
 
-    ``prompts`` carries the agent-authored generation prompts (a base plus one
-    variation per pool slot); ``None`` means no agent supplied them and the pool
-    falls back to a minimal literal prompt.
+    ``prompts`` is the agent-authored generation prompts, or ``None`` to fall
+    back to a minimal literal prompt.
     """
 
     owner_id: str
@@ -134,10 +133,8 @@ class MusicScheduler:
         """Start music or transfer ownership for one (vibe, style) pool.
 
         A ``name`` matching a saved track replays it; otherwise the pool is
-        adopted, the agent's ``prompts`` are installed, and an empty pool
-        generates its first track before playing. ``prompts`` is ``None`` for a
-        hook-driven start with no agent in the loop -- the pool then falls back
-        to a minimal literal prompt.
+        adopted, the agent's ``prompts`` (or the fallback when ``None``) are
+        installed, and an empty pool generates its first track before playing.
         """
         if not owner_id:
             msg = "owner_id is required"
