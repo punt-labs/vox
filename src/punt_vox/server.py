@@ -620,6 +620,30 @@ def vibe(
     return json.dumps({"vibe": updates})
 
 
+def _agent_prompts(
+    base_prompt: str | None, variations: list[str] | None
+) -> PromptSet | None:
+    """Build the agent's validated prompt set from tool args, or None when unset.
+
+    Raises ``ValueError`` (via :meth:`PromptSet.from_agent`) on a malformed shape
+    so the tool surfaces the error at the MCP boundary rather than the daemon.
+    """
+    if base_prompt is None and variations is None:
+        return None
+    return PromptSet.from_agent(base_prompt or "", variations or [])
+
+
+def _music_message(
+    resp: dict[str, object], mode: str, style: str | None, name: str | None
+) -> str:
+    """Return the human-readable status line for a music tool response."""
+    if resp.get("status") == "playing" and name:
+        return f"\u266a Playing saved track: {name}"
+    if mode == "on":
+        return _music_on_message(style, _session.vibe)
+    return "\u266a Music off."
+
+
 def _music_on_message(style: str | None, vibe: str | None) -> str:
     """Build the human-readable message for music-on."""
     prefix = "\u266a Music on \u2014 generating"
@@ -651,18 +675,9 @@ def music(
     boilerplate -- it homogenizes every genre. See ``/music`` for a worked
     example.
 
-    Args:
-        mode: "on" to start music, "off" to stop.
-        style: Optional style modifier (e.g. "techno", "klezmer"); persists.
-        name: Optional track name -- replays a saved track by that name, or
-            saves the generated track under it.
-        base_prompt: Genre-forward stem shared by every track. Requires
-            ``variations``.
-        variations: Exactly 12 literal per-track descriptions, varied within
-            the genre. Requires ``base_prompt``.
-
-    Returns:
-        JSON string with a ``message`` field and the raw voxd response.
+    ``mode`` is "on"/"off"; ``style`` persists across calls; ``name`` replays or
+    saves a track; ``base_prompt`` + the 12 ``variations`` require each other.
+    Returns a JSON string with a ``message`` field and the raw voxd response.
     """
     _session.refresh_from_config()
     if mode not in ("on", "off"):
@@ -670,11 +685,7 @@ def music(
 
     client = _voxd_client()
     try:
-        prompts = (
-            PromptSet.from_agent(base_prompt or "", variations or [])
-            if base_prompt is not None or variations is not None
-            else None
-        )
+        prompts = _agent_prompts(base_prompt, variations)
         resp = client.music(
             mode=mode,
             style=style or "",
@@ -704,14 +715,7 @@ def music(
         )
 
     _session.music_mode = mode
-
-    # Replay of existing track — status is "playing", not "generating".
-    if resp.get("status") == "playing" and name:
-        message = f"\u266a Playing saved track: {name}"
-    elif mode == "on":
-        message = _music_on_message(style, _session.vibe)
-    else:
-        message = "\u266a Music off."
+    message = _music_message(resp, mode, style, name)
     return json.dumps({"message": message, **resp})
 
 
