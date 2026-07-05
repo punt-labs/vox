@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs import (
+    Format,
     Mode,
     Part,
     PlaybackPolicy,
@@ -212,6 +213,50 @@ class TestGeneratingFirstThenPlays:
         harness.channel.post(Produced(Part("id001", 1)))  # the fill delivers #1
         await harness.player.wait_for(1)
         assert harness.player.parts[0] == Part("id001", 1)
+        await harness.stop()
+
+
+class TestSkipInGeneratingFirst:
+    """Z finding #1 (modeled property): a skip while nothing plays is a no-op."""
+
+    async def test_skip_in_generating_first_is_noop(
+        self, policy: PlaybackPolicy
+    ) -> None:
+        harness = _Harness(Program(ProgramState.initial(), policy))
+        harness.channel.post(
+            TurnOn()
+        )  # empty pool -> generating_first, nothing playing
+        await _settle()
+        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+
+        harness.channel.post(Rotate())  # a skip here has no playing Part to advance
+        await _settle()
+        assert harness.player.parts == []  # NO player spawned
+        # The lost-race guard is swallowed: the mode is unchanged and nothing crashed.
+        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        await harness.stop()
+
+
+class TestRetuneDuringGeneratingFirst:
+    """Modeled property: retuning to a full pool from generating_first wakes the
+    loop and plays from disk immediately -- it never hangs waiting for a fill."""
+
+    async def test_retune_during_generating_first_never_hangs(
+        self, policy: PlaybackPolicy, pool_of: PoolFactory
+    ) -> None:
+        harness = _Harness(Program(ProgramState.initial(), policy))
+        harness.channel.post(TurnOn())  # generating_first, parked in _wait_for_playable
+        await _settle()
+        mode_before = harness.channel.program.mode
+        assert mode_before is Mode.GENERATING_FIRST
+        assert harness.player.parts == []  # nothing playing yet
+
+        full = pool_of(*range(1, Format.PLAYLIST.pool_size + 1))
+        harness.channel.post(VibeStyleChange(full))  # full pool -> playing_rotating
+        # The loop wakes on `changed` and plays a saved Part at once -- no hang.
+        await harness.player.wait_for(1)
+        assert harness.channel.program.mode is Mode.PLAYING_ROTATING
+        assert harness.player.parts[0] in full
         await harness.stop()
 
 
