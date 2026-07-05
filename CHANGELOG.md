@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-07-05
+
 ### Added
 
 - **Background music is now a self-driving playlist**: `/music on` plays the first track the moment it is ready, then generates the rest of the pool (up to 12) in the **background with no commands**, and **auto-advances** to a different track as each one ends. Once the pool has 12 it stops generating and **rotates** (shuffle, never back-to-back) forever at zero credits. A vibe/style change finishes the current song, then switches to that vibe's pool. This replaces bas7's manual-skip rotation, which only advanced on `/music next` and otherwise looped a single track. Internally the loop was rebuilt (`MusicLoop` auto-advance + a scheduler-owned cancellable `PoolFiller` + a `Playlist` selection unit), and all disk access now sits behind an injected `TrackStore` protocol (filesystem impl in production, in-memory fake in tests). Behavior is proven by loop-level tests that drive the real playback loop. Closes vox-1rxb (rebuild of #291/bas7).
