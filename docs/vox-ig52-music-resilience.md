@@ -120,7 +120,7 @@ debugging the daemon; it is not a client interface.
 
 Amend `commands/music.md`: an explicit prohibition — **never name specific
 artists, composers, bands, or copyrighted song/piece titles** ("Chopin",
-"Clair-de-lune", "in the style of X"); ElevenLabs Music rejects them under ToS.
+"Clair de lune", "in the style of X"); ElevenLabs Music rejects them under ToS.
 Use **forms, instruments, modes/scales, eras, tempo, key, mood** instead
 (the Klezmer worked-example already models this; add the classical-piano
 counter-example — "nocturne in E-flat, rolling left-hand arpeggios" not
@@ -140,7 +140,7 @@ counter-example — "nocturne in E-flat, rolling left-hand arpeggios" not
 5. Modeled properties asserted **by name** in tests (e.g. `test_bad_prompt_sets_failed_state`,
    `test_transient_keeps_playing`, `test_full_pool_never_hard_fails`).
 6. `make check` EXIT=0; live-verified by the COO through `status` before the bead
-   closes (per [[feedback-live-verify-before-close]] — no close on `make check` alone).
+   closes — verified live before the bead closes, never on `make check` alone.
 
 ## 8. Execution plan (next session)
 
