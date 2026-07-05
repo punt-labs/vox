@@ -669,13 +669,12 @@ def music(
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
 
-    # Validate the agent's prompts before any daemon call. A malformed shape is
-    # caller input, not a daemon failure: reject it without touching music_mode
-    # so voxd and the session never disagree about what is playing.
+    # Validate prompts before any daemon call: a malformed shape is caller input,
+    # not a daemon failure, so reject it without touching music_mode -- voxd and
+    # the session must never disagree about what is playing.
     try:
         prompts = PromptSet.from_tool_args(base_prompt, variations)
     except ValueError as exc:
-        logger.warning("malformed music prompts; running state unchanged")
         return _error(str(exc))
 
     client = _voxd_client()
@@ -689,24 +688,15 @@ def music(
             name=name,
             prompts=prompts,
         )
-    except VoxdConnectionError:
-        logger.warning("voxd unreachable in music tool; music off", exc_info=True)
-        _session.music_mode = "off"
-        return json.dumps(
-            {
-                "message": "\u266a Daemon unreachable \u2014 music off.",
-                "error": "daemon unreachable",
-            }
-        )
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         logger.warning("voxd error in music tool; music off", exc_info=True)
         _session.music_mode = "off"
-        return json.dumps(
-            {
-                "message": f"\u266a Music error: {exc}",
-                "error": str(exc),
-            }
-        )
+        if isinstance(exc, VoxdConnectionError):
+            message = "\u266a Daemon unreachable \u2014 music off."
+            error = "daemon unreachable"
+        else:
+            message, error = f"\u266a Music error: {exc}", str(exc)
+        return json.dumps({"message": message, "error": error})
 
     _session.music_mode = mode
     message = _session.music_message(resp, mode, style, name)

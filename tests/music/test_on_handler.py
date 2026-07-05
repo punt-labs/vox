@@ -9,6 +9,7 @@ from starlette.websockets import WebSocket
 
 from punt_vox.music_prompts import POOL_SIZE, PromptSet
 from punt_vox.voxd.music.on_handler import MusicOnHandler
+from punt_vox.voxd.music.scheduler import MusicRequest
 from punt_vox.voxd.music.types import MusicResponse
 
 __all__: list[str] = []
@@ -46,7 +47,7 @@ class TestMusicOnHandler:
         asyncio.run(handler(msg, ws))
 
         scheduler.turn_on.assert_called_once_with(
-            "abc", "techno", ("focused", "[calm]"), "", prompts=None
+            MusicRequest("abc", "techno", ("focused", "[calm]"), "", None)
         )
         ws.send_json.assert_called_once()
         resp = ws.send_json.call_args[0][0]
@@ -116,8 +117,10 @@ class TestMusicOnHandler:
 
         asyncio.run(handler(msg, ws))
 
-        prompts = scheduler.turn_on.call_args.kwargs["prompts"]
-        assert prompts == PromptSet.from_agent("Klezmer, clarinet lead", _variations())
+        req = scheduler.turn_on.call_args.args[0]
+        assert req.prompts == PromptSet.from_agent(
+            "Klezmer, clarinet lead", _variations()
+        )
 
     def test_reports_invalid_prompt_shape(self) -> None:
         scheduler = MagicMock()
