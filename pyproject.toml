@@ -178,12 +178,6 @@ enable_error_code = ["ignore-without-code"]
 module = "punt_lux.*"
 ignore_missing_imports = true
 
-# Pre-existing: WebSocketRouter handler extraction changed constructor/method
-# signatures but these test files weren't updated yet.
-[[tool.mypy.overrides]]
-module = ["test_voxd_router", "test_voxd_playback"]
-ignore_errors = true
-
 
 [tool.pyright]
 pythonVersion = "3.13"

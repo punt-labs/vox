@@ -48,8 +48,6 @@ _PROBE_TIMEOUT_S = 5.0
 # without unbounded growth in memory or log files.
 _MAX_STDERR_LEN = 2000
 
-_MUSIC_VOLUME = 30
-
 
 # ---------------------------------------------------------------------------
 # PlaybackItem dataclass
@@ -141,17 +139,6 @@ def _player_command(path: Path) -> list[str]:
     if _is_darwin():
         return ["afplay", str(path)]
     return ["ffplay", "-nodisp", "-autoexit", str(path)]
-
-
-def _music_player_command(path: Path) -> list[str]:  # pyright: ignore[reportUnusedFunction]
-    """Return the argv for playing a music track at reduced volume.
-
-    Music plays at ``-volume 30`` so speech and chimes overlay on top
-    at full volume without runtime volume manipulation.
-    """
-    if _is_darwin():
-        return ["afplay", "--volume", "0.3", str(path)]
-    return ["ffplay", "-nodisp", "-autoexit", "-volume", str(_MUSIC_VOLUME), str(path)]
 
 
 async def _probe_duration(path: Path) -> float | None:

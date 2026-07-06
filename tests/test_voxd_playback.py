@@ -11,14 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
-from punt_vox.voxd import (
-    _PLAYBACK_TIMEOUT_DEFAULT_S,
-    _music_player_command,
-)
-from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.on_handler import MusicOnHandler
-from punt_vox.voxd.music.scheduler import MusicScheduler
-from punt_vox.voxd.music.store import FilesystemTrackStore
+from punt_vox.voxd import _PLAYBACK_TIMEOUT_DEFAULT_S
 from punt_vox.voxd.playback import PlaybackQueue
 
 
@@ -336,27 +329,6 @@ class TestPlayAudioProportionalTimeout:
         assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
 
 
-class TestMusicPlayerCommand:
-    """_music_player_command produces the right argv at reduced volume."""
-
-    def test_linux_ffplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd.playback._is_darwin", return_value=False):
-            cmd = _music_player_command(Path("/tmp/track.mp3"))
-        assert cmd == [
-            "ffplay",
-            "-nodisp",
-            "-autoexit",
-            "-volume",
-            "30",
-            "/tmp/track.mp3",
-        ]
-
-    def test_darwin_afplay_with_volume(self) -> None:
-        with patch("punt_vox.voxd.playback._is_darwin", return_value=True):
-            cmd = _music_player_command(Path("/tmp/track.mp3"))
-        assert cmd == ["afplay", "--volume", "0.3", "/tmp/track.mp3"]
-
-
 class TestStderrTruncation:
     """ffplay stderr can be unbounded; the truncator caps it but keeps both ends."""
 
@@ -377,30 +349,3 @@ class TestStderrTruncation:
         assert out.endswith("B")
         # Marker reports the dropped byte count.
         assert str(len(text) - _MAX_STDERR_LEN) in out
-
-
-class TestMusicSeparateFromPlaybackQueue:
-    """Music subprocess must NOT use the playback consumer queue.
-
-    The spec requires music to run its own subprocess at reduced volume,
-    independent of the chime/TTS playback queue. This test verifies the
-    separation by checking that _handle_music_on does not enqueue anything.
-    """
-
-    def test_music_on_does_not_enqueue(self, tmp_path: Path) -> None:
-        playback = PlaybackQueue()
-        tg = TrackGenerator(FilesystemTrackStore(tmp_path))
-        music = MusicScheduler(tg)
-        handler = MusicOnHandler(scheduler=music)
-
-        ws = MagicMock()
-        ws.send_json = AsyncMock()
-        msg: dict[str, object] = {
-            "id": "sep-1",
-            "owner_id": "session-1",
-            "vibe": "focused",
-        }
-
-        asyncio.run(handler(msg, ws))
-
-        assert playback._queue.empty()

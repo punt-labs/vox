@@ -12,16 +12,8 @@ import pytest
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.list_handler import MusicListHandler
-from punt_vox.voxd.music.next_handler import MusicNextHandler
-from punt_vox.voxd.music.off_handler import MusicOffHandler
-from punt_vox.voxd.music.on_handler import MusicOnHandler
-from punt_vox.voxd.music.play_handler import MusicPlayHandler
-from punt_vox.voxd.music.scheduler import MusicScheduler
-from punt_vox.voxd.music.store import FilesystemTrackStore
-from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
@@ -34,13 +26,12 @@ def _make_router(
     auth_token: str | None = None,
 ) -> WebSocketRouter:
     """Build a WebSocketRouter for testing without touching real files."""
-    from punt_vox.dirs import music_output_dir
+    from punt_vox.dirs import default_output_dir
 
     pb = PlaybackQueue()
-    tg = TrackGenerator(FilesystemTrackStore(music_output_dir()))
-    ms = MusicScheduler(tg)
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)
+    programs = ProgramSubsystem(default_output_dir() / "programs")
 
     handlers: dict[str, MessageHandler] = {
         "synthesize": SynthesizeHandler(
@@ -56,12 +47,7 @@ def _make_router(
         ),
         "voices": VoicesHandler(),
         "health": HealthHandler(health=hl),
-        "music_on": MusicOnHandler(scheduler=ms),
-        "music_off": MusicOffHandler(scheduler=ms),
-        "music_play": MusicPlayHandler(scheduler=ms),
-        "music_list": MusicListHandler(generator=tg),
-        "music_vibe": MusicVibeHandler(scheduler=ms),
-        "music_next": MusicNextHandler(scheduler=ms),
+        **programs.handlers(),
     }
     return WebSocketRouter(
         handlers=handlers,
@@ -169,11 +155,12 @@ class TestHandlerRegistration:
             "record",
             "voices",
             "health",
-            "music_on",
-            "music_off",
-            "music_play",
-            "music_list",
-            "music_vibe",
-            "music_next",
+            "program_on",
+            "program_off",
+            "program_next",
+            "program_play",
+            "program_loop",
+            "program_list",
+            "program_status",
         }
         assert set(router.handlers.keys()) == expected
