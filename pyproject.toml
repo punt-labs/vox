@@ -191,6 +191,7 @@ typeCheckingMode = "strict"
 reportMissingTypeStubs = "error"
 venvPath = "."
 venv = ".venv"
+extraPaths = ["."]
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"
@@ -203,6 +204,7 @@ reportUnknownMemberType = false
 minversion = "8.0"
 addopts = "-ra -q -m 'not slow and not integration and not e2e'"
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (requires provider API credentials)",
