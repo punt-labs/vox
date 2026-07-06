@@ -27,6 +27,7 @@ from punt_vox.voxd.programs import (
     ProgramState,
     Reason,
 )
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.manifest import (
     PartEntry,
@@ -34,6 +35,8 @@ from punt_vox.voxd.programs.manifest import (
     ProgramManifest,
 )
 from punt_vox.voxd.programs.part import PartStatus
+from punt_vox.voxd.programs.producer import PartSpec
+from punt_vox.voxd.programs.service import ProgramService
 
 
 @final
@@ -257,3 +260,50 @@ def manifest_of() -> Callable[..., ProgramManifest]:
 def entry_of() -> Callable[..., PartEntry]:
     """Return the ready-entry factory."""
     return ready_entry
+
+
+# ---------------------------------------------------------------------------
+# Daemon-orchestration doubles -- a filesystem-backed service for handler/service
+# tests. The Producer writes a byte so ``FilesystemPartStore`` records a real
+# Part; the store is real (under ``tmp_path``) so replay resolves from disk.
+# ---------------------------------------------------------------------------
+
+
+@final
+class QuietProducer:
+    """Write a byte to the target and return a ready Part (records each call)."""
+
+    __slots__ = ("calls",)
+    calls: list[int]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.calls = []
+        return self
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        self.calls.append(spec.index)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"audio")
+        return Part(target.name, spec.index)
+
+
+def make_service(root: Path) -> ProgramService:
+    """Build a ProgramService over a real filesystem store rooted at ``root``."""
+    return ProgramService(
+        QuietProducer(), FilesystemProgramStore(root), root, FakeSleeper()
+    )
+
+
+def seed_program(root: Path, name: str, *indices: int) -> None:
+    """Create a saved Program on disk with ready Parts at ``indices``."""
+    store = FilesystemProgramStore(root).create(
+        ProgramManifest(
+            name=ProgramName(name),
+            fmt=Format.PLAYLIST,
+            subject=PlaylistSubject(vibe="ambient", style="techno"),
+            parts=tuple(ready_entry(i) for i in indices),
+        )
+    )
+    for i in indices:
+        store.write_target(i).write_bytes(b"audio")

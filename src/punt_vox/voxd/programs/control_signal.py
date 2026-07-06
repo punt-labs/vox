@@ -32,6 +32,6 @@ class ControlSignal(Protocol):
         """
         ...
 
-    def apply(self, program: Program) -> None:
-        """Apply this command's transition to ``program`` (one serialized write)."""
+    def apply(self, program: Program, /) -> None:
+        """Apply this command's transition to ``program`` (positional-only write)."""
         ...

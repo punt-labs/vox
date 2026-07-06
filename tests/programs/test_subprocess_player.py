@@ -19,6 +19,21 @@ if TYPE_CHECKING:
     import pytest
 
 
+class FixedDirectory:
+    """A mutable ``PlayerDirectory`` test double, resolved live on each spawn."""
+
+    __slots__ = ("_directory",)
+
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
+
+    def switch(self, directory: Path) -> None:
+        self._directory = directory
+
+    def active_directory(self) -> Path:
+        return self._directory
+
+
 async def _spawn(*argv: str) -> asyncio.subprocess.Process:
     return await asyncio.create_subprocess_exec(
         *argv,
@@ -99,8 +114,35 @@ class TestSubprocessPlayer:
             "punt_vox.voxd.programs.subprocess_player.asyncio.create_subprocess_exec",
             _fake_exec,
         )
-        player = SubprocessPlayer(tmp_path)
+        player = SubprocessPlayer(FixedDirectory(tmp_path))
         handle = await player.play(Part("001.mp3", 1))
         assert isinstance(handle, SubprocessHandle)
         assert str(tmp_path / "001.mp3") in seen  # the resolved file was played
         await handle.wait()
+
+    async def test_play_resolves_the_live_directory_each_spawn(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The directory is read on every spawn, so a mid-flight switch lands the
+        # player in the new pool -- the dynamic-player half of vox-73m5.
+        seen: list[str] = []
+
+        async def _fake_exec(
+            *argv: str, **_kwargs: object
+        ) -> asyncio.subprocess.Process:
+            seen.extend(argv)
+            return await asyncio.create_subprocess_shell(
+                "true", stderr=asyncio.subprocess.PIPE
+            )
+
+        monkeypatch.setattr(
+            "punt_vox.voxd.programs.subprocess_player.asyncio.create_subprocess_exec",
+            _fake_exec,
+        )
+        source = FixedDirectory(tmp_path / "first")
+        player = SubprocessPlayer(source)
+        await (await player.play(Part("001.mp3", 1))).wait()
+        source.switch(tmp_path / "second")
+        await (await player.play(Part("001.mp3", 1))).wait()
+        assert str(tmp_path / "first" / "001.mp3") in seen
+        assert str(tmp_path / "second" / "001.mp3") in seen

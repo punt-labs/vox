@@ -1,9 +1,8 @@
-"""The production player: play a Part's file as a reduced-volume subprocess.
+"""Play a Part's file as a reduced-volume subprocess in the active directory.
 
-Resolves a Part to its file within the active Program directory, builds the
-platform player argv (``afplay`` on macOS, ``ffplay`` on Linux) at reduced
-volume so speech and chimes overlay on top, and spawns it. The process handle
-logs a non-zero exit so a failed player surfaces instead of vanishing.
+Resolves the active Program's directory live from an injected ``PlayerDirectory``
+on every spawn, builds the platform argv (``afplay``/``ffplay``) at reduced volume
+so speech and chimes overlay it, and spawns it; the handle logs a non-zero exit.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.player_directory import PlayerDirectory
 
 __all__ = ["SubprocessPlayer"]
 
@@ -71,20 +71,20 @@ class SubprocessHandle:
 
 @final
 class SubprocessPlayer:
-    """Play Parts from one Program directory as reduced-volume subprocesses."""
+    """Play Parts from the active Program directory as reduced-volume subprocesses."""
 
-    __slots__ = ("_directory",)
-    _directory: Path
+    __slots__ = ("_directories",)
+    _directories: PlayerDirectory
 
-    def __new__(cls, directory: Path) -> Self:
+    def __new__(cls, directories: PlayerDirectory) -> Self:
         self = super().__new__(cls)
-        self._directory = directory
+        self._directories = directories
         return self
 
     async def play(self, part: Part) -> SubprocessHandle:
-        """Spawn the player for ``part`` and return its handle."""
+        """Spawn the player for ``part`` in the active directory, resolved now."""
         proc = await asyncio.create_subprocess_exec(
-            *self._command(self._directory / part.identity),
+            *self._command(self._directories.active_directory() / part.identity),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

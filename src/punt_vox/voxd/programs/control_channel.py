@@ -87,6 +87,16 @@ class ControlChannel:
         """Return the Program this channel is the sole writer to."""
         return self._program
 
+    def retarget(self, program: Program) -> None:
+        """Swap which Program the sole writer animates (a ``play <name>`` switch).
+
+        Called only from inside an applied command (a ``SwitchProgram`` on the
+        consumer thread), so the swap is serialised with every other mutation --
+        the loop and the fill re-read :attr:`program` after the writer wakes them
+        and see the new Program, never one half-swapped (the vox-73m5 hazard).
+        """
+        self._program = program
+
     @property
     def changed(self) -> asyncio.Event:
         """Return the event set after each applied command (the loop races it)."""
