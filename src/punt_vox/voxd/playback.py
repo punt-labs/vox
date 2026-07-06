@@ -157,7 +157,6 @@ async def _probe_duration(path: Path) -> float | None:
         "csv=p=0",
         str(path),
     ]
-    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -165,17 +164,17 @@ async def _probe_duration(path: Path) -> float | None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
+    except (FileNotFoundError, OSError):
+        return None
+    try:
         stdout_bytes, _ = await asyncio.wait_for(
             proc.communicate(), timeout=_PROBE_TIMEOUT_S
         )
     except TimeoutError:
-        if proc is not None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            with contextlib.suppress(Exception):
-                await proc.wait()
-        return None
-    except (FileNotFoundError, OSError):
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
         return None
     try:
         duration = float((stdout_bytes or b"").strip())
