@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
 from punt_vox.voxd.programs.control_channel import ControlChannel
+from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
 from punt_vox.voxd.programs.format import Format
 from punt_vox.voxd.programs.identifiers import ProgramName
@@ -71,7 +72,7 @@ class ProgramService:
         self._context = ActiveContext()
         self._channel = ControlChannel(Program(ProgramState.initial(), RotatePolicy()))
         self._filler = Filler(producer, self._channel, sleeper)
-        self._channel.attach_fill(self._filler, self)
+        self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._loop = ProgramLoop(self._channel, SubprocessPlayer(self))
         return self
 

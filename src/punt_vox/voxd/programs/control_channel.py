@@ -29,7 +29,7 @@ from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.program import GuardViolationError
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.programs.filler import Filler, FillPlanSource
+    from punt_vox.voxd.programs.fill_reconciler import FillReconciler
     from punt_vox.voxd.programs.program import Program
 
 __all__ = ["ControlChannel"]
@@ -42,26 +42,23 @@ class ControlChannel:
     """Serialize every Program mutation through one consumer (single-writer).
 
     The consumer is also the orchestration point: after each applied command it
-    reconciles the background fill to the Program's ``filling`` flag -- starting
-    the :class:`Filler` on the active plan when generation is wanted, cancelling
-    it otherwise -- so the fill lifecycle rides the single writer and never
-    races the Program's state.
+    hands the Program to its :class:`FillReconciler`, which starts or cancels the
+    background fill to match the ``filling`` flag -- so the fill lifecycle rides
+    the single writer and never races the Program's state.
     """
 
     __slots__ = (
         "_changed",
-        "_filler",
         "_interrupt",
-        "_plan_source",
         "_program",
         "_queue",
+        "_reconciler",
     )
     _program: Program
     _queue: asyncio.Queue[ControlSignal]
     _changed: asyncio.Event
     _interrupt: asyncio.Event
-    _filler: Filler | None
-    _plan_source: FillPlanSource | None
+    _reconciler: FillReconciler | None
 
     def __new__(cls, program: Program) -> Self:
         self = super().__new__(cls)
@@ -69,18 +66,16 @@ class ControlChannel:
         self._queue = asyncio.Queue()
         self._changed = asyncio.Event()
         self._interrupt = asyncio.Event()
-        self._filler = None
-        self._plan_source = None
+        self._reconciler = None
         return self
 
-    def attach_fill(self, filler: Filler, plan_source: FillPlanSource) -> None:
-        """Wire the background fill so the consumer reconciles it after each apply.
+    def attach_reconciler(self, reconciler: FillReconciler) -> None:
+        """Wire the fill reconciler the consumer runs after each applied command.
 
-        Separate from construction because the Filler needs this channel to post
-        its outcomes -- the two are built, then joined here.
+        Separate from construction because the reconciler's Filler needs this
+        channel to post its outcomes -- the two are built, then joined here.
         """
-        self._filler = filler
-        self._plan_source = plan_source
+        self._reconciler = reconciler
 
     @property
     def program(self) -> Program:
@@ -172,13 +167,9 @@ class ControlChannel:
         self._changed.set()
 
     def _reconcile_fill(self) -> None:
-        """Match the background fill to the Program's ``filling`` flag."""
-        if self._filler is None or self._plan_source is None:
-            return
-        if self._program.state.filling:
-            self._filler.ensure_running(self._plan_source.current_plan())
-        else:
-            self._filler.cancel()
+        """Reconcile the background fill to the Program via the wired reconciler."""
+        if self._reconciler is not None:
+            self._reconciler.reconcile(self._program)
 
     async def join(self) -> None:
         """Block until every posted command has been applied."""

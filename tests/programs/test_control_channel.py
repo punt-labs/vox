@@ -25,6 +25,7 @@ from punt_vox.voxd.programs import (
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.fill_signal import TransientFailure
 from punt_vox.voxd.programs.filler import Filler, FillPlan
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
@@ -164,7 +165,7 @@ class TestFillReconciliation:
         plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_HoldingProducer(), channel, sleeper)
-        channel.attach_fill(filler, _FixedPlanSource(plan))
+        channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
 
         channel.post(TurnOn())  # empty pool -> generating_first -> filling True
         await channel.apply_next()
@@ -226,7 +227,7 @@ class TestTerminalStateCancelsFill:
         channel = ControlChannel(prog)
         producer = _CountingHoldingProducer()
         filler = Filler(producer, channel, sleeper)
-        channel.attach_fill(filler, _FixedPlanSource(plan))
+        channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
         filler.ensure_running(plan)  # model a fill still live as the Program gives up
         await _until(lambda: producer.calls == 1)  # one generation in flight, running
 
@@ -261,7 +262,7 @@ class TestUnexpectedFillErrorIsObservable:
         plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_BoomProducer(), channel, sleeper)
-        channel.attach_fill(filler, _FixedPlanSource(plan))
+        channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
 
         server = asyncio.create_task(channel.serve())
         channel.post(TurnOn())  # empty pool -> generating_first -> starts the fill
