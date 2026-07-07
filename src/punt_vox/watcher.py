@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import cast
 
 from punt_vox.chime import resolve_chime_path
-from punt_vox.config import read_config
+from punt_vox.config import ConfigStore
 from punt_vox.playback import enqueue as _enqueue_audio
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def make_notification_consumer(
     last_fired: dict[str, float] = {}
 
     def _consumer(event: SessionEvent) -> None:
-        config = read_config(config_dir)
+        config = ConfigStore(config_dir).read()
         if config.notify != "c":
             return
 

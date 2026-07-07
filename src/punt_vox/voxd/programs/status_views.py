@@ -1,0 +1,96 @@
+"""The format-neutral sub-views of a Program's runtime status (design section 5).
+
+Three small value objects project the parts of a :class:`ProgramState` a client
+watches -- what is playing, how generation is faring, and which Parts failed
+permanently. Every field is format-agnostic: "Part N of M" reads the same for a
+playlist track, a podcast segment, or an audiobook chapter, so Phases 2--3
+populate the identical shape with no field change. Each round-trips through JSON
+so the value crosses the ``voxd`` wire to any client (PY-EH-8 on deserialize).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Self, final
+
+from punt_vox.voxd.programs.wire import JsonObject
+
+__all__ = ["FailedPartView", "GenerationStatus", "NowPlaying"]
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class NowPlaying:
+    """The playing Part's position in the ordered pool -- "Part ``index`` of ``of``"."""
+
+    index: int  # 1-based position of the playing Part in the ordered pool
+    of: int  # total Parts currently in the pool (the "M" in "N of M")
+    title: str | None = (
+        None  # optional display label from the manifest, never an address
+    )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the JSON object form, omitting an absent title."""
+        record: dict[str, object] = {"index": self.index, "of": self.of}
+        if self.title is not None:
+            record["title"] = self.title
+        return record
+
+    @classmethod
+    def from_wire(cls, obj: JsonObject) -> Self:
+        """Build a now-playing view from a wire object, raising on a bad record."""
+        return cls(
+            index=obj.require_int("index"),
+            of=obj.require_int("of"),
+            title=obj.opt_str("title"),
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class GenerationStatus:
+    """The program-level generation/error surface (design finding #5).
+
+    ``last_error`` is the *program-level* advisory error (set while retrying or
+    failed, ``None`` when healthy) -- distinct from the per-Part failures in
+    :class:`FailedPartView`. ``None`` is the documented "healthy" contract, not a
+    gave-up sentinel (PY-TS-14).
+    """
+
+    filling: bool  # a background fill is running
+    attempts: int  # transient retries in flight (0 unless retrying)
+    last_error: str | None = None  # program-level error text; None when healthy
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the JSON object form, omitting an absent error."""
+        record: dict[str, object] = {"filling": self.filling, "attempts": self.attempts}
+        if self.last_error is not None:
+            record["last_error"] = self.last_error
+        return record
+
+    @classmethod
+    def from_wire(cls, obj: JsonObject) -> Self:
+        """Build a generation view from a wire object, raising on a bad record."""
+        return cls(
+            filling=obj.require_bool("filling"),
+            attempts=obj.require_int("attempts"),
+            last_error=obj.opt_str("last_error"),
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class FailedPartView:
+    """One permanently-failed Part while the Program plays on (design finding #5)."""
+
+    index: int  # the intrinsic index of a Part that hit a permanent error
+    reason: str  # the human-readable failure diagnostic
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the JSON object form."""
+        return {"index": self.index, "reason": self.reason}
+
+    @classmethod
+    def from_wire(cls, obj: JsonObject) -> Self:
+        """Build a failed-Part view from a wire object, raising on a bad record."""
+        return cls(index=obj.require_int("index"), reason=obj.require_str("reason"))

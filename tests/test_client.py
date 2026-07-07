@@ -11,13 +11,12 @@ import pytest
 
 from punt_vox.client import (
     VoxClient,
-    VoxClientSync,
-    VoxdConnectionError,
-    VoxdProtocolError,
-    _run_dir,  # pyright: ignore[reportPrivateUsage]
     read_port_file,
     read_token_file,
 )
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.paths import run_dir
 from punt_vox.types_synthesis import SynthesisSpec
 
 # ---------------------------------------------------------------------------
@@ -26,8 +25,8 @@ from punt_vox.types_synthesis import SynthesisSpec
 
 
 def test_run_dir_is_user_state() -> None:
-    """_run_dir is ``~/.punt-labs/vox/run`` — same on macOS and Linux."""
-    assert _run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
+    """The run dir is ``~/.punt-labs/vox/run`` — same on macOS and Linux."""
+    assert run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
 
 
 # ---------------------------------------------------------------------------
@@ -38,24 +37,24 @@ def test_run_dir_is_user_state() -> None:
 def test_read_port_file(tmp_path: Path) -> None:
     port_file = tmp_path / "serve.port"
     port_file.write_text("9999")
-    with patch("punt_vox.client._run_dir", return_value=tmp_path):
+    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
         assert read_port_file() == 9999
 
 
 def test_read_port_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._run_dir", return_value=tmp_path):
+    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
         assert read_port_file() is None
 
 
 def test_read_token_file(tmp_path: Path) -> None:
     token_file = tmp_path / "serve.token"
     token_file.write_text("secret123")
-    with patch("punt_vox.client._run_dir", return_value=tmp_path):
+    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
         assert read_token_file() == "secret123"
 
 
 def test_read_token_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._run_dir", return_value=tmp_path):
+    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
         assert read_token_file() is None
 
 
@@ -86,7 +85,7 @@ class TestVoxClientConnect:
         ):
             client = VoxClient(port=8421, token="tok")
             await client.connect()
-            assert client._ws is mock_ws  # pyright: ignore[reportPrivateUsage]
+            assert client._transport._ws is mock_ws  # pyright: ignore[reportPrivateUsage]
             await client.close()
             mock_ws.close.assert_awaited_once()
 
@@ -110,7 +109,7 @@ class TestVoxClientConnect:
 
         mock_ws = _make_mock_ws()
         with (
-            patch("punt_vox.client._run_dir", return_value=tmp_path),
+            patch("punt_vox.client._user_run_dir", return_value=tmp_path),
             patch(
                 "punt_vox.client.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
@@ -127,7 +126,7 @@ class TestVoxClientConnect:
 
     @pytest.mark.asyncio
     async def test_connect_no_port_file_raises(self, tmp_path: Path) -> None:
-        with patch("punt_vox.client._run_dir", return_value=tmp_path):
+        with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
             client = VoxClient()
             with pytest.raises(VoxdConnectionError, match="port file not found"):
                 await client.connect()
@@ -138,18 +137,18 @@ class TestVoxClientBuildUri:
 
     def test_uri_with_token(self) -> None:
         client = VoxClient(port=8421, token="abc")
-        uri = client._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://127.0.0.1:8421/ws?token=abc"
 
     def test_uri_without_token(self) -> None:
         with patch("punt_vox.client.read_token_file", return_value=None):
             client = VoxClient(port=8421)
-            uri = client._build_uri()  # pyright: ignore[reportPrivateUsage]
+            uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
             assert uri == "ws://127.0.0.1:8421/ws"
 
     def test_uri_custom_host(self) -> None:
         client = VoxClient(host="10.0.0.1", port=9000, token="t")
-        uri = client._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://10.0.0.1:9000/ws?token=t"
 
 
@@ -167,7 +166,7 @@ class TestVoxClientSynthesize:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.synthesize("Hello world")
         assert isinstance(result.request_id, str)
@@ -195,7 +194,7 @@ class TestVoxClientSynthesize:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         await client.synthesize(
             "Test",
@@ -236,7 +235,7 @@ class TestVoxClientSynthesize:
             )
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="empty text"):
             await client.synthesize("")
@@ -250,7 +249,7 @@ class TestVoxClientSynthesize:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         await client.synthesize("Hello")
         sent = json.loads(mock_ws.send.call_args[0][0])
@@ -277,14 +276,14 @@ class TestVoxClientSynthesize:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.synthesize("Hello world")
         assert isinstance(result.request_id, str)
         assert result.deduped is False
         assert mock_ws.recv.call_count == 1
         mock_ws.close.assert_awaited_once()
-        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
     async def test_synthesize_dedup_returns_on_done(self) -> None:
@@ -304,7 +303,7 @@ class TestVoxClientSynthesize:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.synthesize("Hello world", once=600)
         assert result.deduped is True
@@ -321,7 +320,7 @@ class TestVoxClientSynthesize:
             side_effect=[json.dumps({"type": "playing", "id": "r", "cached": True})]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.synthesize("Hello world")
         assert result.cached is True
@@ -334,7 +333,7 @@ class TestVoxClientSynthesize:
             side_effect=[json.dumps({"type": "playing", "id": "r", "cached": False})]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.synthesize("Hello world")
         assert result.cached is False
@@ -353,7 +352,7 @@ class TestVoxClientChime:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         await client.chime("done")
         sent = json.loads(mock_ws.send.call_args[0][0])
@@ -369,12 +368,12 @@ class TestVoxClientChime:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         await client.chime("done")
         assert mock_ws.recv.call_count == 1
         mock_ws.close.assert_awaited_once()
-        assert client._ws is None  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
     async def test_chime_dedup_returns_on_done(self) -> None:
@@ -386,7 +385,7 @@ class TestVoxClientChime:
             ]
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         await client.chime("done")
         assert mock_ws.recv.call_count == 1
@@ -400,7 +399,7 @@ class TestVoxClientChime:
             )
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="unknown chime"):
             await client.chime("bad")
@@ -419,7 +418,7 @@ class TestVoxClientRecord:
             return_value=json.dumps({"type": "audio", "id": "r1", "data": encoded})
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.record("Hello")
         assert result == audio_bytes
@@ -429,7 +428,7 @@ class TestVoxClientRecord:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "done", "id": "r1"}))
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="Expected 'audio'"):
             await client.record("Hello")
@@ -451,7 +450,7 @@ class TestVoxClientVoices:
             )
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.voices(provider="elevenlabs")
         assert result == ["drew", "matilda"]
@@ -468,7 +467,7 @@ class TestVoxClientVoices:
             )
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.voices()
         assert result == ["fred"]
@@ -493,7 +492,7 @@ class TestVoxClientHealth:
             )
         )
         client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.health()
         assert result["status"] == "ok"
@@ -525,317 +524,16 @@ class TestVoxClientReconnect:
             ),
         ):
             client = VoxClient(port=8421, token="tok")
-            client._ws = mock_ws_old  # pyright: ignore[reportPrivateUsage]
+            client._transport._ws = mock_ws_old  # pyright: ignore[reportPrivateUsage]
 
             result = await client.health()
             assert result["status"] == "ok"
-            assert client._ws is mock_ws_new  # pyright: ignore[reportPrivateUsage]
+            assert client._transport._ws is mock_ws_new  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
 # VoxClientSync
 # ---------------------------------------------------------------------------
-
-
-class TestVoxClientMusic:
-    """Test music method."""
-
-    @pytest.mark.asyncio
-    async def test_music_on_sends_correct_message(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "m1", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music(
-            "on",
-            style="techno",
-            vibe="focused",
-            vibe_tags="[calm]",
-            owner_id="sess-abc",
-        )
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_on"
-        assert sent["style"] == "techno"
-        assert sent["vibe"] == "focused"
-        assert sent["vibe_tags"] == "[calm]"
-        assert sent["owner_id"] == "sess-abc"
-        assert "id" in sent
-        assert result["status"] == "generating"
-
-    @pytest.mark.asyncio
-    async def test_music_off_sends_correct_message(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_off", "id": "m2", "status": "stopped"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music("off", owner_id="sess-abc")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_off"
-        assert sent["owner_id"] == "sess-abc"
-        assert "style" not in sent
-        assert "vibe" not in sent
-        assert "vibe_tags" not in sent
-        assert result["status"] == "stopped"
-
-    @pytest.mark.asyncio
-    async def test_music_on_omits_none_params(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "m3", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music("on")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_on"
-        assert "style" not in sent
-        assert "vibe" not in sent
-        assert "vibe_tags" not in sent
-        # owner_id always present — uses default when caller omits it
-        assert sent["owner_id"] == client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_music_error_raises(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "error", "id": "m4", "message": "music generation failed"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(VoxdProtocolError, match="music generation failed"):
-            await client.music("on", owner_id="sess-abc")
-
-    @pytest.mark.asyncio
-    async def test_music_invalid_mode_raises(self) -> None:
-        client = VoxClient(port=8421, token="tok")
-        with pytest.raises(ValueError, match="invalid music mode"):
-            await client.music("pause")
-
-
-class TestVoxClientMusicVibe:
-    """Test music_vibe method."""
-
-    @pytest.mark.asyncio
-    async def test_music_vibe_sends_correct_message(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_vibe", "id": "v1", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music_vibe(
-            vibe="happy", vibe_tags="[warm]", owner_id="sess-abc"
-        )
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_vibe"
-        assert sent["vibe"] == "happy"
-        assert sent["vibe_tags"] == "[warm]"
-        assert sent["owner_id"] == "sess-abc"
-        assert "id" in sent
-        assert result["status"] == "generating"
-
-    @pytest.mark.asyncio
-    async def test_music_vibe_ignored_when_not_owner(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_vibe", "id": "v2", "status": "ignored"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music_vibe(
-            vibe="sad", vibe_tags="[melancholy]", owner_id="other-sess"
-        )
-        assert result["status"] == "ignored"
-
-    @pytest.mark.asyncio
-    async def test_music_vibe_omits_none_params(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_vibe", "id": "v3", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music_vibe()
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_vibe"
-        assert "vibe" not in sent
-        assert "vibe_tags" not in sent
-        # owner_id always present — uses default when caller omits it
-        assert sent["owner_id"] == client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_music_vibe_error_raises(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "error", "id": "v4", "message": "daemon shutting down"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(VoxdProtocolError, match="daemon shutting down"):
-            await client.music_vibe(vibe="happy", owner_id="sess-abc")
-
-
-class TestVoxClientMusicNext:
-    """Test music_next method."""
-
-    @pytest.mark.asyncio
-    async def test_music_next_sends_correct_message(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_next", "id": "n1", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music_next(owner_id="sess-abc")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_next"
-        assert sent["owner_id"] == "sess-abc"
-        assert "id" in sent
-        assert result["status"] == "generating"
-
-    @pytest.mark.asyncio
-    async def test_music_next_ignored(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_next", "id": "n2", "status": "ignored"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        result = await client.music_next(owner_id="other-sess")
-        assert result["status"] == "ignored"
-
-    @pytest.mark.asyncio
-    async def test_music_next_uses_default_owner(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_next", "id": "n3", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music_next()
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["owner_id"] == client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_music_next_error_raises(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "error", "id": "n4", "message": "not playing"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(VoxdProtocolError, match="not playing"):
-            await client.music_next(owner_id="sess-abc")
-
-
-class TestVoxClientDefaultOwnerId:
-    """VoxClient generates a default owner_id for callers that omit it."""
-
-    def test_default_owner_id_is_nonempty_hex(self) -> None:
-        client = VoxClient(port=8421, token="tok")
-        owner = client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-        assert len(owner) == 32
-        assert all(c in "0123456789abcdef" for c in owner)
-
-    def test_two_clients_get_distinct_ids(self) -> None:
-        a = VoxClient(port=8421, token="tok")
-        b = VoxClient(port=8421, token="tok")
-        assert a._default_owner_id != b._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_music_uses_default_when_owner_id_none(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "d1", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music("on")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["owner_id"] == client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_music_vibe_uses_default_when_owner_id_none(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_vibe", "id": "d2", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music_vibe(vibe="happy")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["owner_id"] == client._default_owner_id  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.asyncio
-    async def test_explicit_owner_id_overrides_default(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "d3", "status": "generating"}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        await client.music("on", owner_id="explicit-id")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["owner_id"] == "explicit-id"
 
 
 class TestVoxClientSync:
@@ -961,297 +659,6 @@ class TestVoxClientSync:
             result = sync_client.voices()
             assert result == ["fred"]
 
-    def test_music_on(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "m1", "status": "generating"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music("on", style="techno", owner_id="sess-1")
-            assert result["status"] == "generating"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_on"
-        assert sent["style"] == "techno"
-        assert sent["owner_id"] == "sess-1"
-
-    def test_music_off(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_off", "id": "m2", "status": "stopped"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music("off", owner_id="sess-1")
-            assert result["status"] == "stopped"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_off"
-
-    def test_music_vibe(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_vibe", "id": "v1", "status": "generating"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music_vibe(
-                vibe="happy", vibe_tags="[warm]", owner_id="sess-1"
-            )
-            assert result["status"] == "generating"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_vibe"
-        assert sent["vibe"] == "happy"
-        assert sent["vibe_tags"] == "[warm]"
-        assert sent["owner_id"] == "sess-1"
-
-
-class TestVoxClientMusicName:
-    """Test music() with name parameter."""
-
-    @pytest.mark.asyncio
-    async def test_music_on_with_name(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "n1", "status": "playing", "name": "focus"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            result = await client.music("on", name="focus beats", owner_id="sess-x")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_on"
-        assert sent["name"] == "focus beats"
-        assert result["status"] == "playing"
-
-    @pytest.mark.asyncio
-    async def test_music_on_without_name_omits_field(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "n2", "status": "generating"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            await client.music("on", owner_id="sess-y")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert "name" not in sent
-
-
-class TestVoxClientMusicPlay:
-    """Test music_play method."""
-
-    @pytest.mark.asyncio
-    async def test_music_play_sends_correct_message(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "music_play",
-                    "id": "p1",
-                    "status": "playing",
-                    "name": "chill_vibes",
-                }
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            result = await client.music_play("chill vibes", owner_id="sess-a")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_play"
-        assert sent["name"] == "chill vibes"
-        assert sent["owner_id"] == "sess-a"
-        assert result["status"] == "playing"
-
-    @pytest.mark.asyncio
-    async def test_music_play_error_raises(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "error", "id": "p2", "message": "track not found: bogus"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            with pytest.raises(VoxdProtocolError, match="track not found"):
-                await client.music_play("bogus", owner_id="sess-b")
-
-    @pytest.mark.asyncio
-    async def test_music_play_uses_default_owner(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_play", "id": "p3", "status": "playing", "name": "test"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            await client.music_play("test")
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["owner_id"]  # non-empty default
-
-
-class TestVoxClientMusicList:
-    """Test music_list method."""
-
-    @pytest.mark.asyncio
-    async def test_music_list_returns_tracks(self) -> None:
-        tracks = [
-            {"name": "alpha", "size_bytes": 1024, "modified": 1000.0, "path": "/x.mp3"}
-        ]
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_list", "id": "l1", "tracks": tracks}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            client = VoxClient(port=8421, token="tok")
-            result = await client.music_list()
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_list"
-        assert len(result["tracks"]) == 1
-
-
-class TestVoxClientSyncMusicPlayList:
-    """Sync wrappers for music_play and music_list."""
-
-    def test_music_play(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_play", "id": "sp1", "status": "playing", "name": "x"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music_play("x", owner_id="sess-s")
-            assert result["status"] == "playing"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_play"
-
-    def test_music_list(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "music_list", "id": "sl1", "tracks": []})
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music_list()
-            assert result["tracks"] == []
-
-    def test_music_on_with_name(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_on", "id": "sn1", "status": "playing", "name": "x"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music("on", name="x", owner_id="sess-t")
-            assert result["status"] == "playing"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["name"] == "x"
-
-    def test_music_next(self) -> None:
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "music_next", "id": "sn2", "status": "generating"}
-            )
-        )
-
-        with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
-            new_callable=AsyncMock,
-            return_value=mock_ws,
-        ):
-            sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.music_next(owner_id="sess-u")
-            assert result["status"] == "generating"
-
-        sent = json.loads(mock_ws.send.call_args[0][0])
-        assert sent["type"] == "music_next"
-        assert sent["owner_id"] == "sess-u"
-
 
 # ---------------------------------------------------------------------------
 # Env var resolution (VOXD_HOST, VOXD_PORT, VOXD_TOKEN)
@@ -1262,46 +669,46 @@ class TestEnvVarResolution:
     def test_voxd_host_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(port=8421, token="tok")
-        assert client._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VOXD_HOST", raising=False)
         client = VoxClient(port=8421, token="tok")
-        assert client._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(host="192.168.1.1", port=8421, token="tok")
-        assert client._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(token="tok")
-        assert client._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_invalid_falls_through(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("VOXD_PORT", "not_a_number")
-        monkeypatch.setattr("punt_vox.client._run_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.client._user_run_dir", lambda: tmp_path)
         client = VoxClient(token="tok")
         with pytest.raises(VoxdConnectionError, match="port file not found"):
-            client._resolve_port()  # pyright: ignore[reportPrivateUsage]
+            client._transport._resolve_port()  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(port=1234, token="tok")
-        assert client._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421)
-        assert client._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421, token="local-secret")
-        assert client._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_sync_client_inherits_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")

@@ -79,7 +79,7 @@ class TestResolveVoiceAndLanguage:
         provider = _make_provider(get_default_voice_return="Vicki")
         provider.resolve_voice.return_value = "Vicki"
 
-        with patch("punt_vox.resolve._config.read_field", return_value=None):
+        with patch("punt_vox.config.ConfigStore.read_field", return_value=None):
             voice, language = resolve_voice_and_language(provider, None, "de")
 
         assert voice == "Vicki"
@@ -96,7 +96,7 @@ class TestResolveVoiceAndLanguage:
         """Use provider.default_voice; resolve and infer language."""
         provider = _make_provider(default_voice="Rachel", infer_language_return="en")
 
-        with patch("punt_vox.resolve._config.read_field", return_value=None):
+        with patch("punt_vox.config.ConfigStore.read_field", return_value=None):
             voice, language = resolve_voice_and_language(provider, None, None)
 
         assert voice == "Rachel"
@@ -117,7 +117,9 @@ class TestResolveVoiceAndLanguage:
             "Rachel",
         ]
 
-        with patch("punt_vox.resolve._config.read_field", return_value="session-voice"):
+        with patch(
+            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
+        ):
             voice, language = resolve_voice_and_language(provider, None, None)
 
         assert voice == "Rachel"
@@ -159,7 +161,9 @@ class TestResolveVoiceAndLanguage:
             "Rachel",
         ]
 
-        with patch("punt_vox.resolve._config.read_field", return_value="session-voice"):
+        with patch(
+            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
+        ):
             voice, language = resolve_voice_and_language(provider, None, "en")
 
         assert voice == "Rachel"
@@ -179,7 +183,9 @@ class TestResolveVoiceAndLanguage:
             "Rachel",
         ]
 
-        with patch("punt_vox.resolve._config.read_field", return_value="session-voice"):
+        with patch(
+            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
+        ):
             voice, language = resolve_voice_and_language(provider, None, None)
 
         assert voice == "Rachel"

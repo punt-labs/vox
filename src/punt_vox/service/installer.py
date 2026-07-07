@@ -11,10 +11,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, assert_never
 
-from punt_vox.client import (
-    VoxdConnectionError,
-    VoxdProtocolError,
-)
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,
@@ -145,7 +142,6 @@ class ServiceInstaller:
 
     def _install_linux(self, user: str) -> bool:
         """Run the Linux install path.  Return True if running."""
-        self._systemd.cleanup_stale_user_unit()
         self._systemd.stop()
         self._process_mgr.ensure_port_free()
         self._systemd.install(user)

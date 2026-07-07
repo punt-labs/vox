@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -115,11 +115,9 @@ def _setup_fake_env(
 @patch.object(SystemdBackend, "status", return_value=True)
 @patch.object(SystemdBackend, "install")
 @patch.object(SystemdBackend, "stop")
-@patch.object(SystemdBackend, "cleanup_stale_user_unit", return_value=False)
 @patch.object(ProcessManager, "ensure_port_free")
 def test_install_runs_as_user_creates_keys_env(
     _mock_port: MagicMock,
-    _mock_cleanup: MagicMock,
     _mock_sd_stop: MagicMock,
     _mock_sd_install: MagicMock,
     _mock_sd_status: MagicMock,
@@ -250,11 +248,9 @@ def test_install_raises_when_daemon_never_healthy(
 @patch.object(SystemdBackend, "status", return_value=True)
 @patch.object(SystemdBackend, "install")
 @patch.object(SystemdBackend, "stop")
-@patch.object(SystemdBackend, "cleanup_stale_user_unit", return_value=False)
 @patch.object(ProcessManager, "ensure_port_free")
 def test_install_does_not_chown_anything(
     _mock_port: MagicMock,
-    _mock_cleanup: MagicMock,
     _mock_sd_stop: MagicMock,
     _mock_sd_install: MagicMock,
     _mock_sd_status: MagicMock,
@@ -306,11 +302,6 @@ def test_install_runs_systemd_stop_before_port_check(
         ServiceInstaller,
         "detect_platform",
         staticmethod(lambda: "linux"),
-    )
-    monkeypatch.setattr(
-        SystemdBackend,
-        "cleanup_stale_user_unit",
-        lambda self: call_order.append("cleanup") or False,  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(
         SystemdBackend,
@@ -403,53 +394,6 @@ def test_install_refuses_to_run_as_root(
         inst.install()
 
     assert not (fake_home / ".punt-labs").exists()
-
-
-# ---------------------------------------------------------------------------
-# install() — legacy cleanup ordering
-# ---------------------------------------------------------------------------
-
-
-def test_install_cleans_stale_user_unit_before_systemd_stop(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """install() must run the legacy cleanup before ``_systemd_stop``."""
-    _setup_fake_env(tmp_path, monkeypatch)
-
-    call_order: list[str] = []
-
-    monkeypatch.setattr(
-        ServiceInstaller,
-        "detect_platform",
-        staticmethod(lambda: "linux"),
-    )
-    monkeypatch.setattr(
-        SystemdBackend,
-        "cleanup_stale_user_unit",
-        lambda self: call_order.append("cleanup_stale_user_unit") or False,  # type: ignore[func-returns-value]
-    )
-    monkeypatch.setattr(
-        SystemdBackend,
-        "stop",
-        lambda self: call_order.append("systemd_stop"),
-    )
-    monkeypatch.setattr(
-        ProcessManager,
-        "ensure_port_free",
-        lambda self: call_order.append("ensure_port_free"),
-    )
-    monkeypatch.setattr(SystemdBackend, "install", lambda self, user: None)
-    monkeypatch.setattr(SystemdBackend, "status", lambda self: True)
-
-    inst = ServiceInstaller()
-    inst.install()
-
-    assert call_order == [
-        "cleanup_stale_user_unit",
-        "systemd_stop",
-        "ensure_port_free",
-    ], f"unexpected install() ordering: {call_order}"
 
 
 # ---------------------------------------------------------------------------

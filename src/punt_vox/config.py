@@ -27,10 +27,6 @@ __all__ = [
     "ConfigStore",
     "VoxConfig",
     "find_config_dir",
-    "read_config",
-    "read_field",
-    "write_field",
-    "write_fields",
 ]
 
 
@@ -279,26 +275,3 @@ def _validate_value(value: str) -> None:
     if "\n" in value or "\r" in value:
         msg = f"Config values must not contain newlines, got: {value!r}"
         raise ValueError(msg)
-
-
-# ── Backward-compatible module-level wrappers ───────────────────────
-
-
-def read_field(field: str, config_dir: Path | None = None) -> str | None:
-    """Read a single config field from the correct file."""
-    return ConfigStore(config_dir).read_field(field)
-
-
-def read_config(config_dir: Path | None = None) -> VoxConfig:
-    """Read all config fields, merging vox.md and vox.local.md."""
-    return ConfigStore(config_dir).read()
-
-
-def write_field(key: str, value: str, config_dir: Path | None = None) -> None:
-    """Write a single config field to the correct file."""
-    ConfigStore(config_dir).write_field(key, value)
-
-
-def write_fields(updates: dict[str, str], config_dir: Path | None = None) -> None:
-    """Write multiple config fields, routing each to the correct file."""
-    ConfigStore(config_dir).write_fields(updates)

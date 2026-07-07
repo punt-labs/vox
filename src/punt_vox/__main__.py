@@ -17,18 +17,15 @@ import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
-from punt_vox.config import (
-    read_config,
-    write_field,
-    write_fields,
-)
+from punt_vox.cli_music import build_music_app
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voxd.music.generator import MusicTrack
 
 logger = logging.getLogger(__name__)
 
@@ -75,40 +72,15 @@ def _configure_logging(*, verbose: bool) -> None:
     configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
 
 
-def _build_synthesis_spec(
-    *,
-    voice: str | None,
-    language: str | None,
-    rate: int | None,
-    provider: str | None,
-    model: str | None,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    speaker_boost: bool | None,
-    api_key: str | None = None,
-    vibe_tags: str | None = None,
-    once: bool = False,
-) -> SynthesisSpec:
-    """Build a SynthesisSpec and validate at the CLI boundary.
+def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
+    """Validate a spec at the CLI boundary, returning it for chaining.
 
     Translates ``ValueError`` from :meth:`SynthesisSpec.validate` into
-    ``typer.BadParameter`` so the CLI displays a user-friendly message.
+    ``typer.BadParameter`` so the CLI displays a user-friendly message. The
+    caller builds the :class:`SynthesisSpec` (the bundle already names every
+    field), so this stays a one-argument boundary check rather than re-listing
+    a dozen parameters.
     """
-    spec = SynthesisSpec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        api_key=api_key,
-        vibe_tags=vibe_tags,
-        once=once,
-    )
     try:
         spec.validate()
     except ValueError as exc:
@@ -363,17 +335,19 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     ).resolve()
 
     boost = speaker_boost if speaker_boost else None
-    spec = _build_synthesis_spec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
-        api_key=resolved_api_key,
+    spec = _validated_spec(
+        SynthesisSpec(
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=boost,
+            api_key=resolved_api_key,
+        )
     )
 
     segments = _resolve_text_segments(text, from_file)
@@ -423,16 +397,18 @@ def record(  # pyright: ignore[reportUnusedFunction]
     from punt_vox.types import generate_filename
 
     boost = speaker_boost if speaker_boost else None
-    spec = _build_synthesis_spec(
-        voice=voice,
-        language=language,
-        rate=rate,
-        provider=provider,
-        model=model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=boost,
+    spec = _validated_spec(
+        SynthesisSpec(
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=boost,
+        )
     )
 
     segments = _resolve_text_segments(text, from_file)
@@ -527,16 +503,15 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Set session mood for TTS voice."""
     cd = find_config_dir() or DEFAULT_CONFIG_DIR
+    store = ConfigStore(cd)
     if mood == "auto":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_dir=cd)
+        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})
         _formatter.emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_dir=cd)
+        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
         _formatter.emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
-        write_fields(
-            {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_dir=cd
-        )
+        store.write_fields({"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"})
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
@@ -561,16 +536,15 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y, n, or c.", err=True)
         raise typer.Exit(code=1)
 
-    from punt_vox.config import read_field
-
     config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
-    first_init = read_field("notify", config_dir) is None
+    store = ConfigStore(config_dir)
+    first_init = store.read_field("notify") is None
     updates: dict[str, str] = {"notify": mode}
     if mode == "c" or (first_init and mode == "y"):
         updates["speak"] = "y"
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_dir=config_dir)
+    store.write_fields(updates)
 
     labels = {
         "y": "Notifications enabled.",
@@ -597,7 +571,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    write_field("speak", mode, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -612,7 +586,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
 ) -> None:
     """Set the session voice."""
-    write_field("voice", name, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("voice", name)
     _formatter.emit({"voice": name}, f"{name}'s here.")
 
 
@@ -635,7 +609,7 @@ def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @app.command("status")
 def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Show current state (daemon, voice, vibe, notify)."""
-    cfg = read_config(config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Try to get provider from voxd health
     daemon_provider: str | None = None
@@ -696,38 +670,6 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 
     if payload.get("failed", 0):
         raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
-# migrate-audio — move saved audio from ~/vox-output to ~/Music/vox
-# ---------------------------------------------------------------------------
-
-
-@app.command("migrate-audio")
-def migrate_audio_cmd(
-    execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
-        bool, typer.Option("--execute", help="Actually move files.")
-    ] = False,
-    source: Annotated[
-        Path | None, typer.Option("--source", help="Source directory.")
-    ] = None,
-    dest: Annotated[
-        Path | None, typer.Option("--dest", help="Destination directory.")
-    ] = None,
-) -> None:
-    """Migrate saved audio from ~/vox-output to ~/Music/vox."""
-    from punt_vox.audio_migration import AudioMigration
-
-    src_dir = source or (Path.home() / "vox-output")
-    dst_dir = dest or default_output_dir()
-    migration = AudioMigration(src_dir, dst_dir)
-
-    if not migration.scan():
-        return
-    if execute:
-        migration.execute()
-    else:
-        migration.preview()
 
 
 # ---------------------------------------------------------------------------
@@ -887,9 +829,9 @@ def install_desktop(
     if "mcpServers" not in data:
         data["mcpServers"] = {}
 
-    overwriting = "tts" in data["mcpServers"]
+    overwriting = "vox" in data["mcpServers"]
 
-    data["mcpServers"]["tts"] = {
+    data["mcpServers"]["vox"] = {
         "command": uvx,
         "args": ["--from", "punt-vox", "vox", "mcp"],
         "env": env,
@@ -898,9 +840,9 @@ def install_desktop(
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     if overwriting:
-        typer.echo("Updated existing tts entry.")
+        typer.echo("Updated existing vox entry.")
     else:
-        typer.echo("Registered tts MCP server.")
+        typer.echo("Registered vox MCP server.")
 
     typer.echo(f"Provider: {detected}")
     typer.echo(f"Config: {config_path}")
@@ -978,139 +920,10 @@ def mcp() -> None:
 
 
 # ---------------------------------------------------------------------------
-# music subcommand group
+# music subcommand group (consume-only; implementation in cli_music)
 # ---------------------------------------------------------------------------
 
-music_app = typer.Typer(
-    help="Control background music generation.",
-    no_args_is_help=True,
-)
-app.add_typer(music_app, name="music")
-
-
-@music_app.command("on")
-def music_on_cmd(  # pyright: ignore[reportUnusedFunction]
-    style: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--style",
-            help="Style modifier for music generation (e.g. techno, jazz).",
-        ),
-    ] = None,
-    name: Annotated[
-        str | None,
-        typer.Option(
-            "--name",
-            help="Track name. Replays if exists, otherwise saves.",
-        ),
-    ] = None,
-) -> None:
-    """Start background music generation via voxd."""
-    style_str = " ".join(style) if style else None
-    client = VoxClientSync()
-    try:
-        result = client.music("on", style=style_str, name=name)
-        status = result.get("status", "unknown")
-        payload: dict[str, object] = {"music": "on", "status": status}
-        if style_str:
-            payload["style"] = style_str
-        if name:
-            payload["name"] = name
-        text = f"Music on ({status})"
-        if name and status == "playing":
-            text = f"Playing saved track: {name}"
-        elif style_str:
-            text += f" — style: {style_str}"
-        _formatter.emit(payload, text)
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("off")
-def music_off_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Stop background music generation."""
-    client = VoxClientSync()
-    try:
-        result = client.music("off")
-        status = result.get("status", "stopped")
-        _formatter.emit({"music": "off", "status": status}, f"Music off ({status})")
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("play")
-def music_play_cmd(  # pyright: ignore[reportUnusedFunction]
-    name: Annotated[
-        str,
-        typer.Argument(help="Name of saved track to play."),
-    ],
-) -> None:
-    """Replay a saved music track by name."""
-    client = VoxClientSync()
-    try:
-        result = client.music_play(name)
-        track_name = result.get("name", name)
-        _formatter.emit(
-            {"music": "play", "name": track_name, "status": "playing"},
-            f"Playing: {track_name}",
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("list")
-def music_list_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """List saved music tracks."""
-    client = VoxClientSync()
-    try:
-        result = client.music_list()
-        raw_tracks: list[dict[str, object]] = result.get("tracks", [])
-        tracks = [MusicTrack.from_dict(t) for t in raw_tracks]
-        if not tracks:
-            _formatter.emit({"tracks": []}, "No saved tracks.")
-            return
-        lines = [f"  {track.display_line()}" for track in tracks]
-        _formatter.emit(
-            {"tracks": raw_tracks},
-            f"{len(tracks)} saved track(s):\n" + "\n".join(lines),
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-
-@music_app.command("next")
-def music_next_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Skip to a new generated track (gapless)."""
-    client = VoxClientSync()
-    try:
-        result = client.music_next()
-        status = result.get("status", "unknown")
-        _formatter.emit(
-            {"music": "next", "status": status},
-            f"Music next ({status})",
-        )
-    except VoxdConnectionError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except VoxdProtocolError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+app.add_typer(build_music_app(_formatter), name="music")
 
 
 # ---------------------------------------------------------------------------

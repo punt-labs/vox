@@ -94,11 +94,3 @@ def default_output_dir() -> Path:
     if env_dir:
         return Path(env_dir)
     return _resolve_music_dir() / "vox"
-
-
-def music_output_dir() -> Path:
-    """Return the directory for generated music tracks.
-
-    Layout: ~/Music/vox/tracks/ (replaces ~/vox-output/music/)
-    """
-    return default_output_dir() / "tracks"

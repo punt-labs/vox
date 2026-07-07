@@ -91,9 +91,9 @@ class ProviderRegistry:
           2. Session config (``.punt-labs/vox/`` model field)
           3. ``TTS_MODEL`` env var / provider default
         """
-        from punt_vox.config import read_config
+        from punt_vox.config import ConfigStore
 
-        config = read_config(config_dir=config_dir)
+        config = ConfigStore(config_dir).read()
 
         if name is not None:
             resolved = name.lower()

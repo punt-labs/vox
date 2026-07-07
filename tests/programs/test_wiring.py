@@ -1,0 +1,75 @@
+"""Tests for the ProgramSubsystem facade -- the daemon's one Programs seam."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
+
+from punt_vox.voxd.programs.service import ProgramService
+from punt_vox.voxd.programs.wiring import ProgramSubsystem
+
+from .conftest import QuietProducer, seed_program
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _subsystem(root: Path) -> ProgramSubsystem:
+    """Build a subsystem with a fake producer (Fix #5e: producer is injectable)."""
+    return ProgramSubsystem(root, QuietProducer())
+
+
+_EXPECTED_HANDLERS = frozenset(
+    {
+        "program_on",
+        "program_off",
+        "program_next",
+        "program_play",
+        "program_loop",
+        "program_list",
+        "program_status",
+    }
+)
+
+
+class TestHandlerRoster:
+    """handlers() exposes exactly the seven program_* wire adapters."""
+
+    def test_exactly_the_seven_program_handlers(self, tmp_path: Path) -> None:
+        subsystem = _subsystem(tmp_path / "programs")
+        assert set(subsystem.handlers()) == _EXPECTED_HANDLERS
+
+    def test_service_is_a_program_service(self, tmp_path: Path) -> None:
+        subsystem = _subsystem(tmp_path / "programs")
+        assert isinstance(subsystem.service, ProgramService)
+
+
+class TestHandlersBoundToService:
+    """The handlers read and drive the subsystem's own service, live."""
+
+    def test_status_handler_reports_idle_before_any_command(
+        self, tmp_path: Path
+    ) -> None:
+        subsystem = _subsystem(tmp_path / "programs")
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        asyncio.run(subsystem.handlers()["program_status"]({"id": "s1"}, ws))
+
+        reply = ws.send_json.await_args.args[0]
+        assert reply["type"] == "program_status"
+        assert reply["status"]["mode"] == "off"
+
+    def test_list_handler_reports_saved_programs(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        seed_program(root, "ambient_calm", 1, 2)
+        subsystem = _subsystem(root)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        asyncio.run(subsystem.handlers()["program_list"]({"id": "l1"}, ws))
+
+        reply = ws.send_json.await_args.args[0]
+        assert reply["type"] == "program_list"
+        assert [p["name"] for p in reply["programs"]] == ["ambient_calm"]

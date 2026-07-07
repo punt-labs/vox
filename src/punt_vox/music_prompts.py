@@ -41,23 +41,19 @@ class PromptSet:
     def from_wire(cls, msg: Mapping[str, object]) -> Self | None:
         """Return the agent's prompt set parsed from a wire message, or None.
 
-        ``base_prompt`` and ``variations`` are supplied together; either present
-        triggers validation via :meth:`from_agent`, so a half-supplied pair
-        raises rather than silently degrading. Neither present returns ``None``
-        -- no agent in the loop, so the pool falls back to a minimal prompt.
-
-        A missing or JSON-null ``base_prompt`` is treated as absent, not coerced
-        to the literal string ``"None"`` -- otherwise a null base would seed the
-        pool with garbage instead of falling back.
+        A missing, JSON-null, or empty ``base_prompt`` (or ``variations``) is
+        normalised to ``None`` so this shares the one validation funnel in
+        :meth:`from_tool_args` (DRY): a half-supplied pair raises, both absent
+        falls back to a minimal prompt, and a null base never seeds garbage.
         """
         raw_base = msg.get("base_prompt")
-        base = str(raw_base) if raw_base is not None else ""
-        raw = msg.get("variations")
-        items = cast("list[object]", raw) if isinstance(raw, list) else []
-        variations = [str(v) for v in items]
-        if not base and not variations:
-            return None
-        return cls.from_agent(base, variations)
+        raw_vars = msg.get("variations")
+        variations = (
+            [str(v) for v in cast("list[object]", raw_vars)]
+            if isinstance(raw_vars, list) and raw_vars
+            else None
+        )
+        return cls.from_tool_args(str(raw_base) if raw_base else None, variations)
 
     @classmethod
     def from_tool_args(
@@ -86,9 +82,7 @@ class PromptSet:
             raise ValueError(msg)
         cleaned = tuple(v.strip() for v in variations)
         if len(cleaned) != POOL_SIZE:
-            msg = (
-                f"variations must have exactly {POOL_SIZE} entries, got {len(cleaned)}"
-            )
+            msg = f"variations must be exactly {POOL_SIZE} entries, got {len(cleaned)}"
             raise ValueError(msg)
         if any(not v for v in cleaned):
             msg = "every variation must be a non-empty string"

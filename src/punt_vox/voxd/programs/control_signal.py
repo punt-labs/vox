@@ -1,0 +1,37 @@
+"""The ``ControlSignal`` command interface -- one serialized Program mutation.
+
+Every mutation of the Program -- a user command (turn on, rotate, retune, off),
+an automatic advance, or a fill outcome from the :class:`Filler` -- is a
+``ControlSignal`` posted to the single-consumer :class:`ControlChannel`. The
+consumer applies signals one at a time, so the Z sequential semantics are real:
+no two commands ever interleave against a stale Program. Each signal is a typed
+command that knows its own transition (Command pattern, PY-DP-11) -- replacing
+the old string ``Literal`` control and the conditional forest that read it.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.program import Program
+
+__all__ = ["ControlSignal"]
+
+
+class ControlSignal(Protocol):
+    """A single command applied to the Program by the sole control consumer."""
+
+    @property
+    def interrupts(self) -> bool:
+        """Whether applying this command should stop current playback at once.
+
+        ``True`` for skip / next / play-a-part / off (act now); ``False`` for a
+        retune (finish the current track first) and for fill outcomes (they
+        never cut off what is playing).
+        """
+        ...
+
+    def apply(self, program: Program, /) -> None:
+        """Apply this command's transition to ``program`` (positional-only write)."""
+        ...

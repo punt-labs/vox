@@ -20,14 +20,19 @@ from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
-from punt_vox.client import VoxClientSync, VoxdConnectionError, VoxdProtocolError
-from punt_vox.config import write_fields
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_gateway import ClientProgramGateway
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_prompts import PromptSet
+from punt_vox.program_control import StartRequest
+from punt_vox.program_gateway import ProgramGateway
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 from punt_vox.voices import VOICE_BLURBS
-from punt_vox.voxd.music.generator import MusicTrack
+from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.voxd.programs.mode import Mode
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,6 @@ class SessionConfig:
     _vibe: str | None = None
     _vibe_tags: str | None = None
     _vibe_signals: str = ""
-    _music_mode: str = "off"
     _speak_explicit: bool = False
 
     # -- Properties (read access) ------------------------------------------
@@ -139,15 +143,6 @@ class SessionConfig:
         return self._vibe_signals
 
     @property
-    def music_mode(self) -> str:
-        """Return the music mode ('on' or 'off')."""
-        return self._music_mode
-
-    @music_mode.setter
-    def music_mode(self, value: str) -> None:
-        self._music_mode = value
-
-    @property
     def speak_explicit(self) -> bool:
         """Return whether the user has explicitly set speak mode."""
         return self._speak_explicit
@@ -203,19 +198,13 @@ class SessionConfig:
             self._vibe_mode = updates["vibe_mode"]
         return updates
 
-    def music_message(
-        self, resp: dict[str, object], mode: str, style: str | None, name: str | None
-    ) -> str:
-        """Return the human-readable status line for a music tool response.
+    def generating_message(self, style: str | None) -> str:
+        """Return the music-on success line (the caller adds the ♪ marker).
 
-        The "on" case reads the session vibe (``self._vibe``) to personalize the
-        generating message.
+        Reads the session vibe (``self._vibe``) only to *personalise the display*
+        -- it is never fed back as an input to a Program transition (vox-73m5).
         """
-        if resp.get("status") == "playing" and name:
-            return f"♪ Playing saved track: {name}"
-        if mode != "on":
-            return "♪ Music off."
-        prefix = "♪ Music on — generating"
+        prefix = "Music on — generating"
         vibe = self._vibe
         if style and vibe:
             return f"{prefix} a {style} track for your {vibe} mood..."
@@ -231,9 +220,7 @@ class SessionConfig:
         if config_dir is None:
             return cls()
 
-        from punt_vox.config import read_config
-
-        cfg = read_config(config_dir=config_dir)
+        cfg = ConfigStore(config_dir).read()
         return cls(
             _notify=cfg.notify,
             _speak=cfg.speak,
@@ -262,9 +249,7 @@ class SessionConfig:
         if config_dir is None:
             return
 
-        from punt_vox.config import read_config, read_field
-
-        cfg = read_config(config_dir=config_dir)
+        cfg = ConfigStore(config_dir).read()
 
         self._vibe = cfg.vibe
         self._vibe_tags = cfg.vibe_tags
@@ -273,7 +258,7 @@ class SessionConfig:
         self._notify = cfg.notify
         self._speak = cfg.speak
 
-        if read_field("speak", config_dir) is not None:
+        if ConfigStore(config_dir).read_field("speak") is not None:
             self._speak_explicit = True
 
         if cfg.voice is not None:
@@ -315,6 +300,13 @@ def _default_output_dir() -> Path:
 def _voxd_client() -> VoxClientSync:
     """Create a VoxClientSync instance."""
     return VoxClientSync()
+
+
+# The daemon-facing seam the music/status tools drive. A module-level value (not
+# a factory) so it adds no procedural surface; tests replace it with an in-memory
+# FakeProgramGateway. It holds a VoxClientSync that opens a fresh connection per
+# call, so no session or owner travels with a command (design section 4).
+_program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 
 
 def _error(message: str) -> str:
@@ -624,24 +616,12 @@ def vibe(
     if not updates:
         return _error("Provide at least one of: mood, tags, mode.")
 
-    # Persist to disk so hooks (which read config independently) see the change
-    write_fields(updates, _find_config_dir())
-
-    # Propagate vibe change to music loop if this session owns music.
-    if _session.music_mode == "on":
-        client = _voxd_client()
-        try:
-            client.music_vibe(
-                vibe=_session.vibe or "",
-                vibe_tags=_session.vibe_tags or "",
-                owner_id=_session.session_id,
-            )
-        except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
-            logger.warning(
-                "voxd error during vibe propagation; music off",
-                exc_info=True,
-            )
-            _session.music_mode = "off"
+    # Persist to disk so hooks (which read config independently) see the change.
+    # The session vibe is NOT pushed to the Program here: vox-73m5 shipped broken
+    # because a stale session vibe was replayed as an authoritative music
+    # transition. The vibe is display/record state; a Program retune is a
+    # deliberate music command, never a side effect of setting the session mood.
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps({"vibe": updates})
 
@@ -667,162 +647,88 @@ def music(
 
     ``mode`` is "on"/"off"; ``style`` persists across calls; ``name`` replays or
     saves a track; ``base_prompt`` + the 12 ``variations`` require each other.
-    Returns a JSON string with a ``message`` field and the raw voxd response.
+    Returns a JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
-
-    # Parse prompts only for "on"; an "off" stop must reach voxd even with stale args.
-    prompts: PromptSet | None = None
-    if mode == "on":
-        try:
-            prompts = PromptSet.from_tool_args(base_prompt, variations)
-        except ValueError as exc:
-            return _error(str(exc))
-
-    client = _voxd_client()
     try:
-        resp = client.music(
-            mode=mode,
-            style=style or "",
-            vibe=_session.vibe or "",
-            vibe_tags=_session.vibe_tags or "",
-            owner_id=_session.session_id,
-            name=name,
-            prompts=prompts,
-        )
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
-        logger.warning("voxd error in music tool; music off", exc_info=True)
-        _session.music_mode = "off"
-        if isinstance(exc, VoxdConnectionError):
-            message = "\u266a Daemon unreachable \u2014 music off."
-            error = "daemon unreachable"
+        if mode == "on":
+            prompts = PromptSet.from_tool_args(base_prompt, variations)
+            outcome = _program_tools.start(
+                StartRequest(style=style, name=name, prompts=prompts)
+            )
+            message = f"\u266a {outcome.display(_session.generating_message(style))}"
         else:
-            message, error = f"\u266a Music error: {exc}", str(exc)
-        return json.dumps({"message": message, "error": error})
-
-    _session.music_mode = mode
-    message = _session.music_message(resp, mode, style, name)
-    return json.dumps({"message": message, **resp})
+            outcome = _program_tools.stop()
+            message = f"\u266a {outcome.display('Music off.')}"
+    except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
+        return _error(str(exc))
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+        return _error(str(exc))
+    return json.dumps({"message": message, "applied": outcome.applied})
 
 
 @mcp.tool()
 def music_play(name: str) -> str:
-    """Replay a saved music track by name.
-
-    Finds the track in the music library and starts looping it.
-    No generation, no credits used.
-
-    .. note:: Calls ``_session.refresh_from_config()`` for consistency.
+    """Replay a saved Program by name -- from disk, no generation, no credits.
 
     Args:
-        name: Track name (as shown by music_list).
+        name: Program name (as shown by ``music_list``).
 
     Returns:
-        JSON string with a human-readable ``message`` field and
-        the raw voxd response fields.
+        JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
-    client = _voxd_client()
     try:
-        resp = client.music_play(name, owner_id=_session.session_id)
-    except VoxdConnectionError:
-        logger.warning("voxd unreachable in music_play", exc_info=True)
-        return json.dumps(
-            {
-                "message": "\u266a Daemon unreachable.",
-                "error": "daemon unreachable",
-            }
-        )
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.warning("voxd error in music_play", exc_info=True)
-        return json.dumps(
-            {
-                "message": f"\u266a {exc}",
-                "error": str(exc),
-            }
-        )
-
-    _session.music_mode = "on"
-    track_name = resp.get("name", name)
-    message = f"\u266a Now playing: {track_name}"
-    return json.dumps({"message": message, **resp})
+        outcome = _program_tools.play(ProgramName(name), None)
+    except ValueError as exc:  # empty or path-bearing name
+        return _error(str(exc))
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+        return _error(str(exc))
+    message = f"\u266a {outcome.display(f'Playing {name}.')}"
+    return json.dumps({"message": message, "applied": outcome.applied})
 
 
 @mcp.tool()
 def music_list() -> str:
-    """Show saved music tracks with name, size, and date.
+    """Show saved Programs, grouped by name with their ready/total part counts.
 
     Returns:
-        JSON string with a human-readable ``message`` field and
-        the track list from voxd.
+        JSON string with a ``message`` line and a ``programs`` list.
     """
     _session.refresh_from_config()
-    client = _voxd_client()
     try:
-        resp = client.music_list()
-    except VoxdConnectionError:
-        logger.warning("voxd unreachable in music_list", exc_info=True)
-        return json.dumps(
-            {
-                "message": "\u266a Daemon unreachable.",
-                "error": "daemon unreachable",
-            }
-        )
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.warning("voxd error in music_list", exc_info=True)
-        return json.dumps(
-            {
-                "message": f"\u266a {exc}",
-                "error": str(exc),
-            }
-        )
-
-    raw_tracks: list[dict[str, object]] = resp.get("tracks", [])
-    tracks = [MusicTrack.from_dict(t) for t in raw_tracks]
-    if not tracks:
-        message = "\u266a No saved tracks."
+        summaries = _program_tools.catalog()
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+        return _error(str(exc))
+    if not summaries:
+        message = "\u266a No saved programs."
     else:
-        lines = [f"\u266a {len(tracks)} saved track(s):"]
-        lines.extend(f"  \u266a {track.display_line()}" for track in tracks)
+        lines = [f"\u266a {len(summaries)} saved program(s):"]
+        lines.extend(f"  \u266a {summary.display_line()}" for summary in summaries)
         message = "\n".join(lines)
-    return json.dumps({"message": message, **resp})
+    programs = [
+        {"name": s.name, "format": s.format, "ready": s.ready, "total": s.total}
+        for s in summaries
+    ]
+    return json.dumps({"message": message, "programs": programs})
 
 
 @mcp.tool()
 def music_next() -> str:
-    """Skip to a new generated track.
-
-    Signals voxd to regenerate without changing vibe or style. The
-    current track keeps playing until the new one is ready (gapless).
+    """Advance to another Part -- the one ungated skip/next transition.
 
     Returns:
-        JSON string with a human-readable ``message`` field and
-        the raw voxd response fields.
+        JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
-    client = _voxd_client()
     try:
-        resp = client.music_next(owner_id=_session.session_id)
-    except VoxdConnectionError:
-        logger.warning("voxd unreachable in music_next", exc_info=True)
-        return json.dumps(
-            {
-                "message": "♪ Daemon unreachable.",
-                "error": "daemon unreachable",
-            }
-        )
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.warning("voxd error in music_next", exc_info=True)
-        return json.dumps(
-            {
-                "message": f"♪ {exc}",
-                "error": str(exc),
-            }
-        )
-
-    return json.dumps({"message": "♪ Skipping — generating next track...", **resp})
+        outcome = _program_tools.advance()
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+        return _error(str(exc))
+    message = f"♪ {outcome.display('Skipping — generating next track...')}"
+    return json.dumps({"message": message, "applied": outcome.applied})
 
 
 @mcp.tool()
@@ -914,7 +820,7 @@ def notify(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    write_fields(updates, _find_config_dir())
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps({"notify": updates})
 
@@ -946,33 +852,47 @@ def speak(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    write_fields(updates, _find_config_dir())
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps(updates)
 
 
 @mcp.tool()
 def status() -> str:
-    """Show current vox state (provider, voice, notify, vibe).
+    """Show current vox state (provider, voice, notify, vibe) and the Program.
+
+    Both the ``program`` block and the ``music_mode`` label are the daemon's
+    *authoritative* Program status, read fresh from ``voxd`` on every call --
+    never a server-side cache. vox-73m5 shipped broken because the server served
+    a stale music shadow: ``music_mode`` is derived from ``program.mode`` here,
+    so another client stopping or starting music can never leave the two fields
+    contradicting each other. When ``voxd`` is unreachable the block carries an
+    ``error`` and ``music_mode`` reports ``off`` (nothing can be confirmed playing).
 
     Returns:
-        JSON string with provider, voice, notify mode, speak mode,
-        vibe mode, and current vibe.
+        JSON string with the session display fields plus the authoritative
+        ``program`` status and its derived ``music_mode``.
     """
     _session.refresh_from_config()
-    return json.dumps(
-        {
-            "provider": _session.provider,
-            "voice": _session.voice,
-            "notify": _session.notify,
-            "speak": _session.speak,
-            "vibe_mode": _session.vibe_mode,
-            "vibe": _session.vibe,
-            "vibe_tags": _session.vibe_tags,
-            "vibe_signals": _session.vibe_signals,
-            "music_mode": _session.music_mode,
-        }
-    )
+    payload: dict[str, object] = {
+        "provider": _session.provider,
+        "voice": _session.voice,
+        "notify": _session.notify,
+        "speak": _session.speak,
+        "vibe_mode": _session.vibe_mode,
+        "vibe": _session.vibe,
+        "vibe_tags": _session.vibe_tags,
+        "vibe_signals": _session.vibe_signals,
+    }
+    try:
+        program_status = _program_tools.status()
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+        payload["program"] = {"error": str(exc)}
+        payload["music_mode"] = "off"
+    else:
+        payload["program"] = program_status.to_dict()
+        payload["music_mode"] = "off" if program_status.mode is Mode.OFF else "on"
+    return json.dumps(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -992,11 +912,12 @@ def run_server() -> None:
     _session = SessionConfig.from_config(config_dir)
 
     # Mark speak as explicitly set if the config file had it.
-    if config_dir is not None:
-        from punt_vox.config import read_field
-
-        if read_field("speak", config_dir) is not None:
-            _session.set_speak(_session.speak)
+    speak_was_set = (
+        config_dir is not None
+        and ConfigStore(config_dir).read_field("speak") is not None
+    )
+    if speak_was_set:
+        _session.set_speak(_session.speak)
 
     logger.info(
         "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",

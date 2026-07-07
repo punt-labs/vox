@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
 from punt_vox.paths import ensure_user_dirs
+from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     DaemonConfig,
@@ -33,17 +34,9 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.music.list_handler import MusicListHandler
-from punt_vox.voxd.music.loop import MusicLoop
-from punt_vox.voxd.music.next_handler import MusicNextHandler
-from punt_vox.voxd.music.off_handler import MusicOffHandler
-from punt_vox.voxd.music.on_handler import MusicOnHandler
-from punt_vox.voxd.music.play_handler import MusicPlayHandler
-from punt_vox.voxd.music.scheduler import MusicScheduler
-from punt_vox.voxd.music.store import FilesystemTrackStore
-from punt_vox.voxd.music.vibe_handler import MusicVibeHandler
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
+from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
@@ -62,8 +55,6 @@ __all__ = [
     "build_app",
     "cli",
     "entrypoint",
-    "read_port_file",
-    "read_token_file",
 ]
 
 
@@ -73,18 +64,16 @@ class VoxDaemon:
     __slots__ = (
         "_config",
         "_health",
-        "_music",
-        "_music_loop",
         "_playback",
+        "_programs",
         "_router",
         "_synthesis",
     )
 
     _config: DaemonConfig
     _health: DaemonHealth
-    _music: MusicScheduler
-    _music_loop: MusicLoop
     _playback: PlaybackQueue
+    _programs: ProgramSubsystem
     _router: WebSocketRouter
     _synthesis: SynthesisPipeline
 
@@ -93,8 +82,7 @@ class VoxDaemon:
         config: DaemonConfig,
         playback: PlaybackQueue,
         synthesis: SynthesisPipeline,
-        music: MusicScheduler,
-        music_loop: MusicLoop,
+        programs: ProgramSubsystem,
         health: DaemonHealth,
         router: WebSocketRouter,
     ) -> Self:
@@ -102,8 +90,7 @@ class VoxDaemon:
         self._config = config
         self._playback = playback
         self._synthesis = synthesis
-        self._music = music
-        self._music_loop = music_loop
+        self._programs = programs
         self._health = health
         self._router = router
         return self
@@ -158,25 +145,41 @@ class VoxDaemon:
 
     @asynccontextmanager
     async def _lifespan(self, _app: Starlette) -> AsyncGenerator[None]:
-        """Manage background tasks for playback consumer and music loop."""
+        """Run the playback consumer, the control writer, and the playback loop.
+
+        The Programs subsystem contributes two background tasks: the single
+        control-channel writer (the sole mutator of the Program, O2) and the
+        playback loop that plays and advances Parts. Both ride the daemon's
+        lifetime and are cancelled on shutdown.
+        """
+        service = self._programs.service
         consumer_task = asyncio.create_task(self._playback.consumer())
-        logger.info("Playback consumer started")
-        music_task = asyncio.create_task(self._music_loop.run())
-        logger.info("Music loop started")
+        control_task = asyncio.create_task(service.serve_control())
+        playback_task = asyncio.create_task(service.run_playback())
+        logger.info("Playback consumer, control writer, and playback loop started")
         try:
             yield
         finally:
-            music_task.cancel()
-            with contextlib.suppress(Exception):
-                await music_task
-            with contextlib.suppress(Exception):
-                await self._music.shutdown()
-            consumer_task.cancel()
-            with contextlib.suppress(Exception):
-                await consumer_task
+            await VoxDaemon._cancel(playback_task)
+            await VoxDaemon._cancel(control_task)
+            service.shutdown()
+            await VoxDaemon._cancel(consumer_task)
             with contextlib.suppress(Exception):
                 self._config.remove_port_file()
             logger.info("voxd stopped")
+
+    @staticmethod
+    async def _cancel(task: asyncio.Task[None]) -> None:
+        """Cancel a background task and await its exit, swallowing the teardown.
+
+        ``CancelledError`` is a ``BaseException`` (not ``Exception``) since 3.8, so
+        it must be suppressed explicitly -- otherwise the *expected* cancel of the
+        first task would propagate out of ``_lifespan``'s finally and skip every
+        remaining teardown step (leaking the writer, the fill, and the port file).
+        """
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
 
     @staticmethod
     def read_port_file() -> int | None:
@@ -189,11 +192,27 @@ class VoxDaemon:
         return DaemonConfig.read_token_file(_run_dir())
 
     @staticmethod
-    def _music_output_dir() -> Path:
-        """Return the directory for generated music tracks."""
-        from punt_vox.dirs import music_output_dir
+    def _programs_root() -> Path:
+        """Return the root directory under which saved Programs live.
 
-        return music_output_dir()
+        Each Program is a pool directory directly under the music root
+        (``~/Music/vox/<name>/``) so desktop music players scan the pools with
+        no ``programs/`` segment in the way.
+        """
+        from punt_vox.dirs import default_output_dir
+
+        return default_output_dir()
+
+    @staticmethod
+    def _build_programs() -> ProgramSubsystem:
+        """Build the Programs subsystem with the production ElevenLabs producer.
+
+        The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
+        drive the subsystem with a fake; the ElevenLabs default is applied here, at
+        the daemon composition root.
+        """
+        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
+        return ProgramSubsystem(VoxDaemon._programs_root(), producer)
 
     @staticmethod
     def _health_handler(
@@ -236,11 +255,10 @@ class VoxDaemon:
         *,
         synthesis: SynthesisPipeline,
         playback: PlaybackQueue,
-        music: MusicScheduler,
-        track_generator: TrackGenerator,
+        programs: ProgramSubsystem,
         health: DaemonHealth,
     ) -> dict[str, MessageHandler]:
-        """Build the canonical handler dispatch dict."""
+        """Build the canonical handler dispatch dict (speech + system + programs)."""
         return {
             "synthesize": SynthesizeHandler(
                 synthesis=synthesis,
@@ -255,19 +273,14 @@ class VoxDaemon:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=health),
-            "music_on": MusicOnHandler(scheduler=music),
-            "music_off": MusicOffHandler(scheduler=music),
-            "music_play": MusicPlayHandler(scheduler=music),
-            "music_list": MusicListHandler(generator=track_generator),
-            "music_vibe": MusicVibeHandler(scheduler=music),
-            "music_next": MusicNextHandler(scheduler=music),
+            **programs.handlers(),
         }
 
     @staticmethod
     def create_app(
         *,
         playback: PlaybackQueue | None = None,
-        music: MusicScheduler | None = None,
+        programs: ProgramSubsystem | None = None,
         health: DaemonHealth | None = None,
         synthesis: SynthesisPipeline | None = None,
         router: WebSocketRouter | None = None,
@@ -280,16 +293,14 @@ class VoxDaemon:
         """
         pb = playback or PlaybackQueue()
         syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
-        tg = TrackGenerator(FilesystemTrackStore(VoxDaemon._music_output_dir()))
-        mus = music or MusicScheduler(tg)
+        progs = programs or VoxDaemon._build_programs()
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
             handlers = VoxDaemon._build_handler_dict(
                 synthesis=syn,
                 playback=pb,
-                music=mus,
-                track_generator=tg,
+                programs=progs,
                 health=hlth,
             )
             router = WebSocketRouter(
@@ -300,9 +311,7 @@ class VoxDaemon:
         return VoxDaemon._starlette(health=hlth, router=router)
 
 
-# Module-level aliases for public API backward compatibility.
-read_port_file = VoxDaemon.read_port_file
-read_token_file = VoxDaemon.read_token_file
+# Public module API: the voxd console-script entrypoint and app factory.
 build_app = VoxDaemon.create_app
 entrypoint = VoxDaemon.entrypoint
 
@@ -343,8 +352,7 @@ def main(
 
     auth_token = daemon_cfg.read_or_create_token()
 
-    tg = TrackGenerator(FilesystemTrackStore(VoxDaemon._music_output_dir()))
-    scheduler = MusicScheduler(tg)
+    programs = VoxDaemon._build_programs()
     playback = PlaybackQueue()
     synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
 
@@ -355,8 +363,7 @@ def main(
     handlers = VoxDaemon._build_handler_dict(
         synthesis=synthesis,
         playback=playback,
-        music=scheduler,
-        track_generator=tg,
+        programs=programs,
         health=health,
     )
     ws_router = WebSocketRouter(
@@ -368,8 +375,7 @@ def main(
         config=daemon_cfg,
         playback=playback,
         synthesis=synthesis,
-        music=scheduler,
-        music_loop=MusicLoop(scheduler),
+        programs=programs,
         health=health,
         router=ws_router,
     )

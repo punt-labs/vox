@@ -10,9 +10,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from _program_fakes import FakeProgramGateway
 
 from punt_vox.client import SynthesizeResult
-from punt_vox.config import write_field, write_fields
+from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.config import ConfigStore
+from punt_vox.program_control import ProgramSummary
 from punt_vox.resolve import (
     apply_vibe,
     split_leading_expressive_tags,
@@ -34,6 +37,25 @@ from punt_vox.server import (
 )
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.voices import voice_not_found_message
+from punt_vox.voxd.programs import (
+    Part,
+    Program,
+    ProgramName,
+    ProgramState,
+    ProgramStatus,
+    Reason,
+)
+from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
+
+
+class _StatusPolicy:
+    """Anti-repeat policy stand-in for building a playing Program in tests."""
+
+    def next_part(self, pool: tuple[Part, ...], playing: Part | None) -> AdvanceResult:
+        for part in pool:
+            if part != playing:
+                return Advance(part)
+        return Advance(pool[0])
 
 
 @pytest.fixture()
@@ -242,7 +264,7 @@ class TestWriteConfigField:
     """Tests for write_field in-place YAML editing."""
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         local_md = _patch_config / "vox.local.md"
         assert local_md.exists()
         text = local_md.read_text()
@@ -253,7 +275,7 @@ class TestWriteConfigField:
     def test_updates_existing_field(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[tired]" not in text
@@ -261,7 +283,7 @@ class TestWriteConfigField:
     def test_updates_unquoted_field(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text("---\nvibe_tags: [whispers]\n---\n")
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[whispers]" not in text
@@ -269,7 +291,7 @@ class TestWriteConfigField:
     def test_inserts_new_field_before_closing_fence(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe: "happy"\n---\n')
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert 'vibe: "happy"' in text
@@ -279,7 +301,7 @@ class TestWriteConfigField:
         local_md.write_text(
             '---\nvibe: "happy"\nvibe_tags: "[tired]"\nvibe_signals: "x"\n---\n'
         )
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe: "happy"' in text
         assert 'vibe_signals: "x"' in text
@@ -288,7 +310,7 @@ class TestWriteConfigField:
     def test_clears_field_with_empty_string(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        write_field("vibe_tags", "")
+        ConfigStore().write_field("vibe_tags", "")
         text = local_md.read_text()
         assert 'vibe_tags: ""' in text
 
@@ -296,11 +318,11 @@ class TestWriteConfigField:
         vox_md = _patch_config / "vox.md"
         vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            write_field("bad_key", "value")
+            ConfigStore().write_field("bad_key", "value")
 
     def test_creates_parent_directory(self, tmp_path: Path) -> None:
         nested = tmp_path / "deep" / "dir"
-        write_field("notify", "y", nested)
+        ConfigStore(nested).write_field("notify", "y")
         vox_md = nested / "vox.md"
         assert vox_md.exists()
         assert 'notify: "y"' in vox_md.read_text()
@@ -313,7 +335,7 @@ class TestWriteConfigField:
         import logging
 
         with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
-            write_field("notify", "y", _patch_config)
+            ConfigStore(_patch_config).write_field("notify", "y")
         assert 'notify: "y"' in vox_md.read_text()
         assert "Malformed config" in caplog.text
 
@@ -329,7 +351,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[cheerful]",
             "vibe_mode": "manual",
         }
-        write_fields(updates)
+        ConfigStore().write_fields(updates)
         # notify is the only durable pref here -> vox.md
         vox_text = vox_md.read_text()
         assert 'notify: "y"' in vox_text
@@ -350,7 +372,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[new]",
             "vibe_mode": "manual",
         }
-        write_fields(updates)
+        ConfigStore().write_fields(updates)
         local_text = local_md.read_text()
         assert 'vibe_mode: "manual"' in local_text
         assert "off" not in local_text
@@ -359,7 +381,7 @@ class TestWriteConfigFields:
         assert "old" not in local_text
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
+        ConfigStore().write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
         local_md = _patch_config / "vox.local.md"
         text = local_md.read_text()
         assert text.startswith("---\n")
@@ -371,7 +393,7 @@ class TestWriteConfigFields:
         vox_md = _patch_config / "vox.md"
         vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            write_fields({"vibe": "ok", "bad_key": "fail"})
+            ConfigStore().write_fields({"vibe": "ok", "bad_key": "fail"})
         # vox.md should be unchanged — validation fails before any write
         assert vox_md.read_text() == "---\n---\n"
 
@@ -403,7 +425,7 @@ class TestWriteConfigFields:
         monkeypatch.setattr(Path, "read_text", counting_read)
         monkeypatch.setattr(Path, "write_text", counting_write)
         # All ephemeral keys -> single file write to vox.local.md
-        write_fields({"vibe": "a", "vibe_tags": "[b]"}, _patch_config)
+        ConfigStore(_patch_config).write_fields({"vibe": "a", "vibe_tags": "[b]"})
         assert read_count == 1
         assert write_count == 1
 
@@ -528,7 +550,7 @@ class TestUnmute:
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.synthesize.side_effect = VoxdConnectionError("not running")
@@ -644,7 +666,7 @@ class TestRecord:
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.record.side_effect = VoxdConnectionError("not running")
@@ -850,7 +872,7 @@ class TestWho:
         assert result["all"] == ["samantha", "alex"]
 
     def test_voxd_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.voices.side_effect = VoxdConnectionError("not running")
@@ -1015,12 +1037,44 @@ class TestStatusTool:
         assert result["speak"] == "n"
         assert result["music_mode"] == "off"
 
-    def test_music_mode_reflected(self) -> None:
-        import punt_vox.server as srv
+    def test_music_mode_derived_on_from_program_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``music_mode`` is 'on' when the authoritative Program is playing."""
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(status=ProgramStatus.of(program, ProgramName("amb"))),
+        )
+        assert json.loads(status())["music_mode"] == "on"
 
-        srv._session.music_mode = "on"
-        result = json.loads(status())
-        assert result["music_mode"] == "on"
+    def test_music_mode_derived_off_when_program_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``music_mode`` is 'off' when the daemon holds no active Program."""
+        _install_fake(monkeypatch, FakeProgramGateway(status=ProgramStatus.idle()))
+        assert json.loads(status())["music_mode"] == "off"
+
+    def test_music_mode_reflects_external_change_no_shadow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Program mode change made elsewhere flips ``music_mode`` with no shadow.
+
+        No music tool runs on this server, yet ``music_mode`` follows the daemon's
+        authoritative ``program.mode`` -- the vox-73m5 drift class, closed by
+        deriving the label instead of caching a session copy.
+        """
+        fake = FakeProgramGateway(status=ProgramStatus.idle())
+        _install_fake(monkeypatch, fake)
+        assert json.loads(status())["music_mode"] == "off"
+
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        fake.set_status(ProgramStatus.of(program, ProgramName("amb")))
+        assert json.loads(status())["music_mode"] == "on"
 
 
 # ---------------------------------------------------------------------------
@@ -1041,619 +1095,274 @@ class TestSessionConfig:
         b = SessionConfig()
         assert a.session_id != b.session_id
 
-    def test_music_mode_defaults_off(self) -> None:
-        state = SessionConfig()
-        assert state.music_mode == "off"
-
 
 # ---------------------------------------------------------------------------
-# music tool tests
+# music / program tool tests (routed through the ProgramGateway seam)
 # ---------------------------------------------------------------------------
+
+
+def _install_fake(monkeypatch: pytest.MonkeyPatch, fake: FakeProgramGateway) -> None:
+    """Point the server's module-level gateway at an in-memory fake."""
+    import punt_vox.server as srv
+
+    monkeypatch.setattr(srv, "_program_tools", fake)
 
 
 class TestMusicTool:
-    """Tests for the music MCP tool."""
+    """The music tool routes on/off through the gateway with an F7 result."""
 
-    def test_music_on_with_style_and_vibe(
+    def test_on_starts_via_gateway_and_reports_applied(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import punt_vox.server as srv
 
         srv._session._vibe = "focused"
-        srv._session._vibe_tags = "[calm]"
-
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "abc",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
 
         result = json.loads(music(mode="on", style="techno"))
 
-        expected = (
-            "\u266a Music on \u2014 generating a techno track for your focused mood..."
-        )
-        assert result["message"] == expected
-        assert result["status"] == "generating"
-        assert srv._session.music_mode == "on"
-        mock_client.music.assert_called_once_with(
-            mode="on",
-            style="techno",
-            vibe="focused",
-            vibe_tags="[calm]",
-            owner_id=srv._session.session_id,
-            name=None,
-            prompts=None,
-        )
+        assert result["applied"] is True
+        assert "techno" in result["message"] and "focused" in result["message"]
+        assert fake.verbs() == ["start"]
+        request = fake.calls[0].request
+        assert request is not None and request.style == "techno"
 
-    def test_music_on_forwards_agent_prompts(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-        from punt_vox.music_prompts import PromptSet
-
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "abc",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
+    def test_on_forwards_agent_prompts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
         variations = [f"var{i}" for i in range(12)]
-        json.loads(
-            music(
-                mode="on",
-                style="klezmer",
-                base_prompt="Klezmer, clarinet lead",
-                variations=variations,
-            )
-        )
 
-        prompts = mock_client.music.call_args.kwargs["prompts"]
-        assert prompts == PromptSet.from_agent("Klezmer, clarinet lead", variations)
-        assert srv._session.music_mode == "on"
+        music(mode="on", base_prompt="deep techno", variations=variations)
 
-    def test_music_on_invalid_prompt_shape_reports_error(
+        request = fake.calls[0].request
+        assert request is not None
+        assert request.prompts is not None
+        assert request.prompts.base == "deep techno"
+        assert request.prompts.variations == tuple(variations)
+
+    def test_on_invalid_prompt_shape_reports_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        mock_client = MagicMock()
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        _install_fake(monkeypatch, FakeProgramGateway())
 
-        result = json.loads(
-            music(mode="on", style="klezmer", base_prompt="k", variations=["only-one"])
-        )
+        result = json.loads(music(mode="on", base_prompt="x", variations=["only one"]))
 
         assert "error" in result
-        assert "exactly 12" in result["error"]
-        mock_client.music.assert_not_called()
 
-    def test_music_on_bad_prompts_while_playing_stays_consistent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Finding #2: a ValueError from PromptSet.from_tool_args is caller input,
-        # raised BEFORE any daemon call. It must not flip music_mode to "off"
-        # while voxd keeps playing -- that desyncs the session from the daemon.
-        # Reject it as an input error and leave the running state untouched, so
-        # voxd and the MCP session still agree that music is on.
-        import punt_vox.server as srv
-
-        srv._session.music_mode = "on"  # music already playing on voxd
-        mock_client = MagicMock()
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(
-            music(mode="on", style="jazz", base_prompt="j", variations=["only-one"])
-        )
-
-        assert "error" in result
-        assert "exactly 12" in result["error"]
-        mock_client.music.assert_not_called()  # voxd never told to stop or change
-        assert srv._session.music_mode == "on"  # session still agrees with voxd
-
-    def test_music_on_style_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Style present, no vibe."""
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on", style="jazz"))
-
-        expected = "\u266a Music on \u2014 generating a jazz track..."
-        assert result["message"] == expected
-
-    def test_music_on_vibe_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Vibe present, no style."""
-        import punt_vox.server as srv
-
-        srv._session._vibe = "chill"
-
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on"))
-
-        expected = "\u266a Music on \u2014 generating a track for your chill mood..."
-        assert result["message"] == expected
-
-    def test_music_on_neither_style_nor_vibe(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """No style, no vibe -- ambient fallback."""
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on"))
-
-        assert result["message"] == "\u266a Music on \u2014 generating ambient music..."
-
-    def test_music_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_off",
-            "id": "abc",
-            "status": "stopped",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+    def test_off_stops_via_gateway(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
 
         result = json.loads(music(mode="off"))
 
-        assert result["message"] == "\u266a Music off."
-        assert result["status"] == "stopped"
-        assert srv._session.music_mode == "off"
+        assert result["applied"] is True
+        assert fake.verbs() == ["stop"]
 
-    def test_music_off_ignores_prompt_args_and_stops(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Finding #1: prompt args on a mode="off" request (e.g. a wrapper
-        # forwarding stale args) must not be validated. A malformed shape must
-        # never block the stop -- otherwise the daemon keeps playing while the
-        # session believes it asked to stop.
-        import punt_vox.server as srv
-
-        srv._session.music_mode = "on"
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_off",
-            "id": "abc",
-            "status": "stopped",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(
-            music(mode="off", base_prompt="stale", variations=["only-one"])
-        )
-
-        assert "error" not in result
-        assert result["status"] == "stopped"
-        mock_client.music.assert_called_once()
-        assert mock_client.music.call_args[1]["mode"] == "off"
-        assert mock_client.music.call_args[1]["prompts"] is None
-        assert srv._session.music_mode == "off"
-
-    def test_music_invalid_mode(self) -> None:
-        result = json.loads(music(mode="pause"))
+    def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_fake(monkeypatch, FakeProgramGateway())
+        result = json.loads(music(mode="sideways"))
         assert "error" in result
 
-    def test_music_on_no_vibe_sends_empty(
+    def test_rejected_start_surfaces_not_applied(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When vibe is None, empty strings are sent to voxd."""
-        import punt_vox.server as srv
+        """A lost-race start (F7) reaches the caller as applied=false."""
+        _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        result = json.loads(music(mode="on", style="techno"))
 
-        music(mode="on")
+        assert result["applied"] is False
 
-        call_kwargs = mock_client.music.call_args[1]
-        assert call_kwargs["vibe"] == ""
-        assert call_kwargs["vibe_tags"] == ""
-        assert srv._session.music_mode == "on"
-
-    def test_music_on_no_style_sends_empty(
+    def test_rejected_on_surfaces_reason_not_success_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When style is None, empty string is sent."""
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        music(mode="on")
-
-        call_kwargs = mock_client.music.call_args[1]
-        assert call_kwargs["style"] == ""
-
-    def test_music_connection_error_daemon_unreachable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-        from punt_vox.client import VoxdConnectionError
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music.side_effect = VoxdConnectionError("not running")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on"))
-
-        assert result["message"] == "\u266a Daemon unreachable \u2014 music off."
-        assert result["error"] == "daemon unreachable"
-        assert srv._session.music_mode == "off"
-
-    def test_music_protocol_error_with_message(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-        from punt_vox.client import VoxdProtocolError
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music.side_effect = VoxdProtocolError("bad response")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on"))
-
-        assert result["message"] == "\u266a Music error: bad response"
-        assert result["error"] == "bad response"
-        assert srv._session.music_mode == "off"
-
-
-# ---------------------------------------------------------------------------
-# vibe tool — music propagation tests
-# ---------------------------------------------------------------------------
-
-
-class TestVibeToolMusicPropagation:
-    """Tests for vibe changes propagating to music loop."""
-
-    def test_vibe_propagates_when_music_on(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-
-        srv._session.music_mode = "on"
-        srv._session._vibe = "old"
-        srv._session._vibe_tags = "[old]"
-
-        mock_client = MagicMock()
-        mock_client.music_vibe.return_value = {
-            "type": "music_vibe",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        vibe(mood="happy", tags="[warm]")
-
-        mock_client.music_vibe.assert_called_once_with(
-            vibe="happy",
-            vibe_tags="[warm]",
-            owner_id=srv._session.session_id,
+        """A rejected 'on' shows the daemon's reason, not the generating line (F4)."""
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(applied=False, reason="already generating"),
         )
 
-    def test_vibe_no_propagation_when_music_off(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+        result = json.loads(music(mode="on", style="techno"))
+
+        assert result["applied"] is False
+        assert "already generating" in result["message"]
+        assert "generating a techno track" not in result["message"]
+
+    def test_daemon_error_reports(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
-        srv._session.music_mode = "off"
+        fake = MagicMock()
+        fake.start.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
 
-        mock_client = MagicMock()
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        result = json.loads(music(mode="on"))
 
-        vibe(mood="happy")
-
-        mock_client.music_vibe.assert_not_called()
-
-    def test_vibe_connection_error_resets_music(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-        from punt_vox.client import VoxdConnectionError
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music_vibe.side_effect = VoxdConnectionError("gone")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(vibe(mood="sad"))
-
-        # Vibe update itself should succeed.
-        assert result["vibe"]["vibe"] == "sad"
-        # But music_mode should be reset.
-        assert srv._session.music_mode == "off"
-
-    def test_vibe_protocol_error_resets_music(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-        from punt_vox.client import VoxdProtocolError
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music_vibe.side_effect = VoxdProtocolError("bad response")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(vibe(mood="sad"))
-
-        # Vibe update itself should succeed.
-        assert result["vibe"]["vibe"] == "sad"
-        # But music_mode should be reset.
-        assert srv._session.music_mode == "off"
-
-
-# ---------------------------------------------------------------------------
-# music tool — name parameter tests
-# ---------------------------------------------------------------------------
-
-
-class TestMusicToolName:
-    """Tests for the music MCP tool with name parameter."""
-
-    def test_music_on_with_name_replay(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Replay message when status is 'playing' and name is given."""
-        import punt_vox.server as srv
-
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "n1",
-            "status": "playing",
-            "name": "focus_beats",
-            "track": "/home/x/music/focus_beats.mp3",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on", name="focus beats"))
-
-        assert result["message"] == "\u266a Playing saved track: focus beats"
-        assert result["status"] == "playing"
-        assert srv._session.music_mode == "on"
-        mock_client.music.assert_called_once()
-        call_kwargs = mock_client.music.call_args[1]
-        assert call_kwargs["name"] == "focus beats"
-
-    def test_music_on_with_name_generates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Generate message when name given but track not found."""
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "n2",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music(mode="on", name="new track"))
-
-        # No replay — falls through to normal on message.
-        assert "\u266a Music on" in result["message"]
-        assert result["status"] == "generating"
-
-    def test_music_on_name_none_not_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When name is None, it is passed as None to client."""
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "n3",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        music(mode="on")
-
-        call_kwargs = mock_client.music.call_args[1]
-        assert call_kwargs["name"] is None
-
-
-# ---------------------------------------------------------------------------
-# music_play tool tests
-# ---------------------------------------------------------------------------
+        assert "error" in result
 
 
 class TestMusicPlayTool:
-    """Tests for the music_play MCP tool."""
+    """music_play routes a saved-Program replay through the gateway."""
 
-    def test_play_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_play_forwards_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music_play("ambient_techno"))
+
+        assert result["applied"] is True
+        assert fake.calls[0].verb == "play"
+        assert fake.calls[0].name == "ambient_techno"
+
+    def test_play_empty_name_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake(monkeypatch, FakeProgramGateway())
+        result = json.loads(music_play("   "))
+        assert "error" in result
+
+    def test_play_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
-        mock_client = MagicMock()
-        mock_client.music_play.return_value = {
-            "type": "music_play",
-            "id": "p1",
-            "status": "playing",
-            "name": "chill_vibes",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        fake = MagicMock()
+        fake.play.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
 
-        result = json.loads(music_play(name="chill vibes"))
+        result = json.loads(music_play("ambient_techno"))
 
-        assert result["message"] == "\u266a Now playing: chill_vibes"
-        assert result["status"] == "playing"
-        assert srv._session.music_mode == "on"
-        mock_client.music_play.assert_called_once_with(
-            "chill vibes", owner_id=srv._session.session_id
-        )
-
-    def test_play_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdConnectionError
-
-        mock_client = MagicMock()
-        mock_client.music_play.side_effect = VoxdConnectionError("not running")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music_play(name="test"))
-
-        assert result["error"] == "daemon unreachable"
-
-    def test_play_protocol_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdProtocolError
-
-        mock_client = MagicMock()
-        mock_client.music_play.side_effect = VoxdProtocolError("track not found")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music_play(name="bogus"))
-
-        assert "track not found" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# music_list tool tests
-# ---------------------------------------------------------------------------
+        assert "error" in result
 
 
 class TestMusicListTool:
-    """Tests for the music_list MCP tool."""
+    """music_list groups saved Programs, not loose files."""
 
-    def test_list_with_tracks(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_client = MagicMock()
-        mock_client.music_list.return_value = {
-            "type": "music_list",
-            "id": "l1",
-            "tracks": [
-                {"name": "alpha", "size_bytes": 2048, "modified": 1000.0, "path": "/x"},
-                {"name": "beta", "size_bytes": 4096, "modified": 2000.0, "path": "/y"},
-            ],
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+    def test_list_groups_programs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        catalog = (
+            ProgramSummary(name="ambient_techno", format="music", ready=5, total=12),
+            ProgramSummary(name="jazz", format="music", ready=1, total=1),
+        )
+        _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
 
         result = json.loads(music_list())
 
-        assert "\u266a 2 saved track(s):" in result["message"]
-        assert "\u266a alpha" in result["message"]
-        assert "\u266a beta" in result["message"]
-        # Dates are included in YYYY-MM-DD HH:MM format.
-        import re
-
-        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", result["message"])
-        assert len(result["tracks"]) == 2
+        assert [p["name"] for p in result["programs"]] == ["ambient_techno", "jazz"]
+        assert "ambient_techno" in result["message"]
 
     def test_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_client = MagicMock()
-        mock_client.music_list.return_value = {
-            "type": "music_list",
-            "id": "l2",
-            "tracks": [],
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        _install_fake(monkeypatch, FakeProgramGateway())
+        result = json.loads(music_list())
+        assert result["programs"] == []
+        assert "No saved programs" in result["message"]
+
+    def test_list_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import punt_vox.server as srv
+
+        fake = MagicMock()
+        fake.catalog.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
 
         result = json.loads(music_list())
 
-        assert result["message"] == "\u266a No saved tracks."
-
-    def test_list_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdConnectionError
-
-        mock_client = MagicMock()
-        mock_client.music_list.side_effect = VoxdConnectionError("not running")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music_list())
-
-        assert result["error"] == "daemon unreachable"
-
-
-# ---------------------------------------------------------------------------
-# music_next tool tests
-# ---------------------------------------------------------------------------
+        assert "error" in result
 
 
 class TestMusicNextTool:
-    """Tests for the music_next MCP tool."""
+    """music_next is the one ungated advance."""
 
-    def test_next_while_playing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music_next.return_value = {
-            "type": "music_next",
-            "id": "n1",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+    def test_next_advances(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
 
         result = json.loads(music_next())
 
-        assert result["message"] == "♪ Skipping — generating next track..."
-        assert result["status"] == "generating"
-        mock_client.music_next.assert_called_once_with(
-            owner_id=srv._session.session_id,
+        assert result["applied"] is True
+        assert fake.verbs() == ["advance"]
+
+    def test_next_rejected_surfaces_not_applied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_fake(monkeypatch, FakeProgramGateway(applied=False))
+        result = json.loads(music_next())
+        assert result["applied"] is False
+
+    def test_next_rejected_surfaces_reason_not_skip_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A next-after-off shows the reason, not a misleading skip line (F4/F7)."""
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(applied=False, reason="nothing is playing"),
         )
 
-    def test_next_when_not_playing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_client = MagicMock()
-        mock_client.music_next.return_value = {
-            "type": "music_next",
-            "id": "n1",
-            "status": "ignored",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
         result = json.loads(music_next())
 
-        assert result["status"] == "ignored"
+        assert result["applied"] is False
+        assert "nothing is playing" in result["message"]
+        assert "Skipping" not in result["message"]
 
-    def test_next_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdConnectionError
-
-        mock_client = MagicMock()
-        mock_client.music_next.side_effect = VoxdConnectionError("not running")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(music_next())
-
-        assert result["error"] == "daemon unreachable"
-
-    def test_next_protocol_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_next_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
-        srv._session.music_mode = "on"
-
-        mock_client = MagicMock()
-        mock_client.music_next.side_effect = OSError("unexpected")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        fake = MagicMock()
+        fake.advance.side_effect = OSError("boom")
+        monkeypatch.setattr(srv, "_program_tools", fake)
 
         result = json.loads(music_next())
 
-        assert "unexpected" in result["error"]
+        assert "error" in result
+
+
+class TestStatusProgramSurface:
+    """The status tool serves the daemon's authoritative Program status."""
+
+    def test_status_includes_both_failure_surfaces(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both the program-level error and per-Part failures reach the client."""
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        program.fill_bad_part(Part("id002", 2), Reason("bad_prompt: unsafe"))
+        status_value = ProgramStatus.of(program, ProgramName("ambient_techno"))
+        _install_fake(monkeypatch, FakeProgramGateway(status=status_value))
+
+        block = json.loads(status())["program"]
+
+        assert block["mode"] == "playing_filling"
+        assert block["now_playing"] is not None
+        assert block["failed_parts"][0]["index"] == 2
+
+    def test_status_reads_fresh_no_server_cache(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A state change made via another path is reflected next call (vox-73m5)."""
+        fake = FakeProgramGateway(status=ProgramStatus.idle())
+        _install_fake(monkeypatch, fake)
+
+        first = json.loads(status())["program"]
+        assert first.get("name") is None
+
+        # A different client turns music on; the server must not serve a shadow.
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        fake.set_status(ProgramStatus.of(program, ProgramName("ambient_techno")))
+
+        second = json.loads(status())["program"]
+        assert second["name"] == "ambient_techno"
+
+    def test_status_degrades_when_daemon_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        fake = MagicMock()
+        fake.status.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
+
+        block = json.loads(status())["program"]
+
+        assert "error" in block
 
 
 # ---------------------------------------------------------------------------
@@ -1822,9 +1531,8 @@ class TestRefreshIntegrationWithTools:
         srv._session._vibe_tags = "[gloomy]"
 
         # Simulate CLI writing new vibe to config
-        write_fields(
-            {"vibe": "happy", "vibe_tags": "[cheerful]"},
-            _refresh_config,
+        ConfigStore(_refresh_config).write_fields(
+            {"vibe": "happy", "vibe_tags": "[cheerful]"}
         )
 
         result = json.loads(status())
@@ -1840,38 +1548,38 @@ class TestRefreshIntegrationWithTools:
 
         srv._session._notify = "n"
 
-        write_field("notify", "c", _refresh_config)
+        ConfigStore(_refresh_config).write_field("notify", "c")
 
         result = json.loads(status())
 
         assert result["notify"] == "c"
 
-    def test_music_gets_fresh_vibe(
+    def test_music_display_uses_fresh_vibe(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """music tool reads fresh vibe from config, not stale in-memory."""
+        """music reads fresh config for its display line, not stale in-memory.
+
+        The session vibe personalises the generating *message* only -- it is
+        never forwarded as a Program transition input (vox-73m5).
+        """
         import punt_vox.server as srv
 
         srv._session._vibe = "old-mood"
         srv._session._vibe_tags = "[old]"
 
-        # External write clears vibe (e.g. `vox vibe auto`)
-        write_fields({"vibe": "", "vibe_tags": ""}, _refresh_config)
+        # External write clears vibe (e.g. `vox vibe auto`).
+        ConfigStore(_refresh_config).write_fields({"vibe": "", "vibe_tags": ""})
 
-        mock_client = MagicMock()
-        mock_client.music.return_value = {
-            "type": "music_on",
-            "id": "x",
-            "status": "generating",
-        }
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+        fake = FakeProgramGateway()
+        monkeypatch.setattr(srv, "_program_tools", fake)
 
-        music(mode="on")
+        message = json.loads(music(mode="on"))["message"]
 
-        call_kwargs = mock_client.music.call_args[1]
-        # Vibe should be empty -- the config cleared it
-        assert call_kwargs["vibe"] == ""
-        assert call_kwargs["vibe_tags"] == ""
+        # The cleared vibe means the generic line, not "for your old-mood mood".
+        assert "old-mood" not in message
+        # And no vibe travelled into the Program start request.
+        request = fake.calls[0].request
+        assert request is not None and request.style is None
 
     def test_unmute_uses_refreshed_voice(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1881,7 +1589,7 @@ class TestRefreshIntegrationWithTools:
 
         srv._session.voice = "matilda"
 
-        write_field("voice", "roger", _refresh_config)
+        ConfigStore(_refresh_config).write_field("voice", "roger")
 
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="r1")

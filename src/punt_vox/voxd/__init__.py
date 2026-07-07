@@ -6,19 +6,12 @@ from __future__ import annotations
 
 from punt_vox.voxd.daemon import build_app, entrypoint
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.music.generator import TrackGenerator
-from punt_vox.voxd.playback import (
-    _PLAYBACK_TIMEOUT_DEFAULT_S,
-    PlaybackQueue,
-    _music_player_command,
-)
+from punt_vox.voxd.playback import _PLAYBACK_TIMEOUT_DEFAULT_S, PlaybackQueue
 
 __all__ = [
     "_PLAYBACK_TIMEOUT_DEFAULT_S",
     "DaemonHealth",
     "PlaybackQueue",
-    "TrackGenerator",
-    "_music_player_command",
     "build_app",
     "entrypoint",
 ]

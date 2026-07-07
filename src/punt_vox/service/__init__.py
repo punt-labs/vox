@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, assert_never
 
 from punt_vox.service.installer import ServiceInstaller
@@ -18,7 +17,6 @@ from punt_vox.service.process import (
     ProcessManager,
 )
 from punt_vox.service.systemd import (
-    _LEGACY_USER_UNIT_RELATIVE,
     _SYSTEMD_DIR,
     _SYSTEMD_UNIT,
     SystemdBackend,
@@ -80,15 +78,9 @@ def stop_daemon(plat: PlatformName) -> None:
         assert_never(plat)
 
 
-def _legacy_user_unit_path() -> Path:
-    """Return the legacy per-user systemd unit path."""
-    return _systemd.legacy_user_unit_path()
-
-
 __all__ = [
     "DEFAULT_PORT",
     "_LAUNCHD_PLIST",
-    "_LEGACY_USER_UNIT_RELATIVE",
     "_SYSTEMD_DIR",
     "_SYSTEMD_UNIT",
     "KeysEnvWriter",
@@ -96,7 +88,6 @@ __all__ = [
     "ProcessManager",
     "ServiceInstaller",
     "SystemdBackend",
-    "_legacy_user_unit_path",
     "detect_platform",
     "ensure_port_free",
     "install",

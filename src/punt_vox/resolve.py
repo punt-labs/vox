@@ -82,7 +82,8 @@ def resolve_voice_and_language(
 
     voice_from_config = False
     if voice is None:
-        voice = _config.read_field("voice", config_dir or _config.DEFAULT_CONFIG_DIR)
+        store = _config.ConfigStore(config_dir or _config.DEFAULT_CONFIG_DIR)
+        voice = store.read_field("voice")
         voice_from_config = voice is not None
 
     if voice is None and language is not None:
@@ -136,9 +137,9 @@ def apply_vibe(
     """
     if not expressive_tags:
         return strip_expressive_tags(text)
-    tags = override_tags or _config.read_field(
-        "vibe_tags", config_dir or _config.DEFAULT_CONFIG_DIR
-    )
+    tags = override_tags or _config.ConfigStore(
+        config_dir or _config.DEFAULT_CONFIG_DIR
+    ).read_field("vibe_tags")
     if tags and not _LEADING_TAG_RE.match(text):
         return f"{tags} {text}"
     return text

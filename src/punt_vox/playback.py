@@ -21,11 +21,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from punt_vox.logging_config import VOX_DATA_DIR
+from punt_vox.paths import user_state_dir
 
 logger = logging.getLogger(__name__)
 
-LOCK_FILE = VOX_DATA_DIR / "playback.lock"
+LOCK_FILE = user_state_dir() / "playback.lock"
 PLAYBACK_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
 _PENDING_DIR = LOCK_FILE.parent / "pending"
 

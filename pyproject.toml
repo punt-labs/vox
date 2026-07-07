@@ -28,6 +28,7 @@ dependencies = [
     "botocore-stubs>=1.35.0",
     "elevenlabs>=2.0.0",
     "mcp>=1.0.0",
+    "mutagen>=1.47.0",
     "openai>=1.0.0",
     "pydub>=0.25.0",
     "audioop-lts>=0.2.1",
@@ -116,8 +117,6 @@ ignore = [
 "src/punt_vox/voxd/daemon.py" = ["PLC0415"]
 "src/punt_vox/voxd/synthesis.py" = ["PLC0415"]
 "src/punt_vox/voxd/health.py" = ["PLC0415"]
-"src/punt_vox/voxd/music/generator.py" = ["PLC0415"]
-"src/punt_vox/voxd/music/loop.py" = ["C901"]
 "src/punt_vox/voxd/speech_handlers.py" = ["C901"]
 "src/punt_vox/client.py" = ["PLC0415", "C901"]
 "src/punt_vox/hooks.py" = ["T20", "PLC0415", "S603", "S607", "S311"]
@@ -159,7 +158,6 @@ line-ending = "auto"
 python_version = "3.13"
 mypy_path = "typings"
 strict = true
-exclude = ["tests/music/"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -178,12 +176,6 @@ enable_error_code = ["ignore-without-code"]
 module = "punt_lux.*"
 ignore_missing_imports = true
 
-# Pre-existing: WebSocketRouter handler extraction changed constructor/method
-# signatures but these test files weren't updated yet.
-[[tool.mypy.overrides]]
-module = ["test_voxd_router", "test_voxd_playback"]
-ignore_errors = true
-
 
 [tool.pyright]
 pythonVersion = "3.13"
@@ -191,6 +183,7 @@ typeCheckingMode = "strict"
 reportMissingTypeStubs = "error"
 venvPath = "."
 venv = ".venv"
+extraPaths = ["."]
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"
@@ -203,6 +196,7 @@ reportUnknownMemberType = false
 minversion = "8.0"
 addopts = "-ra -q -m 'not slow and not integration and not e2e'"
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (requires provider API credentials)",
@@ -227,6 +221,9 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == \"__main__\":",
     "if TYPE_CHECKING:",
+    # Protocol/abstract method stub bodies are unexecutable by definition.
+    "^\\s*\\.\\.\\.\\s*$",
+    "@(abc\\.)?abstractmethod",
 ]
 show_missing = true
 precision = 2

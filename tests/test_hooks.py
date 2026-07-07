@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call, patch
 
-from punt_vox.config import VoxConfig, read_config, write_fields
+from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
 from punt_vox.hooks import (
@@ -166,8 +166,8 @@ class TestHandleStop:
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is None
 
-    @patch("punt_vox.hooks.write_fields")
-    def test_voice_mode_blocks_clean_reason(self, _mock_write: MagicMock) -> None:
+    @patch("punt_vox.hooks.ConfigStore")
+    def test_voice_mode_blocks_clean_reason(self, _mock_cs: MagicMock) -> None:
         config = _make_config()
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
@@ -179,22 +179,22 @@ class TestHandleStop:
         assert "vibe_tags" not in reason
         assert "vibe_signals" not in reason
 
-    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.ConfigStore")
     def test_auto_mode_writes_tags_to_passed_config_dir(
-        self, mock_write: MagicMock
+        self, mock_cs: MagicMock
     ) -> None:
         # The vibe-tag write lands in the config_dir resolved from the
         # session cwd, not a re-resolved Path.cwd().
         config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
         handle_stop(_stop(), config, _CONFIG_DIR)
-        assert mock_write.call_count == 1
-        assert mock_write.call_args == call(
-            {"vibe_tags": "[satisfied]", "vibe_signals": ""},
-            _CONFIG_DIR,
+        mock_cs.assert_called_once_with(_CONFIG_DIR)
+        assert mock_cs.return_value.write_fields.call_count == 1
+        assert mock_cs.return_value.write_fields.call_args == call(
+            {"vibe_tags": "[satisfied]", "vibe_signals": ""}
         )
 
-    @patch("punt_vox.hooks.write_fields")
-    def test_continuous_mode_blocks(self, _mock_write: MagicMock) -> None:
+    @patch("punt_vox.hooks.ConfigStore")
+    def test_continuous_mode_blocks(self, _mock_cs: MagicMock) -> None:
         config = _make_config(notify="c")
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
@@ -212,11 +212,11 @@ class TestHandleStop:
             vibe_tags="[excited] [warm]",
             vibe_signals="tests-pass@12:00",
         )
-        with patch("punt_vox.hooks.write_fields") as mock_write:
+        with patch("punt_vox.hooks.ConfigStore") as mock_cs:
             result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         # Manual mode with existing tags — no write needed
-        mock_write.assert_not_called()
+        mock_cs.return_value.write_fields.assert_not_called()
 
     def test_vibe_off_skips_config_write(self) -> None:
         config = VoxConfig(
@@ -230,12 +230,12 @@ class TestHandleStop:
             vibe_tags=None,
             vibe_signals="tests-pass@12:00",
         )
-        with patch("punt_vox.hooks.write_fields") as mock_write:
+        with patch("punt_vox.hooks.ConfigStore") as mock_cs:
             result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         assert result["decision"] == "block"
         # Vibe off — must not write tags to config
-        mock_write.assert_not_called()
+        mock_cs.return_value.write_fields.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -255,15 +255,14 @@ class TestVibeAuthoritativeBoundary:
     @staticmethod
     def _set_vibe_auto(config_dir: Path) -> None:
         """Persist an authoritative ``/vibe auto`` to disk (notify on)."""
-        write_fields(
+        ConfigStore(config_dir).write_fields(
             {
                 "notify": "y",
                 "vibe": "",
                 "vibe_tags": "",
                 "vibe_signals": "",
                 "vibe_mode": "auto",
-            },
-            config_dir=config_dir,
+            }
         )
 
     def test_cleared_mood_stays_cleared_after_write_backs(self, tmp_path: Path) -> None:
@@ -271,15 +270,15 @@ class TestVibeAuthoritativeBoundary:
         # A Bash signal write-back (e.g. during make check) accumulates a signal.
         handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
         # The stop hook then resolves tags from that signal and writes them.
-        handle_stop(_stop(), read_config(config_dir=tmp_path), tmp_path)
+        handle_stop(_stop(), ConfigStore(tmp_path).read(), tmp_path)
         # The mood the user cleared must not come back.
-        assert read_config(config_dir=tmp_path).vibe is None
+        assert ConfigStore(tmp_path).read().vibe is None
 
     def test_auto_mode_survives_hook_write_backs(self, tmp_path: Path) -> None:
         self._set_vibe_auto(tmp_path)
         handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
-        handle_stop(_stop(), read_config(config_dir=tmp_path), tmp_path)
-        assert read_config(config_dir=tmp_path).vibe_mode == "auto"
+        handle_stop(_stop(), ConfigStore(tmp_path).read(), tmp_path)
+        assert ConfigStore(tmp_path).read().vibe_mode == "auto"
 
     def test_committed_manual_does_not_resurrect_stale_mood(
         self, tmp_path: Path
@@ -288,7 +287,7 @@ class TestVibeAuthoritativeBoundary:
         # while the session holds a cleared, auto vibe in vox.local.md.
         (tmp_path / "vox.md").write_text('---\nvibe_mode: "manual"\nnotify: "y"\n---\n')
         (tmp_path / "vox.local.md").write_text('---\nvibe_mode: "auto"\n---\n')
-        config = read_config(config_dir=tmp_path)
+        config = ConfigStore(tmp_path).read()
         assert config.vibe_mode == "auto"  # ephemeral wins; durable copy inert
         assert config.vibe is None
 
@@ -458,7 +457,9 @@ class TestHandlePostBash:
         (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
         payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
         with (
-            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            patch.object(
+                ConfigStore, "write_field", side_effect=OSError("read-only fs")
+            ),
             caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
         ):
             handle_post_bash(payload, config_dir)  # must not raise
@@ -472,7 +473,7 @@ class TestHandlePostBash:
         (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
         payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
         with (
-            patch("punt_vox.hooks.read_config", side_effect=ValueError("bad yaml")),
+            patch.object(ConfigStore, "read", side_effect=ValueError("bad yaml")),
             caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
         ):
             handle_post_bash(payload, config_dir)  # must not raise
@@ -727,26 +728,27 @@ class TestHandleSessionEnd:
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
 
-    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_clears_vibe_signals(
-        self, _mock_run: MagicMock, mock_write: MagicMock
+        self, _mock_run: MagicMock, mock_cs: MagicMock
     ) -> None:
         """SessionEnd clears vibe_signals to prevent stale leakage."""
         config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
         config_dir = Path("/fake/.punt-labs/vox")
         handle_session_end(config, config_dir)
-        mock_write.assert_called_once_with("vibe_signals", "", config_dir)
+        mock_cs.assert_called_once_with(config_dir)
+        mock_cs.return_value.write_field.assert_called_once_with("vibe_signals", "")
 
-    @patch("punt_vox.hooks.write_field")
+    @patch("punt_vox.hooks.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_no_write_when_no_signals(
-        self, _mock_run: MagicMock, mock_write: MagicMock
+        self, _mock_run: MagicMock, mock_cs: MagicMock
     ) -> None:
         """Does not write config if vibe_signals is already empty."""
         config = _make_config(notify="y", speak="y", vibe_signals=None)
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
-        mock_write.assert_not_called()
+        mock_cs.return_value.write_field.assert_not_called()
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_clear_failure_warns_and_returns(
@@ -755,7 +757,9 @@ class TestHandleSessionEnd:
         # An unwritable vox.local.md must not crash the Stop/SessionEnd hook.
         config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
         with (
-            patch("punt_vox.hooks.write_field", side_effect=OSError("read-only fs")),
+            patch.object(
+                ConfigStore, "write_field", side_effect=OSError("read-only fs")
+            ),
             caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
         ):
             handle_session_end(config, Path("/fake/.punt-labs/vox"))  # must not raise
@@ -849,9 +853,9 @@ class TestRepoNamePrefix:
         text = mock_speak.call_args[0][0]
         assert text.startswith("biff. ")
 
-    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.ConfigStore")
     def test_handle_stop_prepends_repo_name_to_reason(
-        self, _mock_write: MagicMock
+        self, _mock_cs: MagicMock
     ) -> None:
         """handle_stop includes repo_name in the block reason string."""
         config = _make_config(repo_name="vox")
@@ -864,9 +868,9 @@ class TestRepoNamePrefix:
         reason = str(result["reason"])
         assert reason.startswith("vox. ")
 
-    @patch("punt_vox.hooks.write_fields")
+    @patch("punt_vox.hooks.ConfigStore")
     def test_handle_stop_no_prefix_when_repo_name_none(
-        self, _mock_write: MagicMock
+        self, _mock_cs: MagicMock
     ) -> None:
         """handle_stop reason is a plain phrase when repo_name is None."""
         config = _make_config(repo_name=None)
@@ -1213,12 +1217,12 @@ class TestCommandsResolveFromCwd:
         payload = {"cwd": str(repo), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),
-            patch("punt_vox.hooks.write_fields") as mock_write,
             patch("punt_vox.hooks._emit"),
         ):
             stop_cmd()
-        mock_write.assert_called_once()
-        assert mock_write.call_args[0][1] == config_dir
+        # The vibe write targeted config_dir: the signal it consumed is cleared there.
+        assert ConfigStore(config_dir).read_field("vibe_signals") is None
+        assert ConfigStore(config_dir).read_field("vibe_tags") is not None
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_stop_cmd_inherited_config_uses_child_repo_name(

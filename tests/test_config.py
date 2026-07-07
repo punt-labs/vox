@@ -11,10 +11,6 @@ from punt_vox.config import (
     DURABLE_KEYS,
     EPHEMERAL_KEYS,
     ConfigStore,
-    read_config,
-    read_field,
-    write_field,
-    write_fields,
 )
 from punt_vox.dirs import find_config_dir
 
@@ -36,37 +32,37 @@ class TestWriteFieldRouting:
 
     def test_write_field_routes_durable_to_vox_md(self, tmp_path: Path) -> None:
         """Test 1: write 'voice' lands in vox.md only."""
-        write_field("voice", "charlie", config_dir=tmp_path)
+        ConfigStore(tmp_path).write_field("voice", "charlie")
         assert (tmp_path / "vox.md").exists()
         assert not (tmp_path / "vox.local.md").exists()
-        assert read_field("voice", config_dir=tmp_path) == "charlie"
+        assert ConfigStore(tmp_path).read_field("voice") == "charlie"
 
     def test_write_field_routes_ephemeral_to_vox_local_md(self, tmp_path: Path) -> None:
         """Test 2: write 'vibe_signals' lands in vox.local.md only."""
-        write_field("vibe_signals", "tests-pass@14:00", config_dir=tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_signals", "tests-pass@14:00")
         assert (tmp_path / "vox.local.md").exists()
         assert not (tmp_path / "vox.md").exists()
-        assert read_field("vibe_signals", config_dir=tmp_path) == "tests-pass@14:00"
+        assert ConfigStore(tmp_path).read_field("vibe_signals") == "tests-pass@14:00"
 
     def test_write_field_creates_dir(self, tmp_path: Path) -> None:
         """Test 11: write to nonexistent dir creates it."""
         deep = tmp_path / "a" / "b" / "c"
-        write_field("voice", "fin", config_dir=deep)
+        ConfigStore(deep).write_field("voice", "fin")
         assert (deep / "vox.md").exists()
-        assert read_field("voice", config_dir=deep) == "fin"
+        assert ConfigStore(deep).read_field("voice") == "fin"
 
     def test_write_field_rejects_unknown_key(self, tmp_path: Path) -> None:
         """Test 12: ValueError for unknown key."""
         with pytest.raises(ValueError, match="Unknown config key 'bogus'"):
-            write_field("bogus", "val", config_dir=tmp_path)
+            ConfigStore(tmp_path).write_field("bogus", "val")
 
     def test_write_field_rejects_newline_in_value(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="must not contain newlines"):
-            write_field("voice", "fin\nevil: injection", config_dir=tmp_path)
+            ConfigStore(tmp_path).write_field("voice", "fin\nevil: injection")
 
     def test_write_fields_rejects_newline_in_value(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="must not contain newlines"):
-            write_fields({"voice": "ok", "vibe": "calm\nbad"}, config_dir=tmp_path)
+            ConfigStore(tmp_path).write_fields({"voice": "ok", "vibe": "calm\nbad"})
 
 
 class TestWriteFieldsRouting:
@@ -74,16 +70,16 @@ class TestWriteFieldsRouting:
 
     def test_write_fields_mixed_keys_routes_correctly(self, tmp_path: Path) -> None:
         """Test 3: mixed durable + ephemeral routes correctly."""
-        write_fields({"notify": "y", "vibe_tags": "[calm]"}, config_dir=tmp_path)
+        ConfigStore(tmp_path).write_fields({"notify": "y", "vibe_tags": "[calm]"})
 
         # Durable key "notify" must be in vox.md
-        assert read_field("notify", config_dir=tmp_path) == "y"
+        assert ConfigStore(tmp_path).read_field("notify") == "y"
         vox_text = (tmp_path / "vox.md").read_text()
         assert "notify" in vox_text
         assert "vibe_tags" not in vox_text
 
         # Ephemeral key "vibe_tags" must be in vox.local.md
-        assert read_field("vibe_tags", config_dir=tmp_path) == "[calm]"
+        assert ConfigStore(tmp_path).read_field("vibe_tags") == "[calm]"
         local_text = (tmp_path / "vox.local.md").read_text()
         assert "vibe_tags" in local_text
         assert "notify" not in local_text
@@ -99,7 +95,7 @@ class TestReadConfig:
             tmp_path / "vox.local.md",
             {"vibe": "happy", "vibe_tags": "[joyful]"},
         )
-        cfg = read_config(config_dir=tmp_path)
+        cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "c"
         assert cfg.voice == "charlie"
         assert cfg.vibe == "happy"
@@ -110,7 +106,7 @@ class TestReadConfig:
         repo = tmp_path / "my-repo"
         config_dir = repo / ".punt-labs" / "vox"
         config_dir.mkdir(parents=True)
-        cfg = read_config(config_dir=config_dir)
+        cfg = ConfigStore(config_dir).read()
         assert cfg.repo_name == "my-repo"
 
     def test_repo_name_none_when_config_dir_none(
@@ -128,7 +124,7 @@ class TestReadConfig:
         monkeypatch.chdir(tmp_path)
         relative_default = Path(".punt-labs") / "vox"
         monkeypatch.setattr(config_mod, "DEFAULT_CONFIG_DIR", relative_default)
-        cfg = read_config(config_dir=None)
+        cfg = ConfigStore(None).read()
         assert cfg.repo_name is None
 
     def test_local_durable_keys_ignored(self, tmp_path: Path) -> None:
@@ -138,14 +134,14 @@ class TestReadConfig:
             tmp_path / "vox.local.md",
             {"notify": "c", "provider": "elevenlabs", "vibe": "calm"},
         )
-        cfg = read_config(config_dir=tmp_path)
+        cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "n"
         assert cfg.provider == "polly"
         assert cfg.vibe == "calm"
 
     def test_read_config_missing_files(self, tmp_path: Path) -> None:
         """Test 6: neither file exists, safe defaults."""
-        cfg = read_config(config_dir=tmp_path)
+        cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "n"
         assert cfg.speak == "y"
         assert cfg.vibe_mode == "auto"
@@ -159,7 +155,7 @@ class TestReadConfig:
     def test_read_config_only_durable(self, tmp_path: Path) -> None:
         """Test 7: only vox.md exists, ephemeral fields default."""
         _write_frontmatter(tmp_path / "vox.md", {"notify": "y", "voice": "matilda"})
-        cfg = read_config(config_dir=tmp_path)
+        cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "y"
         assert cfg.voice == "matilda"
         assert cfg.vibe is None
@@ -171,7 +167,7 @@ class TestReadConfig:
             tmp_path / "vox.local.md",
             {"vibe": "chill", "vibe_signals": "test@12"},
         )
-        cfg = read_config(config_dir=tmp_path)
+        cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "n"  # default
         assert cfg.speak == "y"  # default
         assert cfg.vibe == "chill"
@@ -185,7 +181,7 @@ class TestReadField:
         """Test 9: read_field('voice') reads from vox.md."""
         _write_frontmatter(tmp_path / "vox.md", {"voice": "fin"})
         _write_frontmatter(tmp_path / "vox.local.md", {"vibe": "happy"})
-        assert read_field("voice", config_dir=tmp_path) == "fin"
+        assert ConfigStore(tmp_path).read_field("voice") == "fin"
 
     def test_read_field_ephemeral_key(self, tmp_path: Path) -> None:
         """Test 10: read_field('vibe_signals') reads from vox.local.md."""
@@ -194,7 +190,7 @@ class TestReadField:
             tmp_path / "vox.local.md",
             {"vibe_signals": "deploy@15:30"},
         )
-        assert read_field("vibe_signals", config_dir=tmp_path) == "deploy@15:30"
+        assert ConfigStore(tmp_path).read_field("vibe_signals") == "deploy@15:30"
 
 
 # -- Design tests 13-15: dirs.py ------------------------------------------
@@ -237,40 +233,40 @@ class TestReadFieldLegacy:
 
     def test_returns_value_for_existing_field(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "y"})
-        assert read_field("notify", config_dir=tmp_path) == "y"
+        assert ConfigStore(tmp_path).read_field("notify") == "y"
 
     def test_returns_none_for_missing_field(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"speak": "y"})
-        assert read_field("voice", config_dir=tmp_path) is None
+        assert ConfigStore(tmp_path).read_field("voice") is None
 
     def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        assert read_field("notify", config_dir=tmp_path) is None
+        assert ConfigStore(tmp_path).read_field("notify") is None
 
     def test_handles_unquoted_values(self, tmp_path: Path) -> None:
         vox = tmp_path / "vox.md"
         vox.parent.mkdir(parents=True, exist_ok=True)
         vox.write_text("---\nspeak: y\n---\n")
-        assert read_field("speak", config_dir=tmp_path) == "y"
+        assert ConfigStore(tmp_path).read_field("speak") == "y"
 
     def test_handles_quoted_values(self, tmp_path: Path) -> None:
         _write_frontmatter(
             tmp_path / "vox.local.md",
             {"vibe_tags": "[happy] [calm]"},
         )
-        assert read_field("vibe_tags", config_dir=tmp_path) == "[happy] [calm]"
+        assert ConfigStore(tmp_path).read_field("vibe_tags") == "[happy] [calm]"
 
     def test_returns_none_for_empty_value(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"
         vox_local.parent.mkdir(parents=True, exist_ok=True)
         vox_local.write_text('---\nvibe_signals: ""\n---\n')
-        assert read_field("vibe_signals", config_dir=tmp_path) is None
+        assert ConfigStore(tmp_path).read_field("vibe_signals") is None
 
 
 class TestReadConfigLegacy:
     """Existing read_config coverage, adapted for split config."""
 
     def test_defaults_when_files_missing(self, tmp_path: Path) -> None:
-        result = read_config(config_dir=tmp_path)
+        result = ConfigStore(tmp_path).read()
         assert result.notify == "n"
         assert result.speak == "y"
         assert result.vibe_mode == "auto"
@@ -299,7 +295,7 @@ class TestReadConfigLegacy:
                 "vibe": "happy",
             },
         )
-        result = read_config(config_dir=tmp_path)
+        result = ConfigStore(tmp_path).read()
         assert result.notify == "c"
         assert result.speak == "y"
         assert result.vibe_mode == "manual"
@@ -310,15 +306,15 @@ class TestReadConfigLegacy:
 
     def test_invalid_notify_defaults_to_n(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "invalid"})
-        assert read_config(config_dir=tmp_path).notify == "n"
+        assert ConfigStore(tmp_path).read().notify == "n"
 
     def test_invalid_speak_defaults_to_y(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"speak": "invalid"})
-        assert read_config(config_dir=tmp_path).speak == "y"
+        assert ConfigStore(tmp_path).read().speak == "y"
 
     def test_invalid_vibe_mode_defaults_to_auto(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "invalid"})
-        assert read_config(config_dir=tmp_path).vibe_mode == "auto"
+        assert ConfigStore(tmp_path).read().vibe_mode == "auto"
 
     def test_committed_vibe_mode_in_durable_file_is_ignored(
         self, tmp_path: Path
@@ -332,7 +328,7 @@ class TestReadConfigLegacy:
         _write_frontmatter(
             tmp_path / "vox.md", {"vibe_mode": "manual", "voice": "roger"}
         )
-        result = read_config(config_dir=tmp_path)
+        result = ConfigStore(tmp_path).read()
         assert result.vibe_mode == "auto"  # default -- durable copy ignored
         assert result.voice == "roger"  # genuine durable pref still read
 
@@ -340,17 +336,17 @@ class TestReadConfigLegacy:
         """vox.local.md is authoritative for vibe_mode even if vox.md has one."""
         _write_frontmatter(tmp_path / "vox.md", {"vibe_mode": "manual"})
         _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "off"})
-        assert read_config(config_dir=tmp_path).vibe_mode == "off"
+        assert ConfigStore(tmp_path).read().vibe_mode == "off"
 
     def test_empty_signals_returns_none(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"
         vox_local.parent.mkdir(parents=True, exist_ok=True)
         vox_local.write_text('---\nvibe_signals: ""\n---\n')
-        assert read_config(config_dir=tmp_path).vibe_signals is None
+        assert ConfigStore(tmp_path).read().vibe_signals is None
 
     def test_partial_config_fills_defaults(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "y", "voice": "matilda"})
-        result = read_config(config_dir=tmp_path)
+        result = ConfigStore(tmp_path).read()
         assert result.notify == "y"
         assert result.voice == "matilda"
         assert result.speak == "y"
@@ -362,7 +358,7 @@ class TestWriteFieldsValidation:
 
     def test_rejects_unknown_key_in_batch(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Unknown config key 'bad_key'"):
-            write_fields({"notify": "y", "bad_key": "val"}, config_dir=tmp_path)
+            ConfigStore(tmp_path).write_fields({"notify": "y", "bad_key": "val"})
         # No files created
         assert not (tmp_path / "vox.md").exists()
         assert not (tmp_path / "vox.local.md").exists()

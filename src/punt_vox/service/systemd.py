@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import platform
 import pwd
 import shlex
 import subprocess
@@ -20,14 +19,6 @@ logger = logging.getLogger(__name__)
 
 _SYSTEMD_DIR = Path("/etc/systemd/system")
 _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
-
-# Legacy user-level unit left behind by an earlier install layout that
-# used a ``vox serve`` entrypoint.  That subcommand no longer exists, so
-# any surviving ``~/.config/systemd/user/vox.service`` unit crash-loops
-# on systemd's restart schedule (~12 restarts/minute).  The path is
-# computed from ``Path.home()`` at call time rather than pinned at
-# module import so test fixtures can redirect it via ``$HOME``.
-_LEGACY_USER_UNIT_RELATIVE = Path(".config/systemd/user/vox.service")
 
 _SUDO_NOTICE = (
     "Installing voxd as a system service. You may be prompted for your sudo password."
@@ -51,66 +42,6 @@ class SystemdBackend:
         self._process_mgr = process_mgr
         self._voxd_exec_args_fn = voxd_exec_args_fn
         return self
-
-    # ------------------------------------------------------------------
-    # Legacy cleanup
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def legacy_user_unit_path() -> Path:
-        """Resolve the stale user-level ``vox.service`` path under the current HOME."""
-        return Path.home() / _LEGACY_USER_UNIT_RELATIVE
-
-    @staticmethod
-    def cleanup_stale_user_unit() -> bool:
-        """Remove a stale user-level ``vox.service`` unit if present.
-
-        Background: an earlier install layout registered ``vox.service``
-        as a user-level systemd unit with
-        ``ExecStart=.../vox serve --port 8421``.  The ``serve``
-        subcommand no longer exists in the current CLI, so the unit
-        crashes on every restart.  The current daemon is a system-level
-        ``voxd.service``; the user-level file is pure legacy and must be
-        removed.
-
-        Returns True if a stale unit was found and removed.
-        """
-        if platform.system() != "Linux":
-            return False
-
-        unit_path = Path.home() / _LEGACY_USER_UNIT_RELATIVE
-        if not unit_path.exists():
-            return False
-
-        logger.info(
-            "Removing stale legacy user unit %s: the 'vox serve' subcommand "
-            "referenced by ExecStart= no longer exists in the CLI, so this "
-            "unit crash-loops on the systemd restart schedule. vox-45r.",
-            unit_path,
-        )
-
-        subprocess.run(
-            ["systemctl", "--user", "disable", "--now", "vox.service"],
-            check=False,
-        )
-
-        try:
-            unit_path.unlink()
-        except OSError as exc:
-            logger.warning(
-                "Could not remove stale user unit %s: %s",
-                unit_path,
-                exc,
-            )
-            return False
-
-        subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            check=False,
-        )
-
-        logger.info("Removed stale legacy user unit %s", unit_path)
-        return True
 
     # ------------------------------------------------------------------
     # Systemd value safety

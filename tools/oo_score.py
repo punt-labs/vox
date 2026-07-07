@@ -174,7 +174,11 @@ class ModuleMetrics:
                 continue
             args = node.args
             param_count = len(args.args) + len(args.posonlyargs) + len(args.kwonlyargs)
-            if args.args and args.args[0].arg in ("self", "cls"):
+            # The receiver is the first positional parameter, which lives in
+            # posonlyargs for a PEP-570 signature (`def m(self, x, /)`) and in
+            # args otherwise. Subtract it in both cases.
+            leading = args.posonlyargs or args.args
+            if leading and leading[0].arg in ("self", "cls"):
                 param_count -= 1
             counts.append(param_count)
         if not counts:

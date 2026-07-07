@@ -12,15 +12,15 @@ import binascii
 import contextlib
 import json
 import logging
-import os
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Self
 
 import websockets
 import websockets.asyncio.client
 
+from punt_vox.client_env import DaemonEnv
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.types_synthesis import SynthesisSpec
@@ -64,59 +64,14 @@ _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
 
 # ---------------------------------------------------------------------------
-# Errors
-# ---------------------------------------------------------------------------
-
-
-class VoxdConnectionError(Exception):
-    """Raised when the client cannot connect to voxd."""
-
-
-class VoxdProtocolError(Exception):
-    """Raised when voxd returns an unexpected response."""
-
-
-# ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
+# ``~/.punt-labs/vox/run`` holds ``serve.port`` / ``serve.token``.
 # ---------------------------------------------------------------------------
-
-
-def _env_host() -> str:
-    """Return VOXD_HOST or default."""
-    val = os.environ.get("VOXD_HOST", "").strip()
-    return val if val else "127.0.0.1"
-
-
-def _env_port() -> int | None:
-    """Return VOXD_PORT as int, or None to fall back to file."""
-    raw = os.environ.get("VOXD_PORT", "").strip()
-    if not raw:
-        return None
-    try:
-        port = int(raw)
-    except ValueError:
-        logger.warning("VOXD_PORT=%r is not an integer, ignoring", raw)
-        return None
-    if not 1 <= port <= 65535:
-        logger.warning("VOXD_PORT=%d is out of range (1-65535), ignoring", port)
-        return None
-    return port
-
-
-def _env_token() -> str | None:
-    """Return VOXD_TOKEN, or None to fall back to file."""
-    val = os.environ.get("VOXD_TOKEN", "").strip()
-    return val if val else None
-
-
-def _run_dir() -> Path:
-    """Return ``~/.punt-labs/vox/run`` — holds ``serve.port`` / ``serve.token``."""
-    return _user_run_dir()
 
 
 def read_port_file() -> int | None:
     """Read the daemon port from the port file. Returns None if missing."""
-    port_file = _run_dir() / "serve.port"
+    port_file = _user_run_dir() / "serve.port"
     try:
         return int(port_file.read_text().strip())
     except (FileNotFoundError, ValueError, OSError):
@@ -125,7 +80,7 @@ def read_port_file() -> int | None:
 
 def read_token_file() -> str | None:
     """Read the daemon auth token. Returns None if missing."""
-    token_file = _run_dir() / "serve.token"
+    token_file = _user_run_dir() / "serve.token"
     try:
         return token_file.read_text().strip()
     except (FileNotFoundError, OSError):
@@ -133,15 +88,19 @@ def read_token_file() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Async client
+# Transport — owns the WebSocket connection and the wire I/O primitives.
 # ---------------------------------------------------------------------------
 
 
-class VoxClient:
-    """Async WebSocket client for voxd."""
+class _VoxdTransport:
+    """Own the voxd WebSocket: URI resolution, connect/close, send/recv.
+
+    Split out of :class:`VoxClient` so the transport (connection lifecycle
+    and framing) and the RPC surface (synthesize, program, ...) are two
+    single-purpose objects rather than one class doing both jobs.
+    """
 
     __slots__ = (
-        "_default_owner_id",
         "_explicit_port",
         "_explicit_token",
         "_host",
@@ -156,31 +115,27 @@ class VoxClient:
     _port: int | None
     _token: str | None
     _ws: websockets.asyncio.client.ClientConnection | None
-    _default_owner_id: str
 
     def __new__(
         cls,
-        host: str | None = None,
-        port: int | None = None,
-        token: str | None = None,
+        host: str | None,
+        port: int | None,
+        token: str | None,
     ) -> Self:
         self = super().__new__(cls)
-        self._host = host if host is not None else _env_host()
+        self._host = host if host is not None else DaemonEnv.host()
         self._explicit_port = port
         self._explicit_token = token
         self._port = port
         self._token = token
         self._ws = None
-        self._default_owner_id = uuid.uuid4().hex
         return self
-
-    # -- connection lifecycle ------------------------------------------------
 
     def _resolve_port(self) -> int:
         """Return the port, reading from file if needed."""
         if self._port is not None:
             return self._port
-        env = _env_port()
+        env = DaemonEnv.port()
         if env is not None:
             return env
         port = read_port_file()
@@ -193,7 +148,7 @@ class VoxClient:
         """Return the token, reading from file if needed."""
         if self._token is not None:
             return self._token
-        env = _env_token()
+        env = DaemonEnv.token()
         if env is not None:
             return env
         return read_token_file()
@@ -248,9 +203,7 @@ class VoxClient:
             raise VoxdConnectionError(msg)
         return ws
 
-    # -- request helpers -----------------------------------------------------
-
-    async def _send_and_recv(
+    async def send_and_recv(
         self,
         msg: dict[str, object],
         *,
@@ -271,7 +224,7 @@ class VoxClient:
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
         return resp
 
-    async def _send_and_drain(
+    async def send_and_drain(
         self,
         msg: dict[str, object],
         *,
@@ -320,12 +273,45 @@ class VoxClient:
                 # Server will still send terminal_type (e.g., 'done' after
                 # 'playing'). Close the connection so that stale message
                 # cannot be consumed by the next request on a reused
-                # VoxClient connection. Suppress close errors — the
-                # connection may already be gone, but the audio is queued.
+                # connection. Suppress close errors — the connection may
+                # already be gone, but the audio is queued.
                 with contextlib.suppress(Exception):
                     await ws.close()
                 self._ws = None
                 return responses
+
+
+# ---------------------------------------------------------------------------
+# Async client
+# ---------------------------------------------------------------------------
+
+
+class VoxClient:
+    """Async RPC client for voxd, composing a :class:`_VoxdTransport`."""
+
+    __slots__ = ("_transport",)
+
+    _transport: _VoxdTransport
+
+    def __new__(
+        cls,
+        host: str | None = None,
+        port: int | None = None,
+        token: str | None = None,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._transport = _VoxdTransport(host, port, token)
+        return self
+
+    # -- connection lifecycle ------------------------------------------------
+
+    async def connect(self) -> None:
+        """Connect to voxd WebSocket. Call once before sending messages."""
+        await self._transport.connect()
+
+    async def close(self) -> None:
+        """Close the WebSocket connection."""
+        await self._transport.close()
 
     # -- public API ----------------------------------------------------------
 
@@ -352,7 +338,7 @@ class VoxClient:
         if once is not None:
             msg["once"] = once
 
-        responses = await self._send_and_drain(
+        responses = await self._transport.send_and_drain(
             msg,
             timeout=_TIMEOUT_SYNTHESIS,
             terminal_type="done",
@@ -382,7 +368,7 @@ class VoxClient:
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
         msg: dict[str, object] = {"type": "chime", "signal": signal}
-        await self._send_and_drain(
+        await self._transport.send_and_drain(
             msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
         )
 
@@ -399,7 +385,7 @@ class VoxClient:
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
 
-        resp = await self._send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
         if resp.get("type") != "audio":
             raise VoxdProtocolError(
                 f"Expected 'audio' response, got '{resp.get('type')}'"
@@ -415,276 +401,75 @@ class VoxClient:
         msg: dict[str, object] = {"type": "voices"}
         if provider is not None:
             msg["provider"] = provider
-        resp = await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
         voice_list: list[str] = resp.get("voices", [])
         return voice_list
 
     async def health(self) -> dict[str, object]:
         """Check daemon health."""
-        return await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
+        return await self._transport.send_and_recv(
+            {"type": "health"}, timeout=_TIMEOUT_SHORT
+        )
 
-    async def music(
+    # -- program surface (session-free; the daemon-facing wire, design section 4)
+
+    async def _command(self, msg_type: str, **fields: object) -> dict[str, Any]:
+        """Send a session-free program command and return the single response.
+
+        The one primitive behind every ``program_*`` method: it stamps the wire
+        type and a fresh request id, so a new command needs no bespoke message
+        assembly. No ``owner_id`` -- ``voxd`` state is machine-universal.
+        """
+        msg: dict[str, object] = {
+            "type": msg_type,
+            "id": uuid.uuid4().hex[:12],
+            **fields,
+        }
+        return await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+
+    async def program_status(self) -> dict[str, Any]:
+        """Return the daemon's authoritative Program status."""
+        return await self._command("program_status")
+
+    async def program_on(
         self,
-        mode: str,
         *,
         style: str | None = None,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
-        """Start or stop music playback.
+        """Turn a Program on, forwarding the agent-authored prompts when present."""
+        fields: dict[str, object] = {}
+        if style is not None:
+            fields["style"] = style
+        if name is not None:
+            fields["name"] = name
+        if prompts is not None:
+            fields["base_prompt"] = prompts.base
+            fields["variations"] = list(prompts.variations)
+        return await self._command("program_on", **fields)
 
-        On ``"on"``, forwards *style*, *vibe*, *vibe_tags*, *owner_id*, *name*,
-        and the agent-authored *prompts* (base + one variation per pool slot) to
-        voxd; on ``"off"`` only *owner_id* is sent.
-        """
-        if mode not in ("on", "off"):
-            err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
-            raise ValueError(err)
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        if mode == "on":
-            msg: dict[str, object] = {
-                "type": "music_on",
-                "id": request_id,
-                "owner_id": effective_owner,
-            }
-            if style is not None:
-                msg["style"] = style
-            if vibe is not None:
-                msg["vibe"] = vibe
-            if vibe_tags is not None:
-                msg["vibe_tags"] = vibe_tags
-            if name is not None:
-                msg["name"] = name
-            if prompts is not None:
-                msg["base_prompt"] = prompts.base
-                msg["variations"] = list(prompts.variations)
-        else:
-            msg = {
-                "type": "music_off",
-                "id": request_id,
-                "owner_id": effective_owner,
-            }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+    async def program_off(self) -> dict[str, Any]:
+        """Turn the active Program off."""
+        return await self._command("program_off")
 
-    async def music_play(
-        self,
-        name: str,
-        *,
-        owner_id: str | None = None,
+    async def program_next(self) -> dict[str, Any]:
+        """Advance to another Part (the one ungated skip/next/loop transition)."""
+        return await self._command("program_next")
+
+    async def program_play(
+        self, name: str, *, part: int | None = None
     ) -> dict[str, Any]:
-        """Replay a saved track by name."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_play",
-            "id": request_id,
-            "name": name,
-            "owner_id": effective_owner,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+        """Play a saved Program from disk, optionally at a specific 1-based part."""
+        fields: dict[str, object] = {"name": name}
+        if part is not None:
+            fields["part"] = part
+        return await self._command("program_play", **fields)
 
-    async def music_list(self) -> dict[str, Any]:
-        """List saved music tracks."""
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_list",
-            "id": request_id,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+    async def program_loop(self, name: str) -> dict[str, Any]:
+        """Play a saved Program and rotate on every track end."""
+        return await self._command("program_loop", name=name)
 
-    async def music_vibe(
-        self,
-        *,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Send a vibe update for the currently playing music."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_vibe",
-            "id": request_id,
-            "owner_id": effective_owner,
-        }
-        if vibe is not None:
-            msg["vibe"] = vibe
-        if vibe_tags is not None:
-            msg["vibe_tags"] = vibe_tags
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-    async def music_next(
-        self,
-        *,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Skip to the next generated track."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_next",
-            "id": request_id,
-            "owner_id": effective_owner,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-
-# ---------------------------------------------------------------------------
-# Sync wrapper
-# ---------------------------------------------------------------------------
-
-
-class VoxClientSync:
-    """Synchronous wrapper around VoxClient for hooks and CLI.
-
-    Creates a fresh connection per call. Simple and correct -- hooks and
-    CLI commands are short-lived, so connection pooling adds no value.
-    """
-
-    __slots__ = ("_host", "_port", "_token")
-
-    _host: str
-    _port: int | None
-    _token: str | None
-
-    def __new__(
-        cls,
-        host: str | None = None,
-        port: int | None = None,
-        token: str | None = None,
-    ) -> Self:
-        self = super().__new__(cls)
-        self._host = host if host is not None else _env_host()
-        self._port = port
-        self._token = token
-        return self
-
-    def _make_client(self) -> VoxClient:
-        return VoxClient(host=self._host, port=self._port, token=self._token)
-
-    def _run(self, coro: Any) -> Any:
-        """Run an async coroutine synchronously."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            # Already inside an event loop (e.g., MCP server context).
-            # Create a new loop in a thread.
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result()
-        return asyncio.run(coro)
-
-    async def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        """Connect, call method, close."""
-        client = self._make_client()
-        await client.connect()
-        try:
-            func = getattr(client, method)
-            return await func(*args, **kwargs)
-        finally:
-            await client.close()
-
-    def synthesize(
-        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
-    ) -> SynthesizeResult:
-        """Send synthesize request. Audio plays on server.
-
-        *spec* bundles the voice/provider/rate parameters; *once* is the dedup
-        TTL. See :class:`SynthesizeResult` for the returned fields -- in
-        particular the ``deduped`` flag that surfaces when ``once=<ttl>`` matches
-        an identical text already played within the window.
-        """
-        return self._run(  # type: ignore[no-any-return]
-            self._call("synthesize", text, spec, once=once)
-        )
-
-    def chime(self, signal: str) -> None:
-        """Play a bundled chime asset."""
-        self._run(self._call("chime", signal))
-
-    def record(self, text: str, spec: SynthesisSpec | None = None) -> bytes:
-        """Synthesize and return MP3 bytes (no playback)."""
-        return self._run(self._call("record", text, spec))  # type: ignore[no-any-return]
-
-    def voices(self, provider: str | None = None) -> list[str]:
-        """List available voices."""
-        return self._run(self._call("voices", provider))  # type: ignore[no-any-return]
-
-    def health(self) -> dict[str, object]:
-        """Check daemon health."""
-        return self._run(self._call("health"))  # type: ignore[no-any-return]
-
-    def music(
-        self,
-        mode: str,
-        *,
-        style: str | None = None,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-        name: str | None = None,
-        prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
-        """Start or stop music playback."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call(
-                "music",
-                mode,
-                style=style,
-                vibe=vibe,
-                vibe_tags=vibe_tags,
-                owner_id=owner_id,
-                name=name,
-                prompts=prompts,
-            )
-        )
-
-    def music_play(
-        self,
-        name: str,
-        *,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Replay a saved track by name."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call("music_play", name, owner_id=owner_id)
-        )
-
-    def music_list(self) -> dict[str, Any]:
-        """List saved music tracks."""
-        return self._run(self._call("music_list"))  # type: ignore[no-any-return]
-
-    def music_vibe(
-        self,
-        *,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Send a vibe update for the currently playing music."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call(
-                "music_vibe",
-                vibe=vibe,
-                vibe_tags=vibe_tags,
-                owner_id=owner_id,
-            )
-        )
-
-    def music_next(
-        self,
-        *,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Skip to the next generated track."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call("music_next", owner_id=owner_id)
-        )
+    async def program_list(self) -> dict[str, Any]:
+        """List every saved Program, grouped."""
+        return await self._command("program_list")
