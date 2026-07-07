@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs import (
+    MAX_RETRY,
     Format,
     Part,
     PartStatus,
@@ -311,6 +312,34 @@ class TestFailureHandling:
         assert len(store.ready_parts()) == _FULL
         failed = [e for e in store.manifest().parts if not e.is_ready]
         assert len(failed) == 1
+
+    async def test_permanent_failure_every_call_stops_at_cap(
+        self, tmp_path: Path, policy: PlaybackPolicy, sleeper: Sleeper
+    ) -> None:
+        # A producer that fails permanently on EVERY call (a bad prompt, a missing
+        # key) must not loop forever hammering the provider. With a non-empty pool
+        # the fill records failed Parts but never a ready one, so the MAX_RETRY
+        # failure cap stops it -- and, because the cap is durable in the manifest,
+        # a restart cannot resume the runaway.
+        store = _seeded_store(tmp_path, 1)  # one ready Part -> playing_filling path
+        calls = 0
+
+        @final
+        class AlwaysBadProducer:
+            async def produce(self, spec: PartSpec, target: Path) -> Part:
+                nonlocal calls
+                calls += 1
+                raise ProducerBadInputError("bad_prompt")
+
+        filler = Filler(AlwaysBadProducer(), _channel(policy), sleeper)
+        filler.ensure_running(_plan(store))
+        await _drain(filler)
+        assert calls == MAX_RETRY  # bounded, not an infinite hammer
+        failed = [e for e in store.manifest().parts if not e.is_ready]
+        assert len(failed) == MAX_RETRY
+        assert len(store.ready_parts()) == 1  # the seed remains; none added
+        filler.ensure_running(_plan(store))  # a restart cannot resume the runaway
+        assert not filler.is_running
 
     async def test_unexpected_error_records_failed_and_continues(
         self, tmp_path: Path, policy: PlaybackPolicy, sleeper: Sleeper

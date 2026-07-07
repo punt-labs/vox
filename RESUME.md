@@ -1,118 +1,67 @@
-# OO Refactoring Status
+# Resume — vox-oayr Audio Programs Phase 1, Slice 5
 
-Last updated: 2026-07-03
-Main: `9cb5d53` (post-#281). Package version: **v4.9.0** (shipped 2026-07-03, on PyPI + marketplace).
+**Written:** 2026-07-05 (session paused mid-slice-5-review).
+**Branch:** `design/audio-programs-phase1` (HEAD `d682acc`), NOT pushed, NOT PR'd.
+**Bead:** vox-oayr (in_progress). Mission: `m-2026-07-05-004` (rmh worker, bwk evaluator), still OPEN.
 
-**The OO refactor is an active, ongoing goal.** This file is the authoritative hand-off for resuming it. Phase 1 and Phase 2 Step 5 are complete; Phase 2 Steps 6–11 and most of Phase 3 remain.
+> The prior contents of this file (the 2026-07-03 OO-refactor status hand-off) were overwritten per operator instruction. That plan lives on in `docs/oo-refactor/STATUS.md` + `docs/oo-refactor/oo-execution-plan-v3.md`.
 
-## What Was Done
+## TL;DR
 
-### OO-refactor PRs merged
+**Slice 5 is CODE-COMPLETE and GREEN.** All of Audio Programs Phase 1 (slices 1–5) is done on the branch. `make check` = EXIT 0 (verified by leader: 2046 tests, mypy+pyright clean on 212 files, check-oo improved / zero regressions, check-coupling no regressions, **suppressions DOWN 3**, **zero rebaseline**). Remaining before merge: (1) mission-result write_set mechanics, (2) re-run local review + fix findings, (3) **operator-eared audio flight**, (4) open + merge the Phase-1 PR, (5) follow-up beads + recap email.
 
-| PR | Title | Key changes |
-|----|-------|-------------|
-| #256 | OO tooling foundation | oo_score.py, OutputResolver, ruff rules |
-| #257–#259 | voxd decomposition (Steps 0–10) | config/chimes/dedup/playback/synthesis/health/router/daemon — the 2,729-line `voxd.py` god-module and its 20-field `DaemonContext` eliminated |
-| #260 | service decomposition + handler extraction | `service/` package (5 classes), handler modules |
-| #261 | SessionConfig + DoctorCheck | server.py refactor, doctor.py extraction |
-| #262 | SynthesisSpec + ConfigStore + music package | types_synthesis.py, config.py, `voxd/music/` |
-| #263 | server dedup + playback/synthesis cleanup | `_process_segments`, SessionConfig encapsulation, `play_audio` decomposition |
-| #264 | Phase E/F/G + coupling fixes + dead code | OutputFormatter, ApiKeyResolver, AudioMigration, DaemonRestarter, provider instance voice caches, 315 lines dead code removed, 3 coupling cycles broken |
-| #265 | tooling | max-complexity gate tightened to 10 |
-| #267 | v3 Phase 1 Step 1: CacheKey | `cache.py` (text,voice,provider) → `CacheKey` |
-| #268 | resolve.py coverage | `test_resolve.py`, 50%→100% |
-| #269 | v3 Phase 1 Steps 2–4 | PlaybackResult, MusicTrack, HookPayload value objects |
-| #270 | v3 Phase 2 Step 5 | **Signal + SignalLog extracted from hooks.py** |
+## The 5 slice-5 commits (bdbc039..d682acc)
 
-### Non-refactor PRs merged since (context, not OO work)
+1. `f5a55d6` feat(programs): ProgramService composition root + 7 wire handlers + dynamic player.
+2. `85706ba` fix(oo_score): subtract PEP-570 positional-only receiver in `_avg_params` (+ test tests/test_oo_score.py). Real scorer bug — `self`/`cls` in `posonlyargs` (from `def m(self, x, /)`) miscounted as a param. Returned control_signal.py to avg_params 0.5, no rebaseline.
+3. `236146d` feat(voxd): daemon rewired to `ProgramSubsystem` (programs/wiring.py facade: ProgramService + 7 `program_*` handlers + read-only legacy-migrate hint) + `FillReconciler` extracted from ControlChannel. daemon.py efferent_coupling 21→12.
+4. `e477a6a` refactor(voxd): forward-wire callers off `voxd.music` (test_voxd_router.py → 7 handlers; test_voxd.py deleted = retired TrackGenerator.auto_track_name ONLY, zero live coverage lost, PL-TT-2 confirmed; `voxd/__init__.py` re-exports dropped; stale mypy `ignore_errors` override removed).
+5. `d682acc` refactor(voxd): delete `voxd/music/` (17 modules) + `tests/music/` (16 files). Net slice: +1733 / −5133 (≈ −3400 lines).
 
-PRs #273 (PEP 735 dep-groups), #274 (LaunchDaemon→LaunchAgent, DES-038), #275 (repo name from cwd), #276 (remove migration + install health check), #280 (hook config-IO + stdin-error hardening), and #281 (ethos submodule bump + OO rebaseline). The v4.9.0 release shipped 2026-07-03.
+Full recap + check-oo deltas: `.tmp/missions/results/vox-oayr-slice5.md`. Result YAML: `.tmp/missions/results/vox-oayr-slice5.yaml`.
 
-## Current Metrics (main @ 9cb5d53)
+## PENDING ON RESUME (ordered)
 
-The ratchet (`make check-oo`) is green on touched files, but the codebase has **not** converged — 14 files remain over the `module_size` 300 threshold and two procedural hotspots still fail outright:
+### 1. Mission-result write_set mechanics (leader task, BLOCKED)
 
-- **`__main__.py`** — ~1,035 (metric) / 1,220 (wc) lines, `max_complexity` and `module_size` FAIL, `method_ratio` low.
-- **`server.py`** — ~850 (metric) / 1,030 (wc) lines, same failures.
-- Other over-threshold files: `normalize.py`, `client.py`, `doctor.py` (`init_violations 1`, `classes_per_module 5`), `synthesis.py`, `playback.py`, `music/loop.py`.
-- Note: the git-diff-based ratchet proves "this diff didn't regress touched files," not "the codebase converged." `installer.py` and `core.py` sit pinned exactly at `module_size` 300; adjacent-file drift accumulates until a `--rebaseline` absorbs it (last done in #281).
+`ethos mission result m-2026-07-05-004` REJECTS 5c's result: 6 changed paths are outside the contract write_set — `wiring.py`, `fill_reconciler.py`, `control_channel.py`, `service.py`, `playback.py`, `tools/oo_score.py`. **All 6 were leader-authorized in-band** (facade, FillReconciler extraction, scorer-bug fix, playback offset) — the design delegates write-set to the specialist, so this is a legitimate authorized expansion, NOT a failure. There is NO `ethos mission amend`. Options: (a) worker submits verdict `escalate` + "request write_set expansion" in open_questions → leader closes `--status escalated` and re-scopes (tool's documented path, but mislabels success); (b) hand-edit `.punt-labs/ethos/missions/m-2026-07-05-004/contract.yaml` write_set (risk: invalidates the contract Hash); (c) find a re-scope command not yet located. **Decide on resume.** `ethos mission close` requires a valid round result first (circular with the write_set enforcement) — resolve (a) or (c).
 
-## What Remains — v3 Execution Plan
+### 2. Local review (RE-RUN — reviewers were stopped for the pause)
 
-Full plan: `docs/oo-refactor/oo-execution-plan-v3.md`. Hidden classes: `docs/oo-refactor/hidden-classes-analysis.md`.
+Launched 4 pr-review-toolkit agents on `git diff bdbc039..d682acc`, then stopped them before collecting findings. Re-run: **code-reviewer, silent-failure-hunter, type-design-analyzer, pr-test-analyzer**; then **code-simplifier** once clean (Phase 5). Scrutinize:
 
-### Phase 1: Value Objects (Steps 1–4) — ✅ COMPLETE
+- **O2 single-writer invariant**: every handler POSTs a ControlSignal, never mutates Program directly; SwitchProgram context-swap-then-transition atomic through the ONE consumer (a race reintroduces the vox-73m5 lost-update).
+- `_probe_duration` in playback.py (d682acc) — 5c removed a "mypy-driven defensive guard to offset and pay down." Verify genuinely safe, not a metric play.
+- oo_score scorer fix — confirm it leaves `@staticmethod` (no receiver) alone.
+- Consumer-loop crash/deadlock surfacing (prior slices had a writer-crash deadlock + producer-exception silent-disable).
 
-| Step | Class | Status |
-|------|-------|--------|
-| 1 | CacheKey | **DONE** (#267) |
-| 2 | PlaybackResult | **DONE** (#269) |
-| 3 | MusicTrack | **DONE** (#269) |
-| 4 | HookPayload | **DONE** (#269) |
+### 3. THE AUDIO FLIGHT (operator-eared — the critical gate; `make check` green ≠ works)
 
-### Phase 2: Domain Objects (Steps 5–11) — 1 of 7 done
+Do a REAL `make install` (a local wheel is NOT enough), restart voxd (`vox daemon restart`), then drive through the rebuilt daemon with the operator confirming each audible step:
 
-Dependencies: Step 6 depends on 5. Step 9 depends on 8. Step 11 depends on 8 and 9.
+- MCP: `/music on style '<x>'`, `/music next`, `/music play <name>`, a `/vibe` change, `/music` status, `/music off`.
+- CLI (consume-only): `vox music list`, `vox music play <name>`, `vox music playlist:2` (part addressing), `vox music migrate` (source-registered; the commit-msg hook only flagged it "No such command" because the INSTALLED binary is stale — resolves on install).
+- Verify status surfaces failures (vox-ig52/73m5 client-observability) via the API, not just logs.
 
-| Step | Class | Files | Status |
-|------|-------|-------|--------|
-| 5 | Signal + SignalLog | signal.py, hooks.py, config.py | **DONE** (#270) |
-| 6 | Vibe | vibe.py, 5+ files (data carrier only) | **NOT STARTED** — next up |
-| 7 | Voice + VoiceResolver | voice.py, voices.py, resolve.py, server.py | NOT STARTED |
-| 8 | SynthesisSpec behavior | types_synthesis.py, client.py, server.py, synthesis.py | NOT STARTED |
-| 9 | Segment | segment.py, server.py, `__main__.py` | NOT STARTED |
-| 10 | Notification | notification.py, hooks.py | NOT STARTED |
-| 11 | Utterance | utterance.py + 5 files | NOT STARTED |
+### 4. Open + drive the Phase-1 PR
 
-`vibe.py`, `voice.py`, `segment.py`, `notification.py`, `utterance.py` do not exist yet — these are the remaining extractions.
+Whole branch `design/audio-programs-phase1` vs `main` (the OUTER-loop / rollback-coherent unit for Phase 1). Outer-loop review on the full branch diff; CHANGELOG entry in the branch; MCP create_pull_request + Copilot review + Bugbot; drive to merge. `bd close vox-oayr` before pushing (Phase 6).
 
-### Phase 3: Complexity Reduction (Steps 12–17) — blocked on Phase 2
+### 5. Follow-up beads + close
 
-| Step | What | Status |
-|------|------|--------|
-| 12 | audio_migration CC reduction | NOT STARTED |
-| 13 | server.py CC reduction | NOT STARTED (blocked on Steps 8–11) |
-| 14 | `__main__.py` CC reduction | NOT STARTED (blocked on Steps 8–11) |
-| 15 | chunked synthesis helper | DONE |
-| 16 | delete music_handlers.py | DONE |
-| 17 | `__all__` on every module | NOT STARTED — 50 of 77 source files have it; **27 remain** (incl. `server.py`, `__main__.py`, `client.py`, `hooks.py`, every `service/` module) |
+- **oo_score PEP-570 fix cross-repo propagation**: apply the `_avg_params` posonlyargs fix to canonical `~/Coding/oop-course-python/tools/oo_score.py` + sibling repos. File a bead.
+- Optional: prune stale `voxd/music/*` entries from `.oo-baseline.json` (harmless; a future `update-oo` cleans them).
+- **Recap email** to <jim@punt-labs.com> at close (always-send, permanent record).
 
-## How to Resume
+## Agent / session state
 
-1. **Next step: Phase 2 Step 6 (Vibe).** Step 5 (Signal) is merged, which unblocks it. Work Steps 6–11 to completion — these are the domain-object extractions.
-2. Steps 13–14 (the `server.py` / `__main__.py` complexity reduction — the two worst files) are **dependency-blocked on Steps 8–11**. Do Phase 2 first; the hotspot cleanup falls out of it.
-3. Step 17 (`__all__`) is independent and can be done any time — 27 files remain.
-4. Follow the development loop below. One mission per agent, never batch steps. Delegate implementation to `rmh` (Python core); peer-review designs with `rej`.
+- **rmh-slice5c**: standing by, DONE — all work committed (nothing uncommitted). Only awaits the write_set amendment (task #1). Do NOT re-spawn to redo work.
+- **Reviewers** (rv-code, rv-silent, rv-types, rv-tests): STOPPED. Re-run on resume (task #2).
+- **Crons**: all monitor loops cancelled.
+- 11 stale worktrees under `.claude/worktrees/` from prior sessions — unrelated; cleanup low-priority + needs consent (destructive).
 
-## Development Loop
+## Hard-won lessons this session (do NOT repeat)
 
-### Inner loop — one mission
-
-1. Delegate to specialist (one focused task)
-2. `make check` — must pass
-3. `feature-dev:code-reviewer` on the diff
-4. `pr-review-toolkit:silent-failure-hunter` on the diff
-5. Fix every finding — both agents must return zero findings; re-run
-6. Commit
-
-### Outer loop — one PR
-
-1. `make check` on full accumulated diff
-2. Both review agents on complete diff; fix all findings
-3. Push PR
-
-### Key rules
-
-- **The COO does not write code.** Every code change is delegated.
-- **One mission = one task.** Never batch multiple steps per agent.
-- **PR boundaries by rollback granularity**, not size. Phase 2 steps can share one PR if the diff is coherent.
-
-## Reference Documents
-
-| Document | What it contains |
-|----------|-----------------|
-| `docs/oo-refactor/oo-execution-plan-v3.md` | Complete 17-step plan |
-| `docs/oo-refactor/hidden-classes-analysis.md` | 7 hidden domain classes (Signal ✅, Vibe, Voice, SynthesisSpec, Segment, Notification, Utterance) |
-| `docs/oo-refactor/STATUS.md` | Phase-by-phase status snapshot (kept in sync with this file) |
-| `docs/oo-refactor/package-restructure-design.md` | Coupling analysis — why no new packages |
-| `docs/oo-refactor/music-package-design.md` | Music subsystem redesign (done) |
+- **NEVER TaskStop a background agent to "unstick" it.** Judge liveness by file MTIME (`find … -newermt '-Nmin'`), not point-in-time git polls. A long read phase (600+ line design + Z model = minutes) is NOT a stall. I wrongly stopped a productive agent; the operator can only PROMPT a running agent, not restart a stopped one. Memory: `feedback-never-stop-a-producing-agent`.
+- **Messaging a STOPPED agent RESUMES it** — that created a duplicate. Don't message stopped agents.
+- One agent per tree; sequence, don't parallelize, in the shared tree.

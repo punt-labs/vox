@@ -2,19 +2,16 @@
 
 ``Filler`` ports the machinery of the old ``PoolFiller`` unchanged: exactly one
 generation is ever in flight (a single-flight lock), the in-flight generation is
-awaited through ``asyncio.shield`` so a cancel (off / retarget) stops *this*
-await without cascading into the uncancellable provider call, and the file an
-abandoned generation writes is discarded rather than left orphaned in a pool the
-caller has left.
+awaited through ``asyncio.shield`` so a cancel (off / retarget) stops *this* await
+without cascading into the uncancellable provider call, and an abandoned
+generation's file is discarded rather than orphaned in a pool the caller has left.
 
-What changed from the old code is where the outcome goes: the Filler is
-mode-agnostic and never touches the Program. For each Part it produces (or fails
-to) it records the durable manifest entry in the :class:`PartStore` and *posts a
-message* -- :class:`Produced`, :class:`PermanentFailure`, or
-:class:`TransientFailure` -- to the :class:`ControlChannel`, whose single
-consumer applies the mode-appropriate Program transition. Retry *counting* lives
-in the Program's modeled resilience states, not here; the Filler only backs off
-between attempts through the injected :class:`Sleeper`.
+The Filler is mode-agnostic and never touches the Program: for each Part it
+produces (or fails to) it records the durable manifest entry in the
+:class:`PartStore` and *posts a message* (:class:`Produced`,
+:class:`PermanentFailure`, or :class:`TransientFailure`) to the
+:class:`ControlChannel`, whose single consumer applies the mode-appropriate
+transition. It stops when the pool is full or permanent failures hit the cap.
 """
 
 from __future__ import annotations
@@ -30,6 +27,7 @@ from punt_vox.voxd.programs.fill_signal import (
     Produced,
     TransientFailure,
 )
+from punt_vox.voxd.programs.format import MAX_RETRY
 from punt_vox.voxd.programs.identifiers import Reason
 from punt_vox.voxd.programs.manifest import PartEntry, PlaylistSubject
 from punt_vox.voxd.programs.part import Part, PartStatus
@@ -136,16 +134,16 @@ class Filler:
     def ensure_running(self, plan: FillPlan) -> None:
         """Start or retarget the background fill for ``plan``.
 
-        The same plan with a live task is a no-op; any difference cancels the
-        old task and starts a fresh one, unless the pool is already full (then
-        nothing generates -- it rotates instead).
+        The same plan with a live task is a no-op; any difference cancels the old
+        task and starts a fresh one -- unless the pool is full or has failed out,
+        when nothing generates (it rotates the existing pool instead).
         """
         if self._plan == plan and self.is_running:
             return
         self._cancel_task()
         self._plan = plan
         plan.store.prepare()
-        if self._is_full(plan):
+        if self._is_full(plan) or self._failed_out(plan):
             return
         task = asyncio.create_task(self._fill(plan))
         task.add_done_callback(self._on_fill_done)
@@ -158,22 +156,36 @@ class Filler:
 
     @staticmethod
     def _is_full(plan: FillPlan) -> bool:
+        """Return whether the ready pool has reached the format's target size."""
         store = plan.store
         return len(store.ready_parts()) >= store.manifest().format.pool_size
 
+    @staticmethod
+    def _failed_out(plan: FillPlan) -> bool:
+        """Return whether permanent failures hit the cap -- the runaway bound.
+
+        A producer that fails permanently every call (bad prompt, missing key)
+        records a failed Part but never a ready one, so without this cap ``_fill``
+        regenerates forever, hammering the provider and growing the manifest.
+        ``MAX_RETRY`` total permanent failures -- durable in the manifest, so a
+        restart cannot resume the runaway -- stops it; each stays observable in
+        ``failed_parts``. Transient errors record nothing, so they are untouched.
+        """
+        store = plan.store
+        failed = len(store.manifest().parts) - len(store.ready_parts())
+        return failed >= MAX_RETRY
+
     async def _fill(self, plan: FillPlan) -> None:
-        """Generate Parts one at a time until the pool is full."""
-        while not self._is_full(plan):
+        """Generate Parts one at a time until full or the failure cap is hit."""
+        while not self._is_full(plan) and not self._failed_out(plan):
             await self._produce_one(plan)
-        logger.info("pool reached full size; background fill stopping")
+        logger.info("background fill stopping: pool full or failure cap reached")
 
     async def _produce_one(self, plan: FillPlan) -> None:
-        """Produce one Part, record it, and post the outcome message.
+        """Produce one Part; record it and post its outcome.
 
-        The provider call runs in a detached task held under the single-flight
-        lock; we await it through ``asyncio.shield`` so a cancel drops this await
-        without cascading into the uncancellable provider work. A transient
-        error backs off (via the injected Sleeper) and the loop retries.
+        A transient error backs off and the loop retries; any other error records
+        the Part failed and posts a permanent outcome (OBSERVABLE, vox-ig52).
         """
         store = plan.store
         index = store.next_index()
@@ -194,25 +206,23 @@ class Filler:
             await self._sleeper.sleep(_BACKOFF_SECONDS)
             return
         except Exception as exc:
-            # An unexpected error (OSError on the target, an unwrapped timeout, a
-            # bug) is neither known-permanent nor known-transient. Record the Part
-            # failed and post a permanent outcome so the Program reaches an
-            # OBSERVABLE failed/retry state (vox-ig52) instead of a dead filler
-            # with filling still True and the loop hung waiting on it.
             logger.exception("fill: unexpected error producing part %d", index)
             self._record_and_post(store, self._unexpected(index, target, exc))
             return
         finally:
-            if self._inflight is inflight:
-                self._inflight = None
+            self._clear_inflight(inflight)
         self._record_and_post(store, self._ready(index, written))
+
+    def _clear_inflight(self, inflight: asyncio.Task[Path]) -> None:
+        """Drop the in-flight handle once its generation settles."""
+        if self._inflight is inflight:
+            self._inflight = None
 
     async def _protected_produce(self, spec: PartSpec, target: Path) -> Path:
         """Run one provider generation under the single-flight lock.
 
-        The lock is held across the whole generation -- including the
-        uncancellable provider work -- so no second provider call can begin until
-        this one finishes, bounding concurrency to one across an off/retarget.
+        The lock is held across the whole generation -- including the uncancellable
+        provider work -- so concurrency stays bounded to one across an off/retarget.
         """
         async with self._gen_lock:
             await self._producer.produce(spec, target)
@@ -250,10 +260,7 @@ class Filler:
     ) -> tuple[PartEntry, PermanentFailure]:
         part = Part(target.name, index)
         entry = PartEntry(
-            index=index,
-            file=target.name,
-            status=PartStatus.FAILED,
-            reason=reason.text,
+            index=index, file=target.name, status=PartStatus.FAILED, reason=reason.text
         )
         return entry, PermanentFailure(part, reason)
 
@@ -261,10 +268,8 @@ class Filler:
     def _on_fill_done(task: asyncio.Task[None]) -> None:
         """Surface any error that escaped the fill task instead of losing it.
 
-        ``_produce_one`` posts an outcome for every generation error, so the fill
-        task should only ever finish cleanly or by cancellation. A retrieved
-        exception here means something upstream (a store read, a bug) killed the
-        task; logging it at ERROR keeps the task from dying with no trace.
+        The task should only finish cleanly or by cancellation; a retrieved
+        exception here (a store read, a bug) is logged at ERROR, never lost.
         """
         if task.cancelled():
             return
@@ -283,10 +288,8 @@ class Filler:
     def _abandon_inflight(self) -> None:
         """Detach the in-flight generation so its output is discarded on settle.
 
-        The provider call cannot be cancelled; rather than leave the Part it
-        writes orphaned in a pool the caller has left, we detach it and unlink
-        whatever file it wrote once it settles. It keeps the single-flight lock
-        until then, so no second provider call starts meanwhile.
+        The provider call cannot be cancelled, so rather than orphan the Part it
+        writes, we detach it and unlink whatever file it wrote once it settles.
         """
         inflight = self._inflight
         self._inflight = None
