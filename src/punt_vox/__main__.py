@@ -20,11 +20,7 @@ from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_music import build_music_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import (
-    read_config,
-    write_field,
-    write_fields,
-)
+from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
@@ -507,16 +503,15 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Set session mood for TTS voice."""
     cd = find_config_dir() or DEFAULT_CONFIG_DIR
+    store = ConfigStore(cd)
     if mood == "auto":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"}, config_dir=cd)
+        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})
         _formatter.emit({"vibe_mode": "auto"}, "Vibe mode: auto")
     elif mood == "off":
-        write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"}, config_dir=cd)
+        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
         _formatter.emit({"vibe_mode": "off"}, "Vibe mode: off")
     else:
-        write_fields(
-            {"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"}, config_dir=cd
-        )
+        store.write_fields({"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"})
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
@@ -541,16 +536,15 @@ def notify_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y, n, or c.", err=True)
         raise typer.Exit(code=1)
 
-    from punt_vox.config import read_field
-
     config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
-    first_init = read_field("notify", config_dir) is None
+    store = ConfigStore(config_dir)
+    first_init = store.read_field("notify") is None
     updates: dict[str, str] = {"notify": mode}
     if mode == "c" or (first_init and mode == "y"):
         updates["speak"] = "y"
     if voice is not None:
         updates["voice"] = voice
-    write_fields(updates, config_dir=config_dir)
+    store.write_fields(updates)
 
     labels = {
         "y": "Notifications enabled.",
@@ -577,7 +571,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    write_field("speak", mode, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -592,7 +586,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
 ) -> None:
     """Set the session voice."""
-    write_field("voice", name, config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("voice", name)
     _formatter.emit({"voice": name}, f"{name}'s here.")
 
 
@@ -615,7 +609,7 @@ def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @app.command("status")
 def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """Show current state (daemon, voice, vibe, notify)."""
-    cfg = read_config(config_dir=find_config_dir() or DEFAULT_CONFIG_DIR)
+    cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Try to get provider from voxd health
     daemon_provider: str | None = None

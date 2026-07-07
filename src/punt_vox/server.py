@@ -23,7 +23,7 @@ from punt_vox import __version__
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import write_fields
+from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_prompts import PromptSet
 from punt_vox.program_control import StartRequest
@@ -229,9 +229,7 @@ class SessionConfig:
         if config_dir is None:
             return cls()
 
-        from punt_vox.config import read_config
-
-        cfg = read_config(config_dir=config_dir)
+        cfg = ConfigStore(config_dir).read()
         return cls(
             _notify=cfg.notify,
             _speak=cfg.speak,
@@ -260,9 +258,7 @@ class SessionConfig:
         if config_dir is None:
             return
 
-        from punt_vox.config import read_config, read_field
-
-        cfg = read_config(config_dir=config_dir)
+        cfg = ConfigStore(config_dir).read()
 
         self._vibe = cfg.vibe
         self._vibe_tags = cfg.vibe_tags
@@ -271,7 +267,7 @@ class SessionConfig:
         self._notify = cfg.notify
         self._speak = cfg.speak
 
-        if read_field("speak", config_dir) is not None:
+        if ConfigStore(config_dir).read_field("speak") is not None:
             self._speak_explicit = True
 
         if cfg.voice is not None:
@@ -634,7 +630,7 @@ def vibe(
     # because a stale session vibe was replayed as an authoritative music
     # transition. The vibe is display/record state; a Program retune is a
     # deliberate music command, never a side effect of setting the session mood.
-    write_fields(updates, _find_config_dir())
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps({"vibe": updates})
 
@@ -837,7 +833,7 @@ def notify(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    write_fields(updates, _find_config_dir())
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps({"notify": updates})
 
@@ -869,7 +865,7 @@ def speak(
         _session.voice = voice
 
     # Persist to disk so hooks (which read config independently) see the change
-    write_fields(updates, _find_config_dir())
+    ConfigStore(_find_config_dir()).write_fields(updates)
 
     return json.dumps(updates)
 
@@ -924,11 +920,12 @@ def run_server() -> None:
     _session = SessionConfig.from_config(config_dir)
 
     # Mark speak as explicitly set if the config file had it.
-    if config_dir is not None:
-        from punt_vox.config import read_field
-
-        if read_field("speak", config_dir) is not None:
-            _session.set_speak(_session.speak)
+    speak_was_set = (
+        config_dir is not None
+        and ConfigStore(config_dir).read_field("speak") is not None
+    )
+    if speak_was_set:
+        _session.set_speak(_session.speak)
 
     logger.info(
         "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",

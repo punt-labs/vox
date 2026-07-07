@@ -33,12 +33,7 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import (
-    VoxConfig,
-    read_config,
-    write_field,
-    write_fields,
-)
+from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
@@ -258,7 +253,7 @@ def handle_stop(
     else:
         log = SignalLog.deserialize(config.vibe_signals or "")
         tags = log.resolve_tags()
-        write_fields({"vibe_tags": tags, "vibe_signals": ""}, config_dir)
+        ConfigStore(config_dir).write_fields({"vibe_tags": tags, "vibe_signals": ""})
     return {"decision": "block", "reason": phrase}
 
 
@@ -313,9 +308,9 @@ def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
         return
 
     try:
-        log = SignalLog.deserialize(read_config(config_dir).vibe_signals or "")
+        log = SignalLog.deserialize(ConfigStore(config_dir).read().vibe_signals or "")
         log.append(Signal.now(signal))
-        write_field("vibe_signals", log.serialize(), config_dir)
+        ConfigStore(config_dir).write_field("vibe_signals", log.serialize())
     except (OSError, ValueError) as exc:
         logger.warning("post-bash: cannot save vibe signal in %s: %s", config_dir, exc)
 
@@ -475,7 +470,7 @@ def handle_subagent_stop(config: VoxConfig) -> None:
 def _clear_vibe_signals(config_dir: Path) -> None:
     """Reset accumulated vibe signals, warning instead of raising on failure."""
     try:
-        write_field("vibe_signals", "", config_dir)
+        ConfigStore(config_dir).write_field("vibe_signals", "")
     except OSError as exc:
         logger.warning("session-end: cannot clear signals in %s: %s", config_dir, exc)
 
@@ -513,7 +508,7 @@ def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:
     config_dir = find_config_dir(cwd)
     if config_dir is None:
         return None
-    return _with_repo_name(read_config(config_dir), cwd), config_dir
+    return _with_repo_name(ConfigStore(config_dir).read(), cwd), config_dir
 
 
 @hook_app.command("stop")
@@ -523,7 +518,7 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    config = _with_repo_name(read_config(config_dir), payload.cwd)
+    config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
     result = handle_stop(payload, config, config_dir)
     if result is not None:
         _emit(result)
@@ -546,7 +541,7 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
         return
-    config = _with_repo_name(read_config(config_dir), payload.cwd)
+    config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
     handle_notification(payload, config)
 
 

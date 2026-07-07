@@ -15,7 +15,7 @@ from pathlib import Path
 
 import punt_vox.config as config_mod
 import punt_vox.dirs as dirs_mod
-from punt_vox.config import read_config, write_field, write_fields
+from punt_vox.config import ConfigStore
 from punt_vox.dirs import find_repo_root
 
 
@@ -38,8 +38,8 @@ class TestSuiteDoesNotTouchRealConfig:
 
     def test_default_write_lands_in_tmp(self, hermetic_config: Path) -> None:
         """A dir-less write reaches the tmp config, not the repo config."""
-        write_field("vibe", "SENTINEL")
-        write_fields({"vibe_mode": "manual", "vibe_tags": "[excited]"})
+        ConfigStore().write_field("vibe", "SENTINEL")
+        ConfigStore().write_fields({"vibe_mode": "manual", "vibe_tags": "[excited]"})
 
         local = hermetic_config / "vox.local.md"
         assert local.exists()
@@ -53,9 +53,9 @@ class TestSuiteDoesNotTouchRealConfig:
         before = real_local.read_bytes() if real_local.exists() else None
 
         # Exercise the exact paths that leaked: dir-less read + dir-less writes.
-        read_config()
-        write_field("vibe", "leak-check")
-        write_fields({"vibe": "leak-check-2", "vibe_mode": "off"})
+        ConfigStore().read()
+        ConfigStore().write_field("vibe", "leak-check")
+        ConfigStore().write_fields({"vibe": "leak-check-2", "vibe_mode": "off"})
 
         after = real_local.read_bytes() if real_local.exists() else None
         assert after == before, "default config path wrote to the real vox config"

@@ -14,7 +14,7 @@ from _program_fakes import FakeProgramGateway
 
 from punt_vox.client import SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
-from punt_vox.config import write_field, write_fields
+from punt_vox.config import ConfigStore
 from punt_vox.program_control import ProgramSummary
 from punt_vox.resolve import (
     apply_vibe,
@@ -264,7 +264,7 @@ class TestWriteConfigField:
     """Tests for write_field in-place YAML editing."""
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         local_md = _patch_config / "vox.local.md"
         assert local_md.exists()
         text = local_md.read_text()
@@ -275,7 +275,7 @@ class TestWriteConfigField:
     def test_updates_existing_field(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[tired]" not in text
@@ -283,7 +283,7 @@ class TestWriteConfigField:
     def test_updates_unquoted_field(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text("---\nvibe_tags: [whispers]\n---\n")
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert "[whispers]" not in text
@@ -291,7 +291,7 @@ class TestWriteConfigField:
     def test_inserts_new_field_before_closing_fence(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe: "happy"\n---\n')
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe_tags: "[excited]"' in text
         assert 'vibe: "happy"' in text
@@ -301,7 +301,7 @@ class TestWriteConfigField:
         local_md.write_text(
             '---\nvibe: "happy"\nvibe_tags: "[tired]"\nvibe_signals: "x"\n---\n'
         )
-        write_field("vibe_tags", "[excited]")
+        ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe: "happy"' in text
         assert 'vibe_signals: "x"' in text
@@ -310,7 +310,7 @@ class TestWriteConfigField:
     def test_clears_field_with_empty_string(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text('---\nvibe_tags: "[tired]"\n---\n')
-        write_field("vibe_tags", "")
+        ConfigStore().write_field("vibe_tags", "")
         text = local_md.read_text()
         assert 'vibe_tags: ""' in text
 
@@ -318,11 +318,11 @@ class TestWriteConfigField:
         vox_md = _patch_config / "vox.md"
         vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            write_field("bad_key", "value")
+            ConfigStore().write_field("bad_key", "value")
 
     def test_creates_parent_directory(self, tmp_path: Path) -> None:
         nested = tmp_path / "deep" / "dir"
-        write_field("notify", "y", nested)
+        ConfigStore(nested).write_field("notify", "y")
         vox_md = nested / "vox.md"
         assert vox_md.exists()
         assert 'notify: "y"' in vox_md.read_text()
@@ -335,7 +335,7 @@ class TestWriteConfigField:
         import logging
 
         with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
-            write_field("notify", "y", _patch_config)
+            ConfigStore(_patch_config).write_field("notify", "y")
         assert 'notify: "y"' in vox_md.read_text()
         assert "Malformed config" in caplog.text
 
@@ -351,7 +351,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[cheerful]",
             "vibe_mode": "manual",
         }
-        write_fields(updates)
+        ConfigStore().write_fields(updates)
         # notify is the only durable pref here -> vox.md
         vox_text = vox_md.read_text()
         assert 'notify: "y"' in vox_text
@@ -372,7 +372,7 @@ class TestWriteConfigFields:
             "vibe_tags": "[new]",
             "vibe_mode": "manual",
         }
-        write_fields(updates)
+        ConfigStore().write_fields(updates)
         local_text = local_md.read_text()
         assert 'vibe_mode: "manual"' in local_text
         assert "off" not in local_text
@@ -381,7 +381,7 @@ class TestWriteConfigFields:
         assert "old" not in local_text
 
     def test_creates_file_when_missing(self, _patch_config: Path) -> None:
-        write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
+        ConfigStore().write_fields({"vibe": "happy", "vibe_tags": "[cheerful]"})
         local_md = _patch_config / "vox.local.md"
         text = local_md.read_text()
         assert text.startswith("---\n")
@@ -393,7 +393,7 @@ class TestWriteConfigFields:
         vox_md = _patch_config / "vox.md"
         vox_md.write_text("---\n---\n")
         with pytest.raises(ValueError, match="Unknown config key"):
-            write_fields({"vibe": "ok", "bad_key": "fail"})
+            ConfigStore().write_fields({"vibe": "ok", "bad_key": "fail"})
         # vox.md should be unchanged — validation fails before any write
         assert vox_md.read_text() == "---\n---\n"
 
@@ -425,7 +425,7 @@ class TestWriteConfigFields:
         monkeypatch.setattr(Path, "read_text", counting_read)
         monkeypatch.setattr(Path, "write_text", counting_write)
         # All ephemeral keys -> single file write to vox.local.md
-        write_fields({"vibe": "a", "vibe_tags": "[b]"}, _patch_config)
+        ConfigStore(_patch_config).write_fields({"vibe": "a", "vibe_tags": "[b]"})
         assert read_count == 1
         assert write_count == 1
 
@@ -1513,9 +1513,8 @@ class TestRefreshIntegrationWithTools:
         srv._session._vibe_tags = "[gloomy]"
 
         # Simulate CLI writing new vibe to config
-        write_fields(
-            {"vibe": "happy", "vibe_tags": "[cheerful]"},
-            _refresh_config,
+        ConfigStore(_refresh_config).write_fields(
+            {"vibe": "happy", "vibe_tags": "[cheerful]"}
         )
 
         result = json.loads(status())
@@ -1531,7 +1530,7 @@ class TestRefreshIntegrationWithTools:
 
         srv._session._notify = "n"
 
-        write_field("notify", "c", _refresh_config)
+        ConfigStore(_refresh_config).write_field("notify", "c")
 
         result = json.loads(status())
 
@@ -1551,7 +1550,7 @@ class TestRefreshIntegrationWithTools:
         srv._session._vibe_tags = "[old]"
 
         # External write clears vibe (e.g. `vox vibe auto`).
-        write_fields({"vibe": "", "vibe_tags": ""}, _refresh_config)
+        ConfigStore(_refresh_config).write_fields({"vibe": "", "vibe_tags": ""})
 
         fake = FakeProgramGateway()
         monkeypatch.setattr(srv, "_program_tools", fake)
@@ -1572,7 +1571,7 @@ class TestRefreshIntegrationWithTools:
 
         srv._session.voice = "matilda"
 
-        write_field("voice", "roger", _refresh_config)
+        ConfigStore(_refresh_config).write_field("voice", "roger")
 
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="r1")
