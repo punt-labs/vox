@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.programs.fill_guard import FreshFillOutcome
 from punt_vox.voxd.programs.fill_signal import (
     PermanentFailure,
     Produced,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.programs.control_channel import ControlChannel
+    from punt_vox.voxd.programs.control_signal import ControlSignal
     from punt_vox.voxd.programs.store import PartStore
 
 __all__ = ["FillRecorder"]
@@ -51,7 +53,7 @@ class FillRecorder:
         """Record a ready Part and post it to join the pool."""
         entry = PartEntry(index=index, file=written.name, status=PartStatus.READY)
         store.record(entry)
-        self._channel.post(Produced(Part(written.name, index)))
+        self._post(Produced(Part(written.name, index)))
 
     def permanent(
         self, store: PartStore, index: int, target: Path, exc: Exception
@@ -68,7 +70,7 @@ class FillRecorder:
 
     def transient(self, exc: Exception) -> None:
         """Post a transient failure -- nothing recorded, so backoff-retry is intact."""
-        self._channel.post(TransientFailure(self._reason(exc, "transient")))
+        self._post(TransientFailure(self._reason(exc, "transient")))
 
     def _failed(
         self, store: PartStore, index: int, target: Path, reason: Reason
@@ -82,7 +84,18 @@ class FillRecorder:
                 reason=reason.text,
             )
         )
-        self._channel.post(PermanentFailure(Part(target.name, index), reason))
+        self._post(PermanentFailure(Part(target.name, index), reason))
+
+    def _post(self, outcome: ControlSignal) -> None:
+        """Post a fill outcome bound to the Program it was generated for (finding #1).
+
+        Capturing ``channel.program`` here tags the outcome with the Program the
+        generation ran for: any switch since launch would have cancelled this
+        fill (so this method never runs for a switched-away pool), and a switch
+        that lands *after* this post is caught by the guard, which drops the
+        outcome rather than applying it to the switched-in Program.
+        """
+        self._channel.post(FreshFillOutcome(self._channel.program, outcome))
 
     @staticmethod
     def _reason(exc: Exception, fallback: str) -> Reason:
