@@ -1037,12 +1037,44 @@ class TestStatusTool:
         assert result["speak"] == "n"
         assert result["music_mode"] == "off"
 
-    def test_music_mode_reflected(self) -> None:
-        import punt_vox.server as srv
+    def test_music_mode_derived_on_from_program_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``music_mode`` is 'on' when the authoritative Program is playing."""
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        _install_fake(
+            monkeypatch,
+            FakeProgramGateway(status=ProgramStatus.of(program, ProgramName("amb"))),
+        )
+        assert json.loads(status())["music_mode"] == "on"
 
-        srv._session.music_mode = "on"
-        result = json.loads(status())
-        assert result["music_mode"] == "on"
+    def test_music_mode_derived_off_when_program_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``music_mode`` is 'off' when the daemon holds no active Program."""
+        _install_fake(monkeypatch, FakeProgramGateway(status=ProgramStatus.idle()))
+        assert json.loads(status())["music_mode"] == "off"
+
+    def test_music_mode_reflects_external_change_no_shadow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Program mode change made elsewhere flips ``music_mode`` with no shadow.
+
+        No music tool runs on this server, yet ``music_mode`` follows the daemon's
+        authoritative ``program.mode`` -- the vox-73m5 drift class, closed by
+        deriving the label instead of caching a session copy.
+        """
+        fake = FakeProgramGateway(status=ProgramStatus.idle())
+        _install_fake(monkeypatch, fake)
+        assert json.loads(status())["music_mode"] == "off"
+
+        program = Program(ProgramState.initial(), _StatusPolicy())
+        program.turn_on()
+        program.first_track_ok(Part("id001", 1))
+        fake.set_status(ProgramStatus.of(program, ProgramName("amb")))
+        assert json.loads(status())["music_mode"] == "on"
 
 
 # ---------------------------------------------------------------------------
@@ -1062,10 +1094,6 @@ class TestSessionConfig:
         a = SessionConfig()
         b = SessionConfig()
         assert a.session_id != b.session_id
-
-    def test_music_mode_defaults_off(self) -> None:
-        state = SessionConfig()
-        assert state.music_mode == "off"
 
 
 # ---------------------------------------------------------------------------
@@ -1096,7 +1124,6 @@ class TestMusicTool:
 
         assert result["applied"] is True
         assert "techno" in result["message"] and "focused" in result["message"]
-        assert srv._session.music_mode == "on"
         assert fake.verbs() == ["start"]
         request = fake.calls[0].request
         assert request is not None and request.style == "techno"
@@ -1124,15 +1151,12 @@ class TestMusicTool:
         assert "error" in result
 
     def test_off_stops_via_gateway(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
 
         result = json.loads(music(mode="off"))
 
         assert result["applied"] is True
-        assert srv._session.music_mode == "off"
         assert fake.verbs() == ["stop"]
 
     def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1165,9 +1189,7 @@ class TestMusicTool:
         assert "already generating" in result["message"]
         assert "generating a techno track" not in result["message"]
 
-    def test_daemon_error_reports_and_resets(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_daemon_error_reports(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
         fake = MagicMock()
@@ -1177,22 +1199,18 @@ class TestMusicTool:
         result = json.loads(music(mode="on"))
 
         assert "error" in result
-        assert srv._session.music_mode == "off"
 
 
 class TestMusicPlayTool:
     """music_play routes a saved-Program replay through the gateway."""
 
     def test_play_forwards_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
 
         result = json.loads(music_play("ambient_techno"))
 
         assert result["applied"] is True
-        assert srv._session.music_mode == "on"
         assert fake.calls[0].verb == "play"
         assert fake.calls[0].name == "ambient_techno"
 

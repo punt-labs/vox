@@ -32,6 +32,7 @@ from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 from punt_vox.voices import VOICE_BLURBS
 from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.voxd.programs.mode import Mode
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,6 @@ class SessionConfig:
     _vibe: str | None = None
     _vibe_tags: str | None = None
     _vibe_signals: str = ""
-    _music_mode: str = "off"
     _speak_explicit: bool = False
 
     # -- Properties (read access) ------------------------------------------
@@ -141,15 +141,6 @@ class SessionConfig:
     def vibe_signals(self) -> str:
         """Return the accumulated vibe signals string."""
         return self._vibe_signals
-
-    @property
-    def music_mode(self) -> str:
-        """Return the music mode ('on' or 'off')."""
-        return self._music_mode
-
-    @music_mode.setter
-    def music_mode(self, value: str) -> None:
-        self._music_mode = value
 
     @property
     def speak_explicit(self) -> bool:
@@ -667,16 +658,13 @@ def music(
             outcome = _program_tools.start(
                 StartRequest(style=style, name=name, prompts=prompts)
             )
-            _session.music_mode = "on"
             message = f"\u266a {outcome.display(_session.generating_message(style))}"
         else:
             outcome = _program_tools.stop()
-            _session.music_mode = "off"
             message = f"\u266a {outcome.display('Music off.')}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
-        _session.music_mode = "off"
         return _error(str(exc))
     return json.dumps({"message": message, "applied": outcome.applied})
 
@@ -698,7 +686,6 @@ def music_play(name: str) -> str:
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    _session.music_mode = "on"
     message = f"\u266a {outcome.display(f'Playing {name}.')}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
@@ -874,15 +861,17 @@ def speak(
 def status() -> str:
     """Show current vox state (provider, voice, notify, vibe) and the Program.
 
-    The ``program`` block is the daemon's *authoritative* Program status, read
-    fresh from ``voxd`` on every call -- never a server-side cache. vox-73m5
-    shipped broken because the server served a stale music shadow; here a client
-    asking "what is playing?" always gets what the daemon actually holds. When
-    ``voxd`` is unreachable the block carries an ``error`` instead of stale data.
+    Both the ``program`` block and the ``music_mode`` label are the daemon's
+    *authoritative* Program status, read fresh from ``voxd`` on every call --
+    never a server-side cache. vox-73m5 shipped broken because the server served
+    a stale music shadow: ``music_mode`` is derived from ``program.mode`` here,
+    so another client stopping or starting music can never leave the two fields
+    contradicting each other. When ``voxd`` is unreachable the block carries an
+    ``error`` and ``music_mode`` reports ``off`` (nothing can be confirmed playing).
 
     Returns:
         JSON string with the session display fields plus the authoritative
-        ``program`` status.
+        ``program`` status and its derived ``music_mode``.
     """
     _session.refresh_from_config()
     payload: dict[str, object] = {
@@ -894,12 +883,15 @@ def status() -> str:
         "vibe": _session.vibe,
         "vibe_tags": _session.vibe_tags,
         "vibe_signals": _session.vibe_signals,
-        "music_mode": _session.music_mode,
     }
     try:
-        payload["program"] = _program_tools.status().to_dict()
+        program_status = _program_tools.status()
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         payload["program"] = {"error": str(exc)}
+        payload["music_mode"] = "off"
+    else:
+        payload["program"] = program_status.to_dict()
+        payload["music_mode"] = "off" if program_status.mode is Mode.OFF else "on"
     return json.dumps(payload)
 
 
