@@ -242,7 +242,7 @@ class DoctorCheck:
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             servers = data.get("mcpServers", {})
-            if "tts" in servers:
+            if "vox" in servers:
                 results.append(
                     _result(
                         _OK,

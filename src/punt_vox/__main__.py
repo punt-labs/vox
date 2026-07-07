@@ -829,9 +829,9 @@ def install_desktop(
     if "mcpServers" not in data:
         data["mcpServers"] = {}
 
-    overwriting = "tts" in data["mcpServers"]
+    overwriting = "vox" in data["mcpServers"]
 
-    data["mcpServers"]["tts"] = {
+    data["mcpServers"]["vox"] = {
         "command": uvx,
         "args": ["--from", "punt-vox", "vox", "mcp"],
         "env": env,
@@ -840,9 +840,9 @@ def install_desktop(
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     if overwriting:
-        typer.echo("Updated existing tts entry.")
+        typer.echo("Updated existing vox entry.")
     else:
-        typer.echo("Registered tts MCP server.")
+        typer.echo("Registered vox MCP server.")
 
     typer.echo(f"Provider: {detected}")
     typer.echo(f"Config: {config_path}")

@@ -252,10 +252,10 @@ class TestCheckClaudeDesktop:
         assert len(results) == 2
         assert all(not r.required for r in results)
 
-    def test_config_with_tts_registered(self, tmp_path: Path) -> None:
+    def test_config_with_vox_registered(self, tmp_path: Path) -> None:
         config = tmp_path / "config.json"
         config.write_text(
-            json.dumps({"mcpServers": {"tts": {"command": "uvx"}}}),
+            json.dumps({"mcpServers": {"vox": {"command": "uvx"}}}),
             encoding="utf-8",
         )
         with patch(
@@ -267,7 +267,7 @@ class TestCheckClaudeDesktop:
         assert results[1].passed is True
         assert "registered" in results[1].message
 
-    def test_config_without_tts(self, tmp_path: Path) -> None:
+    def test_config_without_vox(self, tmp_path: Path) -> None:
         config = tmp_path / "config.json"
         config.write_text(
             json.dumps({"mcpServers": {}}),

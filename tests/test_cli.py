@@ -1617,7 +1617,7 @@ class TestInstallDesktopCommand:
         assert config_path.exists()
 
         data = json.loads(config_path.read_text())
-        server = data["mcpServers"]["tts"]
+        server = data["mcpServers"]["vox"]
         assert server["command"] == _UVX
         assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
         assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
@@ -1648,7 +1648,7 @@ class TestInstallDesktopCommand:
         assert result.exit_code == 0
         data = json.loads(config_path.read_text())
         assert "other-server" in data["mcpServers"]
-        assert "tts" in data["mcpServers"]
+        assert "vox" in data["mcpServers"]
 
 
 # ---------------------------------------------------------------------------
