@@ -82,7 +82,7 @@ class FilesystemPartStore:
 
 @final
 class FilesystemProgramStore:
-    """The set of Programs under one root directory (``~/Music/vox/programs``)."""
+    """The set of Programs under one root directory (``~/Music/vox``)."""
 
     __slots__ = ("_root",)
     _root: Path

@@ -42,9 +42,13 @@ class _AvoidRepeat:
 def _programs_dir(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Point the saved-Programs root at an isolated tmp dir."""
+    """Point the saved-Programs root at an isolated tmp dir.
+
+    Programs live directly under the music root now, so the pool directories
+    land in ``tmp_path/<name>/`` with no ``programs/`` segment between them.
+    """
     monkeypatch.setenv("VOX_OUTPUT_DIR", str(tmp_path))
-    return tmp_path / "programs"
+    return tmp_path
 
 
 def _cli(gateway: FakeProgramGateway) -> tuple[MusicCli, MagicMock]:

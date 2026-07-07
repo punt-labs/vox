@@ -63,8 +63,13 @@ class MusicCli:
 
     @staticmethod
     def _programs_root() -> Path:
-        """Return the root directory under which saved Programs live."""
-        return default_output_dir() / "programs"
+        """Return the root directory under which saved Programs live.
+
+        Each Program is a pool directory directly under the music root
+        (``~/Music/vox/<name>/``), so macOS Music.app and Ubuntu players scan
+        the pools without an intervening ``programs/`` segment to descend past.
+        """
+        return default_output_dir()
 
     @staticmethod
     def _fail(message: str) -> NoReturn:

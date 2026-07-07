@@ -193,10 +193,15 @@ class VoxDaemon:
 
     @staticmethod
     def _programs_root() -> Path:
-        """Return the root directory under which saved Programs live."""
+        """Return the root directory under which saved Programs live.
+
+        Each Program is a pool directory directly under the music root
+        (``~/Music/vox/<name>/``) so desktop music players scan the pools with
+        no ``programs/`` segment in the way.
+        """
         from punt_vox.dirs import default_output_dir
 
-        return default_output_dir() / "programs"
+        return default_output_dir()
 
     @staticmethod
     def _build_programs() -> ProgramSubsystem:
