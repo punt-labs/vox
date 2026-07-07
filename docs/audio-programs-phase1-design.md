@@ -1,15 +1,28 @@
 # Audio Programs — Phase 1 Design (playlist format)
 
-**Status:** Design for leader review. Author: Raymond H (`rmh`), 2026-07-05.
+**Status:** SHIPPED (Phase 1, 2026-07-07). Author: Raymond H (`rmh`), 2026-07-05.
+See the **Shipped deviations** note below for where the code differs from this design.
 **Branch:** `design/audio-programs-phase1`. **Contract:** `docs/audio-programs.tex`
 (the verified Z model, ownership-free as of commit 9bb5307). **Concept:**
 `docs/audio-programs-concept.md`.
 
-This design migrates today's music onto a first-class, persisted **Program**
+This design reframes today's music as a first-class, persisted **Program**
 model (playlist format only — no new ElevenLabs engines) and adds **playlist
 replay from both CLI and MCP**. Every state, transition, and invariant traces to
 a named schema in the `.tex`. Where this doc says "schema `X`", it means the Z
 operation or state schema of that name in `docs/audio-programs.tex`.
+
+> **Shipped deviations (2026-07-07).** The code diverges from this design in a few
+> places, all captured in `docs/design-review-phase1.md`: (1) the *format-general*
+> claim is partly aspirational — `Program.rotate` raises on the `COMPLETE` arm,
+> there is no terminal `Mode`, and `Subject` is concretely `PlaylistSubject`, so
+> podcast/audiobook (Phases 2–3) need those seams *built*, not merely supplied;
+> (2) `subject.vibe` records the *style*, not the session vibe — vibe does not yet
+> partition pools (direction B shipped; per-vibe pools are `vox-q7vh`, direction
+> A); (3) the per-command `applied/rejected` wire field is unreachable in Phase 1
+> (handlers ack at enqueue, before the writer applies). The `vox music migrate`
+> path (§3) and the `~/Music/vox/programs/` layout were struck — pools save to
+> `~/Music/vox/<name>/` with ID3 tags.
 
 **Ownership is gone.** Per the operator ruling of 2026-07-05, `voxd`'s Program
 state is machine-universal: any client — an MCP agent session or the CLI, from
@@ -291,7 +304,7 @@ class PartStore(Protocol):
     def prepare(self) -> None: ...
 ```
 
-- **Production:** `FilesystemProgramStore` (root = `~/Music/vox/programs/`) and
+- **Production:** `FilesystemProgramStore` (root = `~/Music/vox/`) and
   `FilesystemPartStore` (one program directory + its `manifest.json`). These are
   the *only* modules importing `pathlib`/`json` for program data. `resolve`
   returns `ProgramManifest | None` because absence-by-name is the documented
@@ -423,7 +436,7 @@ naming pattern, not a list"). This design replaces the pattern with an explicit,
 named directory + manifest.
 
 ```text
-~/Music/vox/programs/
+~/Music/vox/
   <program-name>/
     manifest.json
     001.mp3
@@ -431,9 +444,10 @@ named directory + manifest.
     ...
 ```
 
-`<program-name>` is the addressable identity — for a migrated playlist it is the
-old pool prefix (`ambient_techno`), which stays stable so CLI, MCP, and daemon
-all resolve the same entity by name.
+`<program-name>` is the addressable identity — the `--name`, else the style
+(`ProgramService._name_for`) — and every track carries ID3 tags
+(artist/album/title/genre/track) so pools drop straight into macOS Music.app and
+Ubuntu players. CLI, MCP, and daemon all resolve the same entity by name.
 
 `manifest.json` (the `ProgramManifest` value object serialized) — the minimal
 schema the CLI needs to play/advance **without the daemon regenerating**:
@@ -474,10 +488,10 @@ store is the shared source of truth all three read.
 
 ---
 
-## 3. Migration — old → new (forward integration only)
+## 3. Forward integration — `voxd/music/` → `voxd/programs/`
 
 Per PY-RF-6, callers are wired to the new path and the old path is deleted in the
-same PRs. The mapping:
+same PRs. The code decomposition mapping:
 
 | Today (`voxd/music/`) | Phase 1 (`voxd/programs/`) | Disposition |
 |---|---|---|
@@ -508,18 +522,14 @@ the identical single-flight, orphan-discard, and control-race behavior, and only
 then is the old package removed. New behavior (ungated rotate, status wiring)
 gets new tests on top; it does not replace the parity snapshot.
 
-**On-disk migration of existing tracks — explicit command (was R1, now
-resolved).** Real users have `~/Music/vox/tracks/*.mp3` with no manifest. This is
-user data, not code, so the forward path is an explicit **`vox music migrate`**
-command the operator runs once (the operator's ruling — not start-up
-auto-migration): it groups flat files by prefix, `mv`s each group into
-`programs/<prefix>/NNN.mp3` assigning intrinsic indices, and synthesizes a
-`manifest.json` per group. `mv`, not delete (org rule); the legacy dir is removed
-only after the move verifies. On daemon start, if a legacy `tracks/` dir is
-detected and no `programs/` exists, the daemon logs a single one-line hint
-directing the operator to run `vox music migrate` — it does no disk mutation
-itself. This is the one place a "read the old layout" behavior exists, and it
-exists to *retire* the old layout, then it is gone.
+**On-disk migration: none ships (superseded 2026-07-07).** An earlier draft
+specified a one-time `vox music migrate` command (flat `~/Music/vox/tracks/*.mp3`
+→ `programs/<name>/`) plus a start-up hint on a detected legacy dir. That was
+**struck** under the org no-migration rule: Punt Labs products have no installed
+user base, so a migration bridge is complexity for zero reason. There is no `vox
+music migrate` command, no legacy-`tracks/` detection, and no start-up hint. Pools
+are generated fresh and saved at `~/Music/vox/<name>/` — no intervening
+`programs/` segment — with ID3 tags on every track.
 
 ---
 
@@ -538,7 +548,6 @@ command takes or checks a session** — any client drives any command (CHANGE 1)
 | `vox music loop <name>` | `StartFromDisk` + `Rotate` on end |
 | `vox music next` | `Rotate` (auto-advance is the same transition) |
 | `vox music status` | read the active `Program.status` (§5) |
-| `vox music migrate` | one-time legacy `tracks/` → `programs/` migration (§3) |
 
 `playlist:N` part-addressing: the surface parses `<name> [format:index]`,
 resolves the 1-based `index` against the manifest's `parts` ordered by intrinsic

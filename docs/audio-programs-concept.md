@@ -178,7 +178,7 @@ through voxd** (and saved on our own disk) — a different shape. Decision: go
 
 ## Phasing (operator, 2026-07-05 — Phase 1 first)
 
-**Phase 1 — migrate today's music to the Program model + unlock playlist replay
+**Phase 1 — move today's music onto the Program model + unlock playlist replay
 (CLI + MCP).** No new ElevenLabs engines; refactor + one new capability.
 
 - Generalize the existing music internals into the shared model, **`playlist`

@@ -1865,3 +1865,37 @@ our software clients."
 | Push notification only, no queryable state | A client that missed the event can't learn current state; the queryable field is the contract, a notification is an optional nicety |
 
 Full spec, error taxonomy, and z-spec state machine: `docs/vox-ig52-music-resilience.md`.
+
+---
+
+## DES-041: Audio Programs — Ownership-Free, Persisted Program Model (Phase 1)
+
+**Date:** 2026-07-07
+**Status:** SETTLED
+**Topic:** Rebuilding background music as a first-class, persisted, ownership-free Program
+
+### Decision
+
+Background music is rebuilt on a **Program** model — a named, persisted pool of parts plus a manifest, driven by an explicit state machine — replacing the filename-pattern "pool" and the 29-method `MusicScheduler` god-facade. Phase 1 realizes the `playlist` format; `podcast`/`audiobook` are named in the type vocabulary but not built. Design of record: `docs/audio-programs-phase1-design.md`; formal contract: `docs/audio-programs.tex` (a fuzz-clean Z model, 16 state invariants validated by construction).
+
+Key decisions:
+
+- **Ownership removed.** `voxd`'s Program state is machine-universal — any client (MCP session or CLI, from any process) drives any command. The prior session-ownership gate (source of the vox-73m5 stale-vibe bug) is gone. A vibe change is a deliberate music command, never a silent side effect of setting the session mood.
+- **Single-writer `ControlChannel`.** Every mutation is a typed `ControlSignal` posted to one FIFO drained by one consumer (O2), so no handler races the Program. A benign lost race (`GuardViolationError`) logs at INFO; a corrupt successor is a bug at ERROR.
+- **Persisted + replayable.** Pools save to `~/Music/vox/<name>/` (named by `--name`, else the style; **no `programs/` segment**) with a `manifest.json` and **ID3 tags** on every track, so `/music play <name>` / `list` / `next` / `loop` / `playlist:N` replay from CLI or MCP at zero credits.
+- **No migration.** The flat `~/Music/vox/tracks/` layout is not migrated; the `vox music migrate` command and start-up hint from an earlier draft were struck under the org no-migration rule (no installed user base). Forward integration only — `voxd/music/` deleted in the same PRs.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Keep the filename-pattern pool | "It's a naming pattern, not a list" (vox-us4g) — no manifest, no replay, no status |
+| Keep session ownership | Complex, bug-ridden (vox-73m5 stale vibe), unusable across sessions (operator, 2026-07-05) |
+| Ship a `vox music migrate` bridge | No user base to migrate; a migration bridge is complexity for zero reason (org no-migration rule) |
+| Per-vibe pools now | Deferred — Phase 1 keys pools on style (vibe flavors the agent's prompts only); per-vibe identity is `vox-q7vh` (direction A) |
+
+### Shipped deviations from the design
+
+Recorded in `docs/design-review-phase1.md`: the *format-general* claim is partly aspirational (`Program.rotate` raises on `COMPLETE`, no terminal `Mode`, `Subject` is concretely `PlaylistSubject`, so Phases 2–3 build those seams rather than merely supply them); `subject.vibe` records the style, not the session vibe (`vox-q7vh`); the per-command `applied/rejected` wire field is unreachable in Phase 1 (handlers ack at enqueue).
+
+Closes vox-oayr.

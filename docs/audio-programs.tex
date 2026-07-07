@@ -5,7 +5,7 @@
 % Phase 1 (playlist format) modelled in full, with the shared Program state
 % and mode vocabulary that podcast and audiobook formats extend later.
 %
-% Generalises docs/music-playlist.tex (vox-1rxb) and folds in the failure /
+% Generalises the earlier four-state playlist model (vox-1rxb) and folds in the failure /
 % observability state machine of docs/vox-ig52-music-resilience.md.
 %
 
@@ -42,7 +42,7 @@ format exists, while fixing the shared state and mode vocabulary so that the
 later formats extend the same model rather than replacing it.
 
 The model does two things the informal concept could not. First, it
-generalises the four-state playlist machine of \texttt{music-playlist.tex}
+generalises the earlier four-state playlist machine (vox-1rxb)
 into a six-mode Program machine that carries the resilience states
 (\texttt{retrying}, \texttt{failed}) from \texttt{vox-ig52}, so that a
 generation failure is a \emph{modelled, observable} transition rather than a
@@ -85,7 +85,7 @@ that branch on it are total from the start.
 \end{zed}
 
 The Program mode is a six-state machine. The first four are the playlist modes
-of \texttt{music-playlist.tex}; \texttt{retrying} and \texttt{failed} are the
+of the earlier playlist model; \texttt{retrying} and \texttt{failed} are the
 resilience states of \texttt{vox-ig52}. The modes are format-general: for a
 finite format (podcast, audiobook) \texttt{playingRotating} denotes ``every
 Part generated, playing sequentially'', and the loop-versus-stop distinction at

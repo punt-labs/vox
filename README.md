@@ -153,13 +153,34 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 - **Graceful absence** --- if punt-vox isn't installed, Claude Code works exactly as before
 - **MCP-native** --- runs as a Claude Code plugin with slash commands and hooks
 - **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
-- **Background music** --- `/music on` generates vibe-driven instrumental tracks via the ElevenLabs Music API and loops them at low volume while you work. When the vibe changes, a new track generates to match. Style modifiers (`/music on style techno`) persist across invocations. Requires an ElevenLabs paid plan; each track costs ~2,000 credits
+- **Background music** --- `/music on` generates a pool of up to 12 distinct instrumental tracks via the ElevenLabs Music API, plays the first at once, and rotates the full pool at zero credits. Saved pools replay by name and land in `~/Music/vox/<name>/` with ID3 tags. Requires an ElevenLabs paid plan. See [Background Music](#background-music)
 
 ## Remote Audio
 
 Run Claude Code on a headless server or cloud VM and hear audio on your local machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point at your local voxd, or use an SSH tunnel for network-boundary crossings.
 
 See [docs/remote-setup.md](docs/remote-setup.md) for the full walkthrough (direct network and SSH tunnel approaches).
+
+## Background Music
+
+`/music on` fills your session with generated instrumental music. It plays the first track the moment it's ready, then --- with no further commands --- generates the rest of the pool (up to 12 distinct tracks) in the background and **auto-advances** to a different track as each one ends. Once the pool holds 12, generation stops and playback **rotates** it forever, shuffled and never the same track twice in a row, at **zero credits**.
+
+You author the tracks: vox is a pipe to the ElevenLabs Music API and never decides what a genre sounds like. On `/music on` the agent supplies a genre-accurate base prompt plus 12 variations, so a pool is 12 distinct tracks *within* the style --- not 12 near-clones.
+
+```text
+/music on                      # start music in the current style
+/music on style techno         # start with a style modifier (persists across calls)
+/music on --name focus-beats   # generate and save under a name --- or replay it if it exists
+/music next                    # jump to another track now
+/music play focus-beats        # replay a saved pool by name --- zero credits
+/music list                    # list saved pools
+/music                         # show current music state
+/music off                     # stop
+```
+
+Each pool is saved under `~/Music/vox/<name>/` --- named by `--name`, else the style --- with ID3 tags (artist, album, title, genre, track number) on every track, so your generated music shows up in macOS Music.app, Rhythmbox, and other players. Replaying a saved pool, or rotating a full one, costs **zero credits**; generation runs only while a pool has fewer than 12 tracks.
+
+**Requires an ElevenLabs paid plan.** Each generated track is ~2,000 credits (~3 minutes of audio), and a fresh pool fills to 12 --- roughly **24,000 credits** for a complete pool. Replaying and rotating saved pools is free.
 
 ## What It Looks Like
 
@@ -217,8 +238,11 @@ Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (brigh
 | `/vibe <mood>` | Set session mood --- voice adapts to match |
 | `/vibe auto` | Auto-detect mood from session signals (default) |
 | `/vibe off` | Disable vibe --- neutral voice |
-| `/music on` | Start vibe-driven background music |
+| `/music on` | Start generated background music |
 | `/music on style techno` | Start music with a style modifier |
+| `/music next` | Jump to another track now |
+| `/music play <name>` | Replay a saved pool by name (zero credits) |
+| `/music list` | List saved pools |
 | `/music off` | Stop background music |
 
 ## Providers
@@ -368,6 +392,9 @@ vox speak n                                    # Chimes only
 vox voice matilda                              # Set session voice
 vox music on                                   # Start background music
 vox music on --style techno                    # Start music with style modifier
+vox music next                                 # Jump to another track
+vox music play focus-beats                     # Replay a saved pool (zero credits)
+vox music list                                 # List saved pools
 vox music off                                  # Stop background music
 vox status                                     # Current state
 vox version                                    # Print version
