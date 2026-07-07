@@ -115,6 +115,47 @@ class TestConsumeControls:
         assert status.name == ProgramName("saved")  # O1: off keeps the name
 
 
+class TestNameFallback:
+    """Fix #3: a turn-on with no name derives one from style, else the defaults.
+
+    Reachable via ``/music on --style techno`` (OnHandler._opt_str returns None
+    when the wire omits ``name``), the live successor to the retired
+    ``auto_track_name`` defaults.
+    """
+
+    async def test_name_falls_back_to_style_when_name_absent(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="techno", name=None, prompts=None)
+        await service.run_once()
+        service.shutdown()
+        assert service.status().name == ProgramName("techno")
+
+    async def test_name_and_style_default_when_both_absent(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style=None, name=None, prompts=None)
+        await service.run_once()
+        service.shutdown()
+
+        assert service.status().name == ProgramName("music")
+        manifest = next(
+            m for m in service.saved_programs() if m.name == ProgramName("music")
+        )
+        assert manifest.subject.style == "ambient"  # _DEFAULT_STYLE
+
+    async def test_blank_name_and_style_fall_through_to_music(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="   ", name="  ", prompts=None)
+        await service.run_once()
+        service.shutdown()
+        assert service.status().name == ProgramName("music")
+
+
 class TestResume:
     async def test_turn_on_resumes_a_saved_pool_playing(self, tmp_path: Path) -> None:
         _seed(tmp_path, "mix", 1, 2)
