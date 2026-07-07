@@ -21,6 +21,7 @@ from punt_vox.voxd.programs.filler import FillPlan
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.music_prompts import PromptSet
     from punt_vox.voxd.programs.identifiers import ProgramName
     from punt_vox.voxd.programs.manifest import PlaylistSubject
     from punt_vox.voxd.programs.store import PartStore
@@ -33,9 +34,9 @@ __all__ = ["ActiveContext", "ActiveProgram"]
 class ActiveProgram:
     """The immutable context backing the one active Program (its fill and player).
 
-    ``prompts`` are the pool's ordered, final generation strings (agent base +
-    variations already composed, or the single fallback prompt); the fill draws
-    index ``i`` from ``prompts[(i - 1) mod len]``. ``directory`` is where the
+    ``prompts`` is the pool's :class:`PromptSet` (the agent's base plus its
+    per-track variations, or the minimal fallback); the fill composes each
+    Part's generation prompt and title from it. ``directory`` is where the
     player finds the Part audio -- the store's directory, carried so the player
     resolves it without reopening the store.
     """
@@ -44,7 +45,7 @@ class ActiveProgram:
     store: PartStore
     subject: PlaylistSubject
     directory: Path
-    prompts: tuple[str, ...]
+    prompts: PromptSet
 
     def to_plan(self) -> FillPlan:
         """Return the fill plan the background fill grows this Program from."""

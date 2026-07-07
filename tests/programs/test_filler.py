@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs import (
     MAX_RETRY,
     Format,
@@ -84,7 +85,8 @@ def _seeded_store(tmp_path: Path, count: int, name: str = "prog") -> PartStore:
 
 
 def _plan(store: PartStore, vibe: str = "calm", style: str = "jazz") -> FillPlan:
-    return FillPlan(store, PlaylistSubject(vibe=vibe, style=style), ("p1", "p2", "p3"))
+    prompts = PromptSet(base="pad", variations=("p1", "p2", "p3"))
+    return FillPlan(store, PlaylistSubject(vibe=vibe, style=style), prompts)
 
 
 def _channel(policy: PlaybackPolicy) -> ControlChannel:

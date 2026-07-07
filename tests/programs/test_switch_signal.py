@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs import Format, Mode, Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
 from punt_vox.voxd.programs.control_channel import ControlChannel
@@ -24,7 +25,7 @@ def _active(name: str = "saved") -> ActiveProgram:
         store=InMemoryPartStore(make_manifest(name, 1, 2)),
         subject=PlaylistSubject(vibe="ambient", style="techno"),
         directory=Path("/music") / name,
-        prompts=("p",),
+        prompts=PromptSet(base="p", variations=()),
     )
 
 

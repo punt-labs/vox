@@ -8,14 +8,22 @@ from typing import Self, final
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+from mutagen.id3 import ID3
 
 from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
+from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
     ProducerTransientError,
 )
+
+
+def _spec(prompt: str = "x", index: int = 1) -> PartSpec:
+    """Build a PartSpec with placeholder ID3 tags for a producer test."""
+    tags = PartTags(title=prompt, album="mix", genre="trance", index=index, total=12)
+    return PartSpec(prompt=prompt, index=index, tags=tags)
 
 
 @final
@@ -73,9 +81,27 @@ class TestLengthPolicy:
 class TestMusicProducer:
     async def test_produces_ready_part(self, tmp_path: Path) -> None:
         target = tmp_path / "001.mp3"
-        part = await _producer().produce(PartSpec(prompt="calm", index=1), target)
+        part = await _producer().produce(_spec("calm", 1), target)
         assert part == Part("001.mp3", 1)
         assert target.read_bytes()  # audio actually written
+
+    async def test_writes_id3_tags_on_the_saved_part(self, tmp_path: Path) -> None:
+        target = tmp_path / "001.mp3"
+        tags = PartTags(
+            title="uplifting trance at 138 BPM in A minor",
+            album="trance",
+            genre="trance",
+            index=1,
+            total=12,
+        )
+        await _producer().produce(PartSpec(prompt="calm", index=1, tags=tags), target)
+        id3 = ID3(target)
+        assert id3["TPE1"].text == ["vox"]  # artist
+        assert id3["TPE2"].text == ["vox"]  # album artist
+        assert id3["TALB"].text == ["trance"]  # album
+        assert id3["TIT2"].text == ["uplifting trance at 138 BPM in A minor"]
+        assert id3["TCON"].text == ["trance"]  # genre
+        assert id3["TRCK"].text == ["1/12"]  # track/total
 
     @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
     async def test_permanent_status_is_bad_input(
@@ -83,7 +109,7 @@ class TestMusicProducer:
     ) -> None:
         producer = _producer(ApiError(status_code=status, body="nope"))
         with pytest.raises(ProducerBadInputError):
-            await producer.produce(PartSpec(prompt="x", index=1), tmp_path / "1.mp3")
+            await producer.produce(_spec(), tmp_path / "1.mp3")
 
     @pytest.mark.parametrize("status", [429, 500, 502, 503])
     async def test_transient_status_is_transient(
@@ -91,14 +117,14 @@ class TestMusicProducer:
     ) -> None:
         producer = _producer(ApiError(status_code=status, body="later"))
         with pytest.raises(ProducerTransientError):
-            await producer.produce(PartSpec(prompt="x", index=1), tmp_path / "1.mp3")
+            await producer.produce(_spec(), tmp_path / "1.mp3")
 
     async def test_unknown_status_is_transient(self, tmp_path: Path) -> None:
         producer = _producer(ApiError(status_code=None, body="?"))
         with pytest.raises(ProducerTransientError):
-            await producer.produce(PartSpec(prompt="x", index=1), tmp_path / "1.mp3")
+            await producer.produce(_spec(), tmp_path / "1.mp3")
 
     async def test_timeout_is_transient(self, tmp_path: Path) -> None:
         producer = _producer(TimeoutError("slow"))
         with pytest.raises(ProducerTransientError):
-            await producer.produce(PartSpec(prompt="x", index=1), tmp_path / "1.mp3")
+            await producer.produce(_spec(), tmp_path / "1.mp3")

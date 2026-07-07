@@ -12,6 +12,7 @@ from typing import Self, final
 
 import pytest
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs import (
     MAX_RETRY,
     GuardViolationError,
@@ -162,7 +163,11 @@ class TestFillReconciliation:
         manifest_of: ManifestFactory,
     ) -> None:
         store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        plan = FillPlan(
+            store,
+            PlaylistSubject(vibe="calm", style="jazz"),
+            PromptSet(base="p", variations=()),
+        )
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_HoldingProducer(), channel, sleeper)
         channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
@@ -215,7 +220,11 @@ class TestTerminalStateCancelsFill:
         manifest_of: ManifestFactory,
     ) -> None:
         store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        plan = FillPlan(
+            store,
+            PlaylistSubject(vibe="calm", style="jazz"),
+            PromptSet(base="p", variations=()),
+        )
         # Drive a Program to retrying at the cap with an empty pool.
         prog = Program(ProgramState.initial(), policy)
         prog.turn_on()
@@ -259,7 +268,11 @@ class TestUnexpectedFillErrorIsObservable:
         manifest_of: ManifestFactory,
     ) -> None:
         store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(store, PlaylistSubject(vibe="calm", style="jazz"), ("p",))
+        plan = FillPlan(
+            store,
+            PlaylistSubject(vibe="calm", style="jazz"),
+            PromptSet(base="p", variations=()),
+        )
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_BoomProducer(), channel, sleeper)
         channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))

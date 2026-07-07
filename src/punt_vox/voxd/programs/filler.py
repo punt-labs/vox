@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox.voxd.programs.fill_recorder import FillRecorder
 from punt_vox.voxd.programs.format import MAX_RETRY
+from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
@@ -33,6 +34,7 @@ from punt_vox.voxd.programs.producer import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.music_prompts import PromptSet
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.manifest import PlaylistSubject
     from punt_vox.voxd.programs.producer import Producer
@@ -69,18 +71,36 @@ class FillPlan:
     *different* (vibe, style) Program, so its parts land in a different store,
     never colliding with the pool the loop is leaving. Two plans that differ in
     any field are distinct, so a retune cancels the old fill and starts a fresh
-    one. ``prompts`` is the pool's ordered prompt variations; index ``i`` draws
-    ``prompts[(i - 1) mod len]``.
+    one. ``prompts`` is the pool's :class:`PromptSet`; track ``i`` composes its
+    generation prompt and titles its Part from the ``i``-th variation clause.
     """
 
     store: PartStore
     subject: PlaylistSubject
-    prompts: tuple[str, ...]
+    prompts: PromptSet
 
     def spec_for(self, index: int) -> PartSpec:
-        """Return the generation spec for the Part at 1-based ``index``."""
-        prompt = self.prompts[(index - 1) % len(self.prompts)] if self.prompts else ""
-        return PartSpec(prompt=prompt, index=index)
+        """Return the generation spec (prompt + ID3 tags) for 1-based ``index``.
+
+        The generation prompt is the composed ``base + variation``; the Part's
+        title is the raw variation clause (the base prompt for a fallback pool,
+        or ``<album> <index>`` if even that is empty), so a music player labels
+        each track distinctly rather than by its bare ``NNN`` filename.
+        """
+        manifest = self.store.manifest()
+        album = manifest.name.value
+        variations = self.prompts.variations
+        variation = variations[(index - 1) % len(variations)] if variations else ""
+        tags = PartTags(
+            title=variation or self.prompts.base or f"{album} {index}",
+            album=album,
+            genre=self.subject.style,
+            index=index,
+            total=manifest.format.pool_size,
+        )
+        return PartSpec(
+            prompt=self.prompts.prompt_for(index - 1), index=index, tags=tags
+        )
 
 
 @final

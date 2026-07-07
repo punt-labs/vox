@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Protocol, final
 
 from punt_vox.voxd.programs.part import Part
+from punt_vox.voxd.programs.part_tags import PartTags
 
 __all__ = ["PartSpec", "Producer", "ProducerBadInputError", "ProducerTransientError"]
 
@@ -30,10 +31,16 @@ class ProducerTransientError(Exception):
 @final
 @dataclass(frozen=True, slots=True)
 class PartSpec:
-    """The authored input for producing one Part: its prompt and intrinsic index."""
+    """The authored input for producing one Part: prompt, index, and ID3 tags.
+
+    ``prompt`` drives generation; ``tags`` is the player-facing metadata the
+    Producer writes onto the mp3 once the audio lands (title, album, genre, and
+    track position), authored where the variation clause is known.
+    """
 
     prompt: str
     index: int
+    tags: PartTags
 
 
 class Producer(Protocol):

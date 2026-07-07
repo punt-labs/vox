@@ -148,7 +148,7 @@ class ProgramService:
             store=store,
             subject=subject,
             directory=self._root / program_name.value,
-            prompts=self._final_prompts(prompts, subject.style),
+            prompts=self._resolve_prompts(prompts, subject.style),
         )
         self._switch(Format.PLAYLIST, active, disk_pool, target=None)
 
@@ -173,7 +173,7 @@ class ProgramService:
             store=self._store.open(name),
             subject=manifest.subject,
             directory=self._root / name.value,
-            prompts=self._final_prompts(None, manifest.subject.style),
+            prompts=self._resolve_prompts(None, manifest.subject.style),
         )
         self._switch(manifest.format, active, frozenset(ready), target=target)
 
@@ -234,16 +234,14 @@ class ProgramService:
         return PlaylistSubject(vibe=clean, style=clean)
 
     @staticmethod
-    def _final_prompts(prompts: PromptSet | None, style: str) -> tuple[str, ...]:
-        """Compose the pool's ordered final prompt strings the fill draws from.
+    def _resolve_prompts(prompts: PromptSet | None, style: str) -> PromptSet:
+        """Return the pool's prompt set: the agent's, or the minimal fallback.
 
-        An agent set expands to one composed prompt per pool slot; a fallback set
-        (no agent prompts) is the single literal prompt every Part reuses.
+        The fill composes each Part's generation prompt and title from the set,
+        so composition is deferred to :meth:`FillPlan.spec_for` rather than
+        flattened here -- the raw variation clause survives to title the Part.
         """
-        chosen = prompts if prompts is not None else PromptSet.fallback(style, "")
-        if not chosen.variations:
-            return (chosen.base,)
-        return tuple(chosen.prompt_for(i) for i in range(Format.PLAYLIST.pool_size))
+        return prompts if prompts is not None else PromptSet.fallback(style, "")
 
     @staticmethod
     def _target_in(ready: tuple[Part, ...], part: PartRef | None) -> Part:

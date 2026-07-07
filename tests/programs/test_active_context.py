@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
 from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.manifest import PlaylistSubject
 
 from .conftest import InMemoryPartStore, make_manifest
+
+_PROMPTS = PromptSet(base="pad", variations=("a", "b"))
 
 
 def _active(name: str = "ambient_techno") -> ActiveProgram:
@@ -20,7 +23,7 @@ def _active(name: str = "ambient_techno") -> ActiveProgram:
         store=store,
         subject=PlaylistSubject(vibe="ambient", style="techno"),
         directory=Path("/music") / name,
-        prompts=("a", "b"),
+        prompts=_PROMPTS,
     )
 
 
@@ -30,13 +33,19 @@ class TestActiveProgram:
         plan = active.to_plan()
         assert plan.store is active.store
         assert plan.subject == active.subject
-        assert plan.prompts == ("a", "b")
+        assert plan.prompts == _PROMPTS
 
-    def test_spec_for_draws_from_the_carried_prompts(self) -> None:
+    def test_spec_for_composes_prompt_from_base_and_variation(self) -> None:
         plan = _active().to_plan()
-        assert plan.spec_for(1).prompt == "a"
-        assert plan.spec_for(2).prompt == "b"
-        assert plan.spec_for(3).prompt == "a"  # cycles
+        assert plan.spec_for(1).prompt == "pad a"
+        assert plan.spec_for(2).prompt == "pad b"
+        assert plan.spec_for(3).prompt == "pad a"  # cycles
+
+    def test_spec_for_titles_the_part_from_the_raw_variation(self) -> None:
+        plan = _active().to_plan()
+        assert plan.spec_for(1).tags.title == "a"
+        assert plan.spec_for(2).tags.title == "b"
+        assert plan.spec_for(3).tags.title == "a"  # cycles
 
 
 class TestActiveContext:

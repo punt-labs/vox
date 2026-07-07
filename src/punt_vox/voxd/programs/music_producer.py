@@ -100,6 +100,7 @@ class MusicProducer:
             raise self._classify(exc) from exc
         except (TimeoutError, ConnectionError, OSError) as exc:
             raise ProducerTransientError(str(exc)) from exc
+        spec.tags.write_to(target)
         return Part(target.name, spec.index)
 
     @staticmethod
