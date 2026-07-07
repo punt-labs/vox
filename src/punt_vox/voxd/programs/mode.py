@@ -26,7 +26,7 @@ class PlaybackStatus(StrEnum):
 class Mode(StrEnum):
     """The six-state Program machine (Z free type ``Mode``).
 
-    The first four are the playlist modes of ``music-playlist.tex``;
+    The first four are the original playlist modes;
     ``RETRYING`` and ``FAILED`` are the resilience states of ``vox-ig52``. The
     modes are format-general -- a finite format reads ``PLAYING_ROTATING`` as
     "every Part generated, playing sequentially".
