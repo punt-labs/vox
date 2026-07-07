@@ -22,15 +22,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, final
 
-from punt_vox.voxd.programs.fill_signal import (
-    PermanentFailure,
-    Produced,
-    TransientFailure,
-)
+from punt_vox.voxd.programs.fill_recorder import FillRecorder
 from punt_vox.voxd.programs.format import MAX_RETRY
-from punt_vox.voxd.programs.identifiers import Reason
-from punt_vox.voxd.programs.manifest import PartEntry, PlaylistSubject
-from punt_vox.voxd.programs.part import Part, PartStatus
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
@@ -41,6 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.programs.control_channel import ControlChannel
+    from punt_vox.voxd.programs.manifest import PlaylistSubject
     from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.programs.sleeper import Sleeper
     from punt_vox.voxd.programs.store import PartStore
@@ -94,16 +88,16 @@ class Filler:
     """Own the single background task that fills one pool via a Producer."""
 
     __slots__ = (
-        "_channel",
         "_gen_lock",
         "_inflight",
         "_plan",
         "_producer",
+        "_recorder",
         "_sleeper",
         "_task",
     )
     _producer: Producer
-    _channel: ControlChannel
+    _recorder: FillRecorder
     _sleeper: Sleeper
     _plan: FillPlan | None
     _task: asyncio.Task[None] | None
@@ -118,7 +112,7 @@ class Filler:
     ) -> Self:
         self = super().__new__(cls)
         self._producer = producer
-        self._channel = channel
+        self._recorder = FillRecorder(channel)
         self._sleeper = sleeper
         self._plan = None
         self._task = None
@@ -143,7 +137,7 @@ class Filler:
         self._cancel_task()
         self._plan = plan
         plan.store.prepare()
-        if self._is_full(plan) or self._failed_out(plan):
+        if self._generation_complete(plan):
             return
         task = asyncio.create_task(self._fill(plan))
         task.add_done_callback(self._on_fill_done)
@@ -153,6 +147,17 @@ class Filler:
         """Cancel the fill task and forget the plan -- no orphaned generation."""
         self._cancel_task()
         self._plan = None
+
+    @staticmethod
+    def _generation_complete(plan: FillPlan) -> bool:
+        """Return whether ``plan`` wants no more generation (full or failed out).
+
+        The single source of truth for "stop generating": the pool is full or
+        permanent failures hit the cap. Both the arming check (``ensure_running``)
+        and the fill loop (``_fill``) read it, so they can never disagree on when
+        to stop -- the runaway bound and the full-pool stop live in one place.
+        """
+        return Filler._is_full(plan) or Filler._failed_out(plan)
 
     @staticmethod
     def _is_full(plan: FillPlan) -> bool:
@@ -199,19 +204,19 @@ class Filler:
         except asyncio.CancelledError:
             raise
         except ProducerBadInputError as exc:
-            self._record_and_post(store, self._permanent(index, target, exc))
+            self._recorder.permanent(store, index, target, exc)
             return
         except ProducerTransientError as exc:
-            self._channel.post(TransientFailure(self._reason(exc, "transient")))
+            self._recorder.transient(exc)
             await self._sleeper.sleep(_BACKOFF_SECONDS)
             return
         except Exception as exc:
             logger.exception("fill: unexpected error producing part %d", index)
-            self._record_and_post(store, self._unexpected(index, target, exc))
+            self._recorder.unexpected(store, index, target, exc)
             return
         finally:
             self._clear_inflight(inflight)
-        self._record_and_post(store, self._ready(index, written))
+        self._recorder.ready(store, index, written)
 
     def _clear_inflight(self, inflight: asyncio.Task[Path]) -> None:
         """Drop the in-flight handle once its generation settles."""
@@ -227,42 +232,6 @@ class Filler:
         async with self._gen_lock:
             await self._producer.produce(spec, target)
             return target
-
-    def _record_and_post(
-        self, store: PartStore, outcome: tuple[PartEntry, Produced | PermanentFailure]
-    ) -> None:
-        entry, signal = outcome
-        store.record(entry)
-        self._channel.post(signal)
-
-    @staticmethod
-    def _ready(index: int, target: Path) -> tuple[PartEntry, Produced]:
-        part = Part(target.name, index)
-        entry = PartEntry(index=index, file=target.name, status=PartStatus.READY)
-        return entry, Produced(part)
-
-    @staticmethod
-    def _permanent(
-        index: int, target: Path, exc: ProducerBadInputError
-    ) -> tuple[PartEntry, PermanentFailure]:
-        return Filler._failed(index, target, Filler._reason(exc, "permanent"))
-
-    @staticmethod
-    def _unexpected(
-        index: int, target: Path, exc: Exception
-    ) -> tuple[PartEntry, PermanentFailure]:
-        """Build a permanent outcome tagged as an unexpected (buggy) failure."""
-        return Filler._failed(index, target, Reason(f"unexpected: {exc}"))
-
-    @staticmethod
-    def _failed(
-        index: int, target: Path, reason: Reason
-    ) -> tuple[PartEntry, PermanentFailure]:
-        part = Part(target.name, index)
-        entry = PartEntry(
-            index=index, file=target.name, status=PartStatus.FAILED, reason=reason.text
-        )
-        return entry, PermanentFailure(part, reason)
 
     @staticmethod
     def _on_fill_done(task: asyncio.Task[None]) -> None:
@@ -308,8 +277,3 @@ class Filler:
         with contextlib.suppress(FileNotFoundError):
             task.result().unlink()
         logger.info("discarded orphaned Part from a cancelled fill")
-
-    @staticmethod
-    def _reason(exc: Exception, fallback: str) -> Reason:
-        """Build a non-empty Reason from an exception message."""
-        return Reason(str(exc) or fallback)
