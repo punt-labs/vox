@@ -11,11 +11,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from punt_vox.logging_config import VOX_DATA_DIR
+from punt_vox.paths import user_state_dir
 
 logger = logging.getLogger(__name__)
 
-_KEYS_FILE = VOX_DATA_DIR / "keys.env"
+_KEYS_FILE = user_state_dir() / "keys.env"
 
 PROVIDER_KEY_NAMES: frozenset[str] = frozenset(
     {
