@@ -20,9 +20,9 @@ class OnHandler(ProgramCommandHandler):
     def _run(self, msg: dict[str, object], /) -> None:
         """Parse style/name/prompts and turn the Program on."""
         self._service.turn_on(
-            self._opt_str(msg, "style"),
-            self._opt_str(msg, "name"),
-            PromptSet.from_wire(msg),
+            style=self._opt_str(msg, "style"),
+            name=self._opt_str(msg, "name"),
+            prompts=PromptSet.from_wire(msg),
         )
 
     @staticmethod

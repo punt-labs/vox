@@ -14,12 +14,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.list_handler import ListHandler
 from punt_vox.voxd.programs.loop_handler import LoopHandler
 from punt_vox.voxd.programs.migrate import LegacyMigration
-from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.off_handler import OffHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
@@ -31,6 +29,7 @@ from punt_vox.voxd.programs.status_handler import StatusHandler
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.types import MessageHandler
 
 __all__ = ["ProgramSubsystem"]
@@ -46,9 +45,8 @@ class ProgramSubsystem:
     _root: Path
     _service: ProgramService
 
-    def __new__(cls, root: Path) -> Self:
+    def __new__(cls, root: Path, producer: Producer) -> Self:
         self = super().__new__(cls)
-        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
         self._root = root
         self._service = ProgramService(
             producer, FilesystemProgramStore(root), root, RealSleeper()

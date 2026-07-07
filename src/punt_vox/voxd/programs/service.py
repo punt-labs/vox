@@ -28,6 +28,7 @@ from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
+from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
@@ -55,12 +56,21 @@ _DEFAULT_STYLE = "ambient"
 class ProgramService:
     """Own and drive the one active Program; the handler-facing daemon seam."""
 
-    __slots__ = ("_channel", "_context", "_filler", "_loop", "_root", "_store")
+    __slots__ = (
+        "_channel",
+        "_context",
+        "_filler",
+        "_health",
+        "_loop",
+        "_root",
+        "_store",
+    )
     _store: ProgramStore
     _root: Path
     _context: ActiveContext
     _channel: ControlChannel
     _filler: Filler
+    _health: PlaybackHealth
     _loop: ProgramLoop
 
     def __new__(
@@ -73,7 +83,10 @@ class ProgramService:
         self._channel = ControlChannel(Program(ProgramState.initial(), RotatePolicy()))
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
-        self._loop = ProgramLoop(self._channel, SubprocessPlayer(self))
+        self._health = PlaybackHealth()
+        self._loop = ProgramLoop(
+            self._channel, SubprocessPlayer(self), sleeper, self._health
+        )
         return self
 
     # -- injected seams (FillPlanSource + PlayerDirectory) ------------------
@@ -111,7 +124,7 @@ class ProgramService:
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
-        return ProgramStatus.of(self._channel.program, active.name)
+        return ProgramStatus.of(self._channel.program, active.name, self._health.fault)
 
     def saved_programs(self) -> tuple[ProgramManifest, ...]:
         """Return every saved Program's manifest, by name (the ``list`` view)."""
@@ -120,7 +133,7 @@ class ProgramService:
     # -- handler-facing mutators (each POSTs one serialized command) --------
 
     def turn_on(
-        self, style: str | None, name: str | None, prompts: PromptSet | None
+        self, *, style: str | None, name: str | None, prompts: PromptSet | None
     ) -> None:
         """Turn a Program on: create or resume its pool, then generate/play.
 

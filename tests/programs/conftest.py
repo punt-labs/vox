@@ -9,6 +9,7 @@ about: one that avoids an immediate repeat (stands in for the real
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,9 @@ class FakeSleeper:
         return self
 
     async def sleep(self, seconds: float) -> None:
+        # Yield to the event loop (like a real sleep) so a backoff never starves
+        # a co-running task, then return instantly -- tests never really wait.
+        await asyncio.sleep(0)
         self.sleeps.append(seconds)
 
 
