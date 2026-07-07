@@ -12,7 +12,6 @@ from punt_vox.dirs import (
     default_output_dir,
     find_config_dir,
     find_repo_root,
-    music_output_dir,
 )
 
 # ---------------------------------------------------------------------------
@@ -239,15 +238,3 @@ class TestDefaultOutputDir:
             os.environ.pop("VOX_OUTPUT_DIR", None)
             result = default_output_dir()
         assert result == tmp_path / "Music" / "vox"
-
-
-# ---------------------------------------------------------------------------
-# music_output_dir
-# ---------------------------------------------------------------------------
-
-
-class TestMusicOutputDir:
-    def test_returns_tracks_subdir(self, tmp_path: Path) -> None:
-        with patch("punt_vox.dirs.default_output_dir", return_value=tmp_path / "vox"):
-            result = music_output_dir()
-        assert result == tmp_path / "vox" / "tracks"

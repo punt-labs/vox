@@ -275,36 +275,6 @@ def test_status_idle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# migrate -- delegates to LegacyMigration
-# ---------------------------------------------------------------------------
-
-
-def test_migrate_moves_legacy_tracks(tmp_path: Path, _programs_dir: Path) -> None:
-    legacy = tmp_path / "tracks"
-    legacy.mkdir()
-    (legacy / "ambient_techno_20250101_1200_0.mp3").write_bytes(b"audio")
-    cli, formatter = _cli(FakeProgramGateway())
-
-    cli.migrate()
-
-    payload, text = _emitted(formatter)
-    assert payload["migrated"] == 1  # type: ignore[index]
-    assert (_programs_dir / "ambient_techno" / "001.mp3").is_file()
-    assert "migrated" in text
-
-
-def test_migrate_refuses_when_populated(tmp_path: Path, _programs_dir: Path) -> None:
-    _save(_programs_dir, "existing", ready=1)
-    legacy = tmp_path / "tracks"
-    legacy.mkdir()
-    (legacy / "ambient_techno_20250101_1200_0.mp3").write_bytes(b"audio")
-    cli, _ = _cli(FakeProgramGateway())
-
-    with pytest.raises(typer.Exit):
-        cli.migrate()
-
-
-# ---------------------------------------------------------------------------
 # build_music_app wiring (CliRunner smoke)
 # ---------------------------------------------------------------------------
 

@@ -1,9 +1,9 @@
 """The consume-only ``vox music`` CLI -- play and manage saved audio Programs.
 
 The CLI never authors (no LLM, no generation): it lists, plays, loops, advances,
-shows status, and runs the one-time legacy migration. :class:`MusicCli` is a
-humble object testable with an in-memory gateway and formatter; playback crosses
-to ``voxd`` via a :class:`ProgramGateway`, other reads hit the store (design §4).
+and shows status. :class:`MusicCli` is a humble object testable with an in-memory
+gateway and formatter; playback crosses to ``voxd`` via a :class:`ProgramGateway`,
+other reads hit the store (design §4).
 """
 
 from __future__ import annotations
@@ -18,12 +18,11 @@ from websockets.exceptions import WebSocketException
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.dirs import default_output_dir, music_output_dir
+from punt_vox.dirs import default_output_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
-from punt_vox.voxd.programs.migrate import LegacyMigration, MigrationError
 from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
@@ -137,17 +136,6 @@ class MusicCli:
             self._fail(str(exc))
         self._formatter.emit(report.to_dict(), self._render_status(report))
 
-    def migrate(self) -> None:
-        """Migrate the legacy flat ``tracks/`` layout into named Programs (one-time)."""
-        try:
-            report = LegacyMigration(music_output_dir(), self._programs_root()).run()
-        except MigrationError as exc:
-            self._fail(str(exc))
-        self._formatter.emit(
-            {"migrated": report.parts, "programs": list(report.names)},
-            report.summary(),
-        )
-
     def _resolve_part(self, name: str, token: str | None) -> PartRef | None:
         """Resolve an optional ``playlist:N`` token, or ``None`` when none is given.
 
@@ -197,5 +185,4 @@ def build_music_app(formatter: OutputFormatter) -> typer.Typer:
     app.command("loop")(cli.loop)
     app.command("next")(cli.advance)
     app.command("status")(cli.status)
-    app.command("migrate")(cli.migrate)
     return app

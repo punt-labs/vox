@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,8 +13,6 @@ from .conftest import QuietProducer, seed_program
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _subsystem(root: Path) -> ProgramSubsystem:
@@ -76,48 +73,3 @@ class TestHandlersBoundToService:
         reply = ws.send_json.await_args.args[0]
         assert reply["type"] == "program_list"
         assert [p["name"] for p in reply["programs"]] == ["ambient_calm"]
-
-
-class TestLegacyMigrationGate:
-    """legacy_migration_pending gates the daemon's one-line migrate hint."""
-
-    def test_true_when_legacy_tracks_exist_and_no_programs(
-        self, tmp_path: Path
-    ) -> None:
-        legacy = tmp_path / "tracks"
-        legacy.mkdir()
-        (legacy / "ambient_calm_20260101_1200_1.mp3").write_bytes(b"audio")
-        subsystem = _subsystem(tmp_path / "programs")
-        assert subsystem.legacy_migration_pending(legacy) is True
-
-    def test_false_when_a_program_already_exists(self, tmp_path: Path) -> None:
-        root = tmp_path / "programs"
-        seed_program(root, "ambient_calm", 1)
-        legacy = tmp_path / "tracks"
-        legacy.mkdir()
-        (legacy / "ambient_calm_20260101_1200_1.mp3").write_bytes(b"audio")
-        subsystem = _subsystem(root)
-        assert subsystem.legacy_migration_pending(legacy) is False
-
-    def test_false_when_no_legacy_tracks(self, tmp_path: Path) -> None:
-        subsystem = _subsystem(tmp_path / "programs")
-        assert subsystem.legacy_migration_pending(tmp_path / "tracks") is False
-
-    def test_log_legacy_hint_fires_once_when_pending(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        legacy = tmp_path / "tracks"
-        legacy.mkdir()
-        (legacy / "ambient_calm_20260101_1200_1.mp3").write_bytes(b"audio")
-        subsystem = _subsystem(tmp_path / "programs")
-        with caplog.at_level(logging.INFO, logger="punt_vox.voxd.programs.wiring"):
-            subsystem.log_legacy_hint(legacy)
-        assert sum("vox music migrate" in r.getMessage() for r in caplog.records) == 1
-
-    def test_log_legacy_hint_silent_when_nothing_to_migrate(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        subsystem = _subsystem(tmp_path / "programs")
-        with caplog.at_level(logging.INFO, logger="punt_vox.voxd.programs.wiring"):
-            subsystem.log_legacy_hint(tmp_path / "tracks")
-        assert not caplog.records

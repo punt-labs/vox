@@ -154,7 +154,6 @@ class VoxDaemon:
         playback loop that plays and advances Parts. Both ride the daemon's
         lifetime and are cancelled on shutdown.
         """
-        self._programs.log_legacy_hint(VoxDaemon._legacy_tracks_dir())
         service = self._programs.service
         consumer_task = asyncio.create_task(self._playback.consumer())
         control_task = asyncio.create_task(service.serve_control())
@@ -211,13 +210,6 @@ class VoxDaemon:
         """
         producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
         return ProgramSubsystem(VoxDaemon._programs_root(), producer)
-
-    @staticmethod
-    def _legacy_tracks_dir() -> Path:
-        """Return the legacy flat ``tracks/`` directory (migration source)."""
-        from punt_vox.dirs import music_output_dir
-
-        return music_output_dir()
 
     @staticmethod
     def _health_handler(
