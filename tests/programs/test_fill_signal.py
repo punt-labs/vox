@@ -142,6 +142,43 @@ class TestTransientFailure:
         TransientFailure(reason).apply(prog)  # at the cap, empty pool -> give up
         assert prog.mode is Mode.FAILED
 
+    @staticmethod
+    def _retrying_at_cap_nonempty(
+        policy: PlaybackPolicy, mk: PartFactory, reason: Reason
+    ) -> Program:
+        """Drive to (retrying, attempts == cap, non-empty pool) -- the Bug #2 state."""
+        prog = _filling(policy, mk)
+        prog.fill_transient(reason)  # retrying, non-empty pool, attempts 1
+        for _ in range(MAX_RETRY - 1):  # climb to the cap via retry_fails
+            TransientFailure(reason).apply(prog)
+        assert prog.state.attempts == MAX_RETRY
+        return prog
+
+    def test_retrying_at_cap_nonempty_keeps_trying(
+        self, policy: PlaybackPolicy, mk: PartFactory, reason: Reason
+    ) -> None:
+        # A non-empty pool at the cap must not hard-fail and must not be dropped
+        # by a guard-rejected transition (finding #4): it self-loops in retrying,
+        # attempts pinned, playing intact -- "plays on and keeps trying".
+        prog = self._retrying_at_cap_nonempty(policy, mk, reason)
+        playing = prog.playing
+        TransientFailure(reason).apply(prog)  # at the cap, non-empty -> capped no-op
+        assert prog.mode is Mode.RETRYING  # NOT failed, NOT stuck
+        assert prog.state.attempts == MAX_RETRY  # pinned, not climbing
+        assert prog.playing == playing  # playback continues
+        assert len(prog.pool) == 2
+
+    def test_retrying_at_cap_nonempty_still_recovers(
+        self, policy: PlaybackPolicy, mk: PartFactory, reason: Reason
+    ) -> None:
+        # After the capped self-loop the fill can still deliver a Part, which
+        # recovers the Program back to playing_filling (the resume path lives).
+        prog = self._retrying_at_cap_nonempty(policy, mk, reason)
+        TransientFailure(reason).apply(prog)  # capped no-op, still retrying
+        Produced(mk(3)).apply(prog)
+        assert prog.mode is Mode.PLAYING_FILLING
+        assert len(prog.pool) == 3
+
 
 def test_fill_signals_never_interrupt(mk: PartFactory) -> None:
     # Fill outcomes join the pool / record a failure; they never cut off playback.

@@ -308,6 +308,42 @@ class TestRetry:
         with pytest.raises(ValueError, match="empty pool"):
             prog.retry_exhausted(reason)
 
+    def test_capped_self_loops_on_nonempty_pool(
+        self, policy: PlaybackPolicy, mk: PartFactory, reason: Reason
+    ) -> None:
+        prog = _filling(policy, mk)
+        playing = prog.playing
+        prog.fill_transient(reason)  # retrying with a non-empty pool
+        for _ in range(4):  # climb to the cap
+            prog.retry_fails(reason)
+        assert prog.state.attempts == 5
+        prog.retry_capped(Reason("still transient"))
+        assert prog.mode is Mode.RETRYING  # self-loop, not failed
+        assert prog.state.attempts == 5  # pinned at the cap
+        assert prog.playing == playing  # playback untouched
+        assert prog.state.last_error == Reason("still transient")  # advisory refreshed
+
+    def test_capped_requires_retrying(
+        self, policy: PlaybackPolicy, reason: Reason
+    ) -> None:
+        prog = _generating(policy)
+        with pytest.raises(ValueError, match="retrying"):
+            prog.retry_capped(reason)
+
+    def test_capped_requires_cap(self, policy: PlaybackPolicy, reason: Reason) -> None:
+        prog = self._retrying(policy, reason)  # attempts 1, below the cap
+        with pytest.raises(ValueError, match="at the cap"):
+            prog.retry_capped(reason)
+
+    def test_capped_requires_nonempty_pool(
+        self, policy: PlaybackPolicy, reason: Reason
+    ) -> None:
+        prog = self._retrying(policy, reason)  # empty pool
+        for _ in range(4):  # climb to the cap on an empty pool
+            prog.retry_fails(reason)
+        with pytest.raises(ValueError, match="non-empty pool"):
+            prog.retry_capped(reason)
+
     def test_recover_from_empty_resumes_generation(
         self, policy: PlaybackPolicy, reason: Reason
     ) -> None:

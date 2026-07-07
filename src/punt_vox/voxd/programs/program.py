@@ -186,6 +186,23 @@ class Program:
             last_error=reason,
         )
 
+    def retry_capped(self, reason: Reason) -> None:
+        """Tolerate a transient at the cap on a non-empty pool (Z ``RetryCapped``).
+
+        A non-empty pool never hard-fails (finding #4): at the cap a further
+        transient error neither exhausts (that needs an empty pool) nor climbs
+        (``retry_fails`` guards below the cap), so the retry self-loops with
+        ``attempts`` pinned and playback untouched -- it "plays on and keeps
+        trying at the capped backoff". Only the advisory reason is refreshed.
+        """
+        if self._state.mode is not Mode.RETRYING:
+            self._reject("retry_capped requires mode retrying")
+        if self._state.attempts != MAX_RETRY:
+            self._reject("retry_capped requires attempts at the cap")
+        if len(self._state.pool) == 0:
+            self._reject("retry_capped requires a non-empty pool")
+        self._state = self._state.with_updates(last_error=reason)
+
     def recover(self) -> None:
         """Clear the backoff and resume generation (Z ``Recover``)."""
         if self._state.mode is not Mode.RETRYING:

@@ -79,8 +79,17 @@ class TransientFailure:
         # else: drop -- no fill is in flight to fail.
 
     def _continue_retry(self, program: Program) -> None:
-        exhausted = program.state.attempts >= MAX_RETRY and len(program.pool) == 0
-        if exhausted:
+        """Route the retrying Program to the one valid transition for its state.
+
+        Every reachable ``(attempts, pool)`` in ``retrying`` has exactly one
+        legal move: below the cap it counts (``retry_fails``); at the cap it
+        either gives up an empty pool (``retry_exhausted`` -> failed) or, on a
+        non-empty pool, self-loops indefinitely (``retry_capped``) because a
+        non-empty pool never hard-fails (finding #4). No branch is guard-rejected.
+        """
+        if program.state.attempts < MAX_RETRY:
+            program.retry_fails(self.reason)
+        elif len(program.pool) == 0:
             program.retry_exhausted(self.reason)
         else:
-            program.retry_fails(self.reason)
+            program.retry_capped(self.reason)

@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
+from punt_vox.voxd.programs.format import Format
+from punt_vox.voxd.programs.identifiers import Reason
+from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
 from punt_vox.voxd.programs.state import ProgramState
@@ -62,6 +65,19 @@ def _off_program() -> Program:
     return Program(ProgramState.initial(), RotatePolicy())
 
 
+def _retrying_program() -> Program:
+    """Return a Program in retrying with a non-empty pool (filling False).
+
+    A transient fill error pauses generation: the model's filling flag is False,
+    but the fill task must stay alive to reach recovery -- the Bug #1 state.
+    """
+    partial = frozenset({Part("001", 1), Part("002", 2)})
+    program = Program(ProgramState.restored(Format.PLAYLIST, partial), RotatePolicy())
+    program.turn_on()  # partial pool -> playing_filling, filling True
+    program.fill_transient(Reason("429 rate limited"))  # -> retrying, filling False
+    return program
+
+
 class TestReconcile:
     """reconcile mirrors the Program's filling flag onto the fill."""
 
@@ -77,3 +93,13 @@ class TestReconcile:
         FillReconciler(filler, _StubPlanSource()).reconcile(_off_program())
         assert filler.started == []
         assert filler.cancels == 1
+
+    def test_keeps_the_fill_running_while_retrying(self) -> None:
+        # Bug #1: retrying pauses the model's filling flag, but the fill task is
+        # the retry engine -- cancelling it strands the Program forever. The
+        # reconciler must keep it running so the backoff-retry loop can recover.
+        filler = _RecordingFiller()
+        source = _StubPlanSource()
+        FillReconciler(filler, source).reconcile(_retrying_program())
+        assert filler.started == [source.plan]
+        assert filler.cancels == 0
