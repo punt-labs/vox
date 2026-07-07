@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import TYPE_CHECKING, cast, final
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +20,23 @@ from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 from punt_vox.voxd.types import MessageHandler
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.producer import PartSpec
+
+
+@final
+class _UnusedProducer:
+    """A producer the router tests never invoke (they exercise no generation)."""
+
+    __slots__ = ()
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        """Never called by router tests -- routing does not generate audio."""
+        raise NotImplementedError
+
 
 def _make_router(
     *,
@@ -31,7 +48,7 @@ def _make_router(
     pb = PlaybackQueue()
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)
-    programs = ProgramSubsystem(default_output_dir() / "programs")
+    programs = ProgramSubsystem(default_output_dir() / "programs", _UnusedProducer())
 
     handlers: dict[str, MessageHandler] = {
         "synthesize": SynthesizeHandler(

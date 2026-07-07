@@ -14,7 +14,6 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Self
 
 import websockets
@@ -78,17 +77,13 @@ class VoxdProtocolError(Exception):
 
 # ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
+# ``~/.punt-labs/vox/run`` holds ``serve.port`` / ``serve.token``.
 # ---------------------------------------------------------------------------
-
-
-def _run_dir() -> Path:
-    """Return ``~/.punt-labs/vox/run`` — holds ``serve.port`` / ``serve.token``."""
-    return _user_run_dir()
 
 
 def read_port_file() -> int | None:
     """Read the daemon port from the port file. Returns None if missing."""
-    port_file = _run_dir() / "serve.port"
+    port_file = _user_run_dir() / "serve.port"
     try:
         return int(port_file.read_text().strip())
     except (FileNotFoundError, ValueError, OSError):
@@ -97,7 +92,7 @@ def read_port_file() -> int | None:
 
 def read_token_file() -> str | None:
     """Read the daemon auth token. Returns None if missing."""
-    token_file = _run_dir() / "serve.token"
+    token_file = _user_run_dir() / "serve.token"
     try:
         return token_file.read_text().strip()
     except (FileNotFoundError, OSError):
@@ -394,115 +389,6 @@ class VoxClient:
     async def health(self) -> dict[str, object]:
         """Check daemon health."""
         return await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
-
-    async def music(
-        self,
-        mode: str,
-        *,
-        style: str | None = None,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-        name: str | None = None,
-        prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
-        """Start or stop music playback.
-
-        On ``"on"``, forwards *style*, *vibe*, *vibe_tags*, *owner_id*, *name*,
-        and the agent-authored *prompts* (base + one variation per pool slot) to
-        voxd; on ``"off"`` only *owner_id* is sent.
-        """
-        if mode not in ("on", "off"):
-            err = f"invalid music mode: {mode!r} (expected 'on' or 'off')"
-            raise ValueError(err)
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        if mode == "on":
-            msg: dict[str, object] = {
-                "type": "music_on",
-                "id": request_id,
-                "owner_id": effective_owner,
-            }
-            if style is not None:
-                msg["style"] = style
-            if vibe is not None:
-                msg["vibe"] = vibe
-            if vibe_tags is not None:
-                msg["vibe_tags"] = vibe_tags
-            if name is not None:
-                msg["name"] = name
-            if prompts is not None:
-                msg["base_prompt"] = prompts.base
-                msg["variations"] = list(prompts.variations)
-        else:
-            msg = {
-                "type": "music_off",
-                "id": request_id,
-                "owner_id": effective_owner,
-            }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-    async def music_play(
-        self,
-        name: str,
-        *,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Replay a saved track by name."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_play",
-            "id": request_id,
-            "name": name,
-            "owner_id": effective_owner,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-    async def music_list(self) -> dict[str, Any]:
-        """List saved music tracks."""
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_list",
-            "id": request_id,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-    async def music_vibe(
-        self,
-        *,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Send a vibe update for the currently playing music."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_vibe",
-            "id": request_id,
-            "owner_id": effective_owner,
-        }
-        if vibe is not None:
-            msg["vibe"] = vibe
-        if vibe_tags is not None:
-            msg["vibe_tags"] = vibe_tags
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-
-    async def music_next(
-        self,
-        *,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Skip to the next generated track."""
-        effective_owner = owner_id if owner_id is not None else self._default_owner_id
-        request_id = uuid.uuid4().hex[:12]
-        msg: dict[str, object] = {
-            "type": "music_next",
-            "id": request_id,
-            "owner_id": effective_owner,
-        }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 

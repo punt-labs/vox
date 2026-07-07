@@ -52,18 +52,29 @@ class VoxClientSync:
         return VoxClient(host=self._host, port=self._port, token=self._token)
 
     def _run(self, coro: Any) -> Any:
-        """Run an async coroutine synchronously."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        """Run an async coroutine synchronously.
 
-        if loop is not None and loop.is_running():
-            # Already inside an event loop (e.g., MCP server context).
-            # Create a new loop in a thread.
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result()
+        When the caller is already inside a running event loop (e.g. the MCP
+        server), ``asyncio.run`` would raise, so the coroutine is driven on a
+        fresh loop in a worker thread instead.
+        """
+        if self._loop_is_running():
+            return self._run_in_thread(coro)
         return asyncio.run(coro)
+
+    @staticmethod
+    def _loop_is_running() -> bool:
+        """Return True when called from within a running event loop."""
+        try:
+            return asyncio.get_running_loop().is_running()
+        except RuntimeError:
+            return False
+
+    @staticmethod
+    def _run_in_thread(coro: Any) -> Any:
+        """Drive *coro* to completion on a fresh loop in a worker thread."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
 
     async def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Connect, call method, close."""
@@ -104,59 +115,6 @@ class VoxClientSync:
     def health(self) -> dict[str, object]:
         """Check daemon health."""
         return self._run(self._call("health"))  # type: ignore[no-any-return]
-
-    def music(
-        self,
-        mode: str,
-        *,
-        style: str | None = None,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-        name: str | None = None,
-        prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
-        """Start or stop music playback (legacy owner-gated wire; see program_*)."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call(
-                "music",
-                mode,
-                style=style,
-                vibe=vibe,
-                vibe_tags=vibe_tags,
-                owner_id=owner_id,
-                name=name,
-                prompts=prompts,
-            )
-        )
-
-    def music_play(self, name: str, *, owner_id: str | None = None) -> dict[str, Any]:
-        """Replay a saved track by name (legacy wire)."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call("music_play", name, owner_id=owner_id)
-        )
-
-    def music_list(self) -> dict[str, Any]:
-        """List saved music tracks (legacy wire)."""
-        return self._run(self._call("music_list"))  # type: ignore[no-any-return]
-
-    def music_vibe(
-        self,
-        *,
-        vibe: str | None = None,
-        vibe_tags: str | None = None,
-        owner_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Send a vibe update for the currently playing music (legacy wire)."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call("music_vibe", vibe=vibe, vibe_tags=vibe_tags, owner_id=owner_id)
-        )
-
-    def music_next(self, *, owner_id: str | None = None) -> dict[str, Any]:
-        """Skip to the next generated track (legacy wire)."""
-        return self._run(  # type: ignore[no-any-return]
-            self._call("music_next", owner_id=owner_id)
-        )
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
