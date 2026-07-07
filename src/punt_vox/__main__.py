@@ -679,38 +679,6 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
-# migrate-audio — move saved audio from ~/vox-output to ~/Music/vox
-# ---------------------------------------------------------------------------
-
-
-@app.command("migrate-audio")
-def migrate_audio_cmd(
-    execute: Annotated[  # noqa: FBT002 -- typer CLI requires bool default
-        bool, typer.Option("--execute", help="Actually move files.")
-    ] = False,
-    source: Annotated[
-        Path | None, typer.Option("--source", help="Source directory.")
-    ] = None,
-    dest: Annotated[
-        Path | None, typer.Option("--dest", help="Destination directory.")
-    ] = None,
-) -> None:
-    """Migrate saved audio from ~/vox-output to ~/Music/vox."""
-    from punt_vox.audio_migration import AudioMigration
-
-    src_dir = source or (Path.home() / "vox-output")
-    dst_dir = dest or default_output_dir()
-    migration = AudioMigration(src_dir, dst_dir)
-
-    if not migration.scan():
-        return
-    if execute:
-        migration.execute()
-    else:
-        migration.preview()
-
-
-# ---------------------------------------------------------------------------
 # install / uninstall (Claude Code marketplace)
 # ---------------------------------------------------------------------------
 
