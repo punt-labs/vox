@@ -20,6 +20,7 @@ import websockets
 import websockets.asyncio.client
 
 from punt_vox.client_env import DaemonEnv
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.types_synthesis import SynthesisSpec
@@ -63,19 +64,6 @@ _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
 
 # ---------------------------------------------------------------------------
-# Errors
-# ---------------------------------------------------------------------------
-
-
-class VoxdConnectionError(Exception):
-    """Raised when the client cannot connect to voxd."""
-
-
-class VoxdProtocolError(Exception):
-    """Raised when voxd returns an unexpected response."""
-
-
-# ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
 # ``~/.punt-labs/vox/run`` holds ``serve.port`` / ``serve.token``.
 # ---------------------------------------------------------------------------
@@ -100,15 +88,19 @@ def read_token_file() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Async client
+# Transport — owns the WebSocket connection and the wire I/O primitives.
 # ---------------------------------------------------------------------------
 
 
-class VoxClient:
-    """Async WebSocket client for voxd."""
+class _VoxdTransport:
+    """Own the voxd WebSocket: URI resolution, connect/close, send/recv.
+
+    Split out of :class:`VoxClient` so the transport (connection lifecycle
+    and framing) and the RPC surface (synthesize, program, ...) are two
+    single-purpose objects rather than one class doing both jobs.
+    """
 
     __slots__ = (
-        "_default_owner_id",
         "_explicit_port",
         "_explicit_token",
         "_host",
@@ -123,13 +115,12 @@ class VoxClient:
     _port: int | None
     _token: str | None
     _ws: websockets.asyncio.client.ClientConnection | None
-    _default_owner_id: str
 
     def __new__(
         cls,
-        host: str | None = None,
-        port: int | None = None,
-        token: str | None = None,
+        host: str | None,
+        port: int | None,
+        token: str | None,
     ) -> Self:
         self = super().__new__(cls)
         self._host = host if host is not None else DaemonEnv.host()
@@ -138,10 +129,7 @@ class VoxClient:
         self._port = port
         self._token = token
         self._ws = None
-        self._default_owner_id = uuid.uuid4().hex
         return self
-
-    # -- connection lifecycle ------------------------------------------------
 
     def _resolve_port(self) -> int:
         """Return the port, reading from file if needed."""
@@ -215,9 +203,7 @@ class VoxClient:
             raise VoxdConnectionError(msg)
         return ws
 
-    # -- request helpers -----------------------------------------------------
-
-    async def _send_and_recv(
+    async def send_and_recv(
         self,
         msg: dict[str, object],
         *,
@@ -238,7 +224,7 @@ class VoxClient:
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
         return resp
 
-    async def _send_and_drain(
+    async def send_and_drain(
         self,
         msg: dict[str, object],
         *,
@@ -287,12 +273,45 @@ class VoxClient:
                 # Server will still send terminal_type (e.g., 'done' after
                 # 'playing'). Close the connection so that stale message
                 # cannot be consumed by the next request on a reused
-                # VoxClient connection. Suppress close errors — the
-                # connection may already be gone, but the audio is queued.
+                # connection. Suppress close errors — the connection may
+                # already be gone, but the audio is queued.
                 with contextlib.suppress(Exception):
                     await ws.close()
                 self._ws = None
                 return responses
+
+
+# ---------------------------------------------------------------------------
+# Async client
+# ---------------------------------------------------------------------------
+
+
+class VoxClient:
+    """Async RPC client for voxd, composing a :class:`_VoxdTransport`."""
+
+    __slots__ = ("_transport",)
+
+    _transport: _VoxdTransport
+
+    def __new__(
+        cls,
+        host: str | None = None,
+        port: int | None = None,
+        token: str | None = None,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._transport = _VoxdTransport(host, port, token)
+        return self
+
+    # -- connection lifecycle ------------------------------------------------
+
+    async def connect(self) -> None:
+        """Connect to voxd WebSocket. Call once before sending messages."""
+        await self._transport.connect()
+
+    async def close(self) -> None:
+        """Close the WebSocket connection."""
+        await self._transport.close()
 
     # -- public API ----------------------------------------------------------
 
@@ -319,7 +338,7 @@ class VoxClient:
         if once is not None:
             msg["once"] = once
 
-        responses = await self._send_and_drain(
+        responses = await self._transport.send_and_drain(
             msg,
             timeout=_TIMEOUT_SYNTHESIS,
             terminal_type="done",
@@ -349,7 +368,7 @@ class VoxClient:
     async def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
         msg: dict[str, object] = {"type": "chime", "signal": signal}
-        await self._send_and_drain(
+        await self._transport.send_and_drain(
             msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
         )
 
@@ -366,7 +385,7 @@ class VoxClient:
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
 
-        resp = await self._send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
         if resp.get("type") != "audio":
             raise VoxdProtocolError(
                 f"Expected 'audio' response, got '{resp.get('type')}'"
@@ -382,13 +401,15 @@ class VoxClient:
         msg: dict[str, object] = {"type": "voices"}
         if provider is not None:
             msg["provider"] = provider
-        resp = await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
         voice_list: list[str] = resp.get("voices", [])
         return voice_list
 
     async def health(self) -> dict[str, object]:
         """Check daemon health."""
-        return await self._send_and_recv({"type": "health"}, timeout=_TIMEOUT_SHORT)
+        return await self._transport.send_and_recv(
+            {"type": "health"}, timeout=_TIMEOUT_SHORT
+        )
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
@@ -404,7 +425,7 @@ class VoxClient:
             "id": uuid.uuid4().hex[:12],
             **fields,
         }
-        return await self._send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+        return await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
     async def program_status(self) -> dict[str, Any]:
         """Return the daemon's authoritative Program status."""

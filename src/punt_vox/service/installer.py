@@ -11,10 +11,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, assert_never
 
-from punt_vox.client import (
-    VoxdConnectionError,
-    VoxdProtocolError,
-)
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import (
     ensure_user_dirs as _paths_ensure_user_dirs,
     keys_env_file as _paths_keys_env_file,

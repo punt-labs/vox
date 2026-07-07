@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 import pytest
 from _program_fakes import FakeProgramGateway
 
-from punt_vox.client import SynthesizeResult, VoxdConnectionError
+from punt_vox.client import SynthesizeResult
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import write_field, write_fields
 from punt_vox.program_control import ProgramSummary
 from punt_vox.resolve import (
@@ -549,7 +550,7 @@ class TestUnmute:
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.synthesize.side_effect = VoxdConnectionError("not running")
@@ -665,7 +666,7 @@ class TestRecord:
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.record.side_effect = VoxdConnectionError("not running")
@@ -871,7 +872,7 @@ class TestWho:
         assert result["all"] == ["samantha", "alex"]
 
     def test_voxd_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.voices.side_effect = VoxdConnectionError("not running")

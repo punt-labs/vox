@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.dirs import default_output_dir
 from punt_vox.paths import installed_version

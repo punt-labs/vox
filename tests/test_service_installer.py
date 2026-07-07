@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager

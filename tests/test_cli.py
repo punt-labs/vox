@@ -81,7 +81,7 @@ class TestUnmuteCommand:
         self,
         mock_client_cls: MagicMock,
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_instance = mock_client_cls.return_value
         mock_instance.synthesize.side_effect = VoxdConnectionError("not running")
@@ -887,7 +887,7 @@ class TestRecordCommand:
         mock_client_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
@@ -1127,7 +1127,7 @@ class TestStatusCommand:
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         import punt_vox.config as cfg
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
@@ -1235,7 +1235,7 @@ class TestDoctorCommand:
                 health_payload["daemon_version"] = daemon_version
             mock_client.health.return_value = health_payload
         else:
-            from punt_vox.client import VoxdConnectionError
+            from punt_vox.client_errors import VoxdConnectionError
 
             mock_client.health.side_effect = VoxdConnectionError("not running")
 
@@ -1782,7 +1782,7 @@ class TestDoctorCommand:
                 return "/usr/local/bin/uvx"
             return None
 
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_client = MagicMock()
         mock_client.health.side_effect = VoxdConnectionError("not running")
@@ -2038,7 +2038,7 @@ class TestGlobalFlags:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_quiet_suppresses_status(self, mock_client_cls: MagicMock) -> None:
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         mock_instance = mock_client_cls.return_value
         mock_instance.health.side_effect = VoxdConnectionError("not running")
@@ -2340,7 +2340,7 @@ class TestDaemonRestartCommand:
 
     def test_health_retry_before_success(self) -> None:
         """Daemon takes two poll cycles to come back — restart still succeeds."""
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         runner = CliRunner()
 
@@ -2493,7 +2493,7 @@ class TestDaemonRestartCommand:
 
     def test_daemon_never_comes_back_exits_with_log_hint(self) -> None:
         """Health never succeeds within the 5s window — exit 1 with log hint."""
-        from punt_vox.client import VoxdConnectionError
+        from punt_vox.client_errors import VoxdConnectionError
 
         runner = CliRunner()
 

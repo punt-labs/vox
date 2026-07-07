@@ -15,7 +15,7 @@ from typing import Annotated, NoReturn, Self, final
 import typer
 from websockets.exceptions import WebSocketException
 
-from punt_vox.client import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.dirs import default_output_dir, music_output_dir
