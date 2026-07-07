@@ -587,9 +587,9 @@
   "src/punt_vox/service/__init__.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.12,
+    "avg_params": 0.14,
     "max_complexity": 3.0,
-    "avg_complexity": 1.25,
+    "avg_complexity": 1.29,
     "module_size": 81.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
@@ -665,9 +665,9 @@
   "src/punt_vox/service/systemd.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.6,
+    "avg_params": 0.75,
     "max_complexity": 7.0,
-    "avg_complexity": 2.6,
+    "avg_complexity": 2.62,
     "module_size": 236.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,

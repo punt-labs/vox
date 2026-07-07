@@ -142,7 +142,6 @@ class ServiceInstaller:
 
     def _install_linux(self, user: str) -> bool:
         """Run the Linux install path.  Return True if running."""
-        self._systemd.cleanup_stale_user_unit()
         self._systemd.stop()
         self._process_mgr.ensure_port_free()
         self._systemd.install(user)
