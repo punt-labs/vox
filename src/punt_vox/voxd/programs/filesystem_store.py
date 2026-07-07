@@ -119,16 +119,33 @@ class FilesystemProgramStore:
         if manifest is None:
             msg = f"no saved program named {name.value!r}"
             raise LookupError(msg)
-        return FilesystemPartStore(self._root / name.value, manifest)
+        return FilesystemPartStore(self._program_dir(name), manifest)
 
     def create(self, manifest: ProgramManifest) -> FilesystemPartStore:
         """Create a new Program from ``manifest`` and return its PartStore."""
-        store = FilesystemPartStore(self._root / manifest.name.value, manifest)
+        store = FilesystemPartStore(self._program_dir(manifest.name), manifest)
         store.save_manifest()
         return store
 
+    def _program_dir(self, name: ProgramName) -> Path:
+        """Return the Program directory, refusing any path outside the root.
+
+        Defense-in-depth against path traversal (PY-EH-1): even if a name that
+        escapes the root reaches the store, the resolved directory must stay
+        under ``root``. ``ProgramName`` already blocks separators and dot
+        components, so this guard should never fire -- it exists to fail loud
+        if that value-object invariant is ever bypassed.
+        """
+        directory = self._root / name.value
+        root = self._root.resolve()
+        resolved = directory.resolve()
+        if resolved != root and root not in resolved.parents:
+            msg = f"program name escapes the programs root: {name.value!r}"
+            raise ValueError(msg)
+        return directory
+
     def _manifest_path(self, name: ProgramName) -> Path:
-        return self._root / name.value / _MANIFEST_NAME
+        return self._program_dir(name) / _MANIFEST_NAME
 
     @staticmethod
     def _read(path: Path) -> ProgramManifest:

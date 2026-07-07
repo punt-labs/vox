@@ -7,11 +7,17 @@ vocabulary shared across the domain.
 
 from __future__ import annotations
 
+import os
 from typing import Self
 
 from punt_vox.voxd.programs.format import Format
 
 __all__ = ["PartRef", "ProgramName", "Reason"]
+
+_SEPARATORS = frozenset(
+    sep for sep in ("/", "\\", os.sep, os.altsep) if sep is not None
+)
+_DOT_COMPONENTS = frozenset({".", ".."})
 
 
 class Reason:
@@ -56,8 +62,12 @@ class Reason:
 class ProgramName:
     """The addressable identity of a Program -- its on-disk directory name.
 
-    Non-empty and free of path separators: the name is a single directory
-    component resolved identically by CLI, MCP, and daemon (PY-CC-2).
+    A single, safe filesystem component resolved identically by CLI, MCP, and
+    daemon (PY-CC-2). The name becomes a directory under the Programs root
+    (``~/Music/vox/<name>/``), so construction rejects anything that could
+    escape that root: the empty string, a bare ``.`` or ``..``, and any value
+    bearing a path separator. Without the dot-component guard, a wire-supplied
+    ``".."`` would resolve writes *outside* the root -- a path-traversal escape.
     """
 
     __slots__ = ("_value",)
@@ -67,7 +77,10 @@ class ProgramName:
         if not value.strip():
             msg = "program name must be non-empty"
             raise ValueError(msg)
-        if "/" in value or "\\" in value:
+        if value in _DOT_COMPONENTS:
+            msg = f"program name must not be a dot path component: {value!r}"
+            raise ValueError(msg)
+        if any(sep in value for sep in _SEPARATORS):
             msg = f"program name must not contain path separators: {value!r}"
             raise ValueError(msg)
         self = super().__new__(cls)

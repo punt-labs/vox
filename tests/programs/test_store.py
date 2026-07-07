@@ -7,16 +7,42 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.voxd.programs import Part, ProgramName
+from punt_vox.voxd.programs import Format, Part, ProgramName
 from punt_vox.voxd.programs.filesystem_store import (
     FilesystemPartStore,
     FilesystemProgramStore,
 )
-from punt_vox.voxd.programs.manifest import PartEntry, ProgramManifest
+from punt_vox.voxd.programs.manifest import (
+    PartEntry,
+    PlaylistSubject,
+    ProgramManifest,
+)
 from punt_vox.voxd.programs.store import PartStore, ProgramStore
 
 ManifestFactory = Callable[..., ProgramManifest]
 EntryFactory = Callable[..., PartEntry]
+
+
+def _bypassed_name(value: str) -> ProgramName:
+    """Build a ProgramName carrying ``value`` without running its validation.
+
+    Simulates a future bypass of the value object's guard so the store's own
+    defense-in-depth check can be exercised on a traversal name the constructor
+    would otherwise reject.
+    """
+    name = object.__new__(ProgramName)
+    name._value = value  # forge a would-be-rejected identity
+    return name
+
+
+def _manifest_named(name: ProgramName) -> ProgramManifest:
+    """Build a minimal playlist manifest carrying ``name``."""
+    return ProgramManifest(
+        name=name,
+        fmt=Format.PLAYLIST,
+        subject=PlaylistSubject(vibe="ambient", style="techno"),
+        parts=(),
+    )
 
 
 class TestFilesystemProgramStore:
@@ -99,6 +125,35 @@ class TestFilesystemPartStore:
             FilesystemPartStore(tmp_path / "x", manifest_of("x")).directory
             == tmp_path / "x"
         )
+
+
+class TestPathTraversalGuard:
+    """The store refuses names that resolve outside the programs root."""
+
+    def test_valid_name_still_creates(
+        self, tmp_path: Path, manifest_of: ManifestFactory
+    ) -> None:
+        store = FilesystemProgramStore(tmp_path / "root")
+        store.create(manifest_of("trance", 1))
+        assert store.resolve(ProgramName("trance")) is not None
+
+    @pytest.mark.parametrize("escape", ["..", "../../etc"])
+    def test_create_rejects_traversal_name(self, tmp_path: Path, escape: str) -> None:
+        root = tmp_path / "root"
+        store = FilesystemProgramStore(root)
+        with pytest.raises(ValueError, match="escapes the programs root"):
+            store.create(_manifest_named(_bypassed_name(escape)))
+        assert not (tmp_path / "manifest.json").exists()
+
+    def test_resolve_rejects_traversal_name(self, tmp_path: Path) -> None:
+        store = FilesystemProgramStore(tmp_path / "root")
+        with pytest.raises(ValueError, match="escapes the programs root"):
+            store.resolve(_bypassed_name(".."))
+
+    def test_open_rejects_traversal_name(self, tmp_path: Path) -> None:
+        store = FilesystemProgramStore(tmp_path / "root")
+        with pytest.raises(ValueError, match="escapes the programs root"):
+            store.open(_bypassed_name(".."))
 
 
 class TestProtocolConformance:

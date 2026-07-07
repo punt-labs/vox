@@ -41,10 +41,15 @@ class TestProgramName:
         with pytest.raises(ValueError, match="non-empty"):
             ProgramName(blank)
 
-    @pytest.mark.parametrize("bad", ["a/b", "a\\b"])
+    @pytest.mark.parametrize("bad", ["a/b", "a\\b", "../evil", "sub/../escape"])
     def test_path_separator_rejected(self, bad: str) -> None:
         with pytest.raises(ValueError, match="path separators"):
             ProgramName(bad)
+
+    @pytest.mark.parametrize("dotted", [".", ".."])
+    def test_dot_component_rejected(self, dotted: str) -> None:
+        with pytest.raises(ValueError, match="dot path component"):
+            ProgramName(dotted)
 
     def test_value_equality_and_hash(self) -> None:
         assert ProgramName("a") == ProgramName("a")
