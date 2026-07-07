@@ -104,8 +104,10 @@ class ProgramStatus:
         playing = program.playing
         if playing is None:
             return None
-        ordered = program.pool
-        return NowPlaying(index=ordered.index(playing) + 1, of=len(ordered))
+        # "N" is the playing Part's intrinsic manifest index (MAJOR-1), not its
+        # ordinal position in the pool: a gap from a permanent fill failure (e.g.
+        # ready indices 1, 2, 4) must report "4", never the position-3 it holds.
+        return NowPlaying(index=playing.index, of=len(program.pool))
 
     @property
     def is_idle(self) -> bool:

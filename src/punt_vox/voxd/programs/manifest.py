@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Self, final
 
 from punt_vox.voxd.programs.format import Format
-from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
 from punt_vox.voxd.programs.part import Part, PartStatus
 from punt_vox.voxd.programs.wire import JsonObject
 
@@ -150,6 +150,22 @@ class ProgramManifest:
     def ready_parts(self) -> tuple[Part, ...]:
         """Return the domain Parts for the ready entries, ordered by index."""
         return tuple(entry.as_part() for entry in self._parts if entry.is_ready)
+
+    def resolve_part(self, ref: PartRef) -> Part:
+        """Return the ready Part whose intrinsic index matches ``ref``, else raise.
+
+        Matches on the intrinsic manifest index (MAJOR-1), never list position:
+        with a gap from a permanent fill failure (ready indices 1, 2, 4),
+        ``playlist:4`` finds the index-4 Part, not the fourth pool slot. An
+        unmatched index raises ``ValueError`` naming it and the ready indices.
+        """
+        ready = self.ready_parts()
+        for part in ready:
+            if part.index == ref.index:
+                return part
+        available = ", ".join(str(part.index) for part in ready)
+        msg = f"{self._name.value!r} has no part {ref.index}; ready parts: {available}"
+        raise ValueError(msg)
 
     def next_index(self) -> int:
         """Return the 1-based index the next recorded Part will take."""

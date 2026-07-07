@@ -154,11 +154,7 @@ class MusicCli:
             manifest = store.open(ProgramName(name)).manifest()
             if ref.format is not manifest.format:
                 raise ValueError(f"{name} is not a {ref.format.value} program")
-            ready = manifest.ready_parts()
-            if not 1 <= ref.index <= len(ready):
-                raise ValueError(
-                    f"{name} has {len(ready)} parts; {ref.index} is out of range"
-                )
+            manifest.resolve_part(ref)  # validate by intrinsic index, not position
         except (ValueError, LookupError) as exc:
             self._fail(str(exc))
         return ref

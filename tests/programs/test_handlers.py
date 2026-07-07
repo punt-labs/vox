@@ -126,7 +126,7 @@ class TestMutatingHandlers:
             PlayHandler(_service(tmp_path)), {"id": "3", "name": "saved", "part": 9}
         )
         assert reply["type"] == "error"
-        assert "out of range" in str(reply["message"])
+        assert "no part 9" in str(reply["message"])
 
     async def test_play_missing_name_is_an_error(self, tmp_path: Path) -> None:
         reply = await _reply(PlayHandler(_service(tmp_path)), {"id": "3"})

@@ -68,6 +68,24 @@ def test_playing_reports_part_n_of_m() -> None:
     assert 1 <= status.now_playing.index <= status.now_playing.of
 
 
+def test_now_playing_uses_intrinsic_index_across_a_gap() -> None:
+    """A gap from a permanent fill failure keeps intrinsic ``part N`` (MAJOR-1).
+
+    Ready indices 1, 2, 4 (index 3 failed) with the index-4 Part playing must
+    report ``index == 4`` -- its intrinsic manifest index -- never the ordinal
+    position 3 it holds in the pool, and ``of == 3`` (the ready count).
+    """
+    pool = frozenset({Part("id001", 1), Part("id002", 2), Part("id004", 4)})
+    program = Program(ProgramState.restored(Format.PLAYLIST, pool), AvoidRepeatPolicy())
+    program.start_from_disk(Part("id004", 4))
+
+    status = ProgramStatus.of(program, ProgramName("gapped"))
+
+    assert status.now_playing is not None
+    assert status.now_playing.index == 4  # intrinsic, not the position-3 it holds
+    assert status.now_playing.of == 3
+
+
 def test_both_failure_surfaces_present_and_distinct() -> None:
     """A per-Part failure surfaces in failed_parts while the program plays on."""
     program = Program(ProgramState.initial(), AvoidRepeatPolicy())

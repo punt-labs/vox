@@ -82,13 +82,52 @@ class TestReplay:
 
     def test_play_out_of_range_part_raises(self, tmp_path: Path) -> None:
         _seed(tmp_path, "saved", 1, 2)
-        with pytest.raises(ValueError, match="out of range"):
+        with pytest.raises(ValueError, match="no part 9"):
             _service(tmp_path).play(ProgramName("saved"), PartRef(Format.PLAYLIST, 9))
 
     def test_play_program_with_no_ready_parts_raises(self, tmp_path: Path) -> None:
         _seed(tmp_path, "empty")  # no parts
         with pytest.raises(ValueError, match="no ready parts"):
             _service(tmp_path).play(ProgramName("empty"), None)
+
+
+class TestGappedReplay:
+    """Address ``playlist:N`` by intrinsic Part index, never list position (PR #299).
+
+    A permanent fill failure leaves a gap in the ready set (indices 1, 2, 4 with
+    index 3 failed), so an addressed part's intrinsic index and its ordinal
+    position in the pool diverge (MAJOR-1).
+    """
+
+    async def test_play_resolves_intrinsic_index_across_gap(
+        self, tmp_path: Path
+    ) -> None:
+        _seed(tmp_path, "gapped", 1, 2, 4)
+        service = _service(tmp_path)
+        service.play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 4))
+        await service.run_once()
+        now = service.status().now_playing
+        assert now is not None
+        assert now.index == 4  # intrinsic index 4, not the position-3 it holds
+
+    async def test_play_resolves_first_intrinsic_index(self, tmp_path: Path) -> None:
+        _seed(tmp_path, "gapped", 1, 2, 4)
+        service = _service(tmp_path)
+        service.play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 1))
+        await service.run_once()
+        now = service.status().now_playing
+        assert now is not None
+        assert now.index == 1
+
+    def test_play_absent_gap_index_raises(self, tmp_path: Path) -> None:
+        _seed(tmp_path, "gapped", 1, 2, 4)
+        with pytest.raises(ValueError, match="no part 3"):
+            _service(tmp_path).play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 3))
+
+    def test_play_index_beyond_pool_raises(self, tmp_path: Path) -> None:
+        _seed(tmp_path, "gapped", 1, 2, 4)
+        with pytest.raises(ValueError, match="no part 9"):
+            _service(tmp_path).play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 9))
 
 
 class TestConsumeControls:

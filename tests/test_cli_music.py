@@ -81,6 +81,27 @@ def _save(root: Path, name: str, ready: int, failed: int = 0) -> None:
     FilesystemProgramStore(root).create(manifest)
 
 
+def _save_gapped(root: Path, name: str) -> None:
+    """Save a program whose ready indices are 1, 2, 4 (index 3 permanently failed).
+
+    The gap makes intrinsic index and pool position diverge, so ``playlist:4``
+    must resolve while ``playlist:3`` must be rejected (PR #299, MAJOR-1).
+    """
+    parts = (
+        PartEntry(index=1, file="001.mp3", status=PartStatus.READY, duration_ms=120),
+        PartEntry(index=2, file="002.mp3", status=PartStatus.READY, duration_ms=120),
+        PartEntry(index=3, file="003.mp3", status=PartStatus.FAILED, reason="bad"),
+        PartEntry(index=4, file="004.mp3", status=PartStatus.READY, duration_ms=120),
+    )
+    manifest = ProgramManifest(
+        name=ProgramName(name),
+        fmt=Format.PLAYLIST,
+        subject=PlaylistSubject(vibe="ambient", style="techno"),
+        parts=parts,
+    )
+    FilesystemProgramStore(root).create(manifest)
+
+
 def _emitted(formatter: MagicMock) -> tuple[object, str]:
     payload, text = formatter.emit.call_args.args
     return payload, text
@@ -148,6 +169,28 @@ def test_play_out_of_range_is_clean_error(_programs_dir: Path) -> None:
     with pytest.raises(typer.Exit):
         cli.play("ambient_techno", "playlist:5")
     assert fake.calls == []  # rejected before any transition (finding #7)
+
+
+def test_play_resolves_intrinsic_index_across_gap(_programs_dir: Path) -> None:
+    """``playlist:4`` resolves to intrinsic index 4 across a gap, not position 3."""
+    _save_gapped(_programs_dir, "gapped")
+    fake = FakeProgramGateway()
+    cli, _ = _cli(fake)
+
+    cli.play("gapped", "playlist:4")
+
+    assert fake.calls[0].part == 4  # intrinsic index 4, not the position-3 it holds
+
+
+def test_play_absent_gap_index_is_clean_error(_programs_dir: Path) -> None:
+    """``playlist:3`` (the failed index) is rejected before any transition (#7)."""
+    _save_gapped(_programs_dir, "gapped")
+    fake = FakeProgramGateway()
+    cli, _ = _cli(fake)
+
+    with pytest.raises(typer.Exit):
+        cli.play("gapped", "playlist:3")
+    assert fake.calls == []
 
 
 def test_play_malformed_part_is_clean_error(_programs_dir: Path) -> None:

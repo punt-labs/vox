@@ -167,7 +167,7 @@ class ProgramService:
         if not ready:
             msg = f"{name.value!r} has no ready parts to play"
             raise ValueError(msg)
-        target = self._target_in(ready, part)
+        target = ready[0] if part is None else manifest.resolve_part(part)
         active = ActiveProgram(
             name=name,
             store=self._store.open(name),
@@ -242,13 +242,3 @@ class ProgramService:
         flattened here -- the raw variation clause survives to title the Part.
         """
         return prompts if prompts is not None else PromptSet.fallback(style, "")
-
-    @staticmethod
-    def _target_in(ready: tuple[Part, ...], part: PartRef | None) -> Part:
-        """Resolve the cold-start target Part, raising on an out-of-range index."""
-        if part is None:
-            return ready[0]
-        if not 1 <= part.index <= len(ready):
-            msg = f"playlist has {len(ready)} parts; {part.index} is out of range"
-            raise ValueError(msg)
-        return ready[part.index - 1]
