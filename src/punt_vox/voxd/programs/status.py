@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.voxd.programs.format import Format
 from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.mode import Mode
+from punt_vox.voxd.programs.playback_health import PlaybackFault
 from punt_vox.voxd.programs.status_views import (
     FailedPartView,
     GenerationStatus,
@@ -56,6 +57,9 @@ class ProgramStatus:
     name: ProgramName | None = None  # None means the daemon is idle (no active Program)
     now_playing: NowPlaying | None = None  # None when nothing is playing
     failed_parts: tuple[FailedPartView, ...] = field(default_factory=tuple)
+    # None means the player is healthy; a fault means a Part could not be spawned
+    # (missing afplay/ffplay, or an OS limit) -- observable, not a Program state.
+    playback_error: PlaybackFault | None = None
 
     @classmethod
     def idle(cls) -> Self:
@@ -63,13 +67,19 @@ class ProgramStatus:
         return cls(format=Format.PLAYLIST, mode=Mode.OFF, generation=_NO_GENERATION)
 
     @classmethod
-    def of(cls, program: Program, name: ProgramName | None) -> Self:
+    def of(
+        cls,
+        program: Program,
+        name: ProgramName | None,
+        playback_error: PlaybackFault | None = None,
+    ) -> Self:
         """Assemble the status of an active ``program`` (the status handler).
 
         Reads the Program's observations plus the active manifest's ``name`` --
-        the only piece the pure domain does not carry. Both failure surfaces are
-        populated: the program-level error from the state, and the per-Part
-        failures from ``failed_parts``.
+        the only piece the pure domain does not carry -- and the daemon's live
+        ``playback_error`` (a player-spawn fault, orthogonal to Program state).
+        All three failure surfaces are populated: the program-level error from the
+        state, the per-Part failures from ``failed_parts``, and the playback fault.
         """
         state = program.state
         error = None if state.last_error is None else str(state.last_error)
@@ -85,6 +95,7 @@ class ProgramStatus:
                 FailedPartView(index=part.index, reason=str(reason))
                 for part, reason in state.failed_parts.ordered()
             ),
+            playback_error=playback_error,
         )
 
     @staticmethod
@@ -116,6 +127,9 @@ class ProgramStatus:
             else self.now_playing.to_dict(),
             "generation": self.generation.to_dict(),
             "failed_parts": [view.to_dict() for view in self.failed_parts],
+            "playback_error": None
+            if self.playback_error is None
+            else self.playback_error.to_dict(),
         }
         if self.name is not None:
             record["name"] = self.name.value
@@ -125,6 +139,7 @@ class ProgramStatus:
     def from_wire(cls, obj: JsonObject) -> Self:
         """Build a status from a wire object, raising on a malformed record."""
         now = obj.opt_object("now_playing")
+        fault = obj.opt_object("playback_error")
         return cls(
             format=Format(obj.require_str("format")),
             mode=Mode(obj.require_str("mode")),
@@ -135,6 +150,7 @@ class ProgramStatus:
                 FailedPartView.from_wire(JsonObject.coerce(item, "status.failed_parts"))
                 for item in obj.require_list("failed_parts")
             ),
+            playback_error=None if fault is None else PlaybackFault.from_wire(fault),
         )
 
     @staticmethod

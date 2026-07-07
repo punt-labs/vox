@@ -28,7 +28,10 @@ from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.fill_signal import Produced
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.loop import ProgramLoop
+from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
+
+from .conftest import FakeSleeper
 
 if TYPE_CHECKING:
     import pytest
@@ -104,9 +107,11 @@ async def _settle() -> None:
 class _Harness:
     """A running channel consumer + loop, torn down together."""
 
-    __slots__ = ("_loop", "_serve", "channel", "player")
+    __slots__ = ("_loop", "_serve", "channel", "health", "player", "sleeper")
     channel: ControlChannel
     player: FakePlayer
+    health: PlaybackHealth
+    sleeper: FakeSleeper
     _serve: asyncio.Task[None]
     _loop: asyncio.Task[None]
 
@@ -114,7 +119,9 @@ class _Harness:
         self = super().__new__(cls)
         self.channel = ControlChannel(program)
         self.player = FakePlayer()
-        loop = ProgramLoop(self.channel, self.player)
+        self.health = PlaybackHealth()
+        self.sleeper = FakeSleeper()
+        loop = ProgramLoop(self.channel, self.player, self.sleeper, self.health)
         self._serve = asyncio.create_task(self.channel.serve())
         self._loop = asyncio.create_task(loop.run())
         return self
@@ -334,37 +341,19 @@ class _ErrThenBlockPlayer:
 
 
 class TestPlayerWaitError:
-    """F8: a raised player wait() is a player error, never a clean advance."""
+    """F8: a raised player wait() is a player error, never a clean advance.
 
-    async def test_player_errored_flags_a_raised_wait(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        async def _boom() -> int:
-            msg = "transport gone"
-            raise RuntimeError(msg)
-
-        task: asyncio.Task[int] = asyncio.ensure_future(_boom())
-        with contextlib.suppress(RuntimeError):
-            await task
-        with caplog.at_level(logging.ERROR):
-            errored = ProgramLoop._player_errored(task)
-        assert errored is True
-        assert any("player wait failed" in r.getMessage() for r in caplog.records)
-
-    async def test_player_errored_passes_a_clean_wait(self) -> None:
-        async def _clean() -> int:
-            return 0
-
-        task: asyncio.Task[int] = asyncio.ensure_future(_clean())
-        await task
-        assert ProgramLoop._player_errored(task) is False
+    The unit-level ``_player_errored`` assertions moved to ``test_interrupt_race``
+    with the extracted :class:`InterruptRace`; this end-to-end test proves the loop
+    still routes a raised ``wait`` through the race to a kill-and-replay.
+    """
 
     async def test_wait_error_kills_and_replays_without_advancing(
         self, rotating: Program, caplog: pytest.LogCaptureFixture
     ) -> None:
         player = _ErrThenBlockPlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player)
+        loop = ProgramLoop(channel, player, FakeSleeper(), PlaybackHealth())
         serve = asyncio.create_task(channel.serve())
         run = asyncio.create_task(loop.run())
         with caplog.at_level(logging.ERROR):
@@ -418,7 +407,7 @@ class TestLoopSurvivesAFailingStep:
     ) -> None:
         player = _FailFirstPlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player)
+        loop = ProgramLoop(channel, player, FakeSleeper(), PlaybackHealth())
         serve = asyncio.create_task(channel.serve())
         run = asyncio.create_task(loop.run())
         with caplog.at_level(logging.ERROR):
@@ -434,3 +423,96 @@ class TestLoopSurvivesAFailingStep:
         assert any(
             "unexpected error in a step" in r.getMessage() for r in caplog.records
         )
+
+
+@final
+class _AlwaysFailSpawnPlayer:
+    """Raise ``FileNotFoundError`` on every spawn -- a missing afplay/ffplay."""
+
+    __slots__ = ("parts",)
+    parts: list[Part]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.parts = []
+        return self
+
+    async def play(self, part: Part) -> FakeProcess:
+        msg = "afplay: No such file or directory"
+        raise FileNotFoundError(msg)
+
+
+@final
+class _FailSpawnOncePlayer:
+    """Raise ``OSError`` on the first spawn, then hand back a live process."""
+
+    __slots__ = ("_calls", "parts", "procs")
+    _calls: int
+    parts: list[Part]
+    procs: list[FakeProcess]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._calls = 0
+        self.parts = []
+        self.procs = []
+        return self
+
+    async def play(self, part: Part) -> FakeProcess:
+        self._calls += 1
+        if self._calls == 1:
+            msg = "EMFILE: too many open files"
+            raise OSError(msg)
+        self.parts.append(part)
+        proc = FakeProcess()
+        self.procs.append(proc)
+        return proc
+
+
+class TestSpawnFailure:
+    """Fix #2: a player spawn failure is observable and bounded, never a hot spin."""
+
+    async def test_spawn_failure_is_observable_and_backs_off(
+        self, rotating: Program, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        health = PlaybackHealth()
+        sleeper = FakeSleeper()
+        player = _AlwaysFailSpawnPlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player, sleeper, health)
+        with caplog.at_level(logging.ERROR):
+            run = asyncio.create_task(loop.run())
+            for _ in range(200):
+                if health.fault is not None and sleeper.sleeps:
+                    break
+                await asyncio.sleep(0)
+            run.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run
+        assert player.parts == []  # nothing became audible
+        fault = health.fault
+        assert fault is not None  # the failure is observable via status
+        playing = rotating.playing
+        assert playing is not None
+        assert fault.part_index == playing.index
+        assert "No such file" in fault.reason
+        assert sleeper.sleeps  # it backed off rather than spinning hot
+        assert any("player spawn failed" in r.getMessage() for r in caplog.records)
+
+    async def test_spawn_recovers_and_clears_health(self, rotating: Program) -> None:
+        health = PlaybackHealth()
+        sleeper = FakeSleeper()
+        player = _FailSpawnOncePlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player, sleeper, health)
+        run = asyncio.create_task(loop.run())
+        for _ in range(500):
+            if player.parts:  # a spawn finally succeeded
+                break
+            await asyncio.sleep(0)
+        run.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run
+        assert player.parts  # recovered and played after the failed spawn
+        assert health.fault is None  # the successful spawn cleared the fault
+        assert sleeper.sleeps  # it backed off before recovering

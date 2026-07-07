@@ -22,6 +22,7 @@ from punt_vox.voxd.programs import (
     ProgramStatus,
     Reason,
 )
+from punt_vox.voxd.programs.playback_health import PlaybackFault
 from punt_vox.voxd.programs.wire import JsonObject
 
 from .conftest import AvoidRepeatPolicy, build_rotating, make_manifest
@@ -113,6 +114,31 @@ def test_wire_round_trips(build: Callable[[], ProgramStatus]) -> None:
     restored = ProgramStatus.from_wire(JsonObject.coerce(original.to_dict(), "status"))
 
     assert restored == original
+
+
+def test_playback_error_surfaces_and_round_trips() -> None:
+    """A player spawn fault reaches a client via status, not a log (Fix #2)."""
+    program = build_rotating(AvoidRepeatPolicy())
+    fault = PlaybackFault(part_index=2, reason="afplay: No such file or directory")
+
+    original = ProgramStatus.of(program, ProgramName("ambient_techno"), fault)
+
+    assert original.playback_error == fault
+    restored = ProgramStatus.from_wire(JsonObject.coerce(original.to_dict(), "status"))
+    assert restored == original
+    assert restored.playback_error is not None
+    assert restored.playback_error.part_index == 2
+    assert "No such file" in restored.playback_error.reason
+
+
+def test_healthy_player_has_no_playback_error() -> None:
+    """Absent a spawn fault, status carries playback_error None (healthy contract)."""
+    program = build_rotating(AvoidRepeatPolicy())
+
+    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+
+    assert status.playback_error is None
+    assert status.to_dict()["playback_error"] is None
 
 
 def test_wire_round_trips_failed_parts() -> None:
