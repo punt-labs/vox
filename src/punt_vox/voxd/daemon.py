@@ -55,8 +55,6 @@ __all__ = [
     "build_app",
     "cli",
     "entrypoint",
-    "read_port_file",
-    "read_token_file",
 ]
 
 
@@ -308,9 +306,7 @@ class VoxDaemon:
         return VoxDaemon._starlette(health=hlth, router=router)
 
 
-# Module-level aliases for public API backward compatibility.
-read_port_file = VoxDaemon.read_port_file
-read_token_file = VoxDaemon.read_token_file
+# Public module API: the voxd console-script entrypoint and app factory.
 build_app = VoxDaemon.create_app
 entrypoint = VoxDaemon.entrypoint
 
