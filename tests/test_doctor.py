@@ -14,7 +14,6 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.doctor import (
     CheckResult,
     DoctorCheck,
-    _parse_user_unit_execstart_subcommand,
     format_results,
 )
 
@@ -282,54 +281,6 @@ class TestCheckClaudeDesktop:
         assert len(results) == 2
         assert results[1].passed is False
         assert "not registered" in results[1].message
-
-
-# ---------------------------------------------------------------------------
-# _parse_user_unit_execstart_subcommand
-# ---------------------------------------------------------------------------
-
-
-class TestParseExecStart:
-    def test_simple_unit(self, tmp_path: Path) -> None:
-        unit = tmp_path / "vox.service"
-        unit.write_text(
-            "[Service]\nExecStart=/home/j/.local/bin/vox serve --port 8421\n",
-            encoding="utf-8",
-        )
-        assert _parse_user_unit_execstart_subcommand(unit) == "serve"
-
-    def test_line_continuation(self, tmp_path: Path) -> None:
-        unit = tmp_path / "vox.service"
-        unit.write_text(
-            "[Service]\nExecStart=/home/j/.local/bin/vox \\\n    daemon --port 8421\n",
-            encoding="utf-8",
-        )
-        assert _parse_user_unit_execstart_subcommand(unit) == "daemon"
-
-    def test_missing_file(self, tmp_path: Path) -> None:
-        missing = tmp_path / "no.service"
-        assert _parse_user_unit_execstart_subcommand(missing) is None
-
-    def test_no_execstart(self, tmp_path: Path) -> None:
-        unit = tmp_path / "vox.service"
-        unit.write_text("[Service]\nType=simple\n", encoding="utf-8")
-        assert _parse_user_unit_execstart_subcommand(unit) is None
-
-    def test_binary_only_no_subcommand(self, tmp_path: Path) -> None:
-        unit = tmp_path / "vox.service"
-        unit.write_text(
-            "[Service]\nExecStart=/home/j/.local/bin/vox\n",
-            encoding="utf-8",
-        )
-        assert _parse_user_unit_execstart_subcommand(unit) is None
-
-    def test_exec_prefix_stripped(self, tmp_path: Path) -> None:
-        unit = tmp_path / "vox.service"
-        unit.write_text(
-            "[Service]\nExecStart=-/home/j/.local/bin/vox serve\n",
-            encoding="utf-8",
-        )
-        assert _parse_user_unit_execstart_subcommand(unit) == "serve"
 
 
 # ---------------------------------------------------------------------------

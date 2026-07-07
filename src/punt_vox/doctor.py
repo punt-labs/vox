@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shlex
 import shutil
 import sys
 from dataclasses import dataclass
@@ -83,9 +82,7 @@ class DoctorCheck:
         results.extend(self.check_espeak_fallback())
         results.extend(self.check_daemon_health())
         results.extend(self.check_env_overrides())
-        results.extend(self.check_legacy_output_dir())
         results.extend(self.check_music_dir())
-        results.extend(self.check_legacy_user_unit())
         results.append(self.check_uvx())
         results.extend(self.check_claude_desktop())
         results.extend(self.check_output_dir())
@@ -185,37 +182,6 @@ class DoctorCheck:
             return [_pass(f"Remote config: {', '.join(overrides)}")]
         return []
 
-    def check_legacy_output_dir(self) -> list[CheckResult]:
-        """Check for legacy ~/vox-output/ directory."""
-        legacy_output = Path.home() / "vox-output"
-        if not legacy_output.is_dir():
-            return []
-        try:
-            count = sum(1 for p in legacy_output.rglob("*") if p.is_file())
-        except OSError:
-            count = -1
-
-        if count > 0:
-            return [
-                _warn(
-                    f"Legacy audio: ~/vox-output contains {count} file(s)"
-                    " — run 'vox migrate-audio' to move to ~/Music/vox/"
-                )
-            ]
-        if count == 0:
-            return [
-                _warn(
-                    "Legacy audio: ~/vox-output exists but is empty"
-                    " — safe to remove: rm -rf ~/vox-output"
-                )
-            ]
-        return [
-            _warn(
-                "Legacy audio: ~/vox-output exists but is unreadable"
-                " — check permissions"
-            )
-        ]
-
     def check_music_dir(self) -> list[CheckResult]:
         """Check music directory existence."""
         from punt_vox.dirs import (
@@ -231,52 +197,6 @@ class DoctorCheck:
                 )
             ]
         return []
-
-    def check_legacy_user_unit(self) -> list[CheckResult]:
-        """Check for stale systemd user-level vox.service (Linux only)."""
-        from punt_vox.service import (
-            _legacy_user_unit_path,  # pyright: ignore[reportPrivateUsage]
-        )
-
-        legacy_unit = _legacy_user_unit_path()
-        if platform.system() != "Linux" or not legacy_unit.exists():
-            return []
-
-        referenced = _parse_user_unit_execstart_subcommand(legacy_unit)
-        valid = _valid_vox_subcommands()
-        quoted_legacy_unit = shlex.quote(str(legacy_unit))
-        remediation_command = (
-            "systemctl --user disable --now vox.service"
-            f" && rm {quoted_legacy_unit}"
-            " && systemctl --user daemon-reload"
-        )
-
-        if referenced is None:
-            return [
-                _fail(
-                    f"Legacy user unit: {legacy_unit} exists but ExecStart= is"
-                    " unparseable — run 'vox daemon install' to clean it up,"
-                    " or remove it manually:\n"
-                    f"  {remediation_command}"
-                )
-            ]
-        if referenced not in valid:
-            return [
-                _fail(
-                    f"Legacy user unit: {legacy_unit} references"
-                    f" 'vox {referenced}', which is not a current subcommand"
-                    " (this unit will crash-loop on the systemd restart schedule)."
-                    " Run 'vox daemon install' to clean it up, or remove it"
-                    " manually:\n"
-                    f"  {remediation_command}"
-                )
-            ]
-        return [
-            _pass(
-                f"Legacy user unit: {legacy_unit} references current"
-                f" 'vox {referenced}' subcommand"
-            )
-        ]
 
     def check_uvx(self) -> CheckResult:
         """Check for uvx binary."""
@@ -387,80 +307,6 @@ def claude_desktop_config_path() -> Path:
         / "Claude"
         / "claude_desktop_config.json"
     )
-
-
-def _valid_vox_subcommands() -> set[str]:
-    """Return the set of subcommand tokens the current CLI accepts.
-
-    Includes both leaf commands and subcommand groups so a unit that
-    references ``vox daemon`` or ``vox cache`` parses as valid.
-    """
-    # Lazy import to avoid circular dependency (doctor.py is imported
-    # by __main__.py which defines the app).
-    from punt_vox.__main__ import app
-
-    leaf_names: set[str] = set()
-    for command in app.registered_commands:
-        raw_name = command.callback.__name__ if command.callback else None
-        name = command.name or (raw_name.replace("_", "-") if raw_name else None)
-        if name:
-            leaf_names.add(name)
-    group_names = {g.name for g in app.registered_groups if g.name}
-    return leaf_names | group_names
-
-
-def _parse_user_unit_execstart_subcommand(unit_path: Path) -> str | None:
-    """Extract the first CLI subcommand token from a systemd unit file.
-
-    Reads the unit file, joins line continuations, finds the first
-    ``ExecStart=`` directive, shell-splits it, and returns the first
-    non-flag token after the binary path. Returns None when the file
-    is unreadable or unparseable.
-    """
-    try:
-        content = unit_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    # Join systemd line continuations (trailing backslash).
-    joined_lines: list[str] = []
-    buffer = ""
-    for raw in content.splitlines():
-        stripped = raw.rstrip()
-        if stripped.endswith("\\"):
-            buffer += stripped[:-1] + " "
-            continue
-        joined_lines.append(buffer + raw)
-        buffer = ""
-    if buffer:
-        joined_lines.append(buffer)
-
-    exec_line: str | None = None
-    for raw in joined_lines:
-        line = raw.strip()
-        if line.startswith("ExecStart="):
-            exec_line = line[len("ExecStart=") :].strip()
-            break
-
-    if not exec_line:
-        return None
-
-    # Strip systemd execution prefixes (-, @, +, !, !!).
-    while exec_line[:1] in {"-", "@", "+", "!"}:
-        exec_line = exec_line[1:].lstrip()
-
-    if not exec_line:
-        return None
-
-    try:
-        tokens = shlex.split(exec_line)
-    except ValueError:
-        return None
-
-    for token in tokens[1:]:
-        if not token.startswith("-"):
-            return token
-    return None
 
 
 def format_results(results: list[CheckResult]) -> tuple[dict[str, object], str]:
