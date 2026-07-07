@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
 from punt_vox.paths import ensure_user_dirs
+from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     DaemonConfig,
@@ -34,6 +35,7 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
@@ -171,9 +173,15 @@ class VoxDaemon:
 
     @staticmethod
     async def _cancel(task: asyncio.Task[None]) -> None:
-        """Cancel a background task and await its exit, swallowing the teardown."""
+        """Cancel a background task and await its exit, swallowing the teardown.
+
+        ``CancelledError`` is a ``BaseException`` (not ``Exception``) since 3.8, so
+        it must be suppressed explicitly -- otherwise the *expected* cancel of the
+        first task would propagate out of ``_lifespan``'s finally and skip every
+        remaining teardown step (leaking the writer, the fill, and the port file).
+        """
         task.cancel()
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
 
     @staticmethod
@@ -192,6 +200,17 @@ class VoxDaemon:
         from punt_vox.dirs import default_output_dir
 
         return default_output_dir() / "programs"
+
+    @staticmethod
+    def _build_programs() -> ProgramSubsystem:
+        """Build the Programs subsystem with the production ElevenLabs producer.
+
+        The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
+        drive the subsystem with a fake; the ElevenLabs default is applied here, at
+        the daemon composition root.
+        """
+        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
+        return ProgramSubsystem(VoxDaemon._programs_root(), producer)
 
     @staticmethod
     def _legacy_tracks_dir() -> Path:
@@ -279,7 +298,7 @@ class VoxDaemon:
         """
         pb = playback or PlaybackQueue()
         syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
-        progs = programs or ProgramSubsystem(VoxDaemon._programs_root())
+        progs = programs or VoxDaemon._build_programs()
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
@@ -340,7 +359,7 @@ def main(
 
     auth_token = daemon_cfg.read_or_create_token()
 
-    programs = ProgramSubsystem(VoxDaemon._programs_root())
+    programs = VoxDaemon._build_programs()
     playback = PlaybackQueue()
     synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
 
