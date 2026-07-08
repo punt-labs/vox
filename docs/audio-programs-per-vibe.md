@@ -44,7 +44,8 @@ folder tree.
   "id": "a3f1c9",
   "format": "playlist",
   "tags": { "style": "trance", "vibe": "calm", "name": null },
-  "created": "2026-07-08T02:14:07Z",
+  "created": "2026-07-08T02:14:07+00:00",
+  "prompt_fingerprint": "9f2a7c31",
   "parts": [
     { "index": 1,  "file": "001.mp3", "status": "ready", "duration_ms": 182000 },
     // …
@@ -53,12 +54,19 @@ folder tree.
 }
 ```
 
-`created` is a **tz-aware UTC** timestamp (ISO 8601 — note the trailing `Z`),
-serialized via `datetime.isoformat()` and parsed via `datetime.fromisoformat`. Being
-tz-aware end-to-end is load-bearing: a naive `datetime.now()` would make `newest`'s
-comparisons raise `TypeError` against an aware value (finding #6). It enables "resume
-the newest matching album." `name`, when present, is unique across albums (R5);
-`tags.name == null` means an unnamed, tag-addressed album.
+`created` is a **tz-aware UTC** timestamp serialized via `datetime.isoformat()`, which
+emits the numeric-offset form `+00:00` (e.g. `2026-07-08T02:14:07+00:00`) — *not* a
+trailing `Z` — and parsed back via `datetime.fromisoformat`, which yields a tz-aware
+value (F#3). Being tz-aware end-to-end is load-bearing: a naive `datetime.now()` would
+make `newest`'s comparisons raise `TypeError` against an aware value (finding #6). It
+enables "resume the newest matching album." `name`, when present, is unique across
+albums (R5); `tags.name == null` means an unnamed, tag-addressed album.
+
+`prompt_fingerprint` is a **stable hash of the authored prompt-set** (base prompt +
+the 12 variations) that produced the album — a hidden metadata field, *not* a
+user-facing `style`/`vibe` tag. It makes a pool self-identify which prompt-set it
+was generated from, so `/music on` can refuse to fill a pool with tracks authored
+from a different prompt-set (resolves vox-1uo5 — see below).
 
 ## Directory listing (the locked layout)
 
@@ -91,11 +99,52 @@ per-list disk scan. It is the sole object list / play / switch talk to. Queries:
 - `by_id(id)`, `by_name(name)` → one album
 - `by_tags(style?, vibe?)` → the set of matching albums, `created`-descending
 - `newest(style, vibe)` → the most recent matching album (for `/music on` resume)
+- `newest(style, vibe, fingerprint)` → the most recent match **whose prompt
+  fingerprint equals `fingerprint`** (the resolves-vox-1uo5 resume path)
+
+## Prompt fingerprint — one pool, one prompt-set (resolves vox-1uo5)
+
+**Problem (vox-1uo5).** An agent's authored prompt-set can change between sessions.
+Resuming "the newest `(style, vibe)` album" and filling it with tracks generated from
+a *different* prompt-set produces one pool that mixes old and new material — an
+incoherent album.
+
+**Fix (option (b), operator 2026-07-08).** Every album records a **prompt
+fingerprint**: a stable hash of the authored prompt-set (base prompt + the 12
+variations). `/music on` resolution matches the newest album with the same
+`(style, vibe)` **AND the same fingerprint**. If the incoming prompt-set does not
+match any pool's fingerprint, resolution **mints a NEW album (fresh id)** rather than
+filling into an existing one. A pool therefore always reflects exactly one coherent
+authored prompt-set — the old/new mix cannot occur, because different prompts resolve
+to a different album.
+
+**Interactions:**
+
+1. **Resume-vs-create.** The fingerprint joins `(style, vibe)` (and `name`) as a
+   `catalog.bind`/`turn_on` match key. A tag match with a *different* fingerprint is a
+   miss → mint fresh, not fill.
+2. **Storage.** The fingerprint is written to the manifest (`prompt_fingerprint`), so
+   a resumed album's stored fingerprint can be compared against the incoming
+   prompt-set's computed fingerprint.
+3. **Name-addressed resume still wins by name.** A `--name X` resume binds the album
+   named `X` **regardless of fingerprint** — a curated name is the handle. If the
+   incoming prompt-set differs from a resumed named album's stored fingerprint, the
+   design **keeps playing the named pool** (no warn, no forced regenerate): the user
+   named it, so the name governs. Documented here so the divergence from the tag path
+   is deliberate, not accidental.
 
 ## Playback: tag-filter → Selection → rotate
 
 Every selector is a tag filter over the catalog producing a **Selection** (an ordered
 track list). Single-match = one album; multi-match = a **union radio**.
+
+> **Ordered list vs. set (F#4).** The *implementation* carries a `Selection` as an
+> ordered `tuple[SelectedPart, ...]` for deterministic rotation, but the *Z model*
+> defines `Selection == ℙ PART` — a set, opaque membership. The ordering is an
+> implementation detail below the Z abstraction: the model reasons only over set
+> membership and cardinality (`playing ∈ selection`, no-immediate-repeat by
+> `#selection`), which the ordered tuple satisfies exactly. No model change — the
+> model stays a set; the tuple is the refinement that realizes it.
 
 | Query | Resolves to |
 |---|---|
@@ -208,8 +257,9 @@ client/present  program_gateway · client_gateway · program_control
 | Module | Type(s) | Responsibility |
 |---|---|---|
 | `voxd/programs/album_id.py` | `AlbumId` | A short unique hex id (`secrets.token_hex(3)`). Validates, parses, `__eq__`/`__hash__`. **`AlbumId.mint(taken)` owns the collision loop** — the id value-space is `AlbumId`'s, so the loop lives here and `Catalog.mint_id()` delegates to it (finding #8). |
+| `voxd/programs/prompt_fingerprint.py` | `PromptFingerprint` | A stable hash of the authored prompt-set (base prompt + the 12 variations). `PromptFingerprint.from_prompts(base, variations) -> PromptFingerprint` canonicalizes (order-stable join) then hashes (e.g. `sha256`, truncated hex); validates, parses, `__eq__`/`__hash__`. A frozen value — hidden album metadata, never a user-facing tag (vox-1uo5). The fingerprint value-space is this type's; `Catalog.bind`/`newest` compare `PromptFingerprint`, not raw strings. |
 | `voxd/programs/album_tags.py` | `AlbumTags`, `TagQuery` | `AlbumTags` = `style`, `vibe`, `name: str \| None`; `slug() -> str` (the `<style>--<vibe>` or curated-`name` Finder prefix), wire round-trip. **`TagQuery`** (`style`, `vibe`, `name` — each `str \| None`) owns `matches(tags: AlbumTags) -> bool`; it replaces the repeated `(str\|None, str\|None)` tuple across `by_tags`/`newest`/`by_name` (finding #7, PY-OO-7). **`AlbumTags.mint_unique_name(desired, taken)`** returns a name absent from `taken`, auto-suffixing `X`→`X1`/`X2`/… — the name-space mint parallel to `AlbumId.mint` (R5). The slug rule stays behaviour on the tags, not a free function. |
-| `voxd/programs/catalog.py` | `Catalog`, `Album` | `Album` = `(manifest, locator)` where **`locator` is opaque — the `AlbumId` or directory-name string, never a live `Path`** (finding #3; the store dereferences locator→`Path`). `Catalog` = in-memory index built once from `Album`s: `by_id`, `by_name` (0 or 1 — names unique), `by_tags(query)` newest-first, `newest(query)`, `add(album)`, `mint_id()` (→ `AlbumId.mint`). **Resolution lives here, not in the service** (finding #11): `bind(request) -> Album` (name→tags→mint) and `select(query) -> Selection`. The sole object list/play/switch consult. |
+| `voxd/programs/catalog.py` | `Catalog`, `Album` | `Album` = `(manifest, locator)` where **`locator` is opaque — the `AlbumId` or directory-name string, never a live `Path`** (finding #3; the store dereferences locator→`Path`). `Catalog` = in-memory index built once from `Album`s: `by_id`, `by_name` (0 or 1 — names unique), `by_tags(query)` newest-first, `newest(query)`, `add(album)`, `mint_id()` (→ `AlbumId.mint`). **Resolution lives here, not in the service** (finding #11): `bind(request) -> Album` (name→tags+fingerprint→mint) and `select(query) -> Selection`. `bind`'s tag path matches `newest(style, vibe, fingerprint)` — a `(style, vibe)` hit with a *different* `PromptFingerprint` is a miss, so it mints a fresh album rather than filling a pool with a foreign prompt-set (vox-1uo5). The `--name` path binds by name regardless of fingerprint (a named pool keeps playing). The sole object list/play/switch consult. |
 | `voxd/programs/selection.py` | `Selection`, `SelectedPart` | `SelectedPart` = `(part, locator)` — an **opaque locator** (the album's `AlbumId` or directory-name string, same discipline as `Part.identity`), **not a `Path`** (finding #3), so `selection.py` never imports `pathlib`. `Selection` = ordered `tuple[SelectedPart, ...]` from one or more albums, `from_albums(...)`, `__len__`, `__bool__`. |
 | `voxd/programs/selection_playback.py` | `SelectionPlayback` | Consume-only rotation cursor over a `Selection`: `playing`, `last_played`, `rotate()`, `wants_generation -> bool` (structurally `False`). **Anti-repeat is delegated to the injected `PlaybackPolicy.next_part` (`RotatePolicy`)** — the same strategy that backs `Program.rotate`, so "no immediate repeat" is defined once (finding #9). No cap, no fill, no generation, **no `locate`** (path resolution is the persistence seam's job, finding #2). The replay half of `PlaybackSource`. |
 | `voxd/programs/playback_source.py` | `PlaybackSource` (Protocol) | The narrowed structural interface the loop/channel animate: `playing -> Part \| None`, `rotate() -> None`, **`wants_generation -> bool`** (finding #1). No `filling`, no `locate` (finding #2). `Program` (adapted) returns `state.filling or mode is RETRYING` for `wants_generation`; `SelectionPlayback` returns `False`. |
@@ -219,11 +269,11 @@ client/present  program_gateway · client_gateway · program_control
 
 | Module | Change |
 |---|---|
-| `manifest.py` | Replace `subject: PlaylistSubject` with `id: AlbumId`, `tags: AlbumTags`, `created: datetime` (tz-aware UTC). **Delete `PlaylistSubject` outright** (no shim — PL-PP-1; its `(vibe, style)` role is subsumed by `AlbumTags`). `from_json` **stays total** (finding #5): it requires `id`/`tags`/`created` and raises on a malformed record (PY-EH-8) — the "raises only when the caller demands an album" clause is struck, because it is not expressible on a total `from_json`. Add **`ProgramManifest.from_wire(obj)`** so the store's `scan()` can peek `opt_str("id")` and skip idless legacy dirs *before* committing to a full parse. `created` round-trips as `datetime.isoformat()` / `datetime.fromisoformat`. Add **`ManifestDraft`** (`id`, `tags`, `parts` — no `created`): the store stamps `created` (see finding #6). Drop the `name: ProgramName` *identity* field. |
+| `manifest.py` | Replace `subject: PlaylistSubject` with `id: AlbumId`, `tags: AlbumTags`, `created: datetime` (tz-aware UTC), `prompt_fingerprint: PromptFingerprint` (vox-1uo5 — hidden metadata, round-trips as hex). **Delete `PlaylistSubject` outright** (no shim — PL-PP-1; its `(vibe, style)` role is subsumed by `AlbumTags`). `from_json` **stays total** (finding #5): it requires `id`/`tags`/`created` and raises on a malformed record (PY-EH-8) — the "raises only when the caller demands an album" clause is struck, because it is not expressible on a total `from_json`. Add **`ProgramManifest.from_wire(obj)`** so the store's `scan()` can peek `opt_str("id")` and skip idless legacy dirs *before* committing to a full parse. `created` round-trips as `datetime.isoformat()` / `datetime.fromisoformat`. Add **`ManifestDraft`** (`id`, `tags`, `prompt_fingerprint`, `parts` — no `created`): the store stamps `created` (see finding #6) and persists the caller-supplied fingerprint. Drop the `name: ProgramName` *identity* field. |
 | `identifiers.py` | Keep `ProgramName` but re-document it as **the on-disk directory component only** (`<slug>-<id>`) — the path-traversal guard is exactly what a derived dir name still needs. It is no longer a user-facing identity. `PartRef`, `Reason` unchanged. |
-| `store.py` (Protocol) | Replace name-addressed `list_programs`/`resolve`/`open(name)` with: `scan() -> tuple[Album, ...]` (startup catalog build, the only disk walk, skipping idless legacy dirs), `open(directory) -> PartStore`, `create(draft: ManifestDraft) -> PartStore`. **The store owns the clock** (finding #6): `create` stamps `created = datetime.now(UTC)` and writes the full manifest — the caller hands a `ManifestDraft`, never a `created` value. **`open`-guard invariant (finding #10):** `open` only ever receives directories originating from `scan()`/`create()` under root — a passed PY-EH-1 boundary — so no wire/CLI path can hand it a raw directory. `resolve(name)` is **deleted** (the coupling the spec names). |
-| `filesystem_store.py` | Implement the new protocol: `scan` globs `*/manifest.json`, **peeks `opt_str("id")` via `from_wire` and skips idless legacy dirs** (debug-logged, finding #5), pairing survivors with their directory into an `Album`. `create` composes `tags.slug() + "-" + id` via `ProgramName`, stamps `created = datetime.now(UTC)`, keeps the path guard, and uses **`mkdir(exist_ok=False)` as the second-line race guard** (finding #8 — `AlbumId.mint` is first-line). `_program_dir` takes a directory, not a name. It is the seam that **dereferences an opaque locator → `Path`** (finding #3). |
-| `service.py` | An **orchestrator, not an algorithm** (finding #11). Hold a `Catalog` built from `store.scan()` at construction. `turn_on(style, vibe, name, prompts)` → `catalog.bind(request) -> Album` → seed a `Program` → post `SwitchProgram`. New `replay(query)` → `catalog.select(query) -> Selection` → post `SwitchSelection`. The service **does not** accrete `_bind_album`/`_tags_for`/`_subject_for` — that resolution lives on `Catalog`/`AlbumTags`, so the service only seeds a source and posts a signal (god-object risk averted). The session vibe is recorded as the real `vibe` tag (move #1). |
+| `store.py` (Protocol) | Replace name-addressed `list_programs`/`resolve`/`open(name)` with: `scan() -> tuple[Album, ...]` (startup catalog build, the only disk walk, skipping idless legacy dirs), `open(directory) -> PartStore`, `create(draft: ManifestDraft) -> PartStore`. **The store owns the clock** (finding #6): `create` stamps `created = datetime.now(UTC)` and writes the full manifest — the caller hands a `ManifestDraft`, never a `created` value. **`open`-guard invariant (finding #10, hardened by F#1):** `open` only ever receives a scan/create-*validated* path — `scan()` resolves-and-contains-checks every candidate against the programs root (rejecting symlinks and escapes) and `create()` composes only a validated `<slug>-<id>` segment — so no wire/CLI path, and no symlinked child under root, can hand `open` a directory that resolves outside root. A passed PY-EH-1 boundary. `resolve(name)` is **deleted** (the coupling the spec names). |
+| `filesystem_store.py` | Implement the new protocol: `scan` globs `*/manifest.json`, **resolves each candidate directory (`Path.resolve()`) and confirms the resolved path is a real directory whose resolved path is contained under the programs root** — rejecting symlinks and any child that escapes root (F#1) — then **peeks `opt_str("id")` via `from_wire` and skips idless legacy dirs** (debug-logged, finding #5), pairing survivors with their directory into an `Album`. `create` composes only a validated single `tags.slug() + "-" + id` segment via `ProgramName`, stamps `created = datetime.now(UTC)`, keeps the path guard, and uses **`mkdir(exist_ok=False)` as the second-line race guard** (finding #8 — `AlbumId.mint` is first-line). `_program_dir` takes a directory, not a name. It is the seam that **dereferences an opaque locator → `Path`** (finding #3). |
+| `service.py` | An **orchestrator, not an algorithm** (finding #11). Hold a `Catalog` built from `store.scan()` at construction. `turn_on(style, vibe, name, prompts)` computes `PromptFingerprint.from_prompts(prompts)` and includes it in the bind request, then `catalog.bind(request) -> Album` → seed a `Program` → post `SwitchProgram`. New `replay(query)` → `catalog.select(query) -> Selection` → post `SwitchSelection`. The service **does not** accrete `_bind_album`/`_tags_for`/`_subject_for` — that resolution lives on `Catalog`/`AlbumTags`, so the service only seeds a source and posts a signal (god-object risk averted). The session vibe is recorded as the real `vibe` tag (move #1). |
 | `active_context.py` | `ActiveProgram` unchanged for generate. **`locate(part) -> Path` lives here, on the `active_context`/`PlayerDirectory` seam** (finding #2): the seam has two shapes — the generate context returns its single directory for any part; a selection locator resolves each `SelectedPart`'s opaque locator to a `Path` under root (via the store). The single writer swaps which shape is active alongside the source retarget. `active_directory() -> Path` widens to `locate(part) -> Path`. |
 | `control_channel.py` | `_program: Program` → `_source: PlaybackSource`; `program`/`retarget` generalise to `source`/`retarget(source)`. **`_apply_one` passes `self._source` to `signal.apply(source)`** (finding #4). Fill reconcile reads `source.wants_generation` (finding #1) — `False` for a Selection, so it cancels and idles with no special-casing. |
 | `fill_reconciler.py` | `reconcile(program)` → **`reconcile(source: PlaybackSource)`** reading `source.wants_generation` (finding #1). This preserves the load-bearing `OR mode is RETRYING` clause verbatim: `Program.wants_generation` returns `state.filling or mode is RETRYING`, so a transient backoff still keeps the retry engine running (the vox-ig52 stranded-retry fix). A bare `filling` would drop that clause. |
@@ -239,6 +289,36 @@ client/present  program_gateway · client_gateway · program_control
 | `program_gateway.py` / `client_gateway.py` | `start` carries `vibe`; `play`/`loop` → `select(SelectionRequest)`; `catalog` rows carry tags. |
 | `cli_music.py` | `list` renders tags (grouped by style/vibe); `play`/`loop` take `style`/`vibe`/`--name` and query via the gateway; **stop constructing `FilesystemProgramStore` client-side** — the daemon owns the catalog (layering fix, risk R2). |
 | `server.py` (`music` tool) | Resolve `vibe = _session.vibe` and pass `StartRequest(style, vibe, name, prompts)`. `music_play` → a select tool taking style/vibe/name. |
+
+### Signal behavior by active source (F#2)
+
+`ControlSignal.apply(source, /)` dispatches against whichever `PlaybackSource` the
+channel currently holds. The behavior splits into three categories — *user-intent*,
+*vibe-adaptive*, and *generate-internal* — and **only the generate-internal family is
+rejected-as-lost-race** against a `SelectionPlayback`. The user-intent signals are
+valid against *either* source; a `TurnOff` under replay is a stop, not a reject.
+
+| Signal | Category | vs. active `Program` | vs. active `SelectionPlayback` (replay) |
+|---|---|---|---|
+| `TurnOff` | user-intent | stops — retarget to no source / off | **stops** — retarget to off. Valid retarget, *not* a lost-race reject. |
+| `TurnOn` / `SwitchProgram` (enter/switch generate) | user-intent | (re)binds / retargets a `Program` | **switches to a `Program`** — retarget to generate mode. Valid. |
+| `Next` | user-intent | `Rotate` the pool | **`RadioRotate`** — advance the `Selection` cursor. Valid against either. |
+| `SwitchSelection` | user-intent | retarget to a `SelectionPlayback` | retarget to a new `SelectionPlayback`. Valid. |
+| `VibeStyleChange` | vibe-adaptive (auto) | swaps the bound album for the new `(style,vibe)` | **ignored — a deliberate `ΞSelectionPlayback` no-op.** Replay is consume-only with *no vibe-switch* (spec lock); a drifting session vibe must not abandon a curated Selection. Distinct from a lost-race reject — nothing is "lost," the signal simply does not apply to replay. |
+| fill outcomes (`Produced` / `RecoveringFillOutcome` / transient `FillSignal`) | generate-internal | apply to the `Program` | **lost-race no-op** — `isinstance(source, Program)` narrow fails; reject via `GuardViolationError` (INFO-logged, writer survives, finding #4). |
+
+The dividing line: **user-intent signals (`off`, `on`, `switch`, `next`) act through the
+`PlaybackSource` abstraction and are valid against either source** — they retarget the
+channel (`TurnOff` → off, `TurnOn`/`SwitchProgram` → a `Program`, `SwitchSelection` → a
+`SelectionPlayback`) or advance the cursor (`Next` → `RadioRotate`), never narrowing on
+the concrete type. **Generate-internal signals narrow `isinstance(source, Program)`** and
+reject as a lost race when the source is a `SelectionPlayback` — the bas7-class crash
+defense (finding #4). **`VibeStyleChange` is the lone third case**: it retargets a live
+`Program` but is a deliberate no-op against a `SelectionPlayback`, because replay carries
+no vibe adaptation. `ControlSignal.apply` therefore has exactly three shapes — retarget
+(user-intent), guard-disabled reject (generate-internal), guard-disabled no-op
+(`VibeStyleChange` under replay) — and each signal's `apply` narrows (or does not) per
+its row above.
 
 ### Invariant preservation
 
@@ -258,6 +338,11 @@ it. `TurnOn`, `VibeStyleChange`, `FillOk`, `filling ⟹ mode`, `failed ⟹ pool 
 - **`name` unique (R5).** No two albums share a `name`. `AlbumTags.mint_unique_name`
   auto-suffixes a colliding desired name at mint time, so `by_name(name)` returns 0
   or 1. Style/vibe stay non-unique.
+- **One pool, one prompt-set (vox-1uo5).** Every album stores a `PromptFingerprint`
+  of the prompt-set that authored it. `catalog.bind`'s tag path resumes only a pool
+  whose fingerprint equals the incoming prompt-set's; a `(style,vibe)` match with a
+  different fingerprint mints a fresh album. A pool therefore never mixes tracks from
+  two prompt-sets. (`--name` resume is exempt — a named pool is the handle.)
 - **A `Selection` never generates.** `SelectionPlayback` has no producer, no fill;
   `PlaybackSource.wants_generation` returns `False` structurally (finding #1).
 - **A stale generate outcome against a Selection is a no-op (finding #4).** A fill
@@ -277,9 +362,17 @@ it. `TurnOn`, `VibeStyleChange`, `FillOk`, `filling ⟹ mode`, `failed ⟹ pool 
 - **Catalog excludes legacy.** Idless dirs are skipped at the `scan()` boundary
   (`from_wire` peeks `opt_str("id")`), absent from every query, so a legacy
   `subject.vibe == style` dir can never satisfy `by_tags` (the spec's "never match").
-- **`open` is a trusted boundary (finding #10).** `open(directory)` only ever receives
-  directories originating from `scan()`/`create()` under root — a passed PY-EH-1
-  boundary; no wire/CLI path constructs a raw directory for it.
+- **`open` is a trusted boundary (finding #10, hardened by F#1).** `open(directory)`
+  only ever receives a scan/create-*validated* path: `scan()` resolves every candidate
+  (`Path.resolve()`) and confirms it is a real directory whose resolved path is
+  contained under the programs root — rejecting symlinks and escapes — and `create()`
+  composes only a validated `<slug>-<id>` single segment. The traversal defense is thus
+  "scan resolves-and-contains-checks every candidate; open only ever receives a
+  scan/create-validated path." The path-traversal guard the Phase-1 `ProgramName`
+  provided is **preserved by this containment check, not lost**, now that the directory
+  name is derived rather than user-supplied — a filesystem glob alone would let a
+  symlinked child resolve outside root, so the resolve-and-contain check is what
+  restores the guarantee. A passed PY-EH-1 boundary.
 
 ### Catalog build and legacy handling
 
@@ -295,11 +388,15 @@ vox (Finder-only, deletable by hand) — recommend *not* surfacing them in `list
 
 1. `server.music(mode="on")` reads `style` (arg, else persisted) and
    `vibe = _session.vibe` (current session mood), passes both in `StartRequest`.
-2. `service.turn_on(style, vibe, name, prompts)`:
-   - `name` present → `catalog.by_name(name)` (name overrides vibe).
-   - else `catalog.newest(style, vibe)` → the newest matching album if any.
-   - none → `catalog.mint_id()`, `store.create` a fresh `(style, vibe, name)`
-     album, `catalog.add`, then generate.
+2. `service.turn_on(style, vibe, name, prompts)` computes
+   `fingerprint = PromptFingerprint.from_prompts(prompts)`:
+   - `name` present → `catalog.by_name(name)` (name overrides vibe *and* fingerprint —
+     a named pool keeps playing regardless of prompt-set drift, vox-1uo5).
+   - else `catalog.newest(style, vibe, fingerprint)` → the newest album matching the
+     tags **and** the fingerprint, if any. A `(style, vibe)` hit with a *different*
+     fingerprint is a miss (vox-1uo5), so it falls through to mint.
+   - none → `catalog.mint_id()`, `store.create` a fresh `(style, vibe, name)` album
+     stamped with `fingerprint`, `catalog.add`, then generate.
 3. Seed a `Program` over the bound album's `ready_parts()`; post `SwitchProgram`.
    Full pool rotates from disk; partial resumes filling; empty generates — the
    unchanged activation classification.
@@ -316,9 +413,16 @@ happy + invalid + boundary + missing-dependency per PL-TT-3.
   names with spaces/slashes is filesystem-safe; wire round-trip.
   `mint_unique_name(desired, taken)` returns `desired` when free and `X1`/`X2` when
   taken (R5 auto-suffix).
+- **`prompt_fingerprint`** — `from_prompts` is stable (same prompt-set → same
+  fingerprint) and order-canonical; a changed base prompt or any changed variation
+  yields a different fingerprint; parse rejects malformed hex; equality/hash (vox-1uo5).
 - **`catalog`** — build from mixed manifests; `by_tags(query)` returns **many** albums
   sharing `(style,vibe)` newest-first; **`by_name` returns 0 or 1** (unique, R5);
-  `newest` picks the latest tz-aware `created`; `add` makes a new album queryable;
+  `newest` picks the latest tz-aware `created`; `newest(style, vibe, fingerprint)`
+  matches only the same-fingerprint pool, so a `(style,vibe)` hit with a foreign
+  fingerprint is a miss → `bind` mints fresh (vox-1uo5); `--name` resume binds by name
+  even when the incoming fingerprint differs (named pool keeps playing); `add` makes a
+  new album queryable;
   legacy (idless) dirs are excluded from every query; `bind`/`select` own resolution
   (finding #11) — `bind` resumes a named album or mints an auto-suffixed one on
   collision; `Album.locator` is opaque, never a `Path` (finding #3).
@@ -332,8 +436,8 @@ happy + invalid + boundary + missing-dependency per PL-TT-3.
   `SelectionPlayback` **rejects as `GuardViolationError` and mutates nothing** (no
   `AttributeError`); the writer survives (regression for the bas7-class crash). A
   `SwitchSelection` immediately after a posted `Produced` exercises the real race.
-- **`manifest`** — round-trip `id`/`tags`/`created` (tz-aware UTC via
-  `isoformat`/`fromisoformat`, finding #6); `from_json` **raises** on a malformed or
+- **`manifest`** — round-trip `id`/`tags`/`created`/`prompt_fingerprint` (tz-aware UTC via
+  `isoformat`/`fromisoformat`, finding #6; fingerprint round-trips as hex, vox-1uo5); `from_json` **raises** on a malformed or
   idless record (total, PY-EH-8, finding #5); `from_wire` peek surfaces `opt_str("id")`
   for the scan boundary; `ManifestDraft` carries no `created` (the store stamps it).
 - **`filesystem_store`** — `scan` pairs dirs with manifests and **skips idless legacy
@@ -344,8 +448,10 @@ happy + invalid + boundary + missing-dependency per PL-TT-3.
   (finding #10); a slug collision with a distinct id yields two live dirs; the store
   dereferences an opaque locator → `Path` (finding #3).
 - **`service`** — `/music on` with a matching album **resumes** (no generation), with
-  none **generates**; `--name X` resumes the unique album `X` or mints an
-  auto-suffixed one (R5); `--name`/`style` override the tag; the recorded tag is the
+  none **generates**; a `(style,vibe)` match whose stored fingerprint differs from the
+  incoming prompt-set **mints a new album** rather than resuming (vox-1uo5), while a
+  same-fingerprint match resumes; `--name X` resumes the unique album `X` even when its
+  fingerprint differs (named pool keeps playing) or mints an auto-suffixed one (R5); `--name`/`style` override the tag; the recorded tag is the
   *session vibe*, not the style (move #1 regression test); replay of a two-album union
   plays cap-free with no fill; the service delegates resolution to `catalog.bind`/
   `catalog.select` and holds no `_bind_album`/`_tags_for` of its own (finding #11).
@@ -364,7 +470,10 @@ The active-Program transitions are **unchanged**. Album binding is a *resolution
 not a transition — add one sentence to finding #7's neighbourhood: "the pool a
 `TurnOn`/`VibeStyleChange` enters (`diskPool?`/`newPool?`) is resolved by a catalog
 tag/name lookup before the operation runs, exactly as the 1-based part index is;
-the model abstracts the lookup away." No schema change on `Program`.
+the model abstracts the lookup away." No schema change on `Program`. **The prompt
+fingerprint (vox-1uo5) is part of that same resolution** — it selects *which* album a
+`TurnOn` binds (same tags + same fingerprint resume, else mint), before the transition
+— so it too is abstracted away: **no Z-model change.**
 
 Add a **consume-only replay** section (per M1 — a no-generation rotation over a
 Selection that may span albums):
@@ -396,12 +505,29 @@ Selection that may span albums):
    `isinstance(source, Program)` narrow fails, and the writer logs it at INFO and
    survives. Key Property: **"a stale generate outcome against a Radio never mutates
    and never crashes."**
+7. **Leaving a `Radio` — `RadioOff` (F#2).** A `TurnOff` while a `Radio` is active is a
+   valid stop, the parallel of `TurnOff` on a `Program`: `Radio → off/empty`, tearing
+   the source down (`selection' = ∅`, `playing' = lastPlayed' = nothing`), *not* a
+   rejected lost race. Model it as a total operation on the `Radio` schema.
+8. **Source-agnostic retarget (F#2).** `StartProgram`/`SwitchProgram` may fire while a
+   `Radio` is active, transitioning `Radio → Program`: the channel's active source is a
+   union of `Program` and `Radio`, and a generate-mode start/switch replaces whichever
+   source is current, regardless of shape — so `SwitchProgram` *from* a `Radio` is a
+   legal retarget (user intent), just as `SwitchSelection`/`StartRadio` *from* a
+   `Program` is. `Next` on a `Radio` is `RadioNext ≙ RadioRotate` (item 5). A
+   `VibeStyleChange` while a `Radio` is active is a `ΞRadio` no-op (replay carries no
+   vibe-switch) — modelled like the fill-outcome no-op (item 6), a guard-disabled
+   transition rather than an error. Key Property: **"the user-intent signals (off, on,
+   switch, next) act on either source; only generate-internal outcomes and auto
+   vibe-switches are disabled against a `Radio`."**
 
-`fuzz -t` must stay exit 0; recommend `/z-spec:test` (probcli) explores three
+`fuzz -t` must stay exit 0; recommend `/z-spec:test` (probcli) explores five
 properties over the new schema: "no immediate repeat" and "playing ∈ selection" on
-`RadioRotate`, and the **guard-disabled no-op** of a fill outcome against an active
-`Radio` (finding #4) — the bas7-class crash a transition-level model catches at design
-time.
+`RadioRotate`, the **guard-disabled no-op** of a fill outcome against an active `Radio`
+(finding #4) — the bas7-class crash a transition-level model catches at design time —
+and the two F#2 retargets: `RadioOff` (Radio → off) and `SwitchProgram` from an active
+`Radio` (Radio → Program), so the user-intent stop/switch paths are covered alongside
+the disabled generate-internal ones.
 
 ### Open risks / questions — resolved
 
