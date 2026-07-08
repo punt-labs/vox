@@ -826,7 +826,9 @@ The schema is total in \texttt{produced?} and yields $\Xi Radio$: whatever the
 fill delivered, a Radio consumes none of it. This is the model image of the
 runtime lost race --- the writer narrows $isinstance(source, Program)$, the
 narrowing fails against a Radio, and the writer logs the stale outcome at
-\texttt{INFO} and survives. It is a guard-disabled no-op, never an error, and
+\texttt{INFO} and survives. It is an \emph{enabled}, total $\Xi Radio$ no-op ---
+the operation is defined for every \texttt{produced?} and simply changes nothing
+--- never an error, and
 never the \texttt{AttributeError} that a Radio without a \texttt{fill\_ok} would
 otherwise raise (the \texttt{bas7}-class crash a transition-level model catches
 at design time).
@@ -917,9 +919,9 @@ orchestration seam, precisely as it abstracts the catalog lookup behind
 A \texttt{VibeStyleChange} carries a new \emph{(vibe, style)} pool for the
 generate machine. A Radio is consume-only: it has no vibe adaptation, and the
 design locks that a drifting session vibe must never abandon a curated Selection.
-A vibe change routed to an active Radio is therefore a deliberate no-op --- a
-guard-disabled transition of exactly the shape of \texttt{StaleFillIgnored}, not
-an error.
+A vibe change routed to an active Radio is therefore a deliberate no-op --- an
+\emph{enabled}, total $\Xi Radio$ transition that changes nothing, of exactly
+the shape of \texttt{StaleFillIgnored}, not an error.
 
 \begin{schema}{RadioVibeIgnored}
   \Xi Radio \\
