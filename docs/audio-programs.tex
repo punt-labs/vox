@@ -699,7 +699,11 @@ Alongside the single \texttt{Program} modelled above, Vox plays a second,
 consume-only surface: a \emph{Radio} over a fixed \emph{Selection} of ready
 Parts drawn from one or more Programs. Per-vibe pools (\texttt{vox-q7vh}) make
 this the natural home for a \emph{union}: ``play trance calm'' may resolve to
-two full albums at once. A Radio generates nothing, fills nothing, and ---
+two full albums at once. The tag pair here is a \emph{named} record ---
+\texttt{style} and \texttt{vibe} are named fields, not positions --- so the
+design doc's $(style, vibe)$ prose and this model's $(vibe, style)$ subject
+denote the same named pair; the order in prose is presentational, not a
+positional contract. A Radio generates nothing, fills nothing, and ---
 crucially --- carries \emph{no} \texttt{poolSize} bound, so a Selection may be
 arbitrarily large. It is \texttt{Rotate} without the generation machinery.
 
