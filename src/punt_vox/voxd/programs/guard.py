@@ -19,6 +19,8 @@ class GuardViolationError(ValueError):
     and must surface at ERROR rather than be mislabeled as a losing racer.
     """
 
+    __slots__ = ()
+
     @staticmethod
     def reject(message: str) -> NoReturn:
         """Raise a guard violation -- a violated Z precondition (guard)."""

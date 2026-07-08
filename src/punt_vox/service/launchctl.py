@@ -23,13 +23,14 @@ import logging
 import os
 import subprocess
 import time
-from typing import ClassVar, Self
+from typing import ClassVar, Self, final
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["LaunchctlAgent", "LaunchctlError"]
 
 
+@final
 class LaunchctlError(RuntimeError):
     """A ``launchctl`` operation failed unrecoverably.
 
@@ -41,6 +42,7 @@ class LaunchctlError(RuntimeError):
     __slots__ = ()
 
 
+@final
 class LaunchctlAgent:
     """Control one LaunchAgent job in the caller's ``gui/<uid>`` domain."""
 

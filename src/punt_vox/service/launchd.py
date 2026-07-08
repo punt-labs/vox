@@ -9,7 +9,7 @@ import subprocess
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.launchctl import LaunchctlAgent
@@ -26,6 +26,7 @@ _LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
 
+@final
 class LaunchdBackend:
     """Author the voxd LaunchAgent plist and drive its launchd lifecycle.
 
