@@ -468,6 +468,38 @@ hard-failure to the first-track case: a non-empty pool has no
   lastError' = \{ reason? \}
 \end{schema}
 
+\subsection{RetryCapped}
+
+A further transient error fires during backoff, but the counter is already at
+\texttt{maxRetry} and the pool is non-empty. There is something to play, so the
+Program neither hard-fails --- \texttt{RetryExhausted} needs an empty pool ---
+nor climbs past the cap --- \texttt{RetryFails} is guarded below it. The retry
+self-loops in \texttt{retrying}, pinning \texttt{attempts} at the cap and
+refreshing only the advisory reason; the pool and playback are untouched. This
+is the cap-and-hold that makes ``a non-empty pool tolerates transient errors
+indefinitely'' (finding~\#4) a fact of the model rather than a runtime hope:
+because \texttt{mode} stays \texttt{retrying}, the invariant
+$mode = failed \implies pool = \emptyset$ is never engaged, so a Program with a
+non-empty pool cannot fall through to \texttt{failed} at the cap.
+
+\begin{schema}{RetryCapped}
+  \Delta Program \\
+  reason? : REASON
+  \where
+  mode = retrying \\
+  attempts = maxRetry \\
+  pool \neq \emptyset \\
+  format' = format \\
+  pool' = pool \\
+  failedParts' = failedParts \\
+  playing' = playing \\
+  lastPlayed' = lastPlayed \\
+  mode' = retrying \\
+  filling' = zfalse \\
+  attempts' = attempts \\
+  lastError' = \{ reason? \}
+\end{schema}
+
 \subsection{Recover}
 
 The backoff clears and generation resumes. From an empty pool the Program
@@ -761,8 +793,9 @@ underspecified, or self-contradictory.
     ``a full pool never hard-fails'' (\texttt{vox-ig52} acceptance criterion~3)
     is a theorem of the state schema, not a runtime check. The corner the
     concept left open --- ``what happens when fill on a non-empty pool exhausts
-    its retries?'' --- is answered: it does not exhaust; it plays on and keeps
-    trying at the capped backoff.
+    its retries?'' --- is answered by \texttt{RetryCapped}: it does not exhaust;
+    it plays on and keeps trying at the capped backoff, self-looping in
+    \texttt{retrying} with \texttt{attempts} pinned at the cap.
 
   \item \textbf{There are two failure surfaces, and both must be observable.}
     A \emph{program-level} failure (nothing can play) sets \texttt{lastError}
