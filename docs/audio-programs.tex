@@ -719,13 +719,23 @@ of at most one Part, both drawn from the Selection. It has \emph{no}
 needs none of the resilience state. Above all it carries no \texttt{poolSize}
 bound.
 
+The final conjunct, $selection \neq \emptyset \implies \# playing = 1$, ties the
+cursor to the Selection: a non-empty Selection is an \emph{active} Radio and must
+be playing exactly one Part, so the state schema forbids the ``active radio
+playing nothing'' configuration ($selection \neq \emptyset$, $playing =
+\emptyset$) outright rather than leaving it merely unreachable. With
+$playing \subseteq selection$ and $\# playing \leq 1$ already in force, the
+biconditional $\# playing = 1 \iff selection \neq \emptyset$ holds: the empty
+Selection is the off state, where $playing = \emptyset$.
+
 \begin{schema}{Radio}
   selection : Selection \\
   playing : \power PART \\
   lastPlayed : \power PART
   \where
   \# playing \leq 1 \land \# lastPlayed \leq 1 \\
-  playing \subseteq selection \land lastPlayed \subseteq selection
+  playing \subseteq selection \land lastPlayed \subseteq selection \\
+  selection \neq \emptyset \implies \# playing = 1
 \end{schema}
 
 The missing bound is the whole point. A union of two full 12-Part albums is a
@@ -830,7 +840,7 @@ which clears \texttt{playing} to $\emptyset$ and drops \texttt{mode} to
 \texttt{off}: a Radio has no \texttt{mode}, so its off state \emph{is} the empty
 Selection.
 
-\subsection{SwitchToProgram --- source-agnostic retarget}
+\subsection{SwitchProgram --- source-agnostic retarget}
 
 The channel that plays audio holds \emph{one} source at a time, and that source
 is a union: either a Program or a Radio. A generate-mode start or switch ---
@@ -842,7 +852,7 @@ the exact mirror of \texttt{StartRadio}/\texttt{SwitchSelection} retargeting
 current, never narrowing on its shape. Both directions are user intent, and both
 are valid.
 
-\texttt{SwitchToProgram} discards the Radio and initialises a Program over the
+\texttt{SwitchProgram} discards the Radio and initialises a Program over the
 resolved disk pool \texttt{diskPool?}, with the same pool-shape classification as
 \texttt{TurnOn} --- an empty pool generates the first Part, a partial pool plays
 and resumes the fill, a full pool plays and rotates. The Radio before-state is
@@ -850,7 +860,7 @@ unconstrained, so the retarget is enabled whether the Radio was playing or
 already empty; that is what ``source-agnostic'' means, and it is why the before
 half of $\Delta$ names \texttt{Radio} but the predicate never reads it.
 
-\begin{schema}{SwitchToProgram}
+\begin{schema}{SwitchProgram}
   Radio \\
   Program' \\
   fmt? : Format \\
@@ -904,7 +914,7 @@ vibe simply does not apply to replay, so the ``no vibe-switch'' lock is a fact o
 the model. With \texttt{RadioNext} $\defs$ \texttt{RadioRotate} already giving
 \texttt{Next} on a Radio, the user-intent controls over a Radio are now complete:
 \texttt{StartRadio}/\texttt{SwitchSelection} to enter, \texttt{RadioNext} to
-advance, \texttt{SwitchToProgram} to retarget to generate, and \texttt{RadioOff}
+advance, \texttt{SwitchProgram} to retarget to generate, and \texttt{RadioOff}
 to stop.
 
 \section{Key Properties}
@@ -975,7 +985,7 @@ postconditions; they are the intended proof obligations for animation.
     invariant), the exact parallel of \texttt{TurnOff} on a Program. It is user
     intent, always enabled, never a rejected lost race.
   \item \textbf{Retarget is source-agnostic}: the user-intent signals --- off,
-    on, switch, next --- act on \emph{either} source. \texttt{SwitchToProgram}
+    on, switch, next --- act on \emph{either} source. \texttt{SwitchProgram}
     retargets an active Radio to a Program ($Radio \to Program'$), the mirror of
     \texttt{StartRadio}/\texttt{SwitchSelection} retargeting a Program to a
     Radio; \texttt{RadioNext} advances; \texttt{RadioOff} stops. Only the
