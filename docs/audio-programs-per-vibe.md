@@ -141,3 +141,220 @@ detector (org no-migration rule).
 Spec is ratifiable. Design mission (manifest / catalog / selection decomposition +
 write set; jms folds the Selection rotation into the Z model), then implementation,
 per the two-phase delegation model.
+
+## Design (decomposition, write set, test plan)
+
+**Author:** Raymond H (rmh), 2026-07-07. Design phase for vox-q7vh. No production
+code — this section is the write set the implementation mission builds from.
+
+### The one hard decision, stated first
+
+The reframe is cheap everywhere except one place: **union radio replay can exceed
+12 tracks and spans multiple album directories**, and the shipped Phase-1
+`ProgramState` is capped at `poolSize` (12) with one active directory. The spec
+locks both facts: replay has *no 12-cap*, and the Phase-1 machine is *unchanged*.
+Those two locks together forbid shoehorning union replay through `ProgramState`.
+
+So the design splits playback into two sources behind one Protocol:
+
+- **`Program`** (unchanged) — the generate mode: one album, `ProgramState`, ≤ 12,
+  filling, vibe-adaptive. Every S1–S16 invariant survives verbatim because the
+  entity is not touched.
+- **`SelectionPlayback`** (new) — the consume-only replay: a flat shuffle-rotation
+  over a `Selection` that may span albums and directories, no cap, no fill, no
+  generation.
+
+Both satisfy a new `PlaybackSource` Protocol the loop and channel animate. This is
+the central layering change and the one item most needing the leader's review
+(risk R1 below). The rejected alternative — relax `ProgramState`'s cap so a
+Selection is "just a big Program" — violates the "Phase-1 unchanged" lock and the
+`#pool ≤ poolSize` invariant, and would let a 24-track union corrupt every mode
+implication (`playingRotating ⟹ #pool = poolSize`). Rejected.
+
+### Layer map (dependency arrow points inward)
+
+```text
+identity/value  album_id · album_tags · selection · part · identifiers
+      │
+domain          manifest · catalog · program (unchanged) · selection_playback
+      │            state · invariants · rotate_policy · playback_source (Protocol)
+      │
+persistence     store (Protocol) · filesystem_store
+      │
+orchestration   service · control_channel · loop · switch_signal · lifecycle_signal
+      │
+wire handlers   on/off/next/play/select/list/status handlers · wiring
+      │
+client/present  program_gateway · client_gateway · program_control
+                cli_music · server (music tools)
+```
+
+### New modules (the write set — create)
+
+| Module | Type(s) | Responsibility |
+|---|---|---|
+| `voxd/programs/album_id.py` | `AlbumId` | A short unique hex id (`secrets.token_hex(3)`). Validates, parses, `__eq__`/`__hash__`. `AlbumId.mint(taken)` returns an id absent from a taken set (collision-proof). |
+| `voxd/programs/album_tags.py` | `AlbumTags` | `style`, `vibe`, `name: str \| None`. `matches(style?, vibe?) -> bool`, `slug() -> str` (the `<style>--<vibe>` or curated-`name` Finder prefix), wire round-trip. Owns the slug rule (PY-OO-7 — slug is behaviour on the tags, not a free function). |
+| `voxd/programs/catalog.py` | `Catalog`, `Album` | `Album` = `(manifest, directory)` binding identity to its on-disk location. `Catalog` = in-memory index built once from `Album`s: `by_id`, `by_name`, `by_tags(style?, vibe?)` newest-first, `newest(style, vibe)`, `add(album)` on generation, `mint_id()`. The sole object list/play/switch consult. |
+| `voxd/programs/selection.py` | `Selection`, `SelectedPart` | `SelectedPart` = `(part, directory)` — the per-track directory that union replay needs (a bare `Part` cannot locate its file across albums). `Selection` = ordered `tuple[SelectedPart, ...]` from one or more albums, `from_albums(...)`, `__len__`, `__bool__`. |
+| `voxd/programs/selection_playback.py` | `SelectionPlayback` | Consume-only rotation cursor over a `Selection`: `playing`, `last_played`, `rotate()` (shuffle, no immediate repeat, single-track replays), `locate(part) -> Path`. No cap, no fill, no generation. The replay half of `PlaybackSource`. |
+| `voxd/programs/playback_source.py` | `PlaybackSource` (Protocol) | The structural interface the loop/channel animate: `playing -> Part \| None`, `rotate() -> None`, `filling -> bool`, `locate(part) -> Path`. `Program` (adapted) and `SelectionPlayback` both satisfy it. |
+| `voxd/programs/select_signal.py` | `StartSelection` | The consume-only switch signal (parallel to `SwitchProgram`): retarget the channel to a `SelectionPlayback` over a resolved `Selection`, interrupts, begins at the first track. No fill reconcile arms. |
+
+### Modified modules (the write set — change)
+
+| Module | Change |
+|---|---|
+| `manifest.py` | Replace `subject: PlaylistSubject` with `id: AlbumId`, `tags: AlbumTags`, `created: datetime`. **Delete `PlaylistSubject` outright** (no shim — PL-PP-1). `to_json`/`from_json` gain `id`/`tags`/`created`; `from_json` raises on a well-formed-but-idless record only when the caller demands an album (legacy handled in the catalog build, not here). Drop the `name: ProgramName` *identity* field: the manifest is now addressed by `id`, and the directory is the store's concern. |
+| `identifiers.py` | Keep `ProgramName` but re-document it as **the on-disk directory component only** (`<slug>-<id>`) — the path-traversal guard is exactly what a derived dir name still needs. It is no longer a user-facing identity. `PartRef`, `Reason` unchanged. |
+| `store.py` (Protocol) | Replace name-addressed `list_programs`/`resolve`/`open(name)` with: `scan() -> tuple[Album, ...]` (startup catalog build, the only disk walk), `open(directory) -> PartStore`, `create(manifest) -> PartStore` (derives `<slug>-<id>`, stamps `created`). `resolve(name)` is **deleted** — the coupling the spec names. |
+| `filesystem_store.py` | Implement the new protocol: `scan` globs `*/manifest.json`, pairs each with its directory into an `Album`, skips idless legacy dirs (debug-logged). `create` composes `tags.slug() + "-" + id` via `ProgramName`, keeping the path guard. `_program_dir` takes a directory, not a name. |
+| `service.py` | Hold a `Catalog` built from `store.scan()` at construction. `turn_on` gains `vibe: str \| None`; binds via `_bind_album` = catalog lookup (by name-tag, else `by_tags` newest, else `create` + `catalog.add`). `_subject_for` → `_tags_for(style, vibe, name)` records the *real* session vibe (move #1). New `replay(selection_query)` path builds a `Selection` from `catalog.by_tags`/`by_name`/`by_id` and posts `StartSelection`. `active_directory()` → `locate(part)` delegating to the active `PlaybackSource`. |
+| `active_context.py` | `ActiveProgram` unchanged for generate. The player's directory seam widens from `active_directory() -> Path` to `locate(part) -> Path` so union replay resolves per-track; single-album generate returns its one dir for any part. |
+| `control_channel.py` | `_program: Program` → `_source: PlaybackSource`; `program`/`retarget` generalise to `source`/`retarget(source)`. Signals' `apply` receives the source. Fill reconcile reads `source.filling` (always `False` for a Selection, so it cancels and idles — no special-casing). |
+| `loop.py` | Reads `source.playing` and posts `Rotate`; player resolves the dir via `source.locate(target)`. Otherwise unchanged — the interrupt/natural-end race is source-agnostic. |
+| `switch_signal.py` | `SwitchProgram` retargets to a `Program` source (generate). Sibling `StartSelection` (new module) retargets to a `SelectionPlayback`. |
+| `on_handler.py` | Parse the new `vibe` wire field; pass to `service.turn_on`. |
+| `play_handler.py` → `select_handler.py` | Replace directory-name replay with tag/name/id replay: parse `{style?, vibe?, name?, id?}`, drive `service.replay`. Rename the module to name what it does (select a Selection), delete the old name-addressed handler. |
+| `list_handler.py` | Emit tag-rich rows: `id`, `style`, `vibe`, `name`, `ready`, `total`, `created` — from the catalog, not a re-scan. |
+| `wiring.py` | Swap `program_play` → `program_select`; register against the catalog-backed service. |
+| `program_control.py` | `StartRequest` gains `vibe: str \| None`. New `SelectionRequest(style?, vibe?, name?, id?)`. `ProgramSummary` gains `id`, `style`, `vibe`, `name`. |
+| `program_gateway.py` / `client_gateway.py` | `start` carries `vibe`; `play`/`loop` → `select(SelectionRequest)`; `catalog` rows carry tags. |
+| `cli_music.py` | `list` renders tags (grouped by style/vibe); `play`/`loop` take `style`/`vibe`/`--name` and query via the gateway; **stop constructing `FilesystemProgramStore` client-side** — the daemon owns the catalog (layering fix, risk R2). |
+| `server.py` (`music` tool) | Resolve `vibe = _session.vibe` and pass `StartRequest(style, vibe, name, prompts)`. `music_play` → a select tool taking style/vibe/name. |
+
+### Invariant preservation
+
+**Phase-1 `ProgramState` (S1–S16): untouched.** The generate path still seeds a
+`Program` over a single catalog album whose `ready_parts()` is ≤ 12 (a manifest
+holds ≤ `poolSize` parts by construction). "Which album" is a *resolution* — a
+catalog `by_tags`/`by_name` lookup producing `diskPool?` — exactly the shape of
+finding #7's part-index resolution: it happens before the transition, never inside
+it. `TurnOn`, `VibeStyleChange`, `FillOk`, `filling ⟹ mode`, `failed ⟹ pool = ∅`,
+`playing ∈ pool` all hold because no transition, guard, or field changed.
+
+**New invariants the design adds:**
+
+- **`AlbumId` unique.** `Catalog.mint_id()` loops until the id is absent from
+  `by_id`; `create` uses `mkdir(exist_ok=False)` so even a directory race regenerates.
+- **A `Selection` never generates.** `SelectionPlayback` has no producer, no fill,
+  no `filling=True` path; `PlaybackSource.filling` returns `False` structurally.
+- **`playing ∈ selection`.** `SelectionPlayback.rotate()` chooses only from its
+  `Selection`; the cursor cannot point outside it (mirrors S4 `playing ⊆ pool`).
+- **No immediate repeat in replay** when `#selection ≥ 2`; single-track replays
+  (mirrors Rotate's `#pool ≥ 2 ⟹ playing' ≠ playing`).
+- **Catalog excludes legacy.** Idless dirs are absent from every query, so a legacy
+  `subject.vibe == style` dir can never satisfy `by_tags` (the spec's "never match").
+
+### Catalog build and legacy handling
+
+At service construction, `store.scan()` walks `*/manifest.json` once, pairing each
+manifest with its directory. Idless (pre-change) manifests are skipped with a debug
+log — no converter, no legacy detector beyond "has an `id`?" (no-migration rule).
+The catalog is authoritative thereafter; generation calls `catalog.add(album)` so a
+freshly created album is queryable without a re-scan. Legacy dirs are invisible to
+vox (Finder-only, deletable by hand) — recommend *not* surfacing them in `list`
+(risk R3, a minor decision for the leader).
+
+### `/music on` resolution (the locked default path)
+
+1. `server.music(mode="on")` reads `style` (arg, else persisted) and
+   `vibe = _session.vibe` (current session mood), passes both in `StartRequest`.
+2. `service.turn_on(style, vibe, name, prompts)`:
+   - `name` present → `catalog.by_name(name)` (name overrides vibe).
+   - else `catalog.newest(style, vibe)` → the newest matching album if any.
+   - none → `catalog.mint_id()`, `store.create` a fresh `(style, vibe, name)`
+     album, `catalog.add`, then generate.
+3. Seed a `Program` over the bound album's `ready_parts()`; post `SwitchProgram`.
+   Full pool rotates from disk; partial resumes filling; empty generates — the
+   unchanged activation classification.
+
+### Test plan
+
+Mirror source: one `test_*.py` per new module, extend the touched ones. Cover
+happy + invalid + boundary + missing-dependency per PL-TT-3.
+
+- **`album_id`** — mint avoids a taken set; parse rejects non-hex/empty; equality.
+- **`album_tags`** — `matches` truth table (style-only, vibe-only, both, neither);
+  `slug()` for `(style,vibe)` and curated `name`; slug of names with spaces/slashes
+  is filesystem-safe; wire round-trip.
+- **`catalog`** — build from mixed manifests; `by_tags` returns **many** albums
+  sharing `(style,vibe)` newest-first; `by_name` resolves across vibes; `newest`
+  picks the latest `created`; `add` makes a new album queryable; legacy (idless)
+  dirs are excluded from every query.
+- **`selection` / `selection_playback`** — union spans two directories, each
+  `SelectedPart` locates its own file; rotate never repeats with `#selection ≥ 2`;
+  single-track replays; `locate` returns the right dir per track; empty selection
+  is a caught boundary (no crash — mirrors the empty-pool guard).
+- **`manifest`** — round-trip `id`/`tags`/`created`; `from_json` on a legacy record
+  (no `id`) is handled at the catalog boundary, not a hard parse crash.
+- **`filesystem_store`** — `scan` pairs dirs with manifests and skips legacy;
+  `create` derives `<slug>-<id>`, stamps `created`, keeps the path guard; a slug
+  collision with a distinct id yields two live dirs.
+- **`service`** — `/music on` with a matching album **resumes** (no generation),
+  with none **generates**; `--name`/`style` override the tag; the recorded tag is
+  the *session vibe*, not the style (move #1 regression test); replay of a
+  two-album union plays cap-free with no fill.
+- **`playback_source` / `loop`** — the loop plays and rotates a `SelectionPlayback`
+  identically to a `Program` (a source-agnostic rotation test); `filling=False`
+  keeps the fill reconciler idle under a Selection.
+- **wire/CLI/server** — `program_on` carries `vibe`; `program_select` resolves by
+  style/vibe/name/id; `list` rows carry tags; `music` tool forwards `_session.vibe`.
+
+### Z-model deltas for jms (`docs/audio-programs.tex`)
+
+The active-Program transitions are **unchanged**. Album binding is a *resolution*,
+not a transition — add one sentence to finding #7's neighbourhood: "the pool a
+`TurnOn`/`VibeStyleChange` enters (`diskPool?`/`newPool?`) is resolved by a catalog
+tag/name lookup before the operation runs, exactly as the 1-based part index is;
+the model abstracts the lookup away." No schema change on `Program`.
+
+Add a **consume-only replay** section (per M1 — a no-generation rotation over a
+Selection that may span albums):
+
+1. A basic/derived set: `Selection : ℙ PART` (the model keeps `PART` opaque; the
+   per-track directory is an implementation resolution, out of scope for Z, like
+   the file token behind a `Part`).
+2. A minimal `Radio` state schema: `selection : ℙ PART; playing, lastPlayed :
+   optional PART`, predicate `playing ⊆ selection ∧ lastPlayed ⊆ selection` and
+   `#playing ≤ 1 ∧ #lastPlayed ≤ 1`. **No `poolSize` bound** — this is the delta
+   that makes union radio legal (`#selection` is unconstrained).
+3. `StartRadio` (`selection? : ℙ PART`, `selection? ≠ ∅`): begins at a member,
+   `playing' ∈ selection'`, `selection' = selection?`.
+4. `RadioRotate`: the shape of `Rotate` with **generation framing removed** —
+   `#selection ≥ 2 ⟹ playing' ∈ selection ∧ #playing' = 1 ∧ playing' ≠ playing`;
+   `#selection = 1 ⟹ playing' = playing`; `lastPlayed' = playing`. No `pool`,
+   `filling`, `attempts`, `failedParts`, `lastError` — a Radio has none.
+5. `RadioNext ≙ RadioRotate` (as `Next ≙ Rotate`), and a Key Property: **"Replay
+   generates nothing and is uncapped"** — `RadioRotate`/`StartRadio` touch no
+   generation field and impose no `poolSize` bound, so a union of two full albums
+   (24 parts) is a legal `Radio` state though never a legal `Program` state.
+
+`fuzz -t` must stay exit 0; recommend `/z-spec:test` (probcli) on the "no immediate
+repeat" and "playing ∈ selection" properties for the new schema.
+
+### Open risks / questions for design review
+
+- **R1 (layering — needs a ruling).** The `PlaybackSource` Protocol generalises the
+  `ControlChannel`/`ProgramLoop` from `Program` to a source union. This touches the
+  proven single-writer concurrency core (vox-73m5, vox-ig52). Recommend accepting
+  it: it is the only decomposition that honours *both* locks (no 12-cap on replay,
+  Phase-1 unchanged) without duplicating the loop. Alternative (a second parallel
+  loop for replay) is worse — two tasks racing one player. **Decision needed.**
+- **R2 (CLI direct disk read).** `MusicCli` today builds `FilesystemProgramStore`
+  client-side for `list` and part-resolution — a presentation layer reading the
+  domain's disk. The catalog is daemon-side and authoritative, so these must become
+  gateway calls. Recommend making the move in this change (it is the coupling the
+  spec's "catalog is the sole object list talks to" implies). **Confirm the scope.**
+- **R3 (legacy visibility).** Recommend legacy idless dirs are invisible to vox
+  (excluded from `list`), consistent with "deletable by hand, Finder-only." If the
+  operator wants them listed for discoverability, that is a separate legacy-view
+  surface. **Minor — confirm the default.**
+- **R4 (`created` clock).** `created` is set by the store at `create` time
+  (`datetime.now(UTC)`). `newest` ties break by id (stable). Acceptable? No NTP
+  dependence; a clock skew only reorders same-second creations. **Confirm.**
+- **R5 (`name`-tag vs directory identity).** `--name focus-beats` is a *tag* (slug +
+  addressable handle), not a directory key; two albums could in principle carry the
+  same `name` tag. Recommend `by_name` returns newest-first like `by_tags` (not a
+  uniqueness constraint) — matching the "arbitrary albums" lock. **Confirm no
+  name-uniqueness rule is wanted.**
