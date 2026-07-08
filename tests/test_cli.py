@@ -1591,6 +1591,34 @@ class TestInstallCommand:
         assert "Skipped" in result.output
         assert "Restart Claude Code" in result.output
 
+    def test_install_degrades_when_health_verify_fails(self) -> None:
+        """Registered-but-not-serving daemon skips gracefully, exit 0.
+
+        launchctl/systemctl accepts the job but voxd never answers its health
+        poll (bad env, broken binary, port contention), so ``svc_install``
+        raises ``ServiceHealthError``. Like the bring-up path, the best-effort
+        marketplace install must still succeed rather than propagate a
+        traceback. ``vox daemon install`` (a separate command) still fails
+        loudly on the same error -- only this command degrades.
+        """
+        from punt_vox.service.health_verify import ServiceHealthError
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch(
+                "punt_vox.service.install",
+                side_effect=ServiceHealthError("never became reachable within 5s"),
+            ),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Skipped" in result.output
+        assert "Restart Claude Code" in result.output
+
 
 class TestUninstallCommand:
     def test_uninstall_success(self) -> None:

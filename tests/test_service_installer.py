@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -95,11 +96,7 @@ def _setup_fake_env(
     monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 1000)
 
     if bypass_health:
-        monkeypatch.setattr(
-            ServiceInstaller,
-            "_verify_serving",
-            staticmethod(lambda platform, service_path: None),
-        )
+        monkeypatch.setattr(HealthVerifier, "verify", lambda self: None)
 
     return fake_home
 
@@ -225,8 +222,8 @@ def test_install_raises_when_daemon_never_healthy(
     """
     _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
     # Shrink the deadline and drop the sleep so the poll exhausts instantly.
-    monkeypatch.setattr("punt_vox.service.installer._HEALTH_DEADLINE_S", 0.05)
-    monkeypatch.setattr("punt_vox.service.installer.time.sleep", lambda _s: None)
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+    monkeypatch.setattr("punt_vox.service.health_verify.time.sleep", lambda _s: None)
 
     down = MagicMock()
     down.health.side_effect = VoxdConnectionError("connection refused")
@@ -236,7 +233,7 @@ def test_install_raises_when_daemon_never_healthy(
     )
 
     inst = ServiceInstaller()
-    with pytest.raises(RuntimeError, match="never became reachable"):
+    with pytest.raises(ServiceHealthError, match="never became reachable"):
         inst.install()
 
     assert down.health.called
@@ -463,7 +460,7 @@ def test_install_health_poll_retries_transient_protocol_error(
     answers rather than failing the install on the first hiccup.
     """
     _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
-    monkeypatch.setattr("punt_vox.service.installer.time.sleep", lambda _s: None)
+    monkeypatch.setattr("punt_vox.service.health_verify.time.sleep", lambda _s: None)
 
     client = MagicMock()
     client.health.side_effect = [
