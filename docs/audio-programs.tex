@@ -692,6 +692,260 @@ the model relies on decoupling \texttt{filling} from the playing mode
   (\# pool < (poolSize~format) \implies mode' = playingFilling)
 \end{schema}
 
+\section{Consume-only Replay --- the Radio}
+\label{sec:radio}
+
+Alongside the single \texttt{Program} modelled above, Vox plays a second,
+consume-only surface: a \emph{Radio} over a fixed \emph{Selection} of ready
+Parts drawn from one or more Programs. Per-vibe pools (\texttt{vox-q7vh}) make
+this the natural home for a \emph{union}: ``play trance calm'' may resolve to
+two full albums at once. The tag pair here is a \emph{named} record ---
+\texttt{style} and \texttt{vibe} are named fields, not positions --- so the
+design doc's $(style, vibe)$ prose and this model's $(vibe, style)$ subject
+denote the same named pair; the order in prose is presentational, not a
+positional contract. A Radio generates nothing, fills nothing, and ---
+crucially --- carries \emph{no} \texttt{poolSize} bound, so a Selection may be
+arbitrarily large. It is \texttt{Rotate} without the generation machinery.
+
+A \emph{Selection} is a set of Parts. As with the file token behind a Part, the
+per-track directory that resolves each Part is an implementation concern the
+model keeps out of scope; a Selection is opaque set membership, nothing more.
+
+\begin{zed}
+  Selection == \power PART
+\end{zed}
+
+The \texttt{Radio} state carries only a Selection and the same ``optional Part''
+cursor pair as a Program --- \texttt{playing} and \texttt{lastPlayed}, each a set
+of at most one Part, both drawn from the Selection. It has \emph{no}
+\texttt{pool}, \texttt{filling}, \texttt{attempts}, \texttt{failedParts},
+\texttt{lastError}, or \texttt{mode}: a Radio neither generates nor fails, so it
+needs none of the resilience state. Above all it carries no \texttt{poolSize}
+bound.
+
+The final conjunct, $selection \neq \emptyset \implies \# playing = 1$, ties the
+cursor to the Selection: a non-empty Selection is an \emph{active} Radio and must
+be playing exactly one Part, so the state schema forbids the ``active radio
+playing nothing'' configuration ($selection \neq \emptyset$, $playing =
+\emptyset$) outright rather than leaving it merely unreachable. With
+$playing \subseteq selection$ and $\# playing \leq 1$ already in force, the
+biconditional $\# playing = 1 \iff selection \neq \emptyset$ holds: the empty
+Selection is the off state, where $playing = \emptyset$.
+
+\begin{schema}{Radio}
+  selection : Selection \\
+  playing : \power PART \\
+  lastPlayed : \power PART
+  \where
+  \# playing \leq 1 \land \# lastPlayed \leq 1 \\
+  playing \subseteq selection \land lastPlayed \subseteq selection \\
+  selection \neq \emptyset \implies \# playing = 1
+\end{schema}
+
+The missing bound is the whole point. A union of two full 12-Part albums is a
+Selection of 24 Parts: a legal \texttt{Radio} state, though never a legal
+\texttt{Program} state, whose invariant forces $\# pool \leq (poolSize~format)$.
+This is precisely the delta \texttt{vox-q7vh} needs, and precisely why a union
+cannot be shoehorned through \texttt{Program}.
+
+\subsection{StartRadio}
+
+Begin a Radio on a non-empty Selection, playing at one of its members. Nothing
+has played yet, so \texttt{lastPlayed} is empty.
+
+\begin{schema}{StartRadio}
+  Radio' \\
+  selection? : Selection
+  \where
+  selection? \neq \emptyset \\
+  selection' = selection? \\
+  playing' \subseteq selection' \land \# playing' = 1 \\
+  lastPlayed' = \emptyset
+\end{schema}
+
+Retuning the writer from one Selection to another --- a
+\texttt{SwitchSelection} --- is not a distinct
+transition: it is \texttt{StartRadio} on the new Selection, exactly as
+\texttt{SwitchProgram} is a fresh start on a new Program. Naming the alias keeps
+the model vocabulary self-contained and realises the \texttt{SwitchProgram} /
+\texttt{SwitchSelection} verb-parity.
+
+\begin{zed}
+  SwitchSelection \defs StartRadio
+\end{zed}
+
+\subsection{RadioRotate --- advance, next, and skip}
+
+When the current Part ends, move to another member of the Selection, avoiding an
+immediate repeat when the Selection holds more than one; a singleton Selection
+replays. This is \texttt{Rotate} with every generation field removed --- there
+is no \texttt{pool}, \texttt{filling}, \texttt{attempts}, \texttt{failedParts},
+or \texttt{lastError} to frame, because a Radio has none.
+
+\begin{schema}{RadioRotate}
+  \Delta Radio
+  \where
+  \# selection \geq 1 \\
+  \# playing = 1 \\
+  selection' = selection \\
+  lastPlayed' = playing \\
+  (\# selection \geq 2 \implies \\
+    \quad~ (playing' \subseteq selection \land \# playing' = 1 \\
+    \quad~ \land playing' \neq playing)) \\
+  (\# selection = 1 \implies playing' = playing)
+\end{schema}
+
+The precondition $\# playing = 1$ is redundant with the state invariant --- since
+\texttt{RadioRotate} is $\Delta Radio$, the before-state is a valid \texttt{Radio},
+and $selection \neq \emptyset$ (from $\# selection \geq 1$) already forces
+$\# playing = 1$ --- but stating it makes plain that \texttt{RadioRotate}
+\emph{advances} an already-playing Radio and never starts one: the empty-cursor
+case is \texttt{StartRadio}, not a rotate.
+
+As with \texttt{Rotate}, the automatic track-end advance and the user-driven
+\texttt{next}/\texttt{skip} are one transition; a Radio has no owner and no
+generation, so \texttt{RadioNext} is the only control it needs.
+
+\begin{zed}
+  RadioNext \defs RadioRotate
+\end{zed}
+
+\subsection{StaleFillIgnored --- the lost race}
+
+A background fill belongs to the Program machine: it computes a fresh Part and
+the single writer applies the outcome to whatever source is active. Suppose a
+client has since retuned the writer to a Radio (a \texttt{SwitchSelection})
+while a fill task was still in flight. The produced Part now arrives at a state
+with no \texttt{filling} flag and no \texttt{pool} to grow. \texttt{FillOk}'s
+success guard --- a fill in flight, $filling = ztrue$ --- has no inhabitant in
+the \texttt{Radio} state, so the successful branch is disabled: its precondition
+is false. Only the no-op branch remains, and it changes nothing.
+
+\begin{schema}{StaleFillIgnored}
+  \Xi Radio \\
+  produced? : PART
+  \where
+  true
+\end{schema}
+
+The schema is total in \texttt{produced?} and yields $\Xi Radio$: whatever the
+fill delivered, a Radio consumes none of it. This is the model image of the
+runtime lost race --- the writer narrows $isinstance(source, Program)$, the
+narrowing fails against a Radio, and the writer logs the stale outcome at
+\texttt{INFO} and survives. It is an \emph{enabled}, total $\Xi Radio$ no-op ---
+the operation is defined for every \texttt{produced?} and simply changes nothing
+--- never an error, and
+never the \texttt{AttributeError} that a Radio without a \texttt{fill\_ok} would
+otherwise raise (the \texttt{bas7}-class crash a transition-level model catches
+at design time).
+
+\subsection{RadioOff --- leaving the Radio}
+
+A \texttt{TurnOff} while a Radio is active is a \emph{stop}, the exact parallel
+of \texttt{TurnOff} on a Program: it tears the source down. The Selection is
+emptied and the cursor cleared, leaving the empty Radio --- the model's
+representation of ``no Radio active'', the same shape \texttt{StartRadio} refuses
+as a starting Selection ($selection? \neq \emptyset$). It is a total operation on
+the \texttt{Radio} schema, enabled from any Radio state, and is emphatically
+\emph{not} a rejected lost race: leaving a Radio is user intent, always valid ---
+the counterpart of the generate-family reject that \texttt{StaleFillIgnored}
+models.
+
+\begin{schema}{RadioOff}
+  \Delta Radio
+  \where
+  selection' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset
+\end{schema}
+
+The empty Selection forces the cursor empty through the state invariant
+($playing' \subseteq selection'$ with $selection' = \emptyset$), so clearing
+\texttt{playing'} and \texttt{lastPlayed'} explicitly is a statement of intent
+rather than a separate obligation. This mirrors \texttt{TurnOff} on a Program,
+which clears \texttt{playing} to $\emptyset$ and drops \texttt{mode} to
+\texttt{off}: a Radio has no \texttt{mode}, so its off state \emph{is} the empty
+Selection.
+
+\subsection{SwitchProgram --- source-agnostic retarget}
+
+The channel that plays audio holds \emph{one} source at a time, and that source
+is a union: either a Program or a Radio. A generate-mode start or switch ---
+\texttt{StartProgram}/\texttt{SwitchProgram} in the design's vocabulary ---
+retargets the channel to a fresh Program regardless of what it held before, so
+it may fire while a Radio is active, transitioning Radio $\to$ Program. This is
+the exact mirror of \texttt{StartRadio}/\texttt{SwitchSelection} retargeting
+\emph{from} a Program to a Radio: a start or switch replaces whichever source is
+current, never narrowing on its shape. Both directions are user intent, and both
+are valid.
+
+\texttt{SwitchProgram} discards the Radio and initialises a Program over the
+resolved disk pool \texttt{diskPool?}, with the same pool-shape classification as
+\texttt{TurnOn} --- an empty pool generates the first Part, a partial pool plays
+and resumes the fill, a full pool plays and rotates. The Radio before-state is
+unconstrained, so the retarget is enabled whether the Radio was playing or
+already empty; that is what ``source-agnostic'' means, and it is why the before
+half of $\Delta$ names \texttt{Radio} but the predicate never reads it.
+
+\begin{schema}{SwitchProgram}
+  Radio \\
+  Program' \\
+  fmt? : Format \\
+  diskPool? : \power PART
+  \where
+  \# diskPool? \leq (poolSize~fmt?) \\
+  format' = fmt? \\
+  pool' = diskPool? \\
+  failedParts' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  (diskPool? = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \land filling' = ztrue)) \\
+  (\# diskPool? \geq 1 \land \# diskPool? < (poolSize~fmt?) \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq diskPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# diskPool? = (poolSize~fmt?) \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq diskPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+The before-state \texttt{Radio} is present only to fix the source the transition
+leaves; every primed field is determined by \texttt{diskPool?} alone, exactly as
+\texttt{VibeStyleChange} determines a Program's next state from \texttt{newPool?}.
+The symmetric retarget \emph{from} a Program to a Radio is not a Program schema
+either: \texttt{StartRadio} produces a \texttt{Radio'} without naming the source
+it displaced, because the displaced source is discarded whole. The model thus
+keeps the two states apart and treats the channel-level union at the
+orchestration seam, precisely as it abstracts the catalog lookup behind
+\texttt{diskPool?} (finding~\#7).
+
+\subsection{RadioVibeIgnored --- the vibe no-op}
+
+A \texttt{VibeStyleChange} carries a new \emph{(vibe, style)} pool for the
+generate machine. A Radio is consume-only: it has no vibe adaptation, and the
+design locks that a drifting session vibe must never abandon a curated Selection.
+A vibe change routed to an active Radio is therefore a deliberate no-op --- an
+\emph{enabled}, total $\Xi Radio$ transition that changes nothing, of exactly
+the shape of \texttt{StaleFillIgnored}, not an error.
+
+\begin{schema}{RadioVibeIgnored}
+  \Xi Radio \\
+  newPool? : \power PART
+  \where
+  true
+\end{schema}
+
+The schema is total in \texttt{newPool?} and yields $\Xi Radio$: whatever pool a
+forwarded vibe offers, a Radio takes none of it. This is distinct from a lost
+race --- nothing is ``lost'' --- and distinct from the generate-family reject: the
+vibe simply does not apply to replay, so the ``no vibe-switch'' lock is a fact of
+the model. With \texttt{RadioNext} $\defs$ \texttt{RadioRotate} already giving
+\texttt{Next} on a Radio, the user-intent controls over a Radio are now complete:
+\texttt{StartRadio}/\texttt{SwitchSelection} to enter, \texttt{RadioNext} to
+advance, \texttt{SwitchProgram} to retarget to generate, and \texttt{RadioOff}
+to stop.
+
 \section{Key Properties}
 
 The following hold by construction (state invariants) or as operation
@@ -744,6 +998,33 @@ postconditions; they are the intended proof obligations for animation.
     command --- \texttt{next}, \texttt{skip}, \texttt{vibe}, \texttt{off} ---
     succeeds from any client or process, and the recovery path
     \texttt{VibeStyleChange} is always available from \texttt{failed}.
+  \item \textbf{The Radio is uncapped and generation-free}: \texttt{StartRadio}
+    and \texttt{RadioRotate} touch no generation field --- a \texttt{Radio} has
+    none --- and the \texttt{Radio} state carries no \texttt{poolSize} bound, so
+    a Selection may be arbitrarily large. A union of two full albums (24 Parts)
+    is a legal \texttt{Radio} state though never a legal \texttt{Program} state.
+  \item \textbf{A stale fill against a Radio never mutates}: \texttt{FillOk}'s
+    success guard ($filling = ztrue$) is false on a \texttt{Radio}, so a Part
+    produced by an in-flight fill and routed to an active Radio leaves it
+    unchanged (\texttt{StaleFillIgnored}, $\Xi Radio$) --- never a crash, never
+    a corrupt cursor.
+  \item \textbf{Leaving a Radio is a valid stop}: \texttt{RadioOff} empties the
+    Selection and cursor from any Radio state ($\Delta Radio$ with
+    $selection' = \emptyset$, whence $playing' = lastPlayed' = \emptyset$ by the
+    invariant), the exact parallel of \texttt{TurnOff} on a Program. It is user
+    intent, always enabled, never a rejected lost race.
+  \item \textbf{Retarget is source-agnostic}: the user-intent signals --- off,
+    on, switch, next --- act on \emph{either} source. \texttt{SwitchProgram}
+    retargets an active Radio to a Program ($Radio \to Program'$), the mirror of
+    \texttt{StartRadio}/\texttt{SwitchSelection} retargeting a Program to a
+    Radio; \texttt{RadioNext} advances; \texttt{RadioOff} stops. The
+    generate-internal outcome (\texttt{StaleFillIgnored}) and the auto
+    vibe-switch (\texttt{RadioVibeIgnored}) stay \emph{enabled} against a Radio
+    as total $\Xi Radio$ no-ops --- they are ignored, not disabled, and never
+    errors. What is disabled is only the \emph{successful} fill branch: its
+    $filling = ztrue$ guard has no inhabitant in a \texttt{Radio}, so that
+    branch's precondition is false, leaving the enabled no-op as the sole
+    inhabited operation.
 \end{itemize}
 
 \section{Findings from Formalisation}
@@ -836,7 +1117,12 @@ underspecified, or self-contradictory.
     design owns the ordering (concept: Programs are an \emph{ordered} list); an
     out-of-range index is a resolution failure the CLI reports before any
     operation is attempted, so no ``index out of range'' transition appears
-    here.
+    here. The same abstraction covers \emph{which} pool a \texttt{TurnOn} or
+    \texttt{VibeStyleChange} enters: with per-vibe pools (\texttt{vox-q7vh}) the
+    \texttt{diskPool?}/\texttt{newPool?} it binds is resolved by a catalog tag
+    or name lookup before the operation runs, exactly as the 1-based index is
+    resolved to a Part, so the model abstracts the lookup away and no
+    \texttt{Program} schema changes to accommodate per-vibe pools.
 
   \item \textbf{\texttt{failed} is recoverable, and recovery is unconditional.}
     \emph{(The ownership half of this finding is moot after the 2026-07-05
