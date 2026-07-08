@@ -9,10 +9,15 @@ import subprocess
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.paths import log_dir as _paths_log_dir
-from punt_vox.service.process import ProcessManager
+from punt_vox.service.launchctl import LaunchctlAgent
+
+if TYPE_CHECKING:
+    # Runtime dependency is injected via __new__; the import is annotation-only,
+    # so keeping it out of the runtime graph avoids coupling launchd to process.
+    from punt_vox.service.process import ProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +27,18 @@ _LAUNCHD_PLIST = _LAUNCHD_DIR / f"{_LABEL}.plist"
 
 
 class LaunchdBackend:
-    """Install, uninstall, stop, and query voxd under macOS launchd."""
+    """Author the voxd LaunchAgent plist and drive its launchd lifecycle.
 
-    __slots__ = ("_process_mgr", "_voxd_exec_args_fn")
+    Owns the plist content and location; delegates every ``launchctl``
+    invocation to a composed :class:`LaunchctlAgent`, which serialises the
+    bootout/bootstrap race that leaves voxd down on a first restart.
+    """
+
+    __slots__ = ("_agent", "_process_mgr", "_voxd_exec_args_fn")
 
     _process_mgr: ProcessManager
     _voxd_exec_args_fn: Callable[[], list[str]]
+    _agent: LaunchctlAgent
 
     def __new__(
         cls,
@@ -37,12 +48,8 @@ class LaunchdBackend:
         self = super().__new__(cls)
         self._process_mgr = process_mgr
         self._voxd_exec_args_fn = voxd_exec_args_fn
+        self._agent = LaunchctlAgent(_LABEL, str(_LAUNCHD_PLIST))
         return self
-
-    @staticmethod
-    def _gui_domain() -> str:
-        """Return the launchd GUI domain target for the current user."""
-        return f"gui/{os.getuid()}"
 
     @staticmethod
     def _extra_env() -> dict[str, str]:
@@ -114,57 +121,30 @@ class LaunchdBackend:
         Called as a pre-flight step by ``install()`` before
         ``ensure_port_free`` so launchd's ``KeepAlive=true`` does not
         respawn the daemon the instant the port-cleanup step kills it.
+        The agent waits for the job to actually leave the GUI domain, so a
+        following ``bootstrap`` does not race the asynchronous bootout.
         """
         if not _LAUNCHD_PLIST.exists():
             return
-        domain = self._gui_domain()
-        result = subprocess.run(
-            ["launchctl", "bootout", f"{domain}/{_LABEL}"],
-            check=False,
-        )
-        if result.returncode != 0:
-            logger.debug(
-                "bootout %s exited %d (service may not be loaded)",
-                _LABEL,
-                result.returncode,
-            )
-        else:
-            logger.info("Booted out %s", _LABEL)
+        self._agent.bootout()
 
-    def install(self) -> None:
-        """Install the LaunchAgent plist.  No sudo required."""
+    def _write_plist(self) -> None:
+        """Author the LaunchAgent plist on disk with 0644 permissions."""
         _LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
         _LAUNCHD_PLIST.write_text(self.plist_content())
         _LAUNCHD_PLIST.chmod(0o644)
         logger.info("Wrote plist to %s", _LAUNCHD_PLIST)
 
-        domain = self._gui_domain()
-        subprocess.run(
-            ["launchctl", "bootstrap", domain, str(_LAUNCHD_PLIST)],
-            check=True,
-        )
-        logger.info("Bootstrapped %s into launchd", _LABEL)
-
-        subprocess.run(
-            ["launchctl", "kickstart", "-k", f"{domain}/{_LABEL}"],
-            check=True,
-        )
-        logger.info("Kickstarted %s", _LABEL)
+    def install(self) -> None:
+        """Install the LaunchAgent plist and bring the job up.  No sudo required."""
+        self._write_plist()
+        self._agent.start()
+        logger.info("Bootstrapped and kickstarted %s into launchd", _LABEL)
 
     def uninstall(self) -> bool:
         """Remove the LaunchAgent plist; return ``kill_stale_daemon()``'s result."""
         if _LAUNCHD_PLIST.exists():
-            domain = self._gui_domain()
-            result = subprocess.run(
-                ["launchctl", "bootout", f"{domain}/{_LABEL}"],
-                check=False,
-            )
-            if result.returncode != 0:
-                logger.warning(
-                    "bootout %s exited %d -- removing plist anyway",
-                    _LABEL,
-                    result.returncode,
-                )
+            self._agent.bootout()
             _LAUNCHD_PLIST.unlink(missing_ok=True)
             logger.info("Removed %s", _LAUNCHD_PLIST)
         else:

@@ -1819,10 +1819,14 @@ class TestDaemonRestartCommand:
         assert "9.9.9-test" in result.output
 
     def test_macos_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """macOS path invokes launchctl load + kickstart in order.
+        """macOS path drives launchctl through the race-free LaunchctlAgent.
 
-        Same rename-safe stubbing strategy as the linux variant — see
-        ``test_linux_subprocess_argv_shape`` for the rationale.
+        The bring-up now lives in ``LaunchctlAgent`` (its own subprocess), so
+        this test stubs ``punt_vox.service.launchctl.subprocess.run`` and
+        asserts the bootstrap + kickstart argv shapes. The registration probe
+        (``launchctl print``) reports the job absent so bootstrap proceeds
+        immediately -- the same clean-domain path a real first restart takes
+        once bootout has waited for the job to leave the domain.
         """
         from punt_vox import service
 
@@ -1839,45 +1843,41 @@ class TestDaemonRestartCommand:
 
         def fake_run(
             argv: list[str],
-            *,
-            check: bool = False,
             **_: object,
         ) -> MagicMock:
             calls.append(tuple(argv))
-            return MagicMock(returncode=0)
+            # `print` reports the job absent (rc 1); all else succeeds (rc 0).
+            return MagicMock(returncode=1 if argv[1] == "print" else 0)
 
         monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
         monkeypatch.setattr(service, "ensure_port_free", lambda: None)
 
         with (
             patch(f"{_DR}.os.geteuid", return_value=501),
-            patch(f"{_DR}.os.getuid", return_value=501),
+            patch("punt_vox.service.launchctl.os.getuid", return_value=501),
             patch("punt_vox.service.detect_platform", return_value="macos"),
-            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
+            patch("punt_vox.service.launchctl.subprocess.run", side_effect=fake_run),
             patch(f"{_DR}.VoxClientSync", return_value=mock_client),
             patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 0, result.output
-        assert len(calls) == 2
         plist = str(
             Path.home() / "Library" / "LaunchAgents" / "com.punt-labs.voxd.plist"
         )
-        # First call: launchctl bootstrap (no sudo)
-        assert calls[0] == (
-            "launchctl",
-            "bootstrap",
-            "gui/501",
-            plist,
-        )
-        # Second call: launchctl kickstart -k (no sudo)
-        assert calls[1] == (
+        launchctl_verbs = [c[1] for c in calls if c[0] == "launchctl"]
+        assert "bootstrap" in launchctl_verbs
+        assert "kickstart" in launchctl_verbs
+        # bootstrap targets gui/<uid> with the plist; no sudo anywhere.
+        assert ("launchctl", "bootstrap", "gui/501", plist) in calls
+        assert (
             "launchctl",
             "kickstart",
             "-k",
             "gui/501/com.punt-labs.voxd",
-        )
+        ) in calls
+        assert all(c[0] != "sudo" for c in calls)
         assert "pid=99" in result.output
         assert "9.9.9-test" in result.output
 

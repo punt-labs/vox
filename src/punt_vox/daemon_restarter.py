@@ -13,14 +13,16 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.output_formatter import OutputFormatter
 from punt_vox.paths import installed_version, log_dir
+from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
 from punt_vox.service.launchd import (
     _LABEL as _LAUNCHD_LABEL,  # pyright: ignore[reportPrivateUsage]
     _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
+    # Injected via __new__; annotation-only, so kept out of the runtime graph.
+    from punt_vox.output_formatter import OutputFormatter
     from punt_vox.service.types import PlatformName
 
 __all__ = ["DaemonRestarter"]
@@ -103,29 +105,20 @@ class DaemonRestarter:
 
     @staticmethod
     def _start(plat: PlatformName) -> None:
-        """Start the daemon via the platform service manager."""
+        """Start the daemon via the platform service manager.
+
+        macOS goes through ``LaunchctlAgent.start()``, which waits for the
+        job to leave the GUI domain before bootstrapping and retries once on
+        the exit-5 stale-registration race -- so a single restart reliably
+        brings voxd back up instead of failing the first attempt. Any
+        unrecoverable launchctl failure raises ``LaunchctlError``; both it and
+        the Linux ``CalledProcessError`` are surfaced as a non-zero exit with a
+        clear message, never a false "restarted".
+        """
         logger.info("Starting voxd via service manager...")
         try:
             if plat == "macos":
-                domain = f"gui/{os.getuid()}"
-                subprocess.run(  # noqa: S603 -- launchctl with known args
-                    [  # noqa: S607 -- launchctl is intentional
-                        "launchctl",
-                        "bootstrap",
-                        domain,
-                        str(_LAUNCHD_PLIST),
-                    ],
-                    check=True,
-                )
-                subprocess.run(  # noqa: S603 -- launchctl with known args
-                    [  # noqa: S607 -- launchctl is intentional
-                        "launchctl",
-                        "kickstart",
-                        "-k",
-                        f"{domain}/{_LAUNCHD_LABEL}",
-                    ],
-                    check=True,
-                )
+                LaunchctlAgent(_LAUNCHD_LABEL, str(_LAUNCHD_PLIST)).start()
             elif plat == "linux":
                 subprocess.run(
                     ["sudo", "systemctl", "start", "voxd"],  # noqa: S607
@@ -133,7 +126,7 @@ class DaemonRestarter:
                 )
             else:
                 assert_never(plat)
-        except subprocess.CalledProcessError as exc:
+        except (LaunchctlError, subprocess.CalledProcessError) as exc:
             log_path = log_dir() / "voxd.log"
             typer.echo(
                 f"Error: service manager failed to start voxd: {exc}\n"
