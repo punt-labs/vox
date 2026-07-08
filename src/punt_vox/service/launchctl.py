@@ -1,9 +1,10 @@
 """launchctl GUI-domain control for the voxd LaunchAgent.
 
 Owns every ``launchctl`` invocation for one agent job -- ``bootout``,
-``bootstrap``, ``kickstart``, and the ``print`` registration probe -- so the
-plist-authoring backend (``LaunchdBackend``) and the ``vox daemon restart``
-orchestrator share one race-free implementation.
+``bootstrap``, ``kickstart``, the ``print`` registration probe, and the
+``list`` loaded-status probe -- so the plist-authoring backend
+(``LaunchdBackend``) and the ``vox daemon restart`` orchestrator share one
+race-free implementation and no caller shells out to ``launchctl`` directly.
 
 The race this class exists to close: ``launchctl bootout`` is asynchronous.
 launchctl returns before launchd finishes tearing the job's registration out
@@ -86,6 +87,23 @@ class LaunchctlAgent:
         """
         result = subprocess.run(  # noqa: S603
             ["launchctl", "print", self._service_target()],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def is_loaded(self) -> bool:
+        """Return True if launchd currently has this job loaded.
+
+        ``launchctl list <label>`` exits 0 while the job is loaded under
+        launchd and non-zero once it is gone. Distinct from
+        ``is_registered()``: that probes the GUI-domain service target to
+        serialise the bootout/bootstrap race, whereas this is the external
+        "is voxd up?" status query keyed on the bare label.
+        """
+        result = subprocess.run(  # noqa: S603
+            ["launchctl", "list", self._label],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,

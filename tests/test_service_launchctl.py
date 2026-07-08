@@ -111,6 +111,25 @@ def test_is_registered_false_when_print_nonzero(
 
 
 @patch("punt_vox.service.launchctl.subprocess.run")
+def test_is_loaded_true_when_list_exits_zero(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    """launchctl list exit 0 means the job is loaded under launchd."""
+    mock_run.return_value = _completed(0)
+    assert agent.is_loaded() is True
+    assert _verb(mock_run.call_args_list[0]) == "list"
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_is_loaded_false_when_list_nonzero(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    """launchctl list non-zero means the job is not loaded."""
+    mock_run.return_value = _completed(1)
+    assert agent.is_loaded() is False
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
 def test_wait_returns_immediately_when_already_unregistered(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:

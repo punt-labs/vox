@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 import logging
 import os
-import subprocess
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -153,10 +152,9 @@ class LaunchdBackend:
         return self._process_mgr.kill_stale_daemon()
 
     def status(self) -> bool:
-        """Return True if voxd is registered and running under launchd."""
-        result = subprocess.run(
-            ["launchctl", "list", _LABEL],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0
+        """Return True if voxd is loaded under launchd.
+
+        Delegates the ``launchctl list`` probe to the composed agent so this
+        backend never shells out to ``launchctl`` itself.
+        """
+        return self._agent.is_loaded()

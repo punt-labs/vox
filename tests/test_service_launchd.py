@@ -19,9 +19,11 @@ def _backend_with_mock_agent(
     """Build a LaunchdBackend whose composed LaunchctlAgent is a MagicMock.
 
     launchd.py's contract after the LaunchctlAgent extraction is "author the
-    plist, then delegate every launchctl call to the agent". These tests verify
-    that delegation; the agent's own subprocess behavior (bootout/bootstrap
-    race handling) is covered in test_service_launchctl.py.
+    plist, then delegate every launchctl call to the agent" -- including the
+    lifecycle verbs (bootout/bootstrap/kickstart) and the status probe. These
+    tests verify that delegation; the agent's own subprocess behavior
+    (bootout/bootstrap race handling, the list probe) is covered in
+    test_service_launchctl.py.
     """
     agent = MagicMock()
 
@@ -256,3 +258,34 @@ def test_launchd_uninstall_propagates_failed_kill(
     assert result is False
     # The plist is removed regardless of the kill outcome.
     assert not plist.exists()
+
+
+# ---------------------------------------------------------------------------
+# status -- delegates the launchctl list probe to the composed agent
+# ---------------------------------------------------------------------------
+
+
+def test_launchd_status_true_when_agent_reports_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """status returns True by delegating to the agent's list probe."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    be, agent = _backend_with_mock_agent(monkeypatch, plist)
+    agent.is_loaded.return_value = True
+
+    assert be.status() is True
+    agent.is_loaded.assert_called_once_with()
+
+
+def test_launchd_status_false_when_agent_reports_unloaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """status returns False when the agent reports the job is not loaded."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    be, agent = _backend_with_mock_agent(monkeypatch, plist)
+    agent.is_loaded.return_value = False
+
+    assert be.status() is False
+    agent.is_loaded.assert_called_once_with()
