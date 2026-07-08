@@ -574,6 +574,11 @@ the disabled generate-internal ones.
 
 ### Design-review resolutions
 
+Two label schemes are used throughout this document: **`finding #N`** refers to the
+numbered gvr + rej design-review findings (1--13) resolved in the table below;
+**`F#N`** refers to the subsequent Cursor/Copilot PR-review-round findings on the
+design PR. Both are cross-references, not TODOs.
+
 The gvr and rej reviews converged; the operator ruled R5. Each finding's disposition:
 
 | # | Finding | Disposition |
