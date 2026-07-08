@@ -62,7 +62,7 @@ folder tree.
 `created` is a **tz-aware UTC** timestamp serialized via `datetime.isoformat()`, which
 emits the numeric-offset form `+00:00` (e.g. `2026-07-08T02:14:07+00:00`) — *not* a
 trailing `Z` — and parsed back via `datetime.fromisoformat`, which yields a tz-aware
-value (F#3). Being tz-aware end-to-end is load-bearing: a naive `datetime.now()` would
+value. Being tz-aware end-to-end is load-bearing: a naive `datetime.now()` would
 make `newest`'s comparisons raise `TypeError` against an aware value (finding #6). It
 enables "resume the newest matching album." `name`, when present, is unique across
 albums (R5); `tags.name == null` means an unnamed, tag-addressed album.
@@ -411,8 +411,11 @@ vox (Finder-only, deletable by hand) — recommend *not* surfacing them in `list
    `vibe = _session.vibe` (current session mood), passes both in `StartRequest`.
 2. `service.turn_on(style, vibe, name, prompts)` computes
    `fingerprint = PromptFingerprint.from_prompts(prompts)`:
-   - `name` present → `catalog.by_name(name)` (name overrides vibe *and* fingerprint —
-     a named pool keeps playing regardless of prompt-set drift, vox-1uo5).
+   - `name` present → `catalog.by_name(name)`. On a **hit**, resume it (name overrides
+     vibe *and* fingerprint — a named pool keeps playing regardless of prompt-set
+     drift, vox-1uo5). On a **miss** (no album named `name`), mint a fresh album named
+     `name` (auto-suffixed per R5 if it collides) stamped with the fingerprint, then
+     generate.
    - else `catalog.newest(style, vibe, fingerprint)` → the newest album matching the
      tags **and** the fingerprint, if any. A `(style, vibe)` hit with a *different*
      fingerprint is a miss (vox-1uo5), so it falls through to mint.
