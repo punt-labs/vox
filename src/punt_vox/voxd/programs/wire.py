@@ -106,11 +106,7 @@ class JsonObject:
         return self.require_str(field)
 
     def opt_bool(self, field: str) -> bool | None:
-        """Return a boolean field, or ``None`` when the key is absent or null.
-
-        ``None`` is the documented "field not present" contract; a present but
-        wrong-typed value still raises. A JSON ``null`` is treated as absence.
-        """
+        """Return a boolean field, or ``None`` when absent or null; else raises."""
         if self._data.get(field) is None:
             return None
         return self.require_bool(field)
