@@ -326,9 +326,12 @@ reject as a lost race when the source is a `SelectionPlayback` — the bas7-clas
 defense (finding #4). **`VibeStyleChange` is the lone third case**: it retargets a live
 `Program` but is a deliberate no-op against a `SelectionPlayback`, because replay carries
 no vibe adaptation. `ControlSignal.apply` therefore has exactly three shapes — retarget
-(user-intent), guard-disabled reject (generate-internal), guard-disabled no-op
-(`VibeStyleChange` under replay) — and each signal's `apply` narrows (or does not) per
-its row above.
+(user-intent); a lost-race **reject** for generate-internal outcomes (the
+`isinstance(source, Program)` guard fails and *raises* `GuardViolationError`); and an
+**ignore** for `VibeStyleChange` under replay (a total no-op that changes nothing and
+never raises). Reject and ignore both leave state unchanged, but they are distinct
+mechanisms — a raise vs. a total no-op — not one "guard-disabled" case. Each signal's
+`apply` narrows (or does not) per its row above.
 
 ### Invariant preservation
 
@@ -520,15 +523,18 @@ Selection that may span albums):
    generates nothing and is uncapped"** — `RadioRotate`/`StartRadio` touch no
    generation field and impose no `poolSize` bound, so a union of two full albums
    (24 parts) is a legal `Radio` state though never a legal `Program` state.
-6. **A fill outcome applied while a `Radio` is active is a guard-disabled no-op
-   (finding #4).** Model the generate-family fill transition (`FillOk` and its
-   siblings) as *disabled* when the active source is a `Radio` — the same shape as
-   `FillOk` being disabled outside `playing_filling`: the precondition is false, so
-   the operation makes no state change (`ΞRadio`), rather than being an error. This is
-   the model image of the runtime lost-race idiom: the fill task posts `Produced`
-   after a `SwitchSelection` retargeted the writer to a `SelectionPlayback`, the
-   `isinstance(source, Program)` narrow fails, and the writer logs it at INFO and
-   survives. Key Property: **"a stale generate outcome against a Radio never mutates
+6. **A fill outcome applied while a `Radio` is active changes nothing
+   (finding #4).** In the model this is `StaleFillIgnored` — an *enabled*, total
+   `ΞRadio` no-op that accepts the stale outcome and mutates nothing, **not** a
+   disabled operation. The only thing *disabled* is the successful `FillOk` branch,
+   whose `filling = ztrue` guard has no inhabitant in a `Radio` (the same shape as
+   `FillOk` being disabled outside `playing_filling`); the total `ΞRadio` no-op is
+   what remains and covers the case, so it is never an error. This is the model image
+   of the runtime lost-race idiom: the fill task posts `Produced` after a
+   `SwitchSelection` retargeted the writer to a `SelectionPlayback`, the
+   `isinstance(source, Program)` narrow fails, and the writer **rejects via
+   `GuardViolationError`** and survives (logged at INFO) — a raise at the code level,
+   a `ΞRadio` no-op in the model. Key Property: **"a stale generate outcome against a Radio never mutates
    and never crashes."**
 7. **Leaving a `Radio` — `RadioOff` (F#2).** A `TurnOff` while a `Radio` is active is a
    valid stop, the parallel of `TurnOff` on a `Program`: `Radio → off/empty`, tearing
