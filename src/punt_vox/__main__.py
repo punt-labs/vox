@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import platform
 import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -21,11 +20,15 @@ from punt_vox.cli_music import build_music_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
+from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
+
+if TYPE_CHECKING:
+    # Annotation-only; keeps `client` off __main__'s runtime import graph.
+    from punt_vox.client import SynthesizeResult
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +282,35 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 # ---------------------------------------------------------------------------
 
 
+def _dedup_fields(result: SynthesizeResult) -> dict[str, object]:
+    """Return the dedup annotations for a played result, empty if fresh."""
+    if not result.deduped:
+        return {}
+    fields: dict[str, object] = {"deduped": True}
+    if result.original_played_at is not None:
+        fields["original_played_at"] = result.original_played_at
+    if result.ttl_seconds_remaining is not None:
+        fields["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+    return fields
+
+
+def _speak_segments(
+    segments: list[str],
+    spec: SynthesisSpec,
+    once: int | None,
+) -> None:
+    """Synthesize and emit each segment; map voxd errors to a CLI exit."""
+    client = VoxClientSync()
+    for seg_text in segments:
+        try:
+            result = client.synthesize(seg_text, spec, once=once)
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        payload: dict[str, object] = {"id": result.request_id, **_dedup_fields(result)}
+        _formatter.emit(payload, seg_text)
+
+
 @app.command()
 def unmute(  # pyright: ignore[reportUnusedFunction]
     ctx: typer.Context,
@@ -351,25 +383,7 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     )
 
     segments = _resolve_text_segments(text, from_file)
-    client = VoxClientSync()
-
-    for seg_text in segments:
-        try:
-            result = client.synthesize(seg_text, spec, once=once)
-            payload: dict[str, object] = {"id": result.request_id}
-            if result.deduped:
-                payload["deduped"] = True
-                if result.original_played_at is not None:
-                    payload["original_played_at"] = result.original_played_at
-                if result.ttl_seconds_remaining is not None:
-                    payload["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-            _formatter.emit(payload, seg_text)
-        except VoxdConnectionError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-        except VoxdProtocolError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
+    _speak_segments(segments, spec, once)
 
 
 # ---------------------------------------------------------------------------
@@ -701,13 +715,23 @@ def install() -> None:
     # Step 2: daemon service (best-effort — not available in CI/containers)
     # SystemExit: service.detect_platform() raises on unsupported platforms.
     # OSError/CalledProcessError: subprocess and filesystem failures during install.
+    # LaunchctlError: macOS bring-up (bootstrap/kickstart) fails on a GUI-less host.
+    # ServiceHealthError: voxd registered but never answered health (silent-down).
     typer.echo("[2/2] Registering vox daemon...")
-    try:
-        from punt_vox.service import install as svc_install
+    from punt_vox.service import install as svc_install
+    from punt_vox.service.health_verify import ServiceHealthError
+    from punt_vox.service.launchctl import LaunchctlError
 
+    try:
         msg = svc_install()
         typer.echo(f"  \u2713 {msg}")
-    except (SystemExit, OSError, subprocess.CalledProcessError) as exc:
+    except (
+        SystemExit,
+        OSError,
+        subprocess.CalledProcessError,
+        LaunchctlError,
+        ServiceHealthError,
+    ) as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 
@@ -739,40 +763,6 @@ def uninstall() -> None:
 # ---------------------------------------------------------------------------
 # install-desktop (Claude Desktop MCP server registration)
 # ---------------------------------------------------------------------------
-
-
-def _detect_install_provider(provider_name: str | None) -> str:
-    if provider_name:
-        return provider_name.lower()
-    return auto_detect_provider()
-
-
-def _build_install_env(prov: str, audio_dir: Path) -> dict[str, str]:
-    env: dict[str, str] = {
-        "TTS_PROVIDER": prov,
-        "VOX_OUTPUT_DIR": str(audio_dir),
-    }
-    if prov == "elevenlabs":
-        key = os.environ.get("ELEVENLABS_API_KEY")
-        if not key:
-            typer.echo(
-                "Error: ELEVENLABS_API_KEY is not set."
-                " Export it or use --provider polly/openai/say/espeak.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        env["ELEVENLABS_API_KEY"] = key
-    elif prov == "openai":
-        key = os.environ.get("OPENAI_API_KEY")
-        if not key:
-            typer.echo(
-                "Error: OPENAI_API_KEY is not set."
-                " Export it or use --provider polly/say/espeak.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        env["OPENAI_API_KEY"] = key
-    return env
 
 
 @app.command("install-desktop")
@@ -809,8 +799,7 @@ def install_desktop(
     audio_dir = output_dir or default_output_dir()
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    detected = _detect_install_provider(install_provider)
-    env = _build_install_env(detected, audio_dir)
+    installer = DesktopInstaller.detect(install_provider, audio_dir)
 
     from punt_vox.doctor import claude_desktop_config_path
 
@@ -834,7 +823,7 @@ def install_desktop(
     data["mcpServers"]["vox"] = {
         "command": uvx,
         "args": ["--from", "punt-vox", "vox", "mcp"],
-        "env": env,
+        "env": installer.server_env(),
     }
 
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -844,9 +833,11 @@ def install_desktop(
     else:
         typer.echo("Registered vox MCP server.")
 
-    typer.echo(f"Provider: {detected}")
+    typer.echo(f"Provider: {installer.provider}")
     typer.echo(f"Config: {config_path}")
     typer.echo(f"Output: {audio_dir}")
+    if not installer.daemon_can_authenticate():
+        typer.echo(installer.credential_guidance(), err=True)
     typer.echo("Restart Claude Desktop to activate.")
 
 

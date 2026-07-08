@@ -5,37 +5,31 @@
 the operation's precondition (raising :class:`GuardViolationError` -- the Z
 guard, a ``ValueError`` subtype the single writer treats as a lost race), computes
 the successor state through :meth:`ProgramState.with_updates` (which re-validates
-every invariant), and stores it. Mutators return ``None`` (PY-OP-8). No method
-takes or checks a session: ``voxd`` state is machine-universal (finding #6).
+every invariant), and stores it. The transient-error backoff transitions (the Z
+``retrying``/``failed`` sub-machine) are delegated to :class:`RetryMachine`, which
+computes their successors; ``Program`` only stores what it returns. Mutators
+return ``None`` (PY-OP-8). No method takes or checks a session: ``voxd`` state is
+machine-universal (finding #6).
 """
 
 from __future__ import annotations
 
-from typing import NoReturn, Self, final
+from typing import TYPE_CHECKING, NoReturn, Self, final
 
-from punt_vox.voxd.programs.format import MAX_RETRY
-from punt_vox.voxd.programs.identifiers import Reason
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode import Mode, PlaybackStatus
 from punt_vox.voxd.programs.part import FrozenParts, Part
 from punt_vox.voxd.programs.playback_policy import Advance, PlaybackPolicy
+from punt_vox.voxd.programs.retry_machine import RetryMachine
 from punt_vox.voxd.programs.state import ProgramState
 
-__all__ = ["GuardViolationError", "Program"]
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.identifiers import Reason
+
+__all__ = ["Program"]
 
 _PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
 """The modes in which the consume-only cursor may advance (finding #3)."""
-
-
-class GuardViolationError(ValueError):
-    """A command's Z precondition no longer holds -- a benign lost race.
-
-    Raised by :meth:`Program._reject` when a guard fails (e.g. a ``rotate`` that
-    arrives just after a ``turn_off``). It subclasses ``ValueError`` so callers
-    that only distinguish "illegal transition" keep working, but the single
-    writer catches *this* type alone: a plain ``ValueError`` from
-    :class:`StateInvariants` means a corrupt successor -- a bug, not a race --
-    and must surface at ERROR rather than be mislabeled as a losing racer.
-    """
 
 
 @final
@@ -106,16 +100,7 @@ class Program:
 
     def first_track_transient(self, reason: Reason) -> None:
         """Back off after a transient first-Part error (Z ``FirstTrackTransient``)."""
-        if self._state.mode is not Mode.GENERATING_FIRST:
-            self._reject("first_track_transient requires mode generating_first")
-        self._state = self._state.with_updates(
-            playing=None,
-            last_played=None,
-            mode=Mode.RETRYING,
-            filling=False,
-            attempts=1,
-            last_error=reason,
-        )
+        self._state = RetryMachine(self._state).first_track_transient(reason)
 
     def fill_ok(self, new: Part) -> None:
         """Deliver one background Part, stopping the fill at full (Z ``FillOk``)."""
@@ -149,73 +134,25 @@ class Program:
 
     def fill_transient(self, reason: Reason) -> None:
         """Back off on a transient fill error, playing on (Z ``FillTransient``)."""
-        if not (self._state.mode is Mode.PLAYING_FILLING and self._state.filling):
-            self._reject("fill_transient requires an active fill in playing_filling")
-        self._state = self._state.with_updates(
-            mode=Mode.RETRYING,
-            filling=False,
-            attempts=1,
-            last_error=reason,
-        )
+        self._state = RetryMachine(self._state).fill_transient(reason)
+
+    # -- resilience path (Z retrying/failed, via RetryMachine) -------------
 
     def retry_fails(self, reason: Reason) -> None:
         """Count another transient error below the cap (Z ``RetryFails``)."""
-        if self._state.mode is not Mode.RETRYING:
-            self._reject("retry_fails requires mode retrying")
-        if self._state.attempts >= MAX_RETRY:
-            self._reject("retry_fails requires attempts below the cap")
-        self._state = self._state.with_updates(
-            attempts=self._state.attempts + 1,
-            last_error=reason,
-        )
+        self._state = RetryMachine(self._state).retry_fails(reason)
 
     def retry_exhausted(self, reason: Reason) -> None:
         """Give up an empty-pool Program at the cap (Z ``RetryExhausted``)."""
-        if self._state.mode is not Mode.RETRYING:
-            self._reject("retry_exhausted requires mode retrying")
-        if self._state.attempts != MAX_RETRY:
-            self._reject("retry_exhausted requires attempts at the cap")
-        if len(self._state.pool) != 0:
-            self._reject("retry_exhausted requires an empty pool")
-        self._state = self._state.with_updates(
-            playing=None,
-            last_played=None,
-            mode=Mode.FAILED,
-            filling=False,
-            attempts=0,
-            last_error=reason,
-        )
+        self._state = RetryMachine(self._state).retry_exhausted(reason)
 
     def retry_capped(self, reason: Reason) -> None:
-        """Tolerate a transient at the cap on a non-empty pool (Z ``RetryCapped``).
-
-        A non-empty pool never hard-fails (finding #4): at the cap a further
-        transient error neither exhausts (that needs an empty pool) nor climbs
-        (``retry_fails`` guards below the cap), so the retry self-loops with
-        ``attempts`` pinned and playback untouched -- it "plays on and keeps
-        trying at the capped backoff". Only the advisory reason is refreshed.
-        """
-        if self._state.mode is not Mode.RETRYING:
-            self._reject("retry_capped requires mode retrying")
-        if self._state.attempts != MAX_RETRY:
-            self._reject("retry_capped requires attempts at the cap")
-        if len(self._state.pool) == 0:
-            self._reject("retry_capped requires a non-empty pool")
-        self._state = self._state.with_updates(last_error=reason)
+        """Tolerate a transient at the cap on a non-empty pool (Z ``RetryCapped``)."""
+        self._state = RetryMachine(self._state).retry_capped(reason)
 
     def recover(self) -> None:
         """Clear the backoff and resume generation (Z ``Recover``)."""
-        if self._state.mode is not Mode.RETRYING:
-            self._reject("recover requires mode retrying")
-        act = self._state.activation(self._state.pool)
-        keep_playing = None if len(self._state.pool) == 0 else self._state.playing
-        self._state = self._state.with_updates(
-            mode=act.mode,
-            filling=True,
-            playing=keep_playing,
-            attempts=0,
-            last_error=None,
-        )
+        self._state = RetryMachine(self._state).recover()
 
     def vibe_style_change(self, new_pool: frozenset[Part]) -> None:
         """Retune to a new (vibe, style) key's saved pool (Z ``VibeStyleChange``)."""
@@ -340,4 +277,4 @@ class Program:
     @staticmethod
     def _reject(message: str) -> NoReturn:
         """Raise a :class:`GuardViolationError` -- a violated Z precondition (guard)."""
-        raise GuardViolationError(message)
+        GuardViolationError.reject(message)

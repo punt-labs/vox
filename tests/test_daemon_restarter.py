@@ -125,3 +125,23 @@ class TestDaemonRestarter:
         with patch("punt_vox.service.stop_daemon") as mock_stop:
             DaemonRestarter._stop("macos")  # pyright: ignore[reportPrivateUsage]
             mock_stop.assert_called_once_with("macos")
+
+    def test_macos_start_delegates_to_launchctl_agent(self) -> None:
+        """macOS _start drives the race-free LaunchctlAgent.start()."""
+        with patch(f"{_MOD}.LaunchctlAgent") as mock_agent_cls:
+            DaemonRestarter._start("macos")  # pyright: ignore[reportPrivateUsage]
+        mock_agent_cls.return_value.start.assert_called_once_with()
+
+    def test_macos_start_surfaces_launchctl_failure(self) -> None:
+        """A LaunchctlError (e.g. the job never unregistered) exits non-zero.
+
+        This is the client-observable contract: a restart that cannot bring
+        voxd up must fail loudly, never report a false "restarted".
+        """
+        from punt_vox.service.launchctl import LaunchctlError
+
+        with patch(f"{_MOD}.LaunchctlAgent") as mock_agent_cls:
+            mock_agent_cls.return_value.start.side_effect = LaunchctlError("boom")
+            with pytest.raises(typer.Exit) as exc_info:
+                DaemonRestarter._start("macos")  # pyright: ignore[reportPrivateUsage]
+        assert exc_info.value.exit_code == 1

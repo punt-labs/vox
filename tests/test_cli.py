@@ -1564,6 +1564,61 @@ class TestInstallCommand:
 
         assert result.exit_code != 0
 
+    def test_install_degrades_when_launchctl_fails(self) -> None:
+        """macOS bring-up failure (LaunchctlError) skips gracefully, exit 0.
+
+        On a GUI-less/CI macOS host ``launchctl bootstrap`` fails; the
+        launchd backend now raises ``LaunchctlError`` (a ``RuntimeError``,
+        not ``CalledProcessError``). Daemon registration is best-effort, so
+        the plugin install must still succeed rather than propagate a
+        traceback.
+        """
+        from punt_vox.service.launchctl import LaunchctlError
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch(
+                "punt_vox.service.install",
+                side_effect=LaunchctlError("bootstrap failed: 5"),
+            ),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Skipped" in result.output
+        assert "Restart Claude Code" in result.output
+
+    def test_install_degrades_when_health_verify_fails(self) -> None:
+        """Registered-but-not-serving daemon skips gracefully, exit 0.
+
+        launchctl/systemctl accepts the job but voxd never answers its health
+        poll (bad env, broken binary, port contention), so ``svc_install``
+        raises ``ServiceHealthError``. Like the bring-up path, the best-effort
+        marketplace install must still succeed rather than propagate a
+        traceback. ``vox daemon install`` (a separate command) still fails
+        loudly on the same error -- only this command degrades.
+        """
+        from punt_vox.service.health_verify import ServiceHealthError
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch(
+                "punt_vox.service.install",
+                side_effect=ServiceHealthError("never became reachable within 5s"),
+            ),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Skipped" in result.output
+        assert "Restart Claude Code" in result.output
+
 
 class TestUninstallCommand:
     def test_uninstall_success(self) -> None:
@@ -1616,12 +1671,18 @@ class TestInstallDesktopCommand:
         assert result.exit_code == 0
         assert config_path.exists()
 
-        data = json.loads(config_path.read_text())
+        raw = config_path.read_text()
+        data = json.loads(raw)
         server = data["mcpServers"]["vox"]
         assert server["command"] == _UVX
         assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
-        assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
-        assert server["env"]["TTS_PROVIDER"] == "say"
+        assert server["env"] == {
+            "VOX_OUTPUT_DIR": str(audio_dir),
+            "TTS_PROVIDER": "say",
+        }
+        # PL-PP-4: no provider secret ever lands in the config.
+        assert "ELEVENLABS_API_KEY" not in raw
+        assert "OPENAI_API_KEY" not in raw
 
     def test_preserves_other_servers(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -1649,6 +1710,80 @@ class TestInstallDesktopCommand:
         data = json.loads(config_path.read_text())
         assert "other-server" in data["mcpServers"]
         assert "vox" in data["mcpServers"]
+
+    def test_elevenlabs_key_never_written_to_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PL-PP-4: an exported ElevenLabs key must not reach the config."""
+        secret = "sk-elevenlabs-supersecret"
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setenv("ELEVENLABS_API_KEY", secret)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "install-desktop",
+                    "--provider",
+                    "elevenlabs",
+                    "--output-dir",
+                    str(audio_dir),
+                ],
+            )
+
+        assert result.exit_code == 0
+        raw = config_path.read_text()
+        assert secret not in raw
+        assert "ELEVENLABS_API_KEY" not in raw
+        server = json.loads(raw)["mcpServers"]["vox"]
+        assert server["env"] == {
+            "VOX_OUTPUT_DIR": str(audio_dir),
+            "TTS_PROVIDER": "elevenlabs",
+        }
+
+    def test_missing_key_warns_without_leaking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing credential: register anyway, warn, reveal no secret."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            patch(
+                "punt_vox.desktop_install.keys_env_file",
+                return_value=tmp_path / "absent.env",
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "install-desktop",
+                    "--provider",
+                    "elevenlabs",
+                    "--output-dir",
+                    str(audio_dir),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "vox" in json.loads(config_path.read_text())["mcpServers"]
+        assert "ELEVENLABS_API_KEY" in result.stderr
+        assert "vox daemon install" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -1819,10 +1954,14 @@ class TestDaemonRestartCommand:
         assert "9.9.9-test" in result.output
 
     def test_macos_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """macOS path invokes launchctl load + kickstart in order.
+        """macOS path drives launchctl through the race-free LaunchctlAgent.
 
-        Same rename-safe stubbing strategy as the linux variant — see
-        ``test_linux_subprocess_argv_shape`` for the rationale.
+        The bring-up now lives in ``LaunchctlAgent`` (its own subprocess), so
+        this test stubs ``punt_vox.service.launchctl.subprocess.run`` and
+        asserts the bootstrap + kickstart argv shapes. The registration probe
+        (``launchctl print``) reports the job absent so bootstrap proceeds
+        immediately -- the same clean-domain path a real first restart takes
+        once bootout has waited for the job to leave the domain.
         """
         from punt_vox import service
 
@@ -1839,45 +1978,41 @@ class TestDaemonRestartCommand:
 
         def fake_run(
             argv: list[str],
-            *,
-            check: bool = False,
             **_: object,
         ) -> MagicMock:
             calls.append(tuple(argv))
-            return MagicMock(returncode=0)
+            # `print` reports the job absent (rc 1); all else succeeds (rc 0).
+            return MagicMock(returncode=1 if argv[1] == "print" else 0)
 
         monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
         monkeypatch.setattr(service, "ensure_port_free", lambda: None)
 
         with (
             patch(f"{_DR}.os.geteuid", return_value=501),
-            patch(f"{_DR}.os.getuid", return_value=501),
+            patch("punt_vox.service.launchctl.os.getuid", return_value=501),
             patch("punt_vox.service.detect_platform", return_value="macos"),
-            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
+            patch("punt_vox.service.launchctl.subprocess.run", side_effect=fake_run),
             patch(f"{_DR}.VoxClientSync", return_value=mock_client),
             patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
         ):
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 0, result.output
-        assert len(calls) == 2
         plist = str(
             Path.home() / "Library" / "LaunchAgents" / "com.punt-labs.voxd.plist"
         )
-        # First call: launchctl bootstrap (no sudo)
-        assert calls[0] == (
-            "launchctl",
-            "bootstrap",
-            "gui/501",
-            plist,
-        )
-        # Second call: launchctl kickstart -k (no sudo)
-        assert calls[1] == (
+        launchctl_verbs = [c[1] for c in calls if c[0] == "launchctl"]
+        assert "bootstrap" in launchctl_verbs
+        assert "kickstart" in launchctl_verbs
+        # bootstrap targets gui/<uid> with the plist; no sudo anywhere.
+        assert ("launchctl", "bootstrap", "gui/501", plist) in calls
+        assert (
             "launchctl",
             "kickstart",
             "-k",
             "gui/501/com.punt-labs.voxd",
-        )
+        ) in calls
+        assert all(c[0] != "sudo" for c in calls)
         assert "pid=99" in result.output
         assert "9.9.9-test" in result.output
 

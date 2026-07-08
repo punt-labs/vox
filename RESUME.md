@@ -1,67 +1,43 @@
-# Resume — vox-oayr Audio Programs Phase 1, Slice 5
+# Resume — vox
 
-**Written:** 2026-07-05 (session paused mid-slice-5-review).
-**Branch:** `design/audio-programs-phase1` (HEAD `d682acc`), NOT pushed, NOT PR'd.
-**Bead:** vox-oayr (in_progress). Mission: `m-2026-07-05-004` (rmh worker, bwk evaluator), still OPEN.
+**Updated:** 2026-07-07. **Branch:** `main` (Phase 1 merged).
 
-> The prior contents of this file (the 2026-07-03 OO-refactor status hand-off) were overwritten per operator instruction. That plan lives on in `docs/oo-refactor/STATUS.md` + `docs/oo-refactor/oo-execution-plan-v3.md`.
+## Status: Audio Programs Phase 1 is SHIPPED ✅
 
-## TL;DR
+PR **#299** squash-merged to `main` (`80d8a18`), 2026-07-07. Nothing in flight. `bd close vox-oayr` done. Recap email sent.
 
-**Slice 5 is CODE-COMPLETE and GREEN.** All of Audio Programs Phase 1 (slices 1–5) is done on the branch. `make check` = EXIT 0 (verified by leader: 2046 tests, mypy+pyright clean on 212 files, check-oo improved / zero regressions, check-coupling no regressions, **suppressions DOWN 3**, **zero rebaseline**). Remaining before merge: (1) mission-result write_set mechanics, (2) re-run local review + fix findings, (3) **operator-eared audio flight**, (4) open + merge the Phase-1 PR, (5) follow-up beads + recap email.
+### What shipped
 
-## The 5 slice-5 commits (bdbc039..d682acc)
+Ownership-free, persisted **Program** model for background music + playlist replay (CLI + MCP). Single-writer `ControlChannel` + typed `ControlSignal`s (O2); `ProgramState` with 16 invariants by construction (executable Z model `docs/audio-programs.tex`). `/music on` fills a 12-track pool, auto-advances, rotates at zero credits; `/music play|list|next|loop|playlist:N` replay saved pools. Storage `~/Music/vox/<name>/` (no `programs/` segment) with **ID3 tags** on every track. Whole-tree migration/compat purge (org no-migration rule; suppression ratchet −10). Docs: README Background Music, DES-041, CHANGELOG, design doc reconciled + `docs/design-review-phase1.md` (rej+gvr).
 
-1. `f5a55d6` feat(programs): ProgramService composition root + 7 wire handlers + dynamic player.
-2. `85706ba` fix(oo_score): subtract PEP-570 positional-only receiver in `_avg_params` (+ test tests/test_oo_score.py). Real scorer bug — `self`/`cls` in `posonlyargs` (from `def m(self, x, /)`) miscounted as a param. Returned control_signal.py to avg_params 0.5, no rebaseline.
-3. `236146d` feat(voxd): daemon rewired to `ProgramSubsystem` (programs/wiring.py facade: ProgramService + 7 `program_*` handlers + read-only legacy-migrate hint) + `FillReconciler` extracted from ControlChannel. daemon.py efferent_coupling 21→12.
-4. `e477a6a` refactor(voxd): forward-wire callers off `voxd.music` (test_voxd_router.py → 7 handlers; test_voxd.py deleted = retired TrackGenerator.auto_track_name ONLY, zero live coverage lost, PL-TT-2 confirmed; `voxd/__init__.py` re-exports dropped; stale mypy `ignore_errors` override removed).
-5. `d682acc` refactor(voxd): delete `voxd/music/` (17 modules) + `tests/music/` (16 files). Net slice: +1733 / −5133 (≈ −3400 lines).
+### Verified
 
-Full recap + check-oo deltas: `.tmp/missions/results/vox-oayr-slice5.md`. Result YAML: `.tmp/missions/results/vox-oayr-slice5.yaml`.
+`make check` green (2009 tests). **Operator-eared audio flight passed** (trance pool: audible, genuine, gapless). Live: generated track at `~/Music/vox/lofi/001.mp3` with all six ID3 frames; full transition chain via the status API.
 
-## PENDING ON RESUME (ordered)
+### Review outcome
 
-### 1. Mission-result write_set mechanics (leader task, BLOCKED)
+7 genuine bugs caught pre-merge by Cursor/Bugbot (all real, none false): path-traversal in program names; `playlist:N`/status resolving by list-position vs intrinsic index; retry-machine stall + at-cap-non-empty hole; stale-fill orphan race across a program switch; `music_mode` shadow desync. Plus a real Z-model hole (capped-retry self-loop with no schema).
 
-`ethos mission result m-2026-07-05-004` REJECTS 5c's result: 6 changed paths are outside the contract write_set — `wiring.py`, `fill_reconciler.py`, `control_channel.py`, `service.py`, `playback.py`, `tools/oo_score.py`. **All 6 were leader-authorized in-band** (facade, FillReconciler extraction, scorer-bug fix, playback offset) — the design delegates write-set to the specialist, so this is a legitimate authorized expansion, NOT a failure. There is NO `ethos mission amend`. Options: (a) worker submits verdict `escalate` + "request write_set expansion" in open_questions → leader closes `--status escalated` and re-scopes (tool's documented path, but mislabels success); (b) hand-edit `.punt-labs/ethos/missions/m-2026-07-05-004/contract.yaml` write_set (risk: invalidates the contract Hash); (c) find a re-scope command not yet located. **Decide on resume.** `ethos mission close` requires a valid round result first (circular with the write_set enforcement) — resolve (a) or (c).
+## Pending (next sessions)
 
-### 2. Local review (RE-RUN — reviewers were stopped for the pause)
+**Ratchet discussion (operator-requested, hold-until-ship — now due).** Blind spots hit this session: per-commit-vs-tip `check-oo` scoring (broken intermediate commits that pass at the tip); `update-oo` (whole-tree, refuses ANY regression) vs `check-oo` (git-diff-scoped) mismatch; god-module rebaseline churn (server.py perturbs 4 relative metrics on any change); the `method_ratio`/`class_to_func_ratio` penalty on legitimately-functional modules. Multiple scoped rebaselines were needed just to ship correctness fixes.
 
-Launched 4 pr-review-toolkit agents on `git diff bdbc039..d682acc`, then stopped them before collecting findings. Re-run: **code-reviewer, silent-failure-hunter, type-design-analyzer, pr-test-analyzer**; then **code-simplifier** once clean (Phase 5). Scrutinize:
+**Follow-up beads (filed):**
 
-- **O2 single-writer invariant**: every handler POSTs a ControlSignal, never mutates Program directly; SwitchProgram context-swap-then-transition atomic through the ONE consumer (a race reintroduces the vox-73m5 lost-update).
-- `_probe_duration` in playback.py (d682acc) — 5c removed a "mypy-driven defensive guard to offset and pay down." Verify genuinely safe, not a metric play.
-- oo_score scorer fix — confirm it leaves `@staticmethod` (no receiver) alone.
-- Consumer-loop crash/deadlock surfacing (prior slices had a writer-crash deadlock + producer-exception silent-disable).
+- `vox-q7vh` — per-vibe music pools (**direction A**, operator-chosen). Today vibe only flavors the agent's prompts; it does NOT partition pools (`_name_for` keys on style/name; `_subject_for` copies style into `subject.vibe`; `VibeStyleChange` signal exists but is unwired). Make vibe part of the pool identity + wire it + model in the `.tex`.
+- `vox-pjd8` — `install-desktop` writes the ElevenLabs key in plaintext to `claude_desktop_config.json` (security). Its stale `tts`→`vox` naming was already fixed.
+- `vox-k1ee` — reconcile `architecture.tex` (Background Music subsection still describes ownership/`tracks/` layout/`voxd/music`) + rebuild the tracked `architecture.pdf`.
+- `vox-kne8` — `vox daemon restart` fails first call (launchd double-bootstrap), works on retry.
+- Retry-cluster extraction from `program.py` (the proper OO paydown behind the authorized rebaseline: extract first_track_transient/fill_transient/retry_fails/retry_exhausted/retry_capped/recover + relocate `GuardViolationError`).
+- **jms**: add the `RetryCapped` operation schema to `docs/audio-programs.tex` (precond mode=retrying ∧ attempts=maxRetry ∧ pool≠∅; frames all; self-loop). Note: the stale-fill orphan guard needs NO model change (daemon concurrency contract, out of model scope).
+- Reconcile stale OO baseline mismatches on `filesystem_store`/`identifiers`/`loop` (flagged by whole-tree update-oo, outside any single commit's diff).
 
-### 3. THE AUDIO FLIGHT (operator-eared — the critical gate; `make check` green ≠ works)
+## Session lessons (in memory)
 
-Do a REAL `make install` (a local wheel is NOT enough), restart voxd (`vox daemon restart`), then drive through the rebuilt daemon with the operator confirming each audible step:
+- **Never TaskStop on a transcript-mtime heuristic** — output-file mtime reflects last token emission, not activity; a live agent can be silent 10-20 min. Reliable death signals: the `failed`/`killed` task-notification, or no tracked-file edits over a LONG window (10+ min). I killed a producing agent this way (2nd offense).
+- **One code agent per shared tree.** Parallel agents corrupt each other's tree (caused a git divergence + a network death this session). Reconcile divergences with `reset --soft onto remote` → single fast-forward commit, not force-push.
 
-- MCP: `/music on style '<x>'`, `/music next`, `/music play <name>`, a `/vibe` change, `/music` status, `/music off`.
-- CLI (consume-only): `vox music list`, `vox music play <name>`, `vox music playlist:2` (part addressing), `vox music migrate` (source-registered; the commit-msg hook only flagged it "No such command" because the INSTALLED binary is stale — resolves on install).
-- Verify status surfaces failures (vox-ig52/73m5 client-observability) via the API, not just logs.
+## Loose ends (harmless)
 
-### 4. Open + drive the Phase-1 PR
-
-Whole branch `design/audio-programs-phase1` vs `main` (the OUTER-loop / rollback-coherent unit for Phase 1). Outer-loop review on the full branch diff; CHANGELOG entry in the branch; MCP create_pull_request + Copilot review + Bugbot; drive to merge. `bd close vox-oayr` before pushing (Phase 6).
-
-### 5. Follow-up beads + close
-
-- **oo_score PEP-570 fix cross-repo propagation**: apply the `_avg_params` posonlyargs fix to canonical `~/Coding/oop-course-python/tools/oo_score.py` + sibling repos. File a bead.
-- Optional: prune stale `voxd/music/*` entries from `.oo-baseline.json` (harmless; a future `update-oo` cleans them).
-- **Recap email** to <jim@punt-labs.com> at close (always-send, permanent record).
-
-## Agent / session state
-
-- **rmh-slice5c**: standing by, DONE — all work committed (nothing uncommitted). Only awaits the write_set amendment (task #1). Do NOT re-spawn to redo work.
-- **Reviewers** (rv-code, rv-silent, rv-types, rv-tests): STOPPED. Re-run on resume (task #2).
-- **Crons**: all monitor loops cancelled.
-- 11 stale worktrees under `.claude/worktrees/` from prior sessions — unrelated; cleanup low-priority + needs consent (destructive).
-
-## Hard-won lessons this session (do NOT repeat)
-
-- **NEVER TaskStop a background agent to "unstick" it.** Judge liveness by file MTIME (`find … -newermt '-Nmin'`), not point-in-time git polls. A long read phase (600+ line design + Z model = minutes) is NOT a stall. I wrongly stopped a productive agent; the operator can only PROMPT a running agent, not restart a stopped one. Memory: `feedback-never-stop-a-producing-agent`.
-- **Messaging a STOPPED agent RESUMES it** — that created a duplicate. Don't message stopped agents.
-- One agent per tree; sequence, don't parallelize, in the shared tree.
+- An orphaned `git stash` (a10980a6 set.intersection polish, superseded by shipped code) — droppable.
+- Uncommitted `.punt-labs/ethos/*` mission records (session bookkeeping; incl. `m-2026-07-05-004` never formally closed via `ethos mission result` due to the write_set-vs-authorized-paths mechanics).
