@@ -22,7 +22,10 @@ folder tree.
 - Every **album** (a Program: up to 12 tracks) has its own **unique id**.
 - `style` and `vibe` are **queryable tags on the album, not a key.** An **arbitrary
   number** of albums is supported, **including many albums that share the same
-  `(style, vibe)`** — the arbitrary-albums lock is about the *tag* axes only.
+  `(style, vibe)`** — the arbitrary-albums lock is about the *tag* axes only. The tag
+  pair is a **named record** — `style`/`vibe` are named fields, not positional — so this
+  doc's `(style, vibe)` and the Z model's (and legacy `subject`'s) `(vibe, style)` denote
+  the same named pair; prose order is presentational, not a positional contract.
 - `name` is the album's **unique handle** — a separate, enforced-unique axis (R5,
   operator 2026-07-08): no two albums share a `name`, so `by_name(name)` returns 0 or
   1, and `--name X` resolves to the one album named `X` (resume if it exists, else
@@ -38,7 +41,7 @@ folder tree.
   (`ProgramName` rejects path separators and the special `.` and `..` path
   components -- not names that merely contain a dot) intact.
 
-### Manifest schema (proposed — replaces the old `subject{vibe,style}`)
+### Manifest schema (the locked target shape — replaces the old `subject{vibe,style}`)
 
 ```jsonc
 {
@@ -99,9 +102,12 @@ per-list disk scan. It is the sole object list / play / switch talk to. Queries:
 
 - `by_id(id)`, `by_name(name)` → one album
 - `by_tags(style?, vibe?)` → the set of matching albums, `created`-descending
-- `newest(style, vibe)` → the most recent matching album (for `/music on` resume)
+- `newest(style, vibe)` → the most recent album matching the tags
 - `newest(style, vibe, fingerprint)` → the most recent match **whose prompt
-  fingerprint equals `fingerprint`** (the resolves-vox-1uo5 resume path)
+  fingerprint equals `fingerprint`** — the `/music on` resume path (resolves
+  vox-1uo5). Resume matches on `(style, vibe, fingerprint)`: a `(style, vibe)` hit
+  with a *different* fingerprint is a miss, so resume mints a fresh album rather than
+  filling an existing pool. (`--name` still binds by name regardless of fingerprint.)
 
 ## Prompt fingerprint — one pool, one prompt-set (resolves vox-1uo5)
 
@@ -153,7 +159,7 @@ track list). Single-match = one album; multi-match = a **union radio**.
 | `play trance calm` | union `a3f1c9` + `7b2e04` (two albums share the tags) |
 | `play trance` | all trance albums |
 | `play calm` | all calm albums (cross-genre) |
-| `/music on` (no args) | current style + **current session vibe** → matching album (newest if several), generate if none |
+| `/music on` (no args) | current style + **current session vibe** → newest album matching those tags **and the incoming prompt fingerprint** (vox-1uo5), generate/mint fresh if none |
 
 Two playback modes:
 
@@ -164,9 +170,12 @@ Two playback modes:
   style-union, vibe-union — shuffle-rotated. No generation, no 12-cap, no vibe-switch.
 
 **`/music on` (LOCKED):** with no parameters, defaults to the current style and the
-**current session vibe** — that pair is the selection. It resolves to the album
-matching those tags (newest if several exist) and generates a fresh one only if none
-matches. An explicit `style …` or `--name …` overrides the corresponding tag.
+**current session vibe** — that pair is the selection. It resolves to the newest album
+matching those tags **and the incoming prompt fingerprint** (vox-1uo5) and generates a
+fresh one only if none matches — a `(style, vibe)` hit with a *different* fingerprint is
+a miss, so it mints fresh rather than filling a foreign pool. An explicit `style …` or
+`--name …` overrides the corresponding tag; the `--name` path binds by name regardless
+of fingerprint (a named pool keeps playing).
 
 ## The three implementation moves
 
