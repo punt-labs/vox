@@ -1616,12 +1616,18 @@ class TestInstallDesktopCommand:
         assert result.exit_code == 0
         assert config_path.exists()
 
-        data = json.loads(config_path.read_text())
+        raw = config_path.read_text()
+        data = json.loads(raw)
         server = data["mcpServers"]["vox"]
         assert server["command"] == _UVX
         assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
-        assert server["env"]["VOX_OUTPUT_DIR"] == str(audio_dir)
-        assert server["env"]["TTS_PROVIDER"] == "say"
+        assert server["env"] == {
+            "VOX_OUTPUT_DIR": str(audio_dir),
+            "TTS_PROVIDER": "say",
+        }
+        # PL-PP-4: no provider secret ever lands in the config.
+        assert "ELEVENLABS_API_KEY" not in raw
+        assert "OPENAI_API_KEY" not in raw
 
     def test_preserves_other_servers(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
@@ -1649,6 +1655,80 @@ class TestInstallDesktopCommand:
         data = json.loads(config_path.read_text())
         assert "other-server" in data["mcpServers"]
         assert "vox" in data["mcpServers"]
+
+    def test_elevenlabs_key_never_written_to_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PL-PP-4: an exported ElevenLabs key must not reach the config."""
+        secret = "sk-elevenlabs-supersecret"
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setenv("ELEVENLABS_API_KEY", secret)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "install-desktop",
+                    "--provider",
+                    "elevenlabs",
+                    "--output-dir",
+                    str(audio_dir),
+                ],
+            )
+
+        assert result.exit_code == 0
+        raw = config_path.read_text()
+        assert secret not in raw
+        assert "ELEVENLABS_API_KEY" not in raw
+        server = json.loads(raw)["mcpServers"]["vox"]
+        assert server["env"] == {
+            "VOX_OUTPUT_DIR": str(audio_dir),
+            "TTS_PROVIDER": "elevenlabs",
+        }
+
+    def test_missing_key_warns_without_leaking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing credential: register anyway, warn, reveal no secret."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
+            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            patch(
+                "punt_vox.desktop_install.keys_env_file",
+                return_value=tmp_path / "absent.env",
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "install-desktop",
+                    "--provider",
+                    "elevenlabs",
+                    "--output-dir",
+                    str(audio_dir),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "vox" in json.loads(config_path.read_text())["mcpServers"]
+        assert "ELEVENLABS_API_KEY" in result.stderr
+        assert "vox daemon install" in result.stderr
 
 
 # ---------------------------------------------------------------------------
