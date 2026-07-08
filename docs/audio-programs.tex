@@ -692,6 +692,116 @@ the model relies on decoupling \texttt{filling} from the playing mode
   (\# pool < (poolSize~format) \implies mode' = playingFilling)
 \end{schema}
 
+\section{Consume-only Replay --- the Radio}
+\label{sec:radio}
+
+Alongside the single \texttt{Program} modelled above, Vox plays a second,
+consume-only surface: a \emph{Radio} over a fixed \emph{Selection} of ready
+Parts drawn from one or more Programs. Per-vibe pools (\texttt{vox-q7vh}) make
+this the natural home for a \emph{union}: ``play trance calm'' may resolve to
+two full albums at once. A Radio generates nothing, fills nothing, and ---
+crucially --- carries \emph{no} \texttt{poolSize} bound, so a Selection may be
+arbitrarily large. It is \texttt{Rotate} without the generation machinery.
+
+A \emph{Selection} is a set of Parts. As with the file token behind a Part, the
+per-track directory that resolves each Part is an implementation concern the
+model keeps out of scope; a Selection is opaque set membership, nothing more.
+
+\begin{zed}
+  Selection == \power PART
+\end{zed}
+
+The \texttt{Radio} state carries only a Selection and the same ``optional Part''
+cursor pair as a Program --- \texttt{playing} and \texttt{lastPlayed}, each a set
+of at most one Part, both drawn from the Selection. It has \emph{no}
+\texttt{pool}, \texttt{filling}, \texttt{attempts}, \texttt{failedParts},
+\texttt{lastError}, or \texttt{mode}: a Radio neither generates nor fails, so it
+needs none of the resilience state. Above all it carries no \texttt{poolSize}
+bound.
+
+\begin{schema}{Radio}
+  selection : Selection \\
+  playing : \power PART \\
+  lastPlayed : \power PART
+  \where
+  \# playing \leq 1 \land \# lastPlayed \leq 1 \\
+  playing \subseteq selection \land lastPlayed \subseteq selection
+\end{schema}
+
+The missing bound is the whole point. A union of two full 12-Part albums is a
+Selection of 24 Parts: a legal \texttt{Radio} state, though never a legal
+\texttt{Program} state, whose invariant forces $\# pool \leq (poolSize~format)$.
+This is precisely the delta \texttt{vox-q7vh} needs, and precisely why a union
+cannot be shoehorned through \texttt{Program}.
+
+\subsection{StartRadio}
+
+Begin a Radio on a non-empty Selection, playing at one of its members. Nothing
+has played yet, so \texttt{lastPlayed} is empty.
+
+\begin{schema}{StartRadio}
+  Radio' \\
+  selection? : Selection
+  \where
+  selection? \neq \emptyset \\
+  selection' = selection? \\
+  playing' \subseteq selection' \land \# playing' = 1 \\
+  lastPlayed' = \emptyset
+\end{schema}
+
+\subsection{RadioRotate --- advance, next, and skip}
+
+When the current Part ends, move to another member of the Selection, avoiding an
+immediate repeat when the Selection holds more than one; a singleton Selection
+replays. This is \texttt{Rotate} with every generation field removed --- there
+is no \texttt{pool}, \texttt{filling}, \texttt{attempts}, \texttt{failedParts},
+or \texttt{lastError} to frame, because a Radio has none.
+
+\begin{schema}{RadioRotate}
+  \Delta Radio
+  \where
+  \# selection \geq 1 \\
+  selection' = selection \\
+  lastPlayed' = playing \\
+  (\# selection \geq 2 \implies \\
+    \quad~ (playing' \subseteq selection \land \# playing' = 1 \\
+    \quad~ \land playing' \neq playing)) \\
+  (\# selection = 1 \implies playing' = playing)
+\end{schema}
+
+As with \texttt{Rotate}, the automatic track-end advance and the user-driven
+\texttt{next}/\texttt{skip} are one transition; a Radio has no owner and no
+generation, so \texttt{RadioNext} is the only control it needs.
+
+\begin{zed}
+  RadioNext \defs RadioRotate
+\end{zed}
+
+\subsection{StaleFillIgnored --- the lost race}
+
+A background fill belongs to the Program machine: it computes a fresh Part and
+the single writer applies the outcome to whatever source is active. Suppose a
+client has since retuned the writer to a Radio (a \texttt{SwitchSelection})
+while a fill task was still in flight. The produced Part now arrives at a state
+with no \texttt{filling} flag and no \texttt{pool} to grow. \texttt{FillOk}'s
+success guard --- a fill in flight, $filling = ztrue$ --- has no inhabitant in
+the \texttt{Radio} state, so the successful branch is disabled: its precondition
+is false. Only the no-op branch remains, and it changes nothing.
+
+\begin{schema}{StaleFillIgnored}
+  \Xi Radio \\
+  produced? : PART
+\end{schema}
+
+The schema is total in \texttt{produced?} and yields $\Xi Radio$: whatever the
+fill delivered, a Radio consumes none of it. This is the model image of the
+runtime lost race --- the writer narrows $isinstance(source, Program)$, the
+narrowing fails against a Radio, and the writer logs the stale outcome at
+\texttt{INFO} and survives. It is a guard-disabled no-op, never an error, and
+never the \texttt{AttributeError} that a Radio without a \texttt{fill\_ok} would
+otherwise raise (the \texttt{bas7}-class crash a transition-level model catches
+at design time).
+
 \section{Key Properties}
 
 The following hold by construction (state invariants) or as operation
@@ -744,6 +854,16 @@ postconditions; they are the intended proof obligations for animation.
     command --- \texttt{next}, \texttt{skip}, \texttt{vibe}, \texttt{off} ---
     succeeds from any client or process, and the recovery path
     \texttt{VibeStyleChange} is always available from \texttt{failed}.
+  \item \textbf{Replay generates nothing and is uncapped}: \texttt{StartRadio}
+    and \texttt{RadioRotate} touch no generation field --- a \texttt{Radio} has
+    none --- and the \texttt{Radio} state carries no \texttt{poolSize} bound, so
+    a Selection may be arbitrarily large. A union of two full albums (24 Parts)
+    is a legal \texttt{Radio} state though never a legal \texttt{Program} state.
+  \item \textbf{A stale fill against a Radio never mutates}: \texttt{FillOk}'s
+    success guard ($filling = ztrue$) is false on a \texttt{Radio}, so a Part
+    produced by an in-flight fill and routed to an active Radio leaves it
+    unchanged (\texttt{StaleFillIgnored}, $\Xi Radio$) --- never a crash, never
+    a corrupt cursor.
 \end{itemize}
 
 \section{Findings from Formalisation}
@@ -836,7 +956,12 @@ underspecified, or self-contradictory.
     design owns the ordering (concept: Programs are an \emph{ordered} list); an
     out-of-range index is a resolution failure the CLI reports before any
     operation is attempted, so no ``index out of range'' transition appears
-    here.
+    here. The same abstraction covers \emph{which} pool a \texttt{TurnOn} or
+    \texttt{VibeStyleChange} enters: with per-vibe pools (\texttt{vox-q7vh}) the
+    \texttt{diskPool?}/\texttt{newPool?} it binds is resolved by a catalog tag
+    or name lookup before the operation runs, exactly as the 1-based index is
+    resolved to a Part, so the model abstracts the lookup away and no
+    \texttt{Program} schema changes to accommodate per-vibe pools.
 
   \item \textbf{\texttt{failed} is recoverable, and recovery is unconditional.}
     \emph{(The ownership half of this finding is moot after the 2026-07-05
