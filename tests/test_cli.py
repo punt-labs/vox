@@ -1564,6 +1564,33 @@ class TestInstallCommand:
 
         assert result.exit_code != 0
 
+    def test_install_degrades_when_launchctl_fails(self) -> None:
+        """macOS bring-up failure (LaunchctlError) skips gracefully, exit 0.
+
+        On a GUI-less/CI macOS host ``launchctl bootstrap`` fails; the
+        launchd backend now raises ``LaunchctlError`` (a ``RuntimeError``,
+        not ``CalledProcessError``). Daemon registration is best-effort, so
+        the plugin install must still succeed rather than propagate a
+        traceback.
+        """
+        from punt_vox.service.launchctl import LaunchctlError
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch(
+                "punt_vox.service.install",
+                side_effect=LaunchctlError("bootstrap failed: 5"),
+            ),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Skipped" in result.output
+        assert "Restart Claude Code" in result.output
+
 
 class TestUninstallCommand:
     def test_uninstall_success(self) -> None:
