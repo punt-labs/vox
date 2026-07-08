@@ -1,8 +1,9 @@
 # Audio Programs — Albums, Tags & Catalog (vox-q7vh)
 
-**Status:** RATIFIABLE — model + all decisions LOCKED (operator, 2026-07-08). Ready
-for the design mission. Author: Claude (COO). Bead: vox-q7vh (direction A). Builds on
-the shipped Phase-1 Program model (DES-041, `docs/audio-programs.tex`).
+**Status:** RATIFIED — model + all decisions LOCKED (operator, 2026-07-08); design +
+formal model complete and reviewed. Ready for implementation. Author: Claude (COO).
+Bead: vox-q7vh (direction A). Builds on the shipped Phase-1 Program model (DES-041,
+`docs/audio-programs.tex`).
 
 ## The reframe (locked)
 
@@ -207,9 +208,9 @@ detector (org no-migration rule).
 
 ## Next
 
-Spec is ratifiable. Design mission (manifest / catalog / selection decomposition +
-write set; jms folds the Selection rotation into the Z model), then implementation,
-per the two-phase delegation model.
+Spec is ratified; the design (manifest / catalog / selection decomposition + write
+set) and the Selection/Radio Z model are complete and reviewed. Next is
+implementation, per the two-phase delegation model.
 
 ## Design (decomposition, write set, test plan)
 

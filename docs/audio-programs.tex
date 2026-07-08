@@ -998,7 +998,7 @@ postconditions; they are the intended proof obligations for animation.
     command --- \texttt{next}, \texttt{skip}, \texttt{vibe}, \texttt{off} ---
     succeeds from any client or process, and the recovery path
     \texttt{VibeStyleChange} is always available from \texttt{failed}.
-  \item \textbf{Replay generates nothing and is uncapped}: \texttt{StartRadio}
+  \item \textbf{The Radio is uncapped and generation-free}: \texttt{StartRadio}
     and \texttt{RadioRotate} touch no generation field --- a \texttt{Radio} has
     none --- and the \texttt{Radio} state carries no \texttt{poolSize} bound, so
     a Selection may be arbitrarily large. A union of two full albums (24 Parts)
