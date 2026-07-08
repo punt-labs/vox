@@ -759,6 +759,17 @@ has played yet, so \texttt{lastPlayed} is empty.
   lastPlayed' = \emptyset
 \end{schema}
 
+Retuning the writer from one Selection to another --- a
+\texttt{SwitchSelection} --- is not a distinct
+transition: it is \texttt{StartRadio} on the new Selection, exactly as
+\texttt{SwitchProgram} is a fresh start on a new Program. Naming the alias keeps
+the model vocabulary self-contained and realises the \texttt{SwitchProgram} /
+\texttt{SwitchSelection} verb-parity.
+
+\begin{zed}
+  SwitchSelection \defs StartRadio
+\end{zed}
+
 \subsection{RadioRotate --- advance, next, and skip}
 
 When the current Part ends, move to another member of the Selection, avoiding an
@@ -771,6 +782,7 @@ or \texttt{lastError} to frame, because a Radio has none.
   \Delta Radio
   \where
   \# selection \geq 1 \\
+  \# playing = 1 \\
   selection' = selection \\
   lastPlayed' = playing \\
   (\# selection \geq 2 \implies \\
@@ -778,6 +790,13 @@ or \texttt{lastError} to frame, because a Radio has none.
     \quad~ \land playing' \neq playing)) \\
   (\# selection = 1 \implies playing' = playing)
 \end{schema}
+
+The precondition $\# playing = 1$ is redundant with the state invariant --- since
+\texttt{RadioRotate} is $\Delta Radio$, the before-state is a valid \texttt{Radio},
+and $selection \neq \emptyset$ (from $\# selection \geq 1$) already forces
+$\# playing = 1$ --- but stating it makes plain that \texttt{RadioRotate}
+\emph{advances} an already-playing Radio and never starts one: the empty-cursor
+case is \texttt{StartRadio}, not a rotate.
 
 As with \texttt{Rotate}, the automatic track-end advance and the user-driven
 \texttt{next}/\texttt{skip} are one transition; a Radio has no owner and no
