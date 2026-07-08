@@ -40,7 +40,7 @@
 
 \title{Vox: Technical Architecture Specification}
 \author{Text-to-Speech Engine for AI Agents}
-\date{July 2026 --- v4.9.0}
+\date{July 2026 --- v4.11.0}
 \hypersetup{
   pdftitle={Vox: Technical Architecture Specification},
   pdfauthor={Punt Labs},
@@ -67,11 +67,14 @@ The system does \emph{not} stream audio.  Every synthesis call produces
 a complete MP3 file before playback begins.  There is no audio mixing and
 no real-time pitch manipulation.  Vox is a batch synthesizer with
 a playback queue.  The \texttt{voxd} daemon accepts requests over
-WebSocket and serializes playback.  Since v4.x it also generates and
-loops background music (\texttt{elevenlabs\_music}), plays it in a
-separate reduced-volume subprocess outside the speech queue, and can
-be driven from a remote host over the network (\texttt{VOXD\_HOST}
-/ \texttt{VOXD\_PORT} / \texttt{VOXD\_TOKEN}).
+WebSocket and serializes playback.  Since v4.x it also generates,
+persists, and plays background music as an ownership-free
+\emph{Program} --- a named on-disk pool of instrumental tracks
+(\texttt{elevenlabs\_music}) that fills in the background, auto-advances,
+and shuffle-rotates once full --- through a separate reduced-volume
+subprocess outside the speech queue, and can be driven from a remote
+host over the network (\texttt{VOXD\_HOST} / \texttt{VOXD\_PORT} /
+\texttt{VOXD\_TOKEN}).
 
 \subsection{Design Principles}
 
@@ -93,8 +96,11 @@ be driven from a remote host over the network (\texttt{VOXD\_HOST}
     preferences, \texttt{.punt-labs/vox/vox.local.md} for ephemeral
     session state) at startup; hook handlers also read and write these
     files for signal accumulation.  The \texttt{voxd} daemon
-    is stateless with respect to sessions---it synthesizes and plays
-    whatever clients send it.
+    is stateless with respect to \emph{speech} sessions---it synthesizes
+    and plays whatever clients send it.  Background music is the one
+    piece of daemon-owned state: a single persisted, ownership-free
+    \emph{Program} that any session drives and no session owns
+    (\S\ref{sec:music}, DES-041).
   \item \textbf{Fail fast.}  Invalid input raises exceptions.
     No defensive fallbacks, no silent degradation.  If a voice
     doesn't exist, the call fails with a
@@ -172,8 +178,20 @@ Hook envelope & \modpath{hook\_envelope.py} & Typed wrapper for a hook's
 Hook payload & \modpath{hook\_payload.py} & Parses the raw hook stdin
              payload into typed fields \\
 Chime      & \modpath{chime.py}      & Mood-aware chime file selection \\
-Music      & \modpath{music.py}      & Client-side music control surface
-             (mode, style, track name) consumed by the CLI and MCP tools \\
+Music (CLI) & \modpath{cli\_music.py}  & Client-side \cmd{music} command
+             surface: on / off / play / list / next / loop and
+             \texttt{playlist:N} part addressing \\
+Program client & \modpath{program\_gateway.py} & Translate music/Program
+             commands into \texttt{voxd} Program RPCs over the WebSocket;
+             thin, no business logic (with \modpath{program\_control.py}) \\
+Music prompts & \modpath{music\_prompts.py} & Scaffolds the LLM-authored
+             \texttt{base\_prompt} plus twelve genre \texttt{variations}
+             passed to \texttt{voxd} for track generation \\
+Cache      & \modpath{cache.py}      & MP3 quip cache, content-addressed
+             by (text, voice, provider) \\
+Vibe       & \modpath{vibe.py}       & Vibe domain: mood text $\to$
+             ElevenLabs expressive-tag resolution, extracted from
+             \texttt{hooks.py} \\
 Voices     & \modpath{voices.py}     & Voice personality blurbs for roster
              display \\
 Quips      & \modpath{quips.py}      & Immutable phrase pools for hook
@@ -192,17 +210,22 @@ API key resolver & \modpath{api\_key\_resolver.py} & \texttt{ApiKeyResolver}
 Doctor     & \modpath{doctor.py}     & \texttt{vox doctor} health checks:
              Python, player binary, provider keys, daemon staleness \\
 Daemon restarter & \modpath{daemon\_restarter.py} & Detects a stale
-             running \texttt{voxd} (version mismatch) and restarts it \\
-Audio migration & \modpath{audio\_migration.py} & One-time migration of
-             saved audio out of legacy output locations \\
+             running \texttt{voxd} (version mismatch) and restarts it via
+             the platform service backend \\
+Desktop install & \modpath{desktop\_install.py} & \texttt{DesktopInstaller}
+             --- registers the \texttt{vox} MCP server in Claude Desktop's
+             config \emph{without} embedding provider secrets; the daemon
+             reads keys from \texttt{keys.env} at startup \\
 Logging    & \modpath{logging\_config.py} & Rotating file log under
              \texttt{\~{}/.punt-labs/vox/logs/} \\
 Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
              tailing Claude session JSONL files for real-time
              signal classification and autonomous chime/speech
              in continuous mode \\
-Client     & \modpath{client.py}     & WebSocket client for \texttt{voxd}.
-             \texttt{VoxClient} (async), \texttt{VoxClientSync} (sync).
+Client     & \modpath{client.py}     & WebSocket client for \texttt{voxd}:
+             \texttt{VoxClient} (async) / \texttt{VoxClientSync} (sync),
+             split across \modpath{client\_gateway.py},
+             \modpath{client\_env.py}, and \modpath{client\_errors.py}.
              Lightweight---stdlib + websockets only \\
 Server     & \modpath{server.py}     & FastMCP server (key: \texttt{mic}):
              the eleven MCP tools (see \S\ref{sec:mcp}) \\
@@ -237,16 +260,34 @@ Applet     & \modpath{applet.py}     & Lux display applet: element tree
         & \texttt{dedup.py} & Content-addressed replay dedup with TTL \\
         & \texttt{health.py} & Health-response assembly \\
         & \texttt{chimes.py} & Chime asset resolution inside the daemon \\
-        & \texttt{config.py} & Daemon runtime config \\
-        & \texttt{music/} & Music sub-package: \texttt{generator.py},
-             \texttt{loop.py}, \texttt{scheduler.py}, and per-command
-             handlers (\texttt{on/off/play/list/next/vibe}) \\
+        & \texttt{config.py} & Daemon runtime config; \texttt{load\_keys()}
+             reads \texttt{keys.env} into the environment at startup \\
+        & \texttt{synthesis\_result.py} & Typed synthesis outcome carried
+             back across the WebSocket boundary \\
+        & \texttt{programs/} & Background-music \emph{Program} package
+             (ownership-free, persisted; \S\ref{sec:music}):
+             \texttt{program.py} / \texttt{state.py} / \texttt{invariants.py}
+             (the state machine and its sixteen invariants);
+             \texttt{control\_channel.py} plus the typed
+             \texttt{*\_signal.py} (single-writer control);
+             \texttt{filler.py} / \texttt{fill\_reconciler.py} /
+             \texttt{producer.py} / \texttt{retry\_machine.py} (background
+             fill and resilient retry); \texttt{rotate\_policy.py} /
+             \texttt{player.py} / \texttt{subprocess\_player.py}
+             (auto-advance, shuffle-rotation, reduced-volume playback);
+             \texttt{filesystem\_store.py} / \texttt{manifest.py} /
+             \texttt{part\_tags.py} (persistence and ID3 tagging); the
+             per-command handlers; and \texttt{service.py} (composition
+             root) \\
 \midrule
 \modpath{service/} & \texttt{installer.py} & \texttt{ServiceInstaller}
              composing the platform backends; \texttt{install} /
              \texttt{uninstall} / health verification \\
         & \texttt{launchd.py} & macOS \texttt{LaunchdBackend} ---
              user LaunchAgent under \texttt{\~{}/Library/LaunchAgents} \\
+        & \texttt{launchctl.py} & \texttt{LaunchctlAgent} --- race-free
+             launchd domain control (bootout-and-wait, then bootstrap with
+             retry-on-error-5), shared by install and restart \\
         & \texttt{systemd.py} & Linux \texttt{SystemdBackend} ---
              unit under \texttt{/etc/systemd/system} \\
         & \texttt{process.py} & \texttt{ProcessManager}: port-free
@@ -712,18 +753,23 @@ tools: four speech/state tools (\tool{unmute}, \tool{record},
 \tool{status} & \texttt{()} --- Returns full session state:
   provider, voice, notify, speak, vibe\_mode, vibe, vibe\_tags,
   vibe\_signals, music\_mode. \\
-\tool{music} & \texttt{(mode, style?, name?)} --- Start
-  (\texttt{"on"}) or stop (\texttt{"off"}) background music.  When on,
-  \texttt{voxd} generates an instrumental track derived from the
-  session vibe and loops it; vibe changes trigger a gapless handoff to
-  a new track.  The calling session \emph{owns} the music (see DES-031);
-  a matching saved \field{name} replays without generation
-  (zero credits). \\
-\tool{music\_play} & \texttt{(name)} --- Replay a saved track by name.
-  No generation, no credits. \\
-\tool{music\_list} & \texttt{()} --- List saved tracks with name, size,
+\tool{music} & \texttt{(mode, style?, name?, base\_prompt?, variations?)}
+  --- Start (\texttt{"on"}) or stop (\texttt{"off"}) background music.
+  When on, \texttt{voxd} builds (or reopens) a named, persisted
+  \emph{Program}: it plays the first generated track at once and fills a
+  pool of up to twelve distinct instrumental tracks in the background,
+  auto-advancing as each ends and shuffle-rotating the full pool at zero
+  credits.  The Program is daemon-owned and ownership-free --- any
+  session drives it (DES-041), superseding the old session-ownership
+  model.  A matching saved \field{name} reopens the pool with no
+  generation. \\
+\tool{music\_play} & \texttt{(name)} --- Reopen and play a saved Program
+  by name.  No generation, no credits. \\
+\tool{music\_list} & \texttt{()} --- List saved Programs with name, size,
   and date. \\
-\tool{music\_next} & \texttt{()} --- Skip to the next generated track. \\
+\tool{music\_next} & \texttt{()} --- Advance to the next track now: rotate
+  the full pool (zero credits) or generate one if the pool is not yet
+  full. \\
 \bottomrule
 \end{longtable}
 \end{center}
@@ -845,35 +891,53 @@ they play in FIFO order.  There is no way to interrupt a playing
 file or flush the queue.
 
 \subsection{Background Music}
+\label{sec:music}
 
-Since v4.x, \texttt{voxd} generates and loops instrumental background
-music (via the \texttt{elevenlabs\_music} provider) driven by the
-session vibe.  Music deliberately sidesteps the speech playback queue:
+Since v4.x, \texttt{voxd} generates, persists, and plays instrumental
+background music as an ownership-free \emph{Program}: a named on-disk
+pool of tracks with an explicit, formally-modelled lifecycle
+(\texttt{docs/audio-programs.tex}; DES-041).  This generalised and
+replaced an earlier session-owned, single-looping-track design --- the
+superseded DES-031 (session ownership) and DES-033 (vibe-triggered
+regeneration).  Music deliberately sidesteps the speech playback queue:
 
 \begin{itemize}
-  \item \textbf{Separate subprocess at reduced volume (DES-030).} Music
-    plays through its own \texttt{ffplay} process at \texttt{-volume 30}
-    (Linux) / \texttt{--volume 0.3} (macOS), completely outside the
-    speech mutex.  Speech and chimes overlay at full volume; the volume
-    differential makes speech intelligible over the music with no
-    runtime ducking or pausing.
-  \item \textbf{Session ownership (DES-031).} \texttt{voxd} is shared
-    across sessions, but exactly one session \emph{owns} the music --- the
-    one that ran \texttt{music("on")}.  Each MCP server sends an
-    \field{owner\_id} (a per-startup UUID); \texttt{voxd} rejects
-    \texttt{music\_vibe} messages from non-owners.
-  \item \textbf{Duration-proportional timeout (DES-032).} The daemon
-    probes track duration with \texttt{ffprobe} and sets the player
-    timeout to \texttt{max(duration + 10s, 30s)}, so long tracks are not
-    truncated at a fixed 30\,s ceiling.
-  \item \textbf{Gapless handoff (DES-033).} When the vibe changes, the
-    next track generates as a concurrent \texttt{asyncio.Task} while the
-    old track keeps looping; the swap happens only once generation
-    finishes, so there is no dead air.
-  \item \textbf{Naming and zero-credit replay (DES-035).} Tracks are
-    auto-named \texttt{\{vibe\}-\{style\}-\{YYYYMMDD-HHMM\}} under
-    \texttt{\~{}/Music/vox/tracks/}.  A \field{name} matching a saved
-    track replays it with zero credits instead of regenerating.
+  \item \textbf{Ownership-free, daemon-owned (DES-041).} \texttt{voxd}
+    holds exactly one Program.  There is no \field{owner\_id} and no
+    non-owner rejection --- any session, and the CLI, drive the same
+    Program.  A single-writer \texttt{ControlChannel} serialises every
+    mutation as a typed \texttt{ControlSignal}, so concurrent clients
+    never race the pool, and \texttt{ProgramState} re-validates all
+    sixteen state invariants by construction on every transition.
+  \item \textbf{Pool, auto-advance, and rotation.} \texttt{music("on")}
+    plays the first generated track immediately, then a background filler
+    generates up to twelve distinct tracks (one \texttt{asyncio} task at a
+    time).  Playback auto-advances as each track ends; once the pool is
+    full, generation stops and playback shuffle-rotates the pool ---
+    never repeating the just-played track --- at zero credits.  A
+    resilient retry sub-machine (\texttt{retry\_machine.py}) absorbs
+    transient generation failures without corrupting the pool
+    (see the \texttt{RetryCapped}/\texttt{RetryExhausted} transitions in
+    the Z model).
+  \item \textbf{Persisted and replayable.} Each Program is a directory
+    \texttt{\~{}/Music/vox/<name>/} of \texttt{NNN.mp3} parts plus a
+    manifest; every track carries ID3 tags (artist \texttt{vox}, album =
+    program name, title = the variation clause, genre = style, and track
+    index), so pools drop straight into Music.app or Ubuntu players.
+    Both the CLI and MCP can \texttt{list}, \texttt{play}, \texttt{loop},
+    and address a specific part (\texttt{playlist:N}) of a saved
+    Program --- consume-only replay with no generation and no credits.
+  \item \textbf{Separate subprocess at reduced volume (DES-030).} Each
+    track plays through its own player process (\texttt{afplay
+    -{}-volume 0.3} on macOS, \texttt{ffplay -volume 30} on Linux),
+    completely outside the speech mutex.  Speech and chimes overlay at
+    full volume; the volume differential makes speech intelligible over
+    the music with no runtime ducking or pausing.
+  \item \textbf{LLM-authored prompts.} The agent authors a
+    \field{base\_prompt} plus twelve genre-accurate \field{variations}
+    (scaffolded by \texttt{music\_prompts.py}); \texttt{voxd} is a pipe to
+    ElevenLabs and never decides what a genre sounds like.  With no
+    prompts supplied it falls back to a bare stylistic default.
 \end{itemize}
 
 \subsection{Ephemeral Mode}
@@ -888,7 +952,8 @@ still accepted on the tool surface for callers.
 Persistent output (via \tool{record} or \field{ephemeral=false})
 goes to \texttt{\~{}/Music/vox/} (overridable via
 \texttt{VOX\_OUTPUT\_DIR}) or a user-specified directory.  Generated
-music tracks live under \texttt{\~{}/Music/vox/tracks/}.
+music Programs live under \texttt{\~{}/Music/vox/<name>/} --- one
+directory per named Program (\S\ref{sec:music}).
 
 \subsection{Format Handling}
 
@@ -1503,8 +1568,12 @@ the process restarts (next Claude Code session).
   \texttt{keys\_env} \\
 \texttt{test\_signal.py}            & \texttt{Signal}/\texttt{SignalLog}
   classification and accumulation \\
-\texttt{test\_music.py}, \texttt{music/} & Music control surface and the
-  \texttt{voxd/music/} generation/loop/handler suite \\
+\texttt{cli\_music.py} tests, \texttt{tests/programs/} & The client-side
+  music command surface and the \texttt{voxd/programs/} Program suite:
+  state-machine invariants (\texttt{test\_invariants},
+  \texttt{test\_properties}), the single-writer control channel, the
+  filler and retry sub-machines, rotation, the filesystem store and
+  manifest, and the per-command handlers \\
 \texttt{test\_api\_key\_resolver.py} & Four-source mutual-exclusion key
   resolution and permission warnings \\
 \texttt{test\_paths.py}             & Per-user path resolution and
