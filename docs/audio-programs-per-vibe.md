@@ -35,7 +35,8 @@ folder tree.
   `manifest.json` is authoritative — directory names are never parsed back, so a slug
   collision is harmless.
 - Single-segment directory names keep this repo's path-traversal guard
-  (`ProgramName` rejects `/`, `..`, dot components) intact.
+  (`ProgramName` rejects path separators and the special `.` and `..` path
+  components -- not names that merely contain a dot) intact.
 
 ### Manifest schema (proposed — replaces the old `subject{vibe,style}`)
 
