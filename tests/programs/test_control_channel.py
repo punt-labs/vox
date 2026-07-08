@@ -15,7 +15,6 @@ import pytest
 from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs import (
     MAX_RETRY,
-    GuardViolationError,
     Mode,
     Part,
     PlaybackPolicy,
@@ -29,6 +28,7 @@ from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.fill_signal import TransientFailure
 from punt_vox.voxd.programs.filler import Filler, FillPlan
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
 from punt_vox.voxd.programs.playback_signal import Rotate

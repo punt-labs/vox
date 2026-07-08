@@ -11,31 +11,22 @@ takes or checks a session: ``voxd`` state is machine-universal (finding #6).
 
 from __future__ import annotations
 
-from typing import NoReturn, Self, final
+from typing import TYPE_CHECKING, NoReturn, Self, final
 
 from punt_vox.voxd.programs.format import MAX_RETRY
-from punt_vox.voxd.programs.identifiers import Reason
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode import Mode, PlaybackStatus
 from punt_vox.voxd.programs.part import FrozenParts, Part
 from punt_vox.voxd.programs.playback_policy import Advance, PlaybackPolicy
 from punt_vox.voxd.programs.state import ProgramState
 
-__all__ = ["GuardViolationError", "Program"]
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.identifiers import Reason
+
+__all__ = ["Program"]
 
 _PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
 """The modes in which the consume-only cursor may advance (finding #3)."""
-
-
-class GuardViolationError(ValueError):
-    """A command's Z precondition no longer holds -- a benign lost race.
-
-    Raised by :meth:`Program._reject` when a guard fails (e.g. a ``rotate`` that
-    arrives just after a ``turn_off``). It subclasses ``ValueError`` so callers
-    that only distinguish "illegal transition" keep working, but the single
-    writer catches *this* type alone: a plain ``ValueError`` from
-    :class:`StateInvariants` means a corrupt successor -- a bug, not a race --
-    and must surface at ERROR rather than be mislabeled as a losing racer.
-    """
 
 
 @final

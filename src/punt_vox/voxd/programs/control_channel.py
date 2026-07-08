@@ -26,7 +26,7 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.control_signal import ControlSignal
-from punt_vox.voxd.programs.program import GuardViolationError
+from punt_vox.voxd.programs.guard import GuardViolationError
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
