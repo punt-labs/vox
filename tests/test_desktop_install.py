@@ -9,14 +9,12 @@ touching claude_desktop_config.json.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.voxd.config import DaemonConfig
-
-if TYPE_CHECKING:
-    import pytest
 
 _MOD = "punt_vox.desktop_install"
 _SECRET = "sk-elevenlabs-supersecret-value"
@@ -55,12 +53,20 @@ class TestDaemonCanAuthenticate:
     def test_keyless_provider_always_ok(self, tmp_path: Path) -> None:
         assert DesktopInstaller("say", tmp_path).daemon_can_authenticate()
 
-    def test_true_when_key_exported(
+    def test_false_when_key_only_exported_not_in_keys_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A key exported in the installer's shell is invisible to voxd.
+
+        ``voxd`` is a detached service that never inherits the interactive
+        shell, so it reads keys *only* from ``keys.env``. Exporting the key
+        without ``vox daemon install`` must NOT report the daemon as
+        authenticated.
+        """
         monkeypatch.setenv("ELEVENLABS_API_KEY", _SECRET)
         with patch(f"{_MOD}.keys_env_file", return_value=tmp_path / "absent.env"):
-            assert DesktopInstaller("elevenlabs", tmp_path).daemon_can_authenticate()
+            installer = DesktopInstaller("elevenlabs", tmp_path)
+            assert not installer.daemon_can_authenticate()
 
     def test_true_when_key_in_keys_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -104,6 +110,16 @@ class TestCredentialGuidance:
         assert str(keys_file) in guidance
         assert "vox daemon install" in guidance
         assert _SECRET not in guidance
+
+    def test_keyless_provider_raises_value_error(self, tmp_path: Path) -> None:
+        """A keyless provider has no key var, so guidance is a contract error.
+
+        Turns the confusing bare ``KeyError`` into a clear ``ValueError``
+        (PY-EH-1/2): guidance is only meaningful for a key-based provider.
+        """
+        installer = DesktopInstaller("say", tmp_path)
+        with pytest.raises(ValueError, match="key-based provider"):
+            installer.credential_guidance()
 
 
 class TestDetect:

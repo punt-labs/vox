@@ -23,7 +23,6 @@ that names the missing variable and where to set it -- never the value.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Self, final
 
@@ -99,25 +98,29 @@ class DesktopInstaller:
     def daemon_can_authenticate(self) -> bool:
         """True if the daemon can reach the provider key (or needs none).
 
-        The daemon reads its key from ``keys.env`` at startup, and
-        ``vox daemon install`` seeds ``keys.env`` from the current
-        environment. So the key is reachable if it is already in
-        ``keys.env`` or exported in this process's environment.
+        Reachability is determined *solely* from ``keys.env``. The daemon
+        (``voxd``) is a detached launchd/systemd service that never inherits
+        the installer's interactive shell, so a key merely exported in this
+        process is invisible to it -- only ``keys.env`` (written by
+        ``vox daemon install``, read by ``DaemonConfig.load_keys``) counts.
         """
         if not self.requires_credential():
             return True
-        key_var = _PROVIDER_KEY_VARS[self._provider]
-        if os.environ.get(key_var):
-            return True
-        return self._keys_env_has(key_var)
+        return self._keys_env_has(_PROVIDER_KEY_VARS[self._provider])
 
     def credential_guidance(self) -> str:
         """Return operator guidance for a key the daemon cannot yet reach.
 
-        Precondition: :meth:`daemon_can_authenticate` returned ``False``
-        (which implies :meth:`requires_credential`). Names the missing
-        variable and where the daemon reads it -- never the secret value.
+        Precondition: the provider is key-based (:meth:`requires_credential`).
+        Names the missing variable and where the daemon reads it -- never the
+        secret value.
         """
+        if not self.requires_credential():
+            msg = (
+                "credential_guidance requires a key-based provider, "
+                f"got {self._provider!r}"
+            )
+            raise ValueError(msg)
         key_var = _PROVIDER_KEY_VARS[self._provider]
         return (
             f"Warning: {key_var} is not available to the vox daemon. "
