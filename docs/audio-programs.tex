@@ -824,6 +824,8 @@ is false. Only the no-op branch remains, and it changes nothing.
 \begin{schema}{StaleFillIgnored}
   \Xi Radio \\
   produced? : PART
+  \where
+  true
 \end{schema}
 
 The schema is total in \texttt{produced?} and yields $\Xi Radio$: whatever the
@@ -930,6 +932,8 @@ the shape of \texttt{StaleFillIgnored}, not an error.
 \begin{schema}{RadioVibeIgnored}
   \Xi Radio \\
   newPool? : \power PART
+  \where
+  true
 \end{schema}
 
 The schema is total in \texttt{newPool?} and yields $\Xi Radio$: whatever pool a
@@ -1013,10 +1017,14 @@ postconditions; they are the intended proof obligations for animation.
     on, switch, next --- act on \emph{either} source. \texttt{SwitchProgram}
     retargets an active Radio to a Program ($Radio \to Program'$), the mirror of
     \texttt{StartRadio}/\texttt{SwitchSelection} retargeting a Program to a
-    Radio; \texttt{RadioNext} advances; \texttt{RadioOff} stops. Only the
+    Radio; \texttt{RadioNext} advances; \texttt{RadioOff} stops. The
     generate-internal outcome (\texttt{StaleFillIgnored}) and the auto
-    vibe-switch (\texttt{RadioVibeIgnored}) are disabled against a Radio, and
-    both as $\Xi Radio$ no-ops rather than errors.
+    vibe-switch (\texttt{RadioVibeIgnored}) stay \emph{enabled} against a Radio
+    as total $\Xi Radio$ no-ops --- they are ignored, not disabled, and never
+    errors. What is disabled is only the \emph{successful} fill branch: its
+    $filling = ztrue$ guard has no inhabitant in a \texttt{Radio}, so that
+    branch's precondition is false, leaving the enabled no-op as the sole
+    inhabited operation.
 \end{itemize}
 
 \section{Findings from Formalisation}
