@@ -802,6 +802,111 @@ never the \texttt{AttributeError} that a Radio without a \texttt{fill\_ok} would
 otherwise raise (the \texttt{bas7}-class crash a transition-level model catches
 at design time).
 
+\subsection{RadioOff --- leaving the Radio}
+
+A \texttt{TurnOff} while a Radio is active is a \emph{stop}, the exact parallel
+of \texttt{TurnOff} on a Program: it tears the source down. The Selection is
+emptied and the cursor cleared, leaving the empty Radio --- the model's
+representation of ``no Radio active'', the same shape \texttt{StartRadio} refuses
+as a starting Selection ($selection? \neq \emptyset$). It is a total operation on
+the \texttt{Radio} schema, enabled from any Radio state, and is emphatically
+\emph{not} a rejected lost race: leaving a Radio is user intent, always valid ---
+the counterpart of the generate-family reject that \texttt{StaleFillIgnored}
+models.
+
+\begin{schema}{RadioOff}
+  \Delta Radio
+  \where
+  selection' = \emptyset \\
+  playing' = \emptyset \\
+  lastPlayed' = \emptyset
+\end{schema}
+
+The empty Selection forces the cursor empty through the state invariant
+($playing' \subseteq selection'$ with $selection' = \emptyset$), so clearing
+\texttt{playing'} and \texttt{lastPlayed'} explicitly is a statement of intent
+rather than a separate obligation. This mirrors \texttt{TurnOff} on a Program,
+which clears \texttt{playing} to $\emptyset$ and drops \texttt{mode} to
+\texttt{off}: a Radio has no \texttt{mode}, so its off state \emph{is} the empty
+Selection.
+
+\subsection{SwitchToProgram --- source-agnostic retarget}
+
+The channel that plays audio holds \emph{one} source at a time, and that source
+is a union: either a Program or a Radio. A generate-mode start or switch ---
+\texttt{StartProgram}/\texttt{SwitchProgram} in the design's vocabulary ---
+retargets the channel to a fresh Program regardless of what it held before, so
+it may fire while a Radio is active, transitioning Radio $\to$ Program. This is
+the exact mirror of \texttt{StartRadio}/\texttt{SwitchSelection} retargeting
+\emph{from} a Program to a Radio: a start or switch replaces whichever source is
+current, never narrowing on its shape. Both directions are user intent, and both
+are valid.
+
+\texttt{SwitchToProgram} discards the Radio and initialises a Program over the
+resolved disk pool \texttt{diskPool?}, with the same pool-shape classification as
+\texttt{TurnOn} --- an empty pool generates the first Part, a partial pool plays
+and resumes the fill, a full pool plays and rotates. The Radio before-state is
+unconstrained, so the retarget is enabled whether the Radio was playing or
+already empty; that is what ``source-agnostic'' means, and it is why the before
+half of $\Delta$ names \texttt{Radio} but the predicate never reads it.
+
+\begin{schema}{SwitchToProgram}
+  Radio \\
+  Program' \\
+  fmt? : Format \\
+  diskPool? : \power PART
+  \where
+  \# diskPool? \leq (poolSize~fmt?) \\
+  format' = fmt? \\
+  pool' = diskPool? \\
+  failedParts' = \emptyset \\
+  lastPlayed' = \emptyset \\
+  attempts' = 0 \\
+  lastError' = \emptyset \\
+  (diskPool? = \emptyset \implies \\
+    \quad~ (mode' = generatingFirst \land playing' = \emptyset \land filling' = ztrue)) \\
+  (\# diskPool? \geq 1 \land \# diskPool? < (poolSize~fmt?) \implies \\
+    \quad~ (mode' = playingFilling \land playing' \subseteq diskPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = ztrue)) \\
+  (\# diskPool? = (poolSize~fmt?) \implies \\
+    \quad~ (mode' = playingRotating \land playing' \subseteq diskPool? \\
+    \quad~ \land \# playing' = 1 \land filling' = zfalse))
+\end{schema}
+
+The before-state \texttt{Radio} is present only to fix the source the transition
+leaves; every primed field is determined by \texttt{diskPool?} alone, exactly as
+\texttt{VibeStyleChange} determines a Program's next state from \texttt{newPool?}.
+The symmetric retarget \emph{from} a Program to a Radio is not a Program schema
+either: \texttt{StartRadio} produces a \texttt{Radio'} without naming the source
+it displaced, because the displaced source is discarded whole. The model thus
+keeps the two states apart and treats the channel-level union at the
+orchestration seam, precisely as it abstracts the catalog lookup behind
+\texttt{diskPool?} (finding~\#7).
+
+\subsection{RadioVibeIgnored --- the vibe no-op}
+
+A \texttt{VibeStyleChange} carries a new \emph{(vibe, style)} pool for the
+generate machine. A Radio is consume-only: it has no vibe adaptation, and the
+design locks that a drifting session vibe must never abandon a curated Selection.
+A vibe change routed to an active Radio is therefore a deliberate no-op --- a
+guard-disabled transition of exactly the shape of \texttt{StaleFillIgnored}, not
+an error.
+
+\begin{schema}{RadioVibeIgnored}
+  \Xi Radio \\
+  newPool? : \power PART
+\end{schema}
+
+The schema is total in \texttt{newPool?} and yields $\Xi Radio$: whatever pool a
+forwarded vibe offers, a Radio takes none of it. This is distinct from a lost
+race --- nothing is ``lost'' --- and distinct from the generate-family reject: the
+vibe simply does not apply to replay, so the ``no vibe-switch'' lock is a fact of
+the model. With \texttt{RadioNext} $\defs$ \texttt{RadioRotate} already giving
+\texttt{Next} on a Radio, the user-intent controls over a Radio are now complete:
+\texttt{StartRadio}/\texttt{SwitchSelection} to enter, \texttt{RadioNext} to
+advance, \texttt{SwitchToProgram} to retarget to generate, and \texttt{RadioOff}
+to stop.
+
 \section{Key Properties}
 
 The following hold by construction (state invariants) or as operation
@@ -864,6 +969,19 @@ postconditions; they are the intended proof obligations for animation.
     produced by an in-flight fill and routed to an active Radio leaves it
     unchanged (\texttt{StaleFillIgnored}, $\Xi Radio$) --- never a crash, never
     a corrupt cursor.
+  \item \textbf{Leaving a Radio is a valid stop}: \texttt{RadioOff} empties the
+    Selection and cursor from any Radio state ($\Delta Radio$ with
+    $selection' = \emptyset$, whence $playing' = lastPlayed' = \emptyset$ by the
+    invariant), the exact parallel of \texttt{TurnOff} on a Program. It is user
+    intent, always enabled, never a rejected lost race.
+  \item \textbf{Retarget is source-agnostic}: the user-intent signals --- off,
+    on, switch, next --- act on \emph{either} source. \texttt{SwitchToProgram}
+    retargets an active Radio to a Program ($Radio \to Program'$), the mirror of
+    \texttt{StartRadio}/\texttt{SwitchSelection} retargeting a Program to a
+    Radio; \texttt{RadioNext} advances; \texttt{RadioOff} stops. Only the
+    generate-internal outcome (\texttt{StaleFillIgnored}) and the auto
+    vibe-switch (\texttt{RadioVibeIgnored}) are disabled against a Radio, and
+    both as $\Xi Radio$ no-ops rather than errors.
 \end{itemize}
 
 \section{Findings from Formalisation}
