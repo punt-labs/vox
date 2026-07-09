@@ -485,3 +485,108 @@ def test_prune_missing_file_is_no_op(tmp_path: Path) -> None:
     reg = _global(tmp_path)
     assert reg.prune(_VOX) is False
     assert not reg.path.exists()
+
+
+# ---------------------------------------------------------------------------
+# GlobalClaudeImports CRLF / lone-CR line endings
+# ---------------------------------------------------------------------------
+
+
+def test_crlf_existing_section_reconciles_idempotently(tmp_path: Path) -> None:
+    # A ~/.claude/CLAUDE.md saved with Windows CRLF endings leaves each marker
+    # line as ``...-->\r``. Before the fix, marker detection stripped only
+    # ``\n``, so the ``\r`` made the exact-match fail: the existing section went
+    # unseen and register appended a SECOND one (and prune silently no-oped).
+    # After the fix the section is recognized, so exactly one section survives,
+    # a re-register is a true no-op, and prune removes it.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    crlf = f"# rules\r\n\r\n{_OPEN}\r\n{_HEADER}\r\n\r\n{_VOX}\r\n{_CLOSE}\r\n"
+    reg.path.write_bytes(crlf.encode("utf-8"))
+
+    # Re-registering the line already present must NOT duplicate the section.
+    reg.register(_VOX)
+    text = reg.path.read_text(encoding="utf-8")
+    assert text.count(_OPEN) == 1
+    assert text.count(_CLOSE) == 1
+    assert text.count(_VOX) == 1
+
+    # Now that the file is the canonical (LF) rendering, a re-register is a
+    # true no-op -- the reconcile converged.
+    assert reg.register(_VOX) is False
+
+    # Prune works: the section is recognized and removed, not left orphaned.
+    assert reg.prune(_VOX) is True
+    assert _OPEN not in reg.path.read_text(encoding="utf-8")
+
+
+def test_lone_cr_marker_is_recognized(tmp_path: Path) -> None:
+    # Old-Mac lone-CR endings split into their own lines under splitlines();
+    # ``rstrip("\r\n")`` strips the trailing CR so the marker still matches and
+    # the existing section is not duplicated.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    cr = f"# rules\r\r{_OPEN}\r{_HEADER}\r\r{_VOX}\r{_CLOSE}\r"
+    reg.path.write_bytes(cr.encode("utf-8"))
+    reg.register(_VOX)
+    text = reg.path.read_text(encoding="utf-8")
+    assert text.count(_OPEN) == 1
+    assert text.count(_VOX) == 1
+
+
+# ---------------------------------------------------------------------------
+# GlobalClaudeImports import-line validation (register / prune boundary)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_line",
+    [
+        "",  # empty
+        "   ",  # whitespace only
+        "\n",  # newline only
+        "@~/a.md\n@~/b.md",  # embedded newline -> two lines / two imports
+        "@~/a.md\n",  # trailing newline
+        "@~/a.md\r\n",  # trailing CRLF
+        "a\rb",  # embedded carriage return
+        " @~/a.md",  # leading whitespace
+        "@~/a.md ",  # trailing whitespace
+        "\t@~/a.md",  # leading tab
+        "~/a.md",  # missing @ prefix
+        "# not an import",  # missing @ prefix, stray markdown
+    ],
+)
+def test_register_rejects_malformed_import_line(tmp_path: Path, bad_line: str) -> None:
+    reg = _global(tmp_path)
+    with pytest.raises(ValueError):
+        reg.register(bad_line)
+    # A rejected line must never create or touch the managed file.
+    assert not reg.path.exists()
+
+
+@pytest.mark.parametrize(
+    "bad_line",
+    [
+        "",
+        "@~/a.md\n@~/b.md",
+        "@~/a.md\n",
+        " @~/a.md",
+        "@~/a.md ",
+        "~/a.md",
+    ],
+)
+def test_prune_rejects_malformed_import_line(tmp_path: Path, bad_line: str) -> None:
+    reg = _global(tmp_path)
+    reg.register(_VOX)
+    before = reg.path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        reg.prune(bad_line)
+    # A rejected prune must leave the managed section untouched.
+    assert reg.path.read_text(encoding="utf-8") == before
+
+
+def test_valid_import_line_is_accepted(tmp_path: Path) -> None:
+    # The exact shape the reconciler emits and re-parses must pass validation.
+    reg = _global(tmp_path)
+    assert reg.register(_VOX) is True
+    assert reg.prune(_VOX) is True

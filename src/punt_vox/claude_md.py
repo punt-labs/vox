@@ -146,12 +146,57 @@ class GlobalClaudeImports:
         return self._path
 
     def register(self, import_line: str) -> bool:
-        """Add *import_line* to the managed section. Return True if written."""
+        """Add *import_line* to the managed section. Return True if written.
+
+        *import_line* is validated at this boundary (see
+        :meth:`_validate_import_line`) before it is ever written verbatim into
+        the section.
+        """
+        self._validate_import_line(import_line)
         return self._reconcile(lambda imports: imports | {import_line})
 
     def prune(self, import_line: str) -> bool:
-        """Remove *import_line* from the managed section. Return True if written."""
+        """Remove *import_line* from the managed section. Return True if written.
+
+        *import_line* is validated at this boundary (see
+        :meth:`_validate_import_line`): a malformed line could never have been
+        registered, so asking to prune one is a caller error, not a silent
+        no-op.
+        """
+        self._validate_import_line(import_line)
         return self._reconcile(lambda imports: imports - {import_line})
+
+    @staticmethod
+    def _validate_import_line(import_line: str) -> None:
+        """Raise ``ValueError`` unless *import_line* is a lone top-level ``@`` line.
+
+        :meth:`register` and :meth:`prune` splice *import_line* into the managed
+        section verbatim (one line, sorted among its peers). Today's only caller
+        passes a constant, but this class is the reference reconciler other punt
+        tools drive with their *own* lines, so the untrusted text is validated
+        here at the boundary (PY-EH-1) rather than trusted downstream. A line
+        with leading or trailing whitespace, an embedded newline, or a missing
+        ``@`` prefix would otherwise inject a blank line, a second import, or
+        stray markdown into the block. The rejected shapes:
+
+        * empty / whitespace-only -- no import to register;
+        * leading or trailing whitespace -- ``_render`` never indents an import,
+          so a padded line would never match on a later prune;
+        * an embedded ``\\n`` or ``\\r`` -- would splice multiple lines (or a
+          second import) into the section from one call;
+        * not starting with ``@`` -- Claude Code only resolves ``@path`` lines,
+          so a non-``@`` line is inert markdown, not an import.
+        """
+        if not import_line or import_line.isspace():
+            raise ValueError("import line must be non-empty")
+        if "\n" in import_line or "\r" in import_line:
+            raise ValueError(f"import line must be a single line: {import_line!r}")
+        if import_line != import_line.strip():
+            raise ValueError(
+                f"import line must have no leading/trailing whitespace: {import_line!r}"
+            )
+        if not import_line.startswith("@"):
+            raise ValueError(f"import line must begin with '@': {import_line!r}")
 
     def _reconcile(self, update: Callable[[frozenset[str]], frozenset[str]]) -> bool:
         """Parse, apply *update* to the import set, and write only if changed.
@@ -229,9 +274,12 @@ class GlobalClaudeImports:
 
         Preserve the target's current mode when it already exists so an atomic
         replace never changes how the user's ``CLAUDE.md`` is exposed. A
-        brand-new file gets 0644 (``rw-r--r--``) -- the conventional default a
-        plain write would inherit -- rather than the 0600 ``mkstemp`` gives the
-        temp. Called before the rename, while the target (if any) still exists.
+        brand-new file is forced to 0644 (``rw-r--r--``) -- a predictable,
+        sane default for a config file -- rather than the 0600 ``mkstemp`` gives
+        the temp. 0644 is a deliberate constant, *not* the umask-derived mode a
+        plain ``open()`` would produce (``0666 & ~umask``); a restrictive umask
+        would otherwise make the created file's mode vary by environment. Called
+        before the rename, while the target (if any) still exists.
         """
         if self._path.is_file():
             return stat.S_IMODE(self._path.stat().st_mode)
@@ -304,13 +352,21 @@ class GlobalClaudeImports:
 
         :meth:`_render` always emits the ``OPEN``/``CLOSE`` markers with no
         leading whitespace, so only a column-0 match is a real managed
-        delimiter. Comparing the raw line (newline stripped, indentation kept)
-        rather than ``line.strip()`` means an *indented* marker -- a Markdown
-        indented code block, or one pasted into prose -- stays literal content
-        instead of being consumed and its section mangled. Trailing whitespace
-        likewise disqualifies it, since ``_render`` never writes any.
+        delimiter. Comparing the raw line (line ending stripped, indentation
+        kept) rather than ``line.strip()`` means an *indented* marker -- a
+        Markdown indented code block, or one pasted into prose -- stays literal
+        content instead of being consumed and its section mangled. Trailing
+        spaces likewise disqualify it, since ``_render`` never writes any.
+
+        The strip covers ``\\r`` as well as ``\\n``: a ``~/.claude/CLAUDE.md``
+        saved with CRLF (or lone-CR) endings would otherwise leave the marker
+        line as ``...-->\\r``, fail this exact-match, and go unrecognized -- so
+        the existing section is never seen, a duplicate is appended on register
+        and prune silently no-ops. ``rstrip("\\r\\n")`` removes the line ending
+        only (a trailing space is not in the set), keeping the space-disqualifies
+        contract intact.
         """
-        return line.rstrip("\n") == marker
+        return line.rstrip("\r\n") == marker
 
     @staticmethod
     def _drop_separator(kept: list[str]) -> None:
