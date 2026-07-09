@@ -11,6 +11,7 @@ the running vox version; uninstall deletes the guide and prunes its import.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Self, final
 
@@ -70,15 +71,35 @@ class VoxGuidance:
         return self._global.path
 
     def install(self) -> str:
-        """Write the guide and register its import. Return a status message."""
+        """Write the guide and register its import. Return a status message.
+
+        The guide must exist before the ``@``-import points at it, so the write
+        precedes the register. If ``register`` then fails (e.g. ``~/.claude`` is
+        not writable), the just-written guide would be orphaned -- present on
+        disk with nothing importing it. Unlink it best-effort and re-raise the
+        original error, so a failed install leaves no partial state behind.
+        """
         self._doc_path.parent.mkdir(parents=True, exist_ok=True)
         self._doc_path.write_text(self._load_doc(), encoding="utf-8")
-        wrote = self._global.register(self._import_line)
+        try:
+            wrote = self._global.register(self._import_line)
+        except OSError:
+            self._unlink_quietly()
+            raise
         state = "registered" if wrote else "already registered"
         return (
             f"vox usage guide written to {self._doc_path}; "
             f"import {state} in {self._global.path}"
         )
+
+    def _unlink_quietly(self) -> None:
+        """Remove the guide, suppressing cleanup errors so the original raises.
+
+        Used to roll back a failed :meth:`install`: a failure to remove the
+        orphaned guide must not mask the register error that triggered cleanup.
+        """
+        with suppress(OSError):
+            self._doc_path.unlink(missing_ok=True)
 
     def uninstall(self) -> str:
         """Delete the guide and prune its import. Return a status message.

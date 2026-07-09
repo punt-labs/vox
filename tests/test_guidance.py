@@ -49,6 +49,28 @@ def test_reinstall_is_idempotent(tmp_path: Path) -> None:
     assert global_path.stat().st_mtime_ns == mtime
 
 
+def test_install_cleans_up_guide_when_register_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The guide is written before the @-import that points at it. If register
+    # then fails (e.g. ~/.claude is not writable), the just-written guide would
+    # be orphaned -- present with nothing importing it. install must unlink it
+    # and re-raise the original error, symmetric with the uninstall teardown.
+    guide = _guidance(tmp_path)
+
+    def boom_register(self: GlobalClaudeImports, line: str) -> bool:
+        raise OSError("simulated register failure")
+
+    monkeypatch.setattr(GlobalClaudeImports, "register", boom_register)
+
+    with pytest.raises(OSError, match="simulated register failure"):
+        guide.install()
+
+    # No orphaned guide left behind, and the global file was never created.
+    assert not guide.doc_path.exists()
+    assert not (tmp_path / ".claude" / "CLAUDE.md").exists()
+
+
 def test_install_rewrites_stale_doc(tmp_path: Path) -> None:
     guide = _guidance(tmp_path)
     guide.doc_path.parent.mkdir(parents=True)
