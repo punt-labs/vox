@@ -383,6 +383,45 @@ def test_for_current_user_import_line() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_uninstall_prunes_guide_even_when_plugin_step_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    # __main__ resolves `claude` via shutil.which and runs it via subprocess.run;
+    # patch the module objects it shares with these imports.
+    def fake_which(_cmd: str, *_a: object, **_k: object) -> str:
+        return "/usr/bin/claude"
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+
+    # A guide + import line exist to be pruned.
+    VoxGuidance.for_current_user().install()
+    doc = tmp_path / ".punt-labs" / "vox" / "CLAUDE.md"
+    global_md = tmp_path / ".claude" / "CLAUDE.md"
+    assert doc.is_file()
+    assert _VOX in global_md.read_text(encoding="utf-8")
+
+    # The `claude plugin uninstall` step fails (e.g. the plugin was already gone).
+    def failing_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(args=[], returncode=1)
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+
+    result = CliRunner().invoke(app, ["uninstall"])
+
+    # The command still reports the plugin failure ...
+    assert result.exit_code == 1
+    # ... but the guide + import were pruned anyway: uninstall is self-healing.
+    assert not doc.exists()
+    assert _VOX not in global_md.read_text(encoding="utf-8")
+
+
 def test_register_guidance_command_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

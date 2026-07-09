@@ -765,18 +765,24 @@ def uninstall() -> None:
         [claude, "plugin", "uninstall", _PLUGIN_ID, "--scope", "user"],
         check=False,
     )
-    if result.returncode != 0:
+    plugin_failed = result.returncode != 0
+    if plugin_failed:
         typer.echo("Error: plugin uninstall failed", err=True)
-        raise typer.Exit(code=1)
 
-    # Delete the usage guide and prune its @-import. OSError only -- a
-    # filesystem hiccup should not fail the plugin uninstall.
+    # Prune the usage guide + its @-import regardless of the plugin outcome:
+    # uninstall must be idempotent and self-healing, so a plugin step that fails
+    # (e.g. the plugin was already gone) must not orphan ~/.punt-labs/vox/CLAUDE.md
+    # or its global import line. OSError only -- a filesystem hiccup should not
+    # mask the plugin result.
     from punt_vox.claude_md import VoxGuidance
 
     try:
         typer.echo(VoxGuidance.for_current_user().uninstall())
     except OSError as exc:
         typer.echo(f"  • Skipped guide removal: {exc}")
+
+    if plugin_failed:
+        raise typer.Exit(code=1)
 
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
