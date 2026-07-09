@@ -184,8 +184,10 @@ class GlobalClaudeImports:
         the ``with`` block always closes it on every exit path. If ``fdopen``
         itself raises, the raw fd is closed explicitly (it never took
         ownership) -- otherwise a repeated install would leak a descriptor per
-        failure. The temp file is unlinked on any failure before the rename,
-        so no ``.claude-md-*.tmp`` is orphaned.
+        failure. The temp file is unlinked on *any* exception before the
+        rename -- ``OSError`` or otherwise -- so no ``.claude-md-*.tmp`` is
+        orphaned on any failure path (fdopen, write, flush, fsync, chmod, or
+        replace).
         """
         directory = self._path.parent
         directory.mkdir(parents=True, exist_ok=True)
@@ -210,9 +212,14 @@ class GlobalClaudeImports:
             # current mode before the rename; a brand-new file gets 0644.
             tmp.chmod(self._replacement_mode())
             tmp.replace(self._path)
-        except OSError:
-            # Best-effort cleanup that never masks the original error: a raising
-            # unlink is suppressed so the bare ``raise`` re-raises the real cause.
+        except BaseException:
+            # Any failure before the successful rename -- of any exception type,
+            # not just OSError -- leaves the temp behind. Unlink it so no
+            # ``.claude-md-*.tmp`` is orphaned (a raising fsync, a non-OSError
+            # chmod, a KeyboardInterrupt mid-write all land here). The unlink is
+            # suppressed if it itself raises, so the bare ``raise`` re-raises the
+            # real cause rather than the cleanup error. Reached only before the
+            # rename: once ``tmp.replace`` succeeds the temp no longer exists.
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
             raise
@@ -255,6 +262,12 @@ class GlobalClaudeImports:
         write/parse pair lossless: a body with no final newline round-trips
         to no final newline, and one that ends in blank lines keeps every one.
 
+        Marker detection is column-0 only (see :meth:`_is_marker`): an indented
+        marker is literal content, matching Markdown's own rule that four-space
+        indentation opens a code block. Combined with the fence-awareness below,
+        both ways of writing a marker as documentation -- indented or fenced --
+        survive a reconcile.
+
         Parsing is fence-aware: any line inside a Markdown code fence (a
         ```` ``` ```` or ``~~~`` block) is literal text and is preserved
         byte-for-byte, so a ``<!-- punt:mandatory-reading -->`` marker that
@@ -272,11 +285,11 @@ class GlobalClaudeImports:
                 # Fence delimiter or fenced content: literal, never a marker.
                 kept.append(line)
                 continue
-            if stripped == self._OPEN:
+            if self._is_marker(line, self._OPEN):
                 self._drop_separator(kept)
                 inside = True
                 continue
-            if stripped == self._CLOSE:
+            if self._is_marker(line, self._CLOSE):
                 inside = False
                 continue
             if inside:
@@ -284,6 +297,20 @@ class GlobalClaudeImports:
                 continue
             kept.append(line)
         return kept, imports
+
+    @staticmethod
+    def _is_marker(line: str, marker: str) -> bool:
+        """Return whether *line* is *marker* sitting flush at column 0.
+
+        :meth:`_render` always emits the ``OPEN``/``CLOSE`` markers with no
+        leading whitespace, so only a column-0 match is a real managed
+        delimiter. Comparing the raw line (newline stripped, indentation kept)
+        rather than ``line.strip()`` means an *indented* marker -- a Markdown
+        indented code block, or one pasted into prose -- stays literal content
+        instead of being consumed and its section mangled. Trailing whitespace
+        likewise disqualifies it, since ``_render`` never writes any.
+        """
+        return line.rstrip("\n") == marker
 
     @staticmethod
     def _drop_separator(kept: list[str]) -> None:

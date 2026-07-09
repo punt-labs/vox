@@ -176,6 +176,46 @@ def test_fenced_marker_not_treated_as_registration(tmp_path: Path) -> None:
     assert reg.path.read_text(encoding="utf-8") == fenced
 
 
+def test_indented_marker_is_preserved_not_consumed(tmp_path: Path) -> None:
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    # A 4-space-indented marker is a Markdown indented code block -- literal
+    # text, not a managed delimiter (same spirit as the fenced case). It must
+    # survive a reconcile byte-for-byte, and the real column-0 section must
+    # still register alongside it.
+    indented = (
+        "# doc\n\n"
+        "Example, indented as a code block:\n\n"
+        f"    {_OPEN}\n"
+        f"    {_VOX}\n"
+        f"    {_CLOSE}\n"
+    )
+    reg.path.write_text(indented, encoding="utf-8")
+    assert reg.register("@~/real.md") is True
+    text = reg.path.read_text(encoding="utf-8")
+    # The indented block is untouched -- markers not eaten, indentation kept.
+    assert indented.rstrip("\n") in text
+    assert f"    {_OPEN}" in text
+    # A real column-0 section was appended for the actual registration.
+    assert text.count(_OPEN) == 2  # indented literal + real section
+    assert "@~/real.md" in text
+    # The indented vox line is literal, not managed: pruning it is a no-op.
+    assert reg.prune(_VOX) is False
+
+
+def test_marker_with_trailing_spaces_is_preserved(tmp_path: Path) -> None:
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    # _render never emits trailing whitespace after a marker, so a marker with
+    # trailing spaces is literal content, not a managed delimiter. With no real
+    # (column-0, exact) section present, pruning the vox line is a no-op and the
+    # file is left byte-for-byte.
+    trailing = f"# doc\n\n{_OPEN}   \n{_VOX}\n{_CLOSE}   \n"
+    reg.path.write_text(trailing, encoding="utf-8")
+    assert reg.prune(_VOX) is False
+    assert reg.path.read_text(encoding="utf-8") == trailing
+
+
 def test_tilde_fence_protects_marker(tmp_path: Path) -> None:
     reg = _global(tmp_path)
     reg.path.parent.mkdir(parents=True)
@@ -287,6 +327,52 @@ def test_in_write_failure_leaves_no_temp_and_original_intact(
     monkeypatch.setattr(os, "fsync", boom_fsync)
 
     with pytest.raises(OSError, match="simulated fsync failure"):
+        reg.register(_VOX)
+
+    assert reg.path.read_text(encoding="utf-8") == original
+    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+
+
+def test_non_oserror_in_write_leaves_no_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Cleanup must fire on ANY exception, not just OSError: an fsync that raises
+    # a non-OSError (here ValueError) must still leave no orphaned temp and the
+    # original intact. Guards the whole class of write-path failures, not just
+    # the OSError instance the earlier test covers.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    original = "# keep\n"
+    reg.path.write_text(original, encoding="utf-8")
+
+    def boom_fsync(fd: int) -> None:
+        raise ValueError("non-OSError fsync failure")
+
+    monkeypatch.setattr(os, "fsync", boom_fsync)
+
+    with pytest.raises(ValueError, match="non-OSError fsync failure"):
+        reg.register(_VOX)
+
+    assert reg.path.read_text(encoding="utf-8") == original
+    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+
+
+def test_chmod_failure_leaves_no_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # chmod runs after the fd is closed but before the rename; a failure there
+    # must also unlink the temp -- the last untested edge in the write path.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    original = "# keep\n"
+    reg.path.write_text(original, encoding="utf-8")
+
+    def boom_chmod(self: Path, mode: int, **kwargs: object) -> None:
+        raise OSError("simulated chmod failure")
+
+    monkeypatch.setattr(Path, "chmod", boom_chmod)
+
+    with pytest.raises(OSError, match="simulated chmod failure"):
         reg.register(_VOX)
 
     assert reg.path.read_text(encoding="utf-8") == original
