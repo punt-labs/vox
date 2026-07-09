@@ -159,7 +159,7 @@ class VoxClientSync:
         name: str | None = None,
         album_id: str | None = None,
     ) -> dict[str, Any]:
-        """Replay a Selection resolved by album id (direct) or by tags (F#7)."""
+        """Replay a Selection resolved by album id (direct) or by tags."""
         return self._runner.run(  # type: ignore[no-any-return]
             self._call(
                 "program_select", style=style, vibe=vibe, name=name, album_id=album_id

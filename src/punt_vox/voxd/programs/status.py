@@ -8,7 +8,7 @@ content (that is manifest *subject* data, not runtime status), so the same shape
 reports a playlist track today and a podcast segment or audiobook chapter later
 with no field change -- the shape is decided here, once (design section 5).
 
-Both failure surfaces the Z model demands (finding #5) are present and distinct:
+Both failure surfaces are present and distinct:
 ``generation.last_error`` is the *program-level* failure (retrying/failed,
 nothing can play) and ``failed_parts`` is the *per-Part* permanent failure while
 the Program plays on. Reading a log is not a strategy for a client: a caller
@@ -48,7 +48,7 @@ class ProgramStatus:
     ``name is None`` means the daemon is idle (no active Program). An ``off``
     Program whose pool is saved on disk reports ``mode == off`` with ``name`` set
     and ``now_playing is None``, so a client tells "there is a pool to play" from
-    "there is nothing" (decision O1).
+    "there is nothing".
     """
 
     format: Format
@@ -129,7 +129,7 @@ class ProgramStatus:
         playing = program.playing
         if playing is None:
             return None
-        # "N" is the playing Part's intrinsic manifest index (MAJOR-1), not its
+        # "N" is the playing Part's intrinsic manifest index, not its
         # ordinal position in the pool: a gap from a permanent fill failure (e.g.
         # ready indices 1, 2, 4) must report "4", never the position-3 it holds.
         return NowPlaying(index=playing.index, of=len(program.pool))

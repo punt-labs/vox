@@ -2,9 +2,10 @@
 
 Every test drives the REAL loop + the REAL ControlChannel consumer with a fake
 player whose process end the test controls. Assertions are on what the loop
-actually *spawned* -- a different file on track-end (the bas7 gap), no advance
-past a retune's finish, the current player surviving a retune, the player killed
-on off/skip -- and on the Program mode, never on removed scheduler internals.
+actually *spawned* -- a different file on track-end (the auto-advance is a real,
+listened-to transition), no advance past a retune's finish, the current player
+surviving a retune, the player killed on off/skip -- and on the Program mode,
+never on removed scheduler internals.
 """
 
 from __future__ import annotations
@@ -243,7 +244,7 @@ class _GateSleeper:
 
 
 class TestExitFault:
-    """F3: a non-zero player exit is observable via status, not a silent skip.
+    """A non-zero player exit is observable via status, not a silent skip.
 
     The fault clears on the *next* successful spawn (the ``PlaybackHealth``
     contract), so the test pins the loop in the exit-fault backoff with a gated
@@ -300,7 +301,7 @@ class TestGeneratingFirstThenPlays:
 
 
 class TestSkipInGeneratingFirst:
-    """Z finding #1 (modeled property): a skip while nothing plays is a no-op."""
+    """A skip while nothing plays is a no-op (the modeled empty-pool property)."""
 
     async def test_skip_in_generating_first_is_noop(
         self, policy: PlaybackPolicy
@@ -417,7 +418,7 @@ class _ErrThenBlockPlayer:
 
 
 class TestPlayerWaitError:
-    """F8: a raised player wait() is a player error, never a clean advance.
+    """A raised player wait() is a player error, never a clean advance.
 
     The unit-level ``_player_errored`` assertions moved to ``test_interrupt_race``
     with the extracted :class:`InterruptRace`; this end-to-end test proves the loop

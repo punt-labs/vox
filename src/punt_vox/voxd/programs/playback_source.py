@@ -35,9 +35,9 @@ class PlaybackSource(Protocol):
     def wants_generation(self) -> bool:
         """Whether the fill reconciler should keep generation running.
 
-        ``True`` for a :class:`Program` that is filling or retrying (preserving
-        the vox-ig52 stranded-retry clause); ``False`` for a Selection, which
-        never generates (finding #1).
+        ``True`` for a :class:`Program` that is filling or retrying (so a
+        transient backoff keeps the retry engine running and is never stranded);
+        ``False`` for a Selection, which never generates.
         """
         ...
 
@@ -45,8 +45,8 @@ class PlaybackSource(Protocol):
     def advances_on_end(self) -> bool:
         """Whether the loop should auto-advance this source on a track end.
 
-        The source-agnostic advance gate (F#6), named for its contract rather than
-        for playing-status (it is *not* ``playing``): a :class:`Program` reports
+        The source-agnostic advance gate, named for its contract rather than for
+        playing-status (it is *not* ``playing``): a :class:`Program` reports
         its mode gate, a Selection reports ``playing is not None`` -- so a radio
         auto-advances on track-end exactly as a generate pool does.
         """

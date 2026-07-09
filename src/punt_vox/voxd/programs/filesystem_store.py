@@ -5,7 +5,7 @@ access, directory globbing, and atomic manifest writes live here. Each album is 
 ``<slug>-<id>`` directory under a shared root, holding a ``manifest.json`` (UTF-8)
 and its ``NNN.mp3`` Part files. Manifest writes are atomic and fsynced (temp file
 + ``os.replace``) so a crash mid-write never leaves a torn manifest. This is the
-seam that dereferences an opaque locator to a ``Path`` (finding #3).
+seam that dereferences an opaque locator to a ``Path``.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class FilesystemProgramStore:
         return self._root
 
     def scan(self) -> tuple[Album, ...]:
-        """Return every saved album, in per-album isolation (F#1, F4).
+        """Return every saved album, in per-album isolation.
 
         The one startup disk walk. Each ``*/manifest.json`` is scanned alone, so a
         single escaping, idless-legacy, or corrupt directory is skipped without
@@ -128,11 +128,11 @@ class FilesystemProgramStore:
         return FilesystemPartStore(path, manifest)
 
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
-        """Materialise ``draft`` into a fresh ``<slug>-<id>`` directory (finding #6).
+        """Materialise ``draft`` into a fresh ``<slug>-<id>`` directory.
 
         The name is a single validated segment (``ProgramName``), so it cannot
-        traverse; ``mkdir(exist_ok=False)`` is the race guard behind
-        ``AlbumId.mint`` (finding #8). The store owns the clock -- it stamps now.
+        traverse; ``mkdir(exist_ok=False)`` is the second-line race guard behind
+        ``AlbumId.mint``. The store owns the clock -- it stamps now.
         """
         segment = ProgramName(draft.locator)
         directory = self._contained_dir(segment.value)
@@ -142,9 +142,9 @@ class FilesystemProgramStore:
         return store
 
     def _scan_one(self, manifest_path: Path) -> Album | None:
-        """Return the Album for one manifest, or ``None`` to skip the directory (F4).
+        """Return the Album for one manifest, or ``None`` to skip the directory.
 
-        Three skips, two log levels: an escaping dir (F#1) and an idless legacy
+        Three skips, two log levels: an escaping dir and an idless legacy
         record are intentional debug-logged skips; a corrupt id-bearing manifest
         is a real fault -- caught here and logged at ERROR with its directory
         rather than propagated out of ``scan`` to brick the whole daemon.

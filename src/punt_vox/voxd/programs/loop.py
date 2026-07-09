@@ -6,9 +6,9 @@ directly) so the single :class:`ControlChannel` writer advances the cursor, then
 plays the new ``program.playing``. It never generates. A skip / play-a-part /
 off interrupts the current track at once (the channel's ``interrupt`` event); a
 retune does not -- the current track finishes first, then the loop plays the new
-pool's Part (finish-current-then-switch). This closes the bas7 gap: the advance
-is a real, listened-to transition, proven by a test that asserts the loop
-spawned a *different* file on track-end.
+pool's Part (finish-current-then-switch). The auto-advance is a real,
+listened-to transition, proven by a test that asserts the loop spawned a
+*different* file on track-end.
 
 The interrupt-vs-natural-end race lives in :class:`InterruptRace`; a player
 *spawn* failure (a missing ``afplay``/``ffplay`` binary, or an OS resource limit)
@@ -108,7 +108,7 @@ class ProgramLoop:
         would re-enter ``_step`` on the same still-unplayable target and spin. A
         non-zero *exit* (a missing/corrupt track file -- reachable now that replay
         plays arbitrary saved albums) is likewise made observable on
-        ``PlaybackHealth`` before advancing past the bad track (F3), never a
+        ``PlaybackHealth`` before advancing past the bad track, never a
         WARNING-only log that leaves status reporting "playing" while it skips.
         """
         self._channel.interrupt.clear()
@@ -155,7 +155,7 @@ class ProgramLoop:
         wait for the single writer to apply it; the loop then plays the advanced
         Part. If ``playing`` already changed (a retune finished mid-track), the
         loop simply re-reads and plays the new pool's Part -- no advance. The
-        advance gate is source-agnostic (F#6): ``source.advances_on_end`` is the
+        advance gate is source-agnostic: ``source.advances_on_end`` is the
         Program mode gate for a generate pool and ``playing is not None`` for a
         replay Selection, so a radio auto-advances on track-end exactly as a
         generate pool does.

@@ -1,9 +1,10 @@
 """Tests for the format-spanning ``ProgramStatus`` observability surface.
 
-Covers the three "not playing / playing" situations that decision O1 turns on
-(idle vs off-with-saved-pool vs playing), that both failure surfaces (finding #5)
-reach a client distinctly, and that the value round-trips through the wire so a
-client reads the daemon's authoritative state rather than a log.
+Covers the three "not playing / playing" situations a client distinguishes
+(idle vs off-with-saved-pool vs playing), that both failure surfaces (the
+program-level error and the per-Part failures) reach a client distinctly, and
+that the value round-trips through the wire so a client reads the daemon's
+authoritative state rather than a log.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ def test_playing_reports_part_n_of_m() -> None:
 
 
 def test_now_playing_uses_intrinsic_index_across_a_gap() -> None:
-    """A gap from a permanent fill failure keeps intrinsic ``part N`` (MAJOR-1).
+    """A gap from a permanent fill failure keeps the intrinsic ``part N`` index.
 
     Ready indices 1, 2, 4 (index 3 failed) with the index-4 Part playing must
     report ``index == 4`` -- its intrinsic manifest index -- never the ordinal

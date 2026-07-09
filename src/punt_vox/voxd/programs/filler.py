@@ -210,7 +210,7 @@ class Filler:
         """Produce one Part; record it and post its outcome.
 
         A transient error backs off and the loop retries; any other error records
-        the Part failed and posts a permanent outcome (OBSERVABLE, vox-ig52).
+        the Part failed and posts a permanent outcome the status surface reports.
         """
         store = plan.store
         index = store.next_index()

@@ -15,7 +15,7 @@ sole writer.
 A *non-guard* failure is a different animal: a plain ``ValueError`` from a
 corrupt successor state, or any other unexpected exception, means a bug -- not a
 race. The consumer never swallows it as a lost race; it surfaces at ERROR
-(vox-ig52) through the ``serve`` guard, always sets ``changed`` first so the
+through the ``serve`` guard, always sets ``changed`` first so the
 playback loop never blocks forever on a half-applied command, and keeps the sole
 writer alive.
 """
@@ -85,7 +85,7 @@ class ControlChannel:
         Called only from inside an applied command (a switch on the consumer
         thread), so the swap is serialised with every other mutation -- the loop
         and the fill re-read :attr:`source` after the writer wakes them and see
-        the new source, never one half-swapped (the vox-73m5 hazard).
+        the new source, never one half-swapped.
         """
         self._source = source
 

@@ -3,10 +3,10 @@
 ``Catalog`` is built once at startup from ``store.scan()`` and updated on
 generation; it replaces the per-list disk scan. It is the sole object list,
 play, and switch consult. An :class:`Album` is a manifest paired with its
-*opaque* directory locator (finding #3) -- never a live ``Path``; the persistence
-seam dereferences the locator. Resolution lives here (finding #11): the catalog
-owns the *queries* (``by_id``/``by_name``/``resume``/``newest``/``select``); the
-service owns the mint *side-effect* (a domain object must not call ``store.create``).
+*opaque* directory locator -- never a live ``Path``; the persistence seam
+dereferences the locator. Query resolution lives here: the catalog owns the
+*queries* (``by_id``/``by_name``/``resume``/``newest``/``select``); the service
+owns the mint *side-effect* (a domain object must not call ``store.create``).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class Album:
     *durable* metadata (id, tags, ``created``, fingerprint, format) established at
     creation and never mutated, while its Parts are a *disk read*. The background
     fill grows the on-disk manifest after the catalog registers the album, so a
-    frozen parts snapshot would go stale the instant the fill writes (F1).
+    frozen parts snapshot would go stale the instant the fill writes.
     :meth:`read` and :meth:`ready_parts` therefore dereference the store live; the
     snapshot's own ``parts`` are never consulted for playback state.
     """
@@ -77,7 +77,7 @@ class Album:
         return self._store.open(self._locator).manifest()
 
     def ready_parts(self) -> tuple[Part, ...]:
-        """Return the album's ready Parts, read live from the store (F1)."""
+        """Return the album's ready Parts, read live from the store."""
         return self._store.open(self._locator).ready_parts()
 
     def __eq__(self, other: object) -> bool:
@@ -113,7 +113,7 @@ class Catalog:
         return AlbumId.mint(self._by_id.keys())
 
     def taken_names(self) -> frozenset[str]:
-        """Return every curated album name in use (for uniqueness minting, R5)."""
+        """Return every curated album name in use (for unique-name minting)."""
         return frozenset(
             album.manifest.tags.name
             for album in self._by_id.values()
@@ -121,14 +121,14 @@ class Catalog:
         )
 
     def by_id(self, album_id: AlbumId) -> Album | None:
-        """Return the album with ``album_id``, or ``None`` -- a direct lookup (F#7).
+        """Return the album with ``album_id``, or ``None`` -- a direct id lookup.
 
         ``None`` is the documented "no such album" contract, not a parse failure.
         """
         return self._by_id.get(album_id)
 
     def by_name(self, name: str) -> Album | None:
-        """Return the album named ``name`` (0 or 1 -- names are unique, R5).
+        """Return the album named ``name`` (0 or 1 -- names are unique).
 
         ``None`` is the documented absence contract.
         """
@@ -157,7 +157,7 @@ class Catalog:
     def resume(
         self, style: str, vibe: str, fingerprint: PromptFingerprint
     ) -> Album | None:
-        """Return the newest ``(style, vibe)`` album sharing ``fingerprint`` (vox-1uo5).
+        """Return the newest ``(style, vibe)`` album sharing ``fingerprint``.
 
         A tag match with a *different* fingerprint is a miss, so the caller mints
         a fresh album rather than filling a foreign prompt-set's pool. ``None`` is

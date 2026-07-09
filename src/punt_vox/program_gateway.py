@@ -32,7 +32,7 @@ class ProgramGateway(Protocol):
         """Return the daemon's authoritative Program status, read fresh per call.
 
         Never a client-side cache: a caller asking "what is playing?" gets what
-        the daemon actually holds, so no stale shadow can drift (vox-73m5).
+        the daemon actually holds, so no stale shadow can drift.
         """
         ...
 

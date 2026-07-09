@@ -1,11 +1,12 @@
 """The queryable album tags, the tag query, and the prompt fingerprint.
 
 An album's identity is an :class:`AlbumId` plus a set of *tags*: ``style`` and
-``vibe`` are the non-unique filter axes, ``name`` is the enforced-unique handle
-(R5). :class:`TagQuery` owns the ``matches`` predicate, replacing the repeated
-``(str | None, str | None)`` tuple across the catalog queries (finding #7).
+``vibe`` are the non-unique filter axes, ``name`` is the enforced-unique handle.
+:class:`TagQuery` owns the ``matches`` predicate, replacing the repeated
+``(str | None, str | None)`` tuple across the catalog queries.
 :class:`PromptFingerprint` is a stable hash of the authored prompt-set -- hidden
-album metadata that pins one pool to one coherent prompt-set (vox-1uo5).
+album metadata that pins one pool to one coherent prompt-set, so a differing
+prompt-set never resumes and grows a foreign pool.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ class AlbumTags:
 
     style: str
     vibe: str
-    name: str | None = None  # None means an unnamed, tag-addressed album (R5)
+    name: str | None = None  # None means an unnamed, tag-addressed album
 
     def slug(self) -> str:
         """Return the filesystem-safe Finder prefix (curated name, else tags)."""
@@ -72,7 +73,7 @@ class AlbumTags:
 
     @classmethod
     def mint_unique_name(cls, desired: str, taken: Container[str]) -> str:
-        """Return ``desired`` if free, else auto-suffix ``X1``/``X2``/... (R5).
+        """Return ``desired`` if free, else auto-suffix ``X1``/``X2``/...
 
         The name-space mint parallel to :meth:`AlbumId.mint`: a colliding desired
         name is disambiguated at creation so ``by_name`` always returns 0 or 1.
@@ -98,8 +99,8 @@ class TagQuery:
 
     A ``None`` field matches every album on that axis; a present field must equal
     the album's corresponding tag. An all-``None`` query matches everything. The
-    ``id`` axis is *not* here (F#7): an id is served by ``Catalog.by_id``, a
-    direct lookup, never routed through a tag filter.
+    ``id`` axis is *not* here: an id is served by ``Catalog.by_id``, a direct
+    lookup, never routed through a tag filter.
     """
 
     style: str | None = None  # None wildcards the style axis
@@ -141,7 +142,7 @@ class TagQuery:
 
 @final
 class PromptFingerprint(HexToken):
-    """A stable hash of the authored prompt-set (base + variations, vox-1uo5).
+    """A stable hash of the authored prompt-set (base + variations).
 
     Two albums authored from the same prompt-set share a fingerprint; any change
     to the base or a variation yields a different one. It is hidden album

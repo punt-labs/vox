@@ -4,7 +4,7 @@
 ``Radio``): a shuffle-rotation over a :class:`Selection` that may span albums,
 with no cap, no fill, and no generation. Anti-repeat is delegated to the injected
 :class:`PlaybackPolicy` -- the same :class:`RotatePolicy` that backs
-``Program.rotate`` -- so "no immediate repeat" is defined once (finding #9). It
+``Program.rotate`` -- so "no immediate repeat" is defined once. It
 generates nothing: :attr:`wants_generation` is structurally ``False``.
 """
 
@@ -73,10 +73,10 @@ class SelectionPlayback:
 
     @property
     def wants_generation(self) -> bool:
-        """A Selection never generates -- structurally ``False`` (finding #1)."""
+        """A Selection never generates -- structurally ``False``."""
         return False
 
     @property
     def advances_on_end(self) -> bool:
-        """Whether the loop should auto-advance this radio on a track end (F#6)."""
+        """Whether the loop should auto-advance this radio on a track end."""
         return self._playing is not None

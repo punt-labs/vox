@@ -62,7 +62,7 @@ class ClientProgramGateway:
         return self._outcome(self._client.program_next())
 
     def select(self, request: SelectionRequest) -> CommandOutcome:
-        """Replay a Selection resolved by id (direct) or by tags (F#7)."""
+        """Replay a Selection resolved by id (direct) or by tags."""
         return self._outcome(
             self._client.program_select(
                 style=request.style,

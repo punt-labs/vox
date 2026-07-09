@@ -213,7 +213,7 @@ class _RaisingHandler(ProgramCommandHandler):
 
 
 class TestMutatingBoundary:
-    """F2: every expected domain failure becomes a wire error, not a torn socket.
+    """Every expected domain failure becomes a wire error, not a torn socket.
 
     ``store.open`` on a deleted album dir raises ``LookupError``; ``store.create``'s
     ``mkdir(exist_ok=False)`` mint-race guard raises ``FileExistsError`` and a full

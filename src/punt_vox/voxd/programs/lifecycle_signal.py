@@ -3,8 +3,8 @@
 ``TurnOn`` and ``VibeStyleChange`` are generate-path commands: they narrow
 ``isinstance(source, Program)`` and reject (``TurnOn``) or no-op
 (``VibeStyleChange``) against a consume-only Selection. ``TurnOff`` is
-source-agnostic user intent (finding #4): it stops a generate Program keeping its
-saved pool, and stops a replay Selection by retargeting the channel to idle.
+source-agnostic user intent: it stops a generate Program keeping its saved pool,
+and stops a replay Selection by retargeting the channel to idle.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class TurnOn:
 class TurnOff:
     """Stop playback: a Program keeps its pool; a replay Selection goes idle.
 
-    User intent, valid against either source (finding #4). A generate Program
+    User intent, valid against either source. A generate Program
     turns off keeping its saved pool (Z ``TurnOff``); a replay Selection has no
     pool of its own, so it stops by retargeting the channel to the idle Program
     and clearing the active context.

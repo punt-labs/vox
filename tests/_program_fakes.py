@@ -3,9 +3,9 @@
 The surfaces are thin adapters over :class:`~punt_vox.program_gateway.ProgramGateway`,
 so their tests inject this fake instead of a live daemon: it records every call,
 returns a caller-controlled :class:`ProgramStatus`, and lets a test flip the
-applied/rejected result (design F7) or mutate the status between calls (to prove
-the surface re-reads authoritatively -- vox-73m5). It is a structural stand-in
-(no inheritance), matching the Protocol by shape.
+applied/rejected result or mutate the status between calls (to prove the surface
+re-reads authoritatively rather than caching a stale shadow). It is a structural
+stand-in (no inheritance), matching the Protocol by shape.
 """
 
 from __future__ import annotations

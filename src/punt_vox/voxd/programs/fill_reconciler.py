@@ -48,11 +48,11 @@ class FillReconciler:
     def reconcile(self, source: PlaybackSource) -> None:
         """Keep the fill running while the source wants generation, else cancel it.
 
-        ``source.wants_generation`` is ``filling`` OR ``retrying`` for a Program
-        (finding #1). During a transient backoff the model's ``filling`` flag is
-        false, but generation is paused, not stopped: the fill task is the retry
-        engine that keeps trying at the capped backoff and resumes via ``recover``
-        when a Part finally lands (finding #4) -- so a Program keeps it running.
+        ``source.wants_generation`` is ``filling`` OR ``retrying`` for a Program.
+        During a transient backoff the model's ``filling`` flag is false, but
+        generation is paused, not stopped: the fill task is the retry engine that
+        keeps trying at the capped backoff and resumes via ``recover`` when a Part
+        finally lands -- so a Program keeps it running.
         A replay Selection returns ``False``, so the reconciler cancels and idles.
         """
         if source.wants_generation:

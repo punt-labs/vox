@@ -6,7 +6,7 @@
 as an unretrieved exception nor masquerades as a normal advance -- and both make
 the loop kill without advancing. Otherwise the player's ``wait`` settled with an
 exit code: 0 is a clean natural end (advance); non-zero is a fault the loop
-records on ``PlaybackHealth`` before advancing (F3). Extracting it keeps
+records on ``PlaybackHealth`` before advancing. Extracting it keeps
 :class:`ProgramLoop` focused on *what to do*, with the race mechanics owned here.
 """
 

@@ -4,7 +4,7 @@ A track can stop three ways, and the playback loop reacts differently to each: a
 user interrupt (skip / off / play-a-part) or a *raised* player ``wait`` means the
 loop kills and does not advance; a clean exit (code 0) means advance; a non-zero
 exit means the track *faulted* -- the loop records it on ``PlaybackHealth`` so a
-client sees the fault via status, then advances past the bad track (F3). Folding
+client sees the fault via status, then advances past the bad track. Folding
 these into one immutable value keeps :class:`InterruptRace` returning *what
 happened* and leaves *what to do about it* to the loop.
 """

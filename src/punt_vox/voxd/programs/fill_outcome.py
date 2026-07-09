@@ -29,7 +29,7 @@ class RecoveringFillOutcome(ABC):
 
     A produced Part and a permanent per-Part failure share one spine: narrow the
     active source to a generate ``Program`` (rejecting as a lost race when a
-    replay Selection is active -- finding #4); if it is retrying, ``recover``
+    replay Selection is active); if it is retrying, ``recover``
     first; then apply the mode-appropriate transition for ``generating_first`` or
     ``playing_filling``, and drop the outcome in any other mode (the pool has
     moved on -- off, rotating, failed). Only the two mode hooks differ per
@@ -47,7 +47,7 @@ class RecoveringFillOutcome(ABC):
         """Recover a retrying Program, then apply the mode-appropriate transition.
 
         A fill outcome landing while a replay Selection is active is a benign
-        lost race (finding #4): the ``isinstance`` narrow fails and the writer
+        lost race: the ``isinstance`` narrow fails and the writer
         rejects via ``GuardViolationError`` (INFO-logged) instead of crashing.
         """
         if not isinstance(source, Program):

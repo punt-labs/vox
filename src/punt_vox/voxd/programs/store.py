@@ -58,15 +58,15 @@ class ProgramStore(Protocol):
         """Return every saved album, pairing each manifest with its locator.
 
         The one startup disk walk that builds the catalog. Idless legacy dirs are
-        skipped at this boundary (no-migration), and every candidate directory is
-        resolved-and-contained under the root so a symlink cannot escape (F#1).
+        skipped at this boundary, and every candidate directory is
+        resolved-and-contained under the root so a symlink cannot escape.
         """
         ...
 
     def open(self, directory: str) -> PartStore:
         """Return the PartStore for a scan/create-validated directory, else raise.
 
-        The ``open``-guard invariant (finding #10): ``directory`` is only ever a
+        The ``open``-guard invariant: ``directory`` is only ever a
         locator produced by :meth:`scan` or :meth:`create`, so no wire/CLI path
         can hand this a directory that resolves outside the root.
         """
@@ -75,6 +75,6 @@ class ProgramStore(Protocol):
     def create(self, draft: ManifestDraft) -> PartStore:
         """Materialise ``draft`` into a fresh album directory and return its store.
 
-        The store owns the clock (finding #6): it stamps ``created = now(UTC)``.
+        The store owns the clock: it stamps ``created = now(UTC)``.
         """
         ...

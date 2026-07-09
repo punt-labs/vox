@@ -2,7 +2,7 @@
 
 An ``AlbumId`` is the album's stable handle: the directory suffix (``<slug>-<id>``)
 and the catalog key. The id value-space is this type's, so the collision-avoiding
-mint loop lives here (finding #8) and :meth:`Catalog.mint_id` delegates to it.
+mint loop lives here and :meth:`Catalog.mint_id` delegates to it.
 Construction validates the hex shape, so a wire- or filesystem-derived id can
 never smuggle a path separator or non-hex junk into a directory name.
 """
@@ -25,8 +25,8 @@ class AlbumId(HexToken):
     """A short, unique, lowercase-hex album identity (``secrets.token_hex(3)``).
 
     Validation, the ``value`` accessor, and the value-object dunders come from
-    :class:`HexToken`; this subclass adds only the collision-avoiding mint factory
-    (finding #8), so :meth:`Catalog.mint_id` delegates to it.
+    :class:`HexToken`; this subclass adds only the collision-avoiding mint factory,
+    so :meth:`Catalog.mint_id` delegates to it.
     """
 
     __slots__ = ()
@@ -34,7 +34,7 @@ class AlbumId(HexToken):
 
     @classmethod
     def mint(cls, taken: Container[AlbumId]) -> Self:
-        """Return a fresh id absent from ``taken`` (owns the collision loop, #8)."""
+        """Return a fresh id absent from ``taken`` (owns the collision-retry loop)."""
         while True:
             candidate = cls(secrets.token_hex(_ID_BYTES))
             if candidate not in taken:

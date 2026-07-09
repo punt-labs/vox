@@ -1,10 +1,10 @@
 """Integration test for ``VoxDaemon._lifespan`` -- the background-task wiring.
 
-Fix #4: the lifespan starts three background tasks (playback consumer, the sole
-control writer, and the playback loop). This drives the real lifespan context and
-asserts (a) all three tasks are announced started and (b) a command posted to the
-service is *applied end-to-end* by the running control writer -- the daemon-level
-guard against the bas7 (#291) "a transition was never listened to" failure class.
+The lifespan starts three background tasks (playback consumer, the sole control
+writer, and the playback loop). This drives the real lifespan context and asserts
+(a) all three tasks are announced started and (b) a command posted to the service
+is *applied end-to-end* by the running control writer -- the daemon-level guard
+that a posted transition is actually listened to, never dropped on the floor.
 """
 
 from __future__ import annotations

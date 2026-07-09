@@ -8,7 +8,7 @@ time, so the Z sequential semantics are real: no two commands ever interleave
 against a stale source. Each signal is a typed command that knows its own
 transition (Command pattern, PY-DP-11). A generate-family signal narrows
 ``isinstance(source, Program)`` and rejects as a lost race when the active source
-is a consume-only :class:`SelectionPlayback` (finding #4).
+is a consume-only :class:`SelectionPlayback`.
 """
 
 from __future__ import annotations

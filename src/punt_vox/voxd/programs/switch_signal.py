@@ -1,7 +1,7 @@
 """The ``SwitchProgram`` control signal -- swap the animated Program atomically.
 
 Turning a Program on or playing a saved one replaces *which* Program the daemon
-animates. Doing that swap in the handler thread is the vox-73m5 lost-update: a
+animates. Doing that swap in the handler thread would be a lost update: a
 second client's command could interleave against a half-swapped state. So the
 switch is a :class:`ControlSignal` posted to the single :class:`ControlChannel`
 writer, which applies it atomically -- retarget the channel to the freshly seeded

@@ -1063,8 +1063,8 @@ class TestStatusTool:
         """A Program mode change made elsewhere flips ``music_mode`` with no shadow.
 
         No music tool runs on this server, yet ``music_mode`` follows the daemon's
-        authoritative ``program.mode`` -- the vox-73m5 drift class, closed by
-        deriving the label instead of caching a session copy.
+        authoritative ``program.mode`` -- no drift, because the label is derived
+        instead of caching a session copy.
         """
         fake = FakeProgramGateway(status=ProgramStatus.idle())
         _install_fake(monkeypatch, fake)
@@ -1167,7 +1167,7 @@ class TestMusicTool:
     def test_rejected_start_surfaces_not_applied(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A lost-race start (F7) reaches the caller as applied=false."""
+        """A lost-race start reaches the caller as applied=false."""
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
         result = json.loads(music(mode="on", style="techno"))
@@ -1177,7 +1177,7 @@ class TestMusicTool:
     def test_rejected_on_surfaces_reason_not_success_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A rejected 'on' shows the daemon's reason, not the generating line (F4)."""
+        """A rejected 'on' shows the daemon's reason, not the generating line."""
         _install_fake(
             monkeypatch,
             FakeProgramGateway(applied=False, reason="already generating"),
@@ -1342,7 +1342,7 @@ class TestStatusProgramSurface:
     def test_status_reads_fresh_no_server_cache(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A state change made via another path is reflected next call (vox-73m5)."""
+        """A state change made via another path is reflected next call."""
         fake = FakeProgramGateway(status=ProgramStatus.idle())
         _install_fake(monkeypatch, fake)
 
@@ -1567,7 +1567,7 @@ class TestRefreshIntegrationWithTools:
         """music reads fresh config for its display line, not stale in-memory.
 
         The session vibe personalises the generating *message* only -- it is
-        never forwarded as a Program transition input (vox-73m5).
+        never forwarded as a Program transition input.
         """
         import punt_vox.server as srv
 

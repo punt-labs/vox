@@ -4,7 +4,7 @@ These port the unit-level ``_exit_code`` assertions that lived on ``ProgramLoop`
 before the race machinery was extracted, and cover the four outcomes ``settle``
 decides between: a user interrupt wins outright, a clean player exit (code 0) is a
 natural end, a *raised* ``wait`` is a player error retrieved and logged so it never
-masquerades as a clean advance, and a non-zero exit is a fault (F3).
+masquerades as a clean advance, and a non-zero exit is a fault.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ class TestSettle:
 
         end = await race.settle(proc)
         assert end.interrupted is False
-        assert end.faulted is True  # F3: surfaced, not swallowed as a clean advance
+        assert end.faulted is True  # surfaced, not swallowed as a clean advance
         assert end.exit_code == 1
 
     async def test_raised_wait_is_interrupted_and_logs(

@@ -201,7 +201,7 @@ class SessionConfig:
         """Return the music-on success line (the caller adds the ♪ marker).
 
         Reads the session vibe (``self._vibe``) only to *personalise the display*
-        -- it is never fed back as an input to a Program transition (vox-73m5).
+        -- it is never fed back as an input to a Program transition.
         """
         prefix = "Music on — generating"
         vibe = self._vibe
@@ -616,9 +616,9 @@ def vibe(
         return _error("Provide at least one of: mood, tags, mode.")
 
     # Persist to disk so hooks (which read config independently) see the change.
-    # The session vibe is NOT pushed to the Program here: vox-73m5 shipped broken
-    # because a stale session vibe was replayed as an authoritative music
-    # transition. The vibe is display/record state; a Program retune is a
+    # The session vibe is NOT pushed to the Program here: a stale session vibe
+    # must not be replayed as an authoritative music transition. The vibe is
+    # display/record state; a Program retune is a
     # deliberate music command, never a side effect of setting the session mood.
     ConfigStore(_find_config_dir()).write_fields(updates)
 
@@ -881,8 +881,8 @@ def status() -> str:
 
     Both the ``program`` block and the ``music_mode`` label are the daemon's
     *authoritative* Program status, read fresh from ``voxd`` on every call --
-    never a server-side cache. vox-73m5 shipped broken because the server served
-    a stale music shadow: ``music_mode`` is derived from ``program.mode`` here,
+    never a server-side cache, which could serve a stale music shadow:
+    ``music_mode`` is derived from ``program.mode`` here,
     so another client stopping or starting music can never leave the two fields
     contradicting each other. When ``voxd`` is unreachable the block carries an
     ``error`` and ``music_mode`` reports ``off`` (nothing can be confirmed playing).

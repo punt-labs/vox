@@ -118,7 +118,7 @@ def test_play_reports_rejected() -> None:
 
 
 def test_play_websocket_error_is_clean_error() -> None:
-    """A mid-request WebSocket close on play is a clean CLI error, not raw (F1)."""
+    """A mid-request WebSocket close on play is a clean CLI error, not raw."""
     gateway = MagicMock()
     gateway.select.side_effect = WebSocketException("connection closed")
     cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
@@ -128,7 +128,7 @@ def test_play_websocket_error_is_clean_error() -> None:
 
 
 def test_status_websocket_handshake_error_is_clean_error() -> None:
-    """A stale-token handshake failure on status surfaces cleanly, not raw (F1)."""
+    """A stale-token handshake failure on status surfaces cleanly, not raw."""
     gateway = MagicMock()
     gateway.status.side_effect = WebSocketException("invalid status 401")
     cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)

@@ -88,7 +88,7 @@ class TestAlbumManifest:
         assert AlbumManifest.from_json(manifest.to_json()) == manifest
 
     def test_created_round_trips_tz_aware(self) -> None:
-        # finding #6: the timestamp stays tz-aware so newest() never raises.
+        # The timestamp stays tz-aware so newest() can order by it without raising.
         restored = AlbumManifest.from_json(_manifest(_READY).to_json())
         assert restored.created == _CREATED
         assert restored.created.tzinfo is not None

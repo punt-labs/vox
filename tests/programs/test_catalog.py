@@ -1,10 +1,10 @@
 """Tests for the in-memory album catalog -- the query surface over manifests.
 
-Asserts the modeled invariants by name: ``by_id`` is a direct lookup; ``by_name``
-returns 0 or 1 (names unique, R5); ``by_tags`` returns many albums sharing
+Asserts the query invariants by name: ``by_id`` is a direct lookup; ``by_name``
+returns 0 or 1 (names unique); ``by_tags`` returns many albums sharing
 ``(style, vibe)`` newest-first; ``newest`` picks the latest tz-aware ``created``;
-``resume`` matches only the same prompt-fingerprint (vox-1uo5); ``add`` makes a
-new album queryable; and legacy (idless) dirs never enter the catalog.
+``resume`` matches only the same prompt-fingerprint; ``add`` makes a new album
+queryable; and legacy (idless) dirs never enter the catalog.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _album(
         ),
     )
     # Wire the album to a live in-memory store so ready_parts/select read from
-    # the store, not a frozen snapshot (F1) -- one store per album, each keyed by
+    # the store, not a frozen snapshot -- one store per album, each keyed by
     # its own locator.
     store = InMemoryProgramStore()
     store.preload(manifest)
@@ -112,7 +112,7 @@ class TestResumeFingerprint:
         assert catalog.resume("trance", "calm", _FP_ONE) is not None
 
     def test_different_fingerprint_is_a_miss(self) -> None:
-        # vox-1uo5: a (style, vibe) hit with a foreign fingerprint does not resume.
+        # A (style, vibe) hit with a foreign fingerprint does not resume.
         catalog = Catalog((_album("a3f1c9", "trance", "calm", fingerprint=_FP_ONE),))
         assert catalog.resume("trance", "calm", _FP_TWO) is None
 

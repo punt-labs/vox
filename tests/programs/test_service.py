@@ -4,8 +4,8 @@ The service is driven synchronously via ``run_once`` (apply exactly one queued
 command), so each handler-facing call and its serialized effect are asserted
 without a running event-loop consumer. The Producer is a fake; the store is a
 real filesystem store under ``tmp_path`` so replay resolves from disk. The named
-invariants -- resume vs. mint, vox-1uo5 fingerprint, move #1 vibe tag, and the
-cap-free union replay -- are asserted here by name.
+invariants -- resume vs. mint, the prompt-fingerprint gate, the session-vibe tag,
+and the cap-free union replay -- are asserted here by name.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class TestTurnOn:
         assert status.mode is Mode.GENERATING_FIRST
 
     def test_records_the_session_vibe_not_the_style(self, tmp_path: Path) -> None:
-        # move #1: the album's vibe tag is the session vibe, never the style.
+        # The album's vibe tag is the session vibe, never the style.
         service = _service(tmp_path)
         service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
         service.shutdown()
@@ -94,7 +94,7 @@ class TestResumeVsMint:
         assert len(service.catalog_albums()) == 1  # resumed, not minted twice
 
     def test_differing_fingerprint_mints_fresh(self, tmp_path: Path) -> None:
-        # vox-1uo5: a (style, vibe) hit with a different prompt-set mints fresh.
+        # A (style, vibe) hit with a different prompt-set mints fresh.
         service = _service(tmp_path)
         service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
         service.turn_on(style="techno", vibe="calm", name=None, prompts=_TWO)
@@ -178,12 +178,12 @@ class TestResumeVsMint:
 
 
 class TestFilledAlbumLiveReads:
-    """F1: after a real fill grows the pool, every read reflects the live parts.
+    """After a real fill grows the pool, every read reflects the live parts.
 
-    Before the fix, ``Album`` froze a 0-part snapshot at mint, so ``select`` saw
-    an empty pool ("no albums match"), ``list`` showed 0/0, and a re-``on`` seeded
-    an empty pool -- the fill then saw disk already full, started nothing, and the
-    playback loop hung in ``_wait_for_playable``.
+    If ``Album`` froze a 0-part snapshot at mint, ``select`` would see an empty
+    pool ("no albums match"), ``list`` would show 0/0, and a re-``on`` would seed
+    an empty pool -- the fill then sees disk already full, starts nothing, and the
+    playback loop hangs in ``_wait_for_playable``. Reading parts live prevents it.
     """
 
     async def test_select_list_and_resume_all_see_the_filled_pool(

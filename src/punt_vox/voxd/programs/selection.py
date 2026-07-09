@@ -4,7 +4,7 @@ A ``Selection`` is the consume-only replay target: an ordered tuple of ready
 Parts drawn from one or more albums (the Z ``Selection == power PART``, refined
 to an ordered tuple for deterministic rotation). Each :class:`SelectedPart` carries an
 *opaque locator* -- the album's directory-name string, never a live ``Path``, so
-this module imports no ``pathlib`` (finding #3); the store dereferences the
+this module imports no ``pathlib``; the store dereferences the
 locator to a directory. A union of two albums whose files both count ``001.mp3``
 stays distinct because each part's :attr:`SelectedPart.playable` identity is
 namespaced by its locator -- faithful to the Z Selection as a set of distinct

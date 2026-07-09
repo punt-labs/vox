@@ -4,7 +4,7 @@
 :class:`ControlChannel` over the active :class:`PlaybackSource`, the background
 :class:`Filler`, the :class:`ProgramLoop` and its player, the :class:`Catalog`
 built once from ``store.scan()``, and the :class:`ActiveContext` that names which
-source is animated. It is an *orchestrator, not an algorithm* (finding #11): the
+source is animated. It is an *orchestrator, not an algorithm*: the
 catalog owns query resolution (``by_name``/``resume``/``select``/``by_id``); the
 service owns only the mint side-effect (a domain object must not call
 ``store.create``), seeds a source, and posts one serialized signal.
@@ -128,7 +128,7 @@ class ProgramService:
     # -- observation (authoritative, read per call, never cached) ----------
 
     def status(self) -> ProgramStatus:
-        """Return the daemon's authoritative status (vox-73m5, per call).
+        """Return the daemon's authoritative status, read fresh per call.
 
         A generate Program reports the full Program status; a replay Selection
         reports the consume-only radio status; an idle daemon reports idle.
@@ -164,8 +164,8 @@ class ProgramService:
         Resolution is the catalog's: ``--name`` resumes the named album (or mints
         an auto-suffixed one on a fresh name); otherwise the newest album matching
         the ``(style, vibe)`` tags *and* the incoming prompt fingerprint resumes,
-        and a fingerprint mismatch mints a fresh album (vox-1uo5). The recorded
-        vibe tag is the session vibe, not the style (move #1).
+        and a fingerprint mismatch mints a fresh album rather than growing a
+        foreign pool. The recorded vibe tag is the session vibe, not the style.
         """
         clean_style = AlbumTags.canonical(style or "") or _DEFAULT_STYLE
         clean_vibe = AlbumTags.canonical(vibe or "") or clean_style
@@ -183,9 +183,9 @@ class ProgramService:
             directory=self._root / album.locator,
             prompts=prompt_set,
         )
-        # Seed the pool from the freshly-opened store, never a catalog snapshot
-        # (F1): a re-``on`` of a filled album must restore its live parts, or the
-        # fill would see disk already full, start nothing, and the loop would hang.
+        # Seed the pool from the freshly-opened store, never a catalog snapshot:
+        # a re-``on`` of a filled album must restore its live parts, or the fill
+        # would see disk already full, start nothing, and the loop would hang.
         program = Program(
             ProgramState.restored(
                 album.manifest.format, frozenset(active.store.ready_parts())
@@ -275,7 +275,7 @@ class ProgramService:
     def _mint(
         self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
     ) -> Album:
-        """Create a fresh album (auto-suffixing a colliding name, R5), register it."""
+        """Create a fresh album (auto-suffixing a colliding name), register it."""
         final_name = (
             None
             if name is None

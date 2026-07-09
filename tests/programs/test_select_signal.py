@@ -1,10 +1,10 @@
 """Tests for ``SwitchSelection`` and the generate-outcome lost-race no-op.
 
-Asserts the modeled invariants by name: a switch retargets the channel to a
+Asserts the switch invariants by name: a switch retargets the channel to a
 consume-only ``SelectionPlayback`` (no fill armed); and a fill outcome applied
 while a ``SelectionPlayback`` is active rejects via ``GuardViolationError`` and
-mutates nothing -- the bas7-class crash defense (finding #4). ``ControlChannel``
-swallows the guard, so the writer survives.
+mutates nothing -- the crash defense for an outcome that lands after the source
+was switched. ``ControlChannel`` swallows the guard, so the writer survives.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class TestLostRaceNoOp:
         assert replay.playing == before  # mutated nothing
 
     async def test_channel_survives_a_fill_outcome_after_a_switch(self) -> None:
-        # The real bas7-class race: a Produced posted after a SwitchSelection is
+        # The switched-away race: a Produced posted after a SwitchSelection is
         # applied to the SelectionPlayback -- the channel swallows the guard and
         # the sole writer keeps running (no AttributeError, no crash).
         channel = _idle_channel()

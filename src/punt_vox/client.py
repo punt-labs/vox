@@ -41,7 +41,6 @@ class SynthesizeResult:
     the server found an identical text already played within it -- the
     audio was NOT re-played; treat it as success, not an error. Non-deduped
     results leave ``original_played_at`` and ``ttl_seconds_remaining`` None.
-    (See bead vox-0e9 for the biff-wall use case.)
 
     ``cached`` reports whether voxd served the audio from its
     content-addressed cache (True) or synthesized it fresh (False) -- the
@@ -468,7 +467,7 @@ class VoxClient:
         name: str | None = None,
         album_id: str | None = None,
     ) -> dict[str, Any]:
-        """Replay a Selection resolved by album id (direct) or by tags (F#7)."""
+        """Replay a Selection resolved by album id (direct) or by tags."""
         fields: dict[str, object] = {}
         if album_id is not None:
             fields["album_id"] = album_id

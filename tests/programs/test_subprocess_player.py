@@ -124,7 +124,7 @@ class TestSubprocessPlayer:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # The directory is read on every spawn, so a mid-flight switch lands the
-        # player in the new pool -- the dynamic-player half of vox-73m5.
+        # player in the new pool rather than a directory captured once at start.
         seen: list[str] = []
 
         async def _fake_exec(

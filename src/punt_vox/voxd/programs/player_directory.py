@@ -3,9 +3,9 @@
 The player never binds to one fixed directory: the active source switches at
 runtime (a ``play`` swaps which pool is animated, and a union replay spans
 directories), so the player asks the service to :meth:`locate` each Part it
-spawns. This is the dynamic-player half of the vox-73m5 fix -- the path follows
-the single writer's context swap, never a stale copy captured once at
-construction -- generalised to resolve per-track for a union replay (finding #2).
+spawns. The resolved path follows the single writer's context swap, never a
+stale copy captured once at construction, and resolves per-track so a union
+replay that spans directories locates each Part in its own album directory.
 """
 
 from __future__ import annotations

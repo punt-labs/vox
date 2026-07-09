@@ -73,8 +73,8 @@ class TransientFailure:
         """Drive the retry machine by mode, rejecting against a replay Selection.
 
         A transient outcome landing while a replay Selection is active is a
-        benign lost race (finding #4): the narrow fails and the writer rejects
-        via ``GuardViolationError`` (INFO-logged) instead of crashing.
+        benign lost race: the narrow fails and the writer rejects via
+        ``GuardViolationError`` (INFO-logged) instead of crashing.
         """
         if not isinstance(source, Program):
             GuardViolationError.reject("transient outcome dropped: replay active")
@@ -95,7 +95,7 @@ class TransientFailure:
         legal move: below the cap it counts (``retry_fails``); at the cap it
         either gives up an empty pool (``retry_exhausted`` -> failed) or, on a
         non-empty pool, self-loops indefinitely (``retry_capped``) because a
-        non-empty pool never hard-fails (finding #4). No branch is guard-rejected.
+        non-empty pool never hard-fails. No branch is guard-rejected.
         """
         if program.state.attempts < MAX_RETRY:
             program.retry_fails(self.reason)

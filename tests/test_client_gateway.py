@@ -122,7 +122,7 @@ def test_start_forwards_request_and_reads_applied() -> None:
 
 
 def test_rejected_command_surfaces_as_not_applied() -> None:
-    """A daemon reply of applied=false becomes a rejected CommandOutcome (F7)."""
+    """A daemon reply of applied=false becomes a rejected CommandOutcome."""
     client = MagicMock()
     client.program_next.return_value = {"applied": False, "message": "lost race"}
 
@@ -178,7 +178,7 @@ def test_select_by_tags_forwards_the_query() -> None:
 
 
 def test_select_by_id_forwards_the_album_id() -> None:
-    """select() forwards an exact album id as a direct lookup (F#7)."""
+    """select() forwards an exact album id as a direct lookup."""
     client = MagicMock()
     client.program_select.return_value = {"applied": True, "message": "ok"}
 

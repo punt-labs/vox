@@ -162,7 +162,7 @@ class AlbumManifest:
     def resolve_part(self, ref: PartRef) -> Part:
         """Return the ready Part whose intrinsic index matches ``ref``, else raise.
 
-        Matches on the intrinsic manifest index (MAJOR-1), never list position:
+        Matches on the intrinsic manifest index, never list position:
         with a gap from a permanent fill failure (ready indices 1, 2, 4),
         ``playlist:4`` finds the index-4 Part, not the fourth pool slot.
         """
@@ -259,8 +259,8 @@ class ManifestDraft:
     """A pre-``created`` album record: the store stamps the clock and persists it.
 
     The caller hands the store an id, tags, the authoring fingerprint, and any
-    seed parts; the store owns the clock (finding #6), stamping
-    ``created = now(UTC)`` when it materialises the manifest. Keeping ``created``
+    seed parts; the store owns the clock, stamping ``created = now(UTC)`` when it
+    materialises the manifest. Keeping ``created``
     off the draft means no caller can forge a creation time.
     """
 
@@ -278,7 +278,7 @@ class ManifestDraft:
     def stamped(self, created: datetime) -> AlbumManifest:
         """Return the manifest for this draft stamped with ``created``.
 
-        The store is the sole clock owner (finding #6): it calls this with
+        The store is the sole clock owner: it calls this with
         ``datetime.now(UTC)`` at materialisation, so the draft stays a pure value
         object no caller can use to forge a creation time.
         """

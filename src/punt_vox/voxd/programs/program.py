@@ -9,7 +9,7 @@ every invariant), and stores it. The transient-error backoff transitions (the Z
 ``retrying``/``failed`` sub-machine) are delegated to :class:`RetryMachine`, which
 computes their successors; ``Program`` only stores what it returns. Mutators
 return ``None`` (PY-OP-8). No method takes or checks a session: ``voxd`` state is
-machine-universal (finding #6).
+machine-universal.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 __all__ = ["Program"]
 
 _PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
-"""The modes in which the consume-only cursor may advance (finding #3)."""
+"""The modes in which the consume-only cursor may advance."""
 
 
 @final
@@ -211,7 +211,7 @@ class Program:
         """Play a specific ready Part by name, without anti-repeat (Z ``PlayPart``).
 
         The user asked for this Part, so it plays even if it equals the current
-        or just-played Part -- the policy is bypassed (finding #7).
+        or just-played Part -- the anti-repeat policy is bypassed.
         """
         if self._state.mode not in _PLAYING_MODES:
             self._reject("play_part requires a playing mode")
@@ -226,7 +226,7 @@ class Program:
         """Cold-start playback from a saved pool with no fill (Z ``StartFromDisk``).
 
         A partial pool enters ``playing_filling`` with the fill inactive -- the
-        one place ``filling`` is decoupled from the playing mode (finding #2).
+        one place ``filling`` is decoupled from the playing mode.
         """
         if self._state.mode is not Mode.OFF:
             self._reject("start_from_disk requires mode off")
@@ -266,27 +266,27 @@ class Program:
 
     @property
     def wants_generation(self) -> bool:
-        """Whether the fill reconciler should keep generation running (finding #1).
+        """Whether the fill reconciler should keep generation running.
 
-        ``filling`` OR ``retrying`` -- the load-bearing vox-ig52 clause: a
-        transient backoff has ``filling`` false but must keep the retry engine
-        running, so a single transient error never strands the Program.
+        ``filling`` OR ``retrying`` -- the load-bearing clause: a transient
+        backoff has ``filling`` false but must keep the retry engine running, so
+        a single transient error never strands the Program.
         """
         return self._state.filling or self._state.mode is Mode.RETRYING
 
     @property
     def advances_on_end(self) -> bool:
-        """Whether the loop should auto-advance on a track end (the mode gate, F#6)."""
+        """Whether the loop should auto-advance on a track end (the mode gate)."""
         return self._state.mode in _PLAYING_MODES
 
     @property
     def pool(self) -> tuple[Part, ...]:
-        """Return the ready Parts sorted by intrinsic index (stable, MAJOR-1)."""
+        """Return the ready Parts sorted by intrinsic index (stable order)."""
         return self._state.ordered_pool
 
     @property
     def failed_parts(self) -> FrozenParts:
-        """Return the permanently-failed Parts and their reasons (finding #5)."""
+        """Return the permanently-failed Parts and their reasons."""
         return self._state.failed_parts
 
     @staticmethod

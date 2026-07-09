@@ -4,7 +4,7 @@ Playing a Selection (a name, a ``(style, vibe)`` pair, or a style/vibe union)
 replaces *which* source the daemon animates with a :class:`SelectionPlayback`.
 Like :class:`SwitchProgram`, the swap is a :class:`ControlSignal` posted to the
 single :class:`ControlChannel` writer, so it is serialised with every other
-mutation (the vox-73m5 discipline). It arms no fill: a Selection is consume-only,
+mutation. It arms no fill: a Selection is consume-only,
 so ``wants_generation`` is false and the reconcile that follows idles the fill.
 The seeded :class:`SelectionPlayback` already begins at its first track.
 """
@@ -28,7 +28,7 @@ __all__ = ["SwitchSelection"]
 class SwitchSelection:
     """Retarget the daemon to a freshly seeded replay Selection (no fill).
 
-    Verb-parallel to :class:`SwitchProgram` (finding #13). ``playback`` is the
+    Verb-parallel to :class:`SwitchProgram`. ``playback`` is the
     consume-only cursor over the resolved Selection; ``active`` is the backing
     context that resolves each Part's opaque locator to a directory under root.
     """

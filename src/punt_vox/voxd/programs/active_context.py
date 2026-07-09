@@ -2,7 +2,7 @@
 
 The daemon animates a single source at a time -- a generate :class:`ActiveProgram`
 or a consume-only :class:`ActiveSelection`. Both resolve a Part to its on-disk
-``Path`` through :meth:`locate` (finding #2), so the player asks the context, not
+``Path`` through :meth:`locate`, so the player asks the context, not
 the source, where a track lives. Only a program has a fill plan and a store to
 grow; a selection resolves each part's opaque locator to a directory under root.
 The mutable :class:`ActiveContext` is the one slot the single control-channel
@@ -68,7 +68,7 @@ class ActiveSelection:
     A selection has no fill and no store to grow: it only resolves each
     :class:`SelectedPart`'s opaque locator to a directory under ``root``. The
     per-part path map is precomputed once, keyed by each part's selection-unique
-    ``playable`` identity, so :meth:`locate` never parses a string (finding #3).
+    ``playable`` identity, so :meth:`locate` never parses a string.
     """
 
     __slots__ = ("_label", "_paths")

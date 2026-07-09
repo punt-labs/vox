@@ -241,7 +241,7 @@ class _CountingHoldingProducer:
 
 
 class TestTerminalStateCancelsFill:
-    """F6: reaching a terminal, non-filling state cancels the fill so a Program
+    """Reaching a terminal, non-filling state cancels the fill so a Program
     that has given up makes no further provider calls -- no leftover window."""
 
     async def test_retry_exhausted_to_failed_cancels_the_fill(
@@ -283,7 +283,7 @@ class TestTerminalStateCancelsFill:
 
 
 class TestUnexpectedFillErrorIsObservable:
-    """F3 + F6: an unexpected fill error drives the Program to an observable
+    """An unexpected fill error drives the Program to an observable
     failed state through the posted outcome, and the reconcile then cancels the
     dead-ended fill -- never a silent hang with filling still True."""
 
@@ -307,7 +307,7 @@ class TestUnexpectedFillErrorIsObservable:
             await server
 
         assert _prog(channel).mode is Mode.FAILED  # OBSERVABLE, not a silent hang
-        assert not filler.is_running  # F6: reconcile cancelled the dead-ended fill
+        assert not filler.is_running  # reconcile cancelled the dead-ended fill
         failed = [e for e in store.manifest().parts if not e.is_ready]
         assert failed and failed[0].reason is not None
         assert failed[0].reason.startswith("unexpected:")
@@ -345,7 +345,7 @@ class _Boom:
 
 
 class TestWriterSurvivesFailures:
-    """F1/F2: a non-guard failure surfaces at ERROR, never masquerades as a race,
+    """A non-guard failure surfaces at ERROR, never masquerades as a race,
     and always sets ``changed`` so the playback loop can never block forever."""
 
     async def test_guard_violation_is_swallowed_and_logs_the_mode(
@@ -357,18 +357,18 @@ class TestWriterSurvivesFailures:
             await channel.apply_next()  # a benign race -> does NOT raise
         assert channel.changed.is_set()
         messages = [r.getMessage() for r in caplog.records]
-        assert any("lost race" in m and "off" in m for m in messages)  # F7: mode logged
+        assert any("lost race" in m and "off" in m for m in messages)  # mode logged
 
     async def test_plain_valueerror_is_not_swallowed_as_a_race(
         self, policy: PlaybackPolicy
     ) -> None:
-        # F1: a corrupt-successor ValueError is a bug, not a race -- it propagates
+        # A corrupt-successor ValueError is a bug, not a race -- it propagates
         # (to the serve guard), and is NOT logged as a lost race.
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         channel.post(_Boom(ValueError("S13: corrupt successor")))
         with pytest.raises(ValueError, match="corrupt successor"):
             await channel.apply_next()
-        assert channel.changed.is_set()  # F2: still woke the loop
+        assert channel.changed.is_set()  # still woke the loop
 
     async def test_unexpected_error_sets_changed_and_propagates(
         self, policy: PlaybackPolicy
@@ -377,7 +377,7 @@ class TestWriterSurvivesFailures:
         channel.post(_Boom(RuntimeError("kaboom")))
         with pytest.raises(RuntimeError, match="kaboom"):
             await channel.apply_next()
-        assert channel.changed.is_set()  # F2: the finally always wakes the loop
+        assert channel.changed.is_set()  # the finally always wakes the loop
 
     async def test_serve_survives_a_crash_and_applies_the_next_command(
         self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
@@ -391,7 +391,7 @@ class TestWriterSurvivesFailures:
         server.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await server
-        # F2: the sole writer survived the crash and applied the next command.
+        # The sole writer survived the crash and applied the next command.
         assert _prog(channel).mode is Mode.GENERATING_FIRST
         assert any(
             "unexpected error" in r.getMessage() and r.levelno == logging.ERROR

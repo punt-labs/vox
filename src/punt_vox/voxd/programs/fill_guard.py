@@ -51,7 +51,7 @@ class FreshFillOutcome:
         the generation ran for. A mismatch means a switch overtook this outcome
         in the queue (to another Program or a replay Selection), so the outcome
         is an orphan of an abandoned pool and is dropped rather than polluting
-        the switched-in source (finding #1/#4).
+        the switched-in source.
         """
         if source is not self.origin:
             logger.info(

@@ -1,4 +1,4 @@
-"""Tests for the ``program_select`` wire handler -- id vs. tag-query routing (F#7)."""
+"""Tests for the ``program_select`` wire handler -- id vs. tag-query routing."""
 
 from __future__ import annotations
 

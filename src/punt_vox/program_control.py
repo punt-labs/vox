@@ -24,7 +24,7 @@ class StartRequest:
     """The authoring input for turning a Program on (the ``music on`` command).
 
     All fields optional: ``style`` persists across calls, ``vibe`` is the session
-    mood recorded as the album's vibe tag (move #1), ``name`` binds a curated
+    mood recorded as the album's vibe tag, ``name`` binds a curated
     album, ``prompts`` carries the agent base + per-slot variations (``None`` => a
     minimal literal fallback -- absence is the contract, PY-TS-14).
     """
@@ -41,7 +41,7 @@ class SelectionRequest:
     """The replay input for playing a Selection (the ``music play`` command).
 
     ``id`` is a *direct-lookup* axis served by ``catalog.by_id`` -- distinct from
-    the ``style``/``vibe``/``name`` tag axes that build a tag query (F#7); it is
+    the ``style``/``vibe``/``name`` tag axes that build a tag query; it is
     never folded into the tag filter. All fields optional: an all-``None`` request
     replays every album (the cross-genre radio).
     """
@@ -49,7 +49,7 @@ class SelectionRequest:
     style: str | None = None
     vibe: str | None = None
     name: str | None = None
-    id: str | None = None  # direct album-id lookup, never a tag axis (F#7)
+    id: str | None = None  # direct album-id lookup, never a tag axis
 
 
 @final

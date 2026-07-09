@@ -52,7 +52,7 @@ class TestSwitchProgram:
         assert channel.source is new_program
         assert context.current is active
         assert new_program.playing == make_part(1)
-        assert new_program.state.filling is False  # cold start, no fill (finding #2)
+        assert new_program.state.filling is False  # cold start, no fill
 
     def test_turn_on_generates_from_an_empty_pool(self) -> None:
         channel = _idle_channel()
