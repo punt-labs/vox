@@ -101,11 +101,15 @@ class ProgramLoop:
         await self._channel.changed.wait()
 
     async def _play(self, target: Part) -> None:
-        """Play ``target``: race its end against an interrupt, then advance.
+        """Play ``target``: settle its end against an interrupt, then advance.
 
         A spawn failure is turned into an observable fault plus a bounded backoff
         (``_back_off_spawn``) rather than a raise into ``run``'s guard, which
-        would re-enter ``_step`` on the same still-unplayable target and spin.
+        would re-enter ``_step`` on the same still-unplayable target and spin. A
+        non-zero *exit* (a missing/corrupt track file -- reachable now that replay
+        plays arbitrary saved albums) is likewise made observable on
+        ``PlaybackHealth`` before advancing past the bad track (F3), never a
+        WARNING-only log that leaves status reporting "playing" while it skips.
         """
         self._channel.interrupt.clear()
         try:
@@ -114,10 +118,13 @@ class ProgramLoop:
             await self._back_off_spawn(target, exc)
             return
         self._health.clear()
-        if await self._race.interrupted(proc):
+        end = await self._race.settle(proc)
+        if end.interrupted:
             await proc.kill()
-        else:
-            await self._advance_after(target)
+            return
+        if end.faulted:
+            await self._note_exit_fault(target, end.exit_code)
+        await self._advance_after(target)
 
     async def _back_off_spawn(self, target: Part, exc: OSError) -> None:
         """Record the spawn failure observably, then pause so it cannot spin."""
@@ -128,6 +135,17 @@ class ProgramLoop:
             _SPAWN_BACKOFF_SECONDS,
             exc_info=exc,
         )
+        await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
+
+    async def _note_exit_fault(self, target: Part, exit_code: int | None) -> None:
+        """Record a non-zero player exit observably, then pause so it cannot spin.
+
+        The track spawned but exited non-zero, so the loop advances past it; the
+        backoff bounds the rate at which a wholly-corrupt pool would rotate.
+        """
+        reason = f"player exited with code {exit_code}"
+        self._health.record(target, reason)
+        logger.warning("player exited non-zero for part %s: %s", target.index, reason)
         await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
 
     async def _advance_after(self, target: Part) -> None:

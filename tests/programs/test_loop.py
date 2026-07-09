@@ -220,6 +220,70 @@ class TestSkipInterrupts:
         await harness.stop()
 
 
+@final
+class _GateSleeper:
+    """A Sleeper whose ``sleep`` blocks until released -- pins the backoff window."""
+
+    __slots__ = ("_gate", "sleeps")
+    _gate: asyncio.Event
+    sleeps: list[float]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._gate = asyncio.Event()
+        self.sleeps = []
+        return self
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        await self._gate.wait()
+
+    def release(self) -> None:
+        self._gate.set()
+
+
+class TestExitFault:
+    """F3: a non-zero player exit is observable via status, not a silent skip.
+
+    The fault clears on the *next* successful spawn (the ``PlaybackHealth``
+    contract), so the test pins the loop in the exit-fault backoff with a gated
+    sleeper to observe the standing fault before the loop advances and clears it.
+    """
+
+    async def test_non_zero_exit_records_a_fault_and_advances(
+        self, rotating: Program
+    ) -> None:
+        health = PlaybackHealth()
+        sleeper = _GateSleeper()
+        player = FakePlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player, sleeper, health)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+
+        await player.wait_for(1)
+        first = player.parts[0]
+        player.procs[0].end(rc=1)  # a corrupt/missing track exits non-zero
+        for _ in range(500):  # let the loop record the fault and park in the backoff
+            if health.fault is not None and sleeper.sleeps:
+                break
+            await asyncio.sleep(0)
+
+        fault = health.fault
+        assert fault is not None  # surfaced on the status health surface, not swallowed
+        assert fault.part_index == first.index
+        assert "code 1" in fault.reason
+        assert sleeper.sleeps  # backed off so a corrupt pool cannot spin hot
+
+        sleeper.release()  # let the loop advance past the bad track
+        await player.wait_for(2)
+        assert player.parts[1] != first  # skipped forward, radio kept playing
+        for task in (run, serve):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 class TestGeneratingFirstThenPlays:
     async def test_empty_pool_awaits_then_plays_first_track(
         self, policy: PlaybackPolicy

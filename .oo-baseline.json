@@ -1250,10 +1250,10 @@
   "src/punt_vox/voxd/programs/loop.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
-    "max_complexity": 3.0,
+    "avg_params": 1.11,
+    "max_complexity": 4.0,
     "avg_complexity": 2.22,
-    "module_size": 126.0,
+    "module_size": 142.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
