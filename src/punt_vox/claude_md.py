@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
@@ -203,6 +204,11 @@ class GlobalClaudeImports:
                 handle.write(text)
                 handle.flush()
                 os.fsync(handle.fileno())
+            # mkstemp creates the temp at 0600 and Path.replace preserves the
+            # source's mode, so without this an existing 0644 CLAUDE.md would
+            # silently become 0600 on the first reconcile. Match the target's
+            # current mode before the rename; a brand-new file gets 0644.
+            tmp.chmod(self._replacement_mode())
             tmp.replace(self._path)
         except OSError:
             # Best-effort cleanup that never masks the original error: a raising
@@ -210,6 +216,19 @@ class GlobalClaudeImports:
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
             raise
+
+    def _replacement_mode(self) -> int:
+        """Return the permission bits to stamp on the replacement file.
+
+        Preserve the target's current mode when it already exists so an atomic
+        replace never changes how the user's ``CLAUDE.md`` is exposed. A
+        brand-new file gets 0644 (``rw-r--r--``) -- the conventional default a
+        plain write would inherit -- rather than the 0600 ``mkstemp`` gives the
+        temp. Called before the rename, while the target (if any) still exists.
+        """
+        if self._path.is_file():
+            return stat.S_IMODE(self._path.stat().st_mode)
+        return 0o644
 
     def _read(self) -> str:
         """Return the file's text, or ``""`` when it does not exist."""

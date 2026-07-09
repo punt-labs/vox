@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -290,6 +291,37 @@ def test_in_write_failure_leaves_no_temp_and_original_intact(
 
     assert reg.path.read_text(encoding="utf-8") == original
     assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+
+
+def test_replace_preserves_existing_file_mode(tmp_path: Path) -> None:
+    # mkstemp makes the temp 0600 and Path.replace keeps the source's mode, so
+    # a reconcile must restamp the target's own mode -- otherwise an existing
+    # 0644 CLAUDE.md silently becomes 0600 on the first write.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    reg.path.write_text("# rules\n", encoding="utf-8")
+    reg.path.chmod(0o644)
+    assert reg.register(_VOX) is True
+    assert stat.S_IMODE(reg.path.stat().st_mode) == 0o644
+
+
+def test_new_file_gets_default_mode_not_temp_0600(tmp_path: Path) -> None:
+    # A brand-new CLAUDE.md must not inherit the 0600 mkstemp mode; it gets the
+    # conventional 0644 a plain write would have produced.
+    reg = _global(tmp_path)
+    assert reg.register(_VOX) is True
+    assert stat.S_IMODE(reg.path.stat().st_mode) == 0o644
+
+
+def test_replace_preserves_nondefault_file_mode(tmp_path: Path) -> None:
+    # Whatever the user set stays: a 0600-restricted file stays 0600, proving
+    # the mode is read from the target rather than hardcoded to a default.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    reg.path.write_text("# rules\n", encoding="utf-8")
+    reg.path.chmod(0o600)
+    assert reg.register(_VOX) is True
+    assert stat.S_IMODE(reg.path.stat().st_mode) == 0o600
 
 
 # ---------------------------------------------------------------------------
