@@ -201,12 +201,20 @@ class ProgramService:
         self._start_replay(self._catalog.select(query), _RADIO_LABEL)
 
     def replay_album(self, album_id: AlbumId) -> None:
-        """Replay a single album resolved by its id -- a direct lookup (F#7)."""
+        """Replay a single album resolved by its id -- a direct lookup.
+
+        Distinguishes an unknown id from a known-but-empty album: a resolved
+        album with zero ready tracks reports "no playable tracks yet" rather than
+        the generic tag-miss message, which would misread as an unknown album.
+        """
         album = self._catalog.by_id(album_id)
         if album is None:
             msg = f"no album with id {album_id.value!r}"
             raise ValueError(msg)
         selection = Selection.from_albums([(album.locator, album.ready_parts())])
+        if not selection:
+            msg = f"album {album_id.value!r} has no playable tracks yet"
+            raise ValueError(msg)
         self._start_replay(selection, album.locator)
 
     def advance(self) -> None:

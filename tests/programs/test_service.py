@@ -246,6 +246,17 @@ class TestReplay:
         with pytest.raises(ValueError, match="no album with id"):
             _service(tmp_path).replay_album(AlbumId("badbad"))
 
+    def test_replay_existing_empty_album_raises_distinct_error(
+        self, tmp_path: Path
+    ) -> None:
+        # An album that EXISTS but has no ready tracks yet must not report the
+        # generic tag-miss message (which reads as "unknown album"); it reports
+        # the distinct "no playable tracks yet".
+        seed_album(tmp_path / "programs", style="trance", vibe="calm", album_id="a3")
+        service = _service(tmp_path)
+        with pytest.raises(ValueError, match="has no playable tracks yet"):
+            service.replay_album(AlbumId("a3"))
+
 
 class TestConsumeControls:
     async def test_advance_rotates_a_replay(self, tmp_path: Path) -> None:
