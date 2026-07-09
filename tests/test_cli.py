@@ -1685,6 +1685,42 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Uninstalled." in result.output
 
+    def test_uninstall_reports_failure_when_teardown_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A raising guide teardown exits non-zero and names what survives.
+
+        ``uninstall`` writes the user's global ``~/.claude/CLAUDE.md``, so a
+        teardown that fails (permissions, filesystem error) must not print
+        ``Uninstalled.`` and exit 0 -- that would be a silent failure hiding an
+        orphaned guide or ``@``-import. The command surfaces the error, names
+        the paths that may remain, and exits 1, distinct from a healthy
+        plugin-step outcome.
+        """
+        from punt_vox.guidance import VoxGuidance
+
+        def boom_uninstall(_self: VoxGuidance) -> str:
+            raise OSError("simulated teardown failure")
+
+        monkeypatch.setattr(VoxGuidance, "uninstall", boom_uninstall)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)  # plugin step succeeds
+            result = runner.invoke(app, ["uninstall"])
+
+        assert result.exit_code == 1
+        assert "Uninstalled." not in result.output
+        assert "teardown failed" in result.stderr
+        assert "simulated teardown failure" in result.stderr
+        # Names the surviving artifacts so the user can finish by hand.
+        assert ".punt-labs/vox/CLAUDE.md" in result.stderr
+        assert "@~/.punt-labs/vox/CLAUDE.md" in result.stderr
+        assert ".claude/CLAUDE.md" in result.stderr
+
     def test_uninstall_operates_under_redirected_home_only(
         self, tmp_path: Path
     ) -> None:

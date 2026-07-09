@@ -64,6 +64,11 @@ class VoxGuidance:
         """Return the ``@``-import line registered in the global CLAUDE.md."""
         return self._import_line
 
+    @property
+    def global_path(self) -> Path:
+        """Return the ``~/.claude/CLAUDE.md`` the ``@``-import is written into."""
+        return self._global.path
+
     def install(self) -> str:
         """Write the guide and register its import. Return a status message."""
         self._doc_path.parent.mkdir(parents=True, exist_ok=True)

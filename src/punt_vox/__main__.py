@@ -772,16 +772,27 @@ def uninstall() -> None:
     # Prune the usage guide + its @-import regardless of the plugin outcome:
     # uninstall must be idempotent and self-healing, so a plugin step that fails
     # (e.g. the plugin was already gone) must not orphan ~/.punt-labs/vox/CLAUDE.md
-    # or its global import line. OSError only -- a filesystem hiccup should not
-    # mask the plugin result.
+    # or its global import line. A teardown failure (OSError -- a permissions
+    # error or a filesystem hiccup) is surfaced distinctly from the plugin
+    # outcome and forces a non-zero exit: reporting ``Uninstalled.`` while the
+    # guide or its global @-import survives would be a silent failure.
     from punt_vox.guidance import VoxGuidance
 
+    guide = VoxGuidance.for_current_user()
+    guide_failed = False
     try:
-        typer.echo(VoxGuidance.for_current_user().uninstall())
+        typer.echo(guide.uninstall())
     except OSError as exc:
-        typer.echo(f"  • Skipped guide removal: {exc}")
+        guide_failed = True
+        typer.echo(f"Error: vox usage guide teardown failed: {exc}", err=True)
+        typer.echo(
+            f"  These may remain -- remove by hand or re-run 'vox uninstall': "
+            f"guide {guide.doc_path}; import {guide.import_line} "
+            f"in {guide.global_path}",
+            err=True,
+        )
 
-    if plugin_failed:
+    if plugin_failed or guide_failed:
         raise typer.Exit(code=1)
 
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
