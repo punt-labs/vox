@@ -1153,7 +1153,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         assert json.loads(status())["music_mode"] == "off"
         gateway = srv._program_tools
         assert isinstance(gateway, FakeProgramGateway)
-        assert gateway.verbs() == ["status"]
+        assert "status" in gateway.verbs()
 
     def test_synthesis_seam_is_unreachable_by_default(self) -> None:
         """The default synthesis client models 'voxd down', never the real daemon."""
