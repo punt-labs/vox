@@ -59,6 +59,17 @@ class AlbumTags:
             name=obj.opt_str("name"),
         )
 
+    @staticmethod
+    def canonical(value: str) -> str:
+        """Return the canonical stored form of a tag value (trimmed).
+
+        The one place a raw tag string is normalized before it is minted or
+        queried, so the write path (``turn_on``) and the read path
+        (``program_select``) agree: ``" trance "`` and ``"trance"`` name the same
+        tag. (Case folding is a separate, deferred policy -- this only trims.)
+        """
+        return value.strip()
+
     @classmethod
     def mint_unique_name(cls, desired: str, taken: Container[str]) -> str:
         """Return ``desired`` if free, else auto-suffix ``X1``/``X2``/... (R5).
@@ -94,6 +105,30 @@ class TagQuery:
     style: str | None = None  # None wildcards the style axis
     vibe: str | None = None  # None wildcards the vibe axis
     name: str | None = None  # None wildcards the name axis
+
+    @classmethod
+    def normalized(
+        cls, *, style: str | None, vibe: str | None, name: str | None
+    ) -> Self:
+        """Build a query with each present tag canonicalized to its stored form.
+
+        Applies the same trim :meth:`AlbumTags.canonical` applies on the write
+        path, so ``" trance "`` queried matches ``"trance"`` minted. A tag that is
+        empty after trimming collapses to ``None`` (a wildcard), never an
+        impossible ``""`` filter.
+        """
+        return cls(
+            style=cls._clean(style),
+            vibe=cls._clean(vibe),
+            name=cls._clean(name),
+        )
+
+    @staticmethod
+    def _clean(value: str | None) -> str | None:
+        """Return the canonical tag, or ``None`` when absent or blank (a wildcard)."""
+        if value is None:
+            return None
+        return AlbumTags.canonical(value) or None
 
     def matches(self, tags: AlbumTags) -> bool:
         """Return whether ``tags`` satisfies every present (non-wildcard) axis."""

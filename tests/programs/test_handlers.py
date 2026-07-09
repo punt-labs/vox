@@ -109,6 +109,21 @@ class TestMutatingHandlers:
         await service.run_once()
         assert service.status().now_playing is not None
 
+    async def test_select_normalizes_tags_to_match_the_mint_form(
+        self, tmp_path: Path
+    ) -> None:
+        # The on-path stores canonical (trimmed) tags; the select path must apply
+        # the same normalization, so a whitespace-padded query still matches.
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        reply = await _reply(
+            SelectHandler(service), {"id": "3", "style": "  trance  ", "vibe": " calm "}
+        )
+        # Matched despite the whitespace, rather than a "no albums match" error.
+        assert reply == {"type": "program_select", "id": "3"}
+        await service.run_once()
+        assert service.status().now_playing is not None
+
     async def test_select_no_match_is_an_error(self, tmp_path: Path) -> None:
         reply = await _reply(
             SelectHandler(_service(tmp_path)), {"id": "3", "style": "ghost"}

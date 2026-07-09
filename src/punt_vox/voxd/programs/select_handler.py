@@ -34,8 +34,10 @@ class SelectHandler(ProgramCommandHandler):
         if album_id is not None:
             self._service.replay_album(AlbumId(album_id))
             return
+        # Canonicalize the tags the same way the on-path mints them, so a replay
+        # of " trance " matches an album minted as "trance" -- write and read agree.
         self._service.replay(
-            TagQuery(
+            TagQuery.normalized(
                 style=self._opt_str(msg, "style"),
                 vibe=self._opt_str(msg, "vibe"),
                 name=self._opt_str(msg, "name"),

@@ -167,8 +167,8 @@ class ProgramService:
         and a fingerprint mismatch mints a fresh album (vox-1uo5). The recorded
         vibe tag is the session vibe, not the style (move #1).
         """
-        clean_style = (style or "").strip() or _DEFAULT_STYLE
-        clean_vibe = (vibe or "").strip() or clean_style
+        clean_style = AlbumTags.canonical(style or "") or _DEFAULT_STYLE
+        clean_vibe = AlbumTags.canonical(vibe or "") or clean_style
         prompt_set = (
             prompts if prompts is not None else PromptSet.fallback(clean_style, "")
         )

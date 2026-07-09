@@ -47,12 +47,17 @@ class SelectedPart:
 class Selection:
     """An ordered tuple of album-tagged ready Parts -- one or more albums' union."""
 
-    __slots__ = ("_parts",)
+    __slots__ = ("_parts", "_pool")
     _parts: tuple[SelectedPart, ...]
+    _pool: tuple[Part, ...]
 
     def __new__(cls, parts: tuple[SelectedPart, ...]) -> Self:
         self = super().__new__(cls)
         self._parts = parts
+        # The rotation pool is a pure map over the immutable parts, so it never
+        # changes -- compute it once here rather than rebuilding an O(n) tuple on
+        # every rotate over a large cross-library selection.
+        self._pool = tuple(selected.playable for selected in parts)
         return self
 
     @classmethod
@@ -69,8 +74,8 @@ class Selection:
         return self._parts
 
     def playable_pool(self) -> tuple[Part, ...]:
-        """Return the selection-unique playable Parts (the rotation pool)."""
-        return tuple(selected.playable for selected in self._parts)
+        """Return the cached selection-unique playable Parts (the rotation pool)."""
+        return self._pool
 
     def __len__(self) -> int:
         return len(self._parts)

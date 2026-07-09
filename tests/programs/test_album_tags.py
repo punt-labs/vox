@@ -91,6 +91,28 @@ class TestTagQueryMatches:
         assert TagQuery(name="mix").matches(unnamed) is False
 
 
+class TestTagQueryNormalized:
+    _TAGS = AlbumTags(style="trance", vibe="calm", name="mix")
+
+    def test_trims_present_tags_to_the_stored_form(self) -> None:
+        query = TagQuery.normalized(style="  trance ", vibe=" calm", name="mix ")
+        assert query == TagQuery(style="trance", vibe="calm", name="mix")
+        assert query.matches(self._TAGS) is True
+
+    def test_absent_tags_stay_wildcards(self) -> None:
+        assert TagQuery.normalized(style=None, vibe=None, name=None) == TagQuery()
+
+    def test_blank_tag_collapses_to_a_wildcard(self) -> None:
+        # A whitespace-only tag is absence, never an impossible empty-string filter.
+        query = TagQuery.normalized(style="   ", vibe="calm", name=None)
+        assert query.style is None
+        assert query.matches(self._TAGS) is True
+
+    def test_canonical_agrees_with_the_query_normalization(self) -> None:
+        # Both the write path (AlbumTags.canonical) and the read path share one rule.
+        assert AlbumTags.canonical("  trance ") == "trance"
+
+
 class TestPromptFingerprint:
     def test_same_prompt_set_is_stable(self) -> None:
         a = PromptFingerprint.from_prompts("base", ["one", "two"])

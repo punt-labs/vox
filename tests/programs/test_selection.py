@@ -39,6 +39,19 @@ class TestSelectionFromAlbums:
         assert len(pool) == 2
         assert len(set(pool)) == 2
 
+    def test_playable_pool_is_cached_and_stable(self) -> None:
+        # The rotation pool is computed once at construction; repeated calls (the
+        # hot rotate path) return the identical cached tuple, not a fresh rebuild.
+        selection = Selection.from_albums(
+            [("album-a", (Part("001.mp3", 1), Part("002.mp3", 2)))]
+        )
+        first = selection.playable_pool()
+        assert selection.playable_pool() is first
+        assert first == (
+            Part("album-a/001.mp3", 1),
+            Part("album-a/002.mp3", 2),
+        )
+
     def test_empty_selection_is_falsey(self) -> None:
         selection = Selection.from_albums([])
         assert len(selection) == 0
