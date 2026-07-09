@@ -234,7 +234,8 @@ class GlobalClaudeImports:
         orphaned on any failure path (fdopen, write, flush, fsync, chmod, or
         replace).
         """
-        directory = self._path.parent
+        target = self._write_target()
+        directory = target.parent
         directory.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             dir=directory, prefix=".claude-md-", suffix=".tmp"
@@ -255,8 +256,8 @@ class GlobalClaudeImports:
             # source's mode, so without this an existing 0644 CLAUDE.md would
             # silently become 0600 on the first reconcile. Match the target's
             # current mode before the rename; a brand-new file gets 0644.
-            tmp.chmod(self._replacement_mode())
-            tmp.replace(self._path)
+            tmp.chmod(self._replacement_mode(target))
+            tmp.replace(target)
         except BaseException:
             # Any failure before the successful rename -- of any exception type,
             # not just OSError -- leaves the temp behind. Unlink it so no
@@ -269,20 +270,42 @@ class GlobalClaudeImports:
                 tmp.unlink(missing_ok=True)
             raise
 
-    def _replacement_mode(self) -> int:
+    def _write_target(self) -> Path:
+        """Return the real path the atomic replace must rename onto.
+
+        When ``self._path`` is a symlink -- common with dotfile managers
+        (chezmoi, GNU stow, bare-repo dotfiles) that link ``~/.claude/CLAUDE.md``
+        at a file inside their store -- ``os.replace(tmp, link)`` would replace
+        the *link itself* with a regular file, breaking the dotfile setup and
+        silently diverging the file from its source-of-truth target. Following
+        the link to ``self._path.resolve()`` and renaming onto that real path
+        instead preserves the symlink and updates the file it points at.
+        ``resolve()`` also settles any symlinked parent directory, so the temp
+        (created in the resolved parent by :meth:`_write_atomic`) shares the
+        target's filesystem and the rename stays atomic. A non-symlink path is
+        returned unchanged, preserving the original behavior exactly.
+        """
+        if self._path.is_symlink():
+            return self._path.resolve()
+        return self._path
+
+    def _replacement_mode(self, target: Path) -> int:
         """Return the permission bits to stamp on the replacement file.
 
-        Preserve the target's current mode when it already exists so an atomic
-        replace never changes how the user's ``CLAUDE.md`` is exposed. A
-        brand-new file is forced to 0644 (``rw-r--r--``) -- a predictable,
-        sane default for a config file -- rather than the 0600 ``mkstemp`` gives
-        the temp. 0644 is a deliberate constant, *not* the umask-derived mode a
-        plain ``open()`` would produce (``0666 & ~umask``); a restrictive umask
-        would otherwise make the created file's mode vary by environment. Called
-        before the rename, while the target (if any) still exists.
+        Preserve *target*'s current mode when it already exists so an atomic
+        replace never changes how the user's ``CLAUDE.md`` is exposed. *target*
+        is the resolved real file (see :meth:`_write_target`), so when
+        ``self._path`` is a symlink the mode is read from the link's destination
+        -- the file actually being rewritten -- not the link. A brand-new file
+        is forced to 0644 (``rw-r--r--``) -- a predictable, sane default for a
+        config file -- rather than the 0600 ``mkstemp`` gives the temp. 0644 is
+        a deliberate constant, *not* the umask-derived mode a plain ``open()``
+        would produce (``0666 & ~umask``); a restrictive umask would otherwise
+        make the created file's mode vary by environment. Called before the
+        rename, while the target (if any) still exists.
         """
-        if self._path.is_file():
-            return stat.S_IMODE(self._path.stat().st_mode)
+        if target.is_file():
+            return stat.S_IMODE(target.stat().st_mode)
         return 0o644
 
     def _read(self) -> str:

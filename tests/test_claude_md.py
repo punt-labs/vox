@@ -411,6 +411,72 @@ def test_replace_preserves_nondefault_file_mode(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# GlobalClaudeImports symlinked target (dotfile managers)
+# ---------------------------------------------------------------------------
+
+
+def test_symlink_target_is_updated_and_link_preserved(tmp_path: Path) -> None:
+    # Dotfile managers (chezmoi, GNU stow, bare-repo dotfiles) make
+    # ~/.claude/CLAUDE.md a symlink into their store. A naive replace would
+    # clobber the LINK with a regular file, breaking the setup and diverging
+    # the file from its source-of-truth target. The reconcile must instead
+    # follow the link and rewrite the file it points at, leaving the link intact.
+    store = tmp_path / "store"
+    store.mkdir()
+    real = store / "CLAUDE.md"
+    real.write_text("# hand-authored rules\n\nkeep me\n", encoding="utf-8")
+
+    link = tmp_path / ".claude" / "CLAUDE.md"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(real)
+
+    reg = GlobalClaudeImports(link)
+    assert reg.register(_VOX) is True
+
+    # The link is still a link, still pointing where it did.
+    assert link.is_symlink()
+    assert link.readlink() == real
+    # The real file behind the link was updated -- content and section landed.
+    real_text = real.read_text(encoding="utf-8")
+    assert "keep me" in real_text
+    assert _VOX in real_text
+    # No regular file was dropped in place of the link, and no temp leaked.
+    assert list(link.parent.glob(".claude-md-*.tmp")) == []
+    assert list(real.parent.glob(".claude-md-*.tmp")) == []
+
+
+def test_symlink_target_mode_is_preserved(tmp_path: Path) -> None:
+    # Mode preservation must read the resolved target (the file being rewritten),
+    # not the link: a 0600-restricted store file stays 0600 after the reconcile.
+    store = tmp_path / "store"
+    store.mkdir()
+    real = store / "CLAUDE.md"
+    real.write_text("# rules\n", encoding="utf-8")
+    real.chmod(0o600)
+
+    link = tmp_path / ".claude" / "CLAUDE.md"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(real)
+
+    reg = GlobalClaudeImports(link)
+    assert reg.register(_VOX) is True
+    assert stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert link.is_symlink()
+
+
+def test_non_symlink_replace_targets_path_directly(tmp_path: Path) -> None:
+    # The non-symlink path is unchanged: the temp+replace targets self._path
+    # itself, in its own directory -- no resolve(), no behavior shift.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    reg.path.write_text("# original\n", encoding="utf-8")
+    assert not reg.path.is_symlink()
+    assert reg.register(_VOX) is True
+    assert not reg.path.is_symlink()
+    assert _VOX in reg.path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # GlobalClaudeImports.prune
 # ---------------------------------------------------------------------------
 
