@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Any, Self, final
 
 from punt_vox.voxd.programs.track_end import TrackEnd
 
@@ -60,7 +60,9 @@ class InterruptRace:
         return TrackEnd(interrupted=False, exit_code=exit_code)
 
     @staticmethod
-    async def _cancel_all(tasks: set[asyncio.Task[int]]) -> None:
+    async def _cancel_all(tasks: set[asyncio.Task[Any]]) -> None:
+        # Task[Any]: the race mixes a Task[int] (proc.wait) and a Task[bool]
+        # (Event.wait); this only cancels-and-awaits, so the result type is moot.
         """Cancel and reap the losing tasks of the interrupt race."""
         for task in tasks:
             task.cancel()
