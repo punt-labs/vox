@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from typer.testing import CliRunner
+
+from punt_vox.__main__ import app
 from punt_vox.claude_md import GlobalClaudeImports, VoxGuidance
+
+if TYPE_CHECKING:
+    import pytest
 
 _OPEN = "<!-- punt:mandatory-reading -->"
 _CLOSE = "<!-- /punt:mandatory-reading -->"
@@ -239,3 +246,27 @@ def test_uninstall_missing_doc_is_safe(tmp_path: Path) -> None:
 def test_for_current_user_import_line() -> None:
     guide = VoxGuidance.for_current_user()
     assert guide.import_line == _VOX
+
+
+# ---------------------------------------------------------------------------
+# register-guidance CLI command
+# ---------------------------------------------------------------------------
+
+
+def test_register_guidance_command_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    runner = CliRunner()
+    guide = tmp_path / ".punt-labs" / "vox" / "CLAUDE.md"
+    global_md = tmp_path / ".claude" / "CLAUDE.md"
+
+    result = runner.invoke(app, ["register-guidance"])
+    assert result.exit_code == 0
+    assert guide.is_file()
+    assert _VOX in global_md.read_text(encoding="utf-8")
+
+    result = runner.invoke(app, ["register-guidance", "--remove"])
+    assert result.exit_code == 0
+    assert not guide.exists()
+    assert _VOX not in global_md.read_text(encoding="utf-8")

@@ -781,6 +781,31 @@ def uninstall() -> None:
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
 
+@app.command("register-guidance", hidden=True)
+def register_guidance(
+    *,
+    remove: Annotated[
+        bool,
+        typer.Option("--remove", "-r", help="Prune the guide instead of writing it."),
+    ] = False,
+) -> None:
+    """Write (or remove) the usage guide and its ``@``-import.
+
+    Hidden plumbing for install scripts (``install.sh``) that register the
+    plugin directly via ``claude plugin install`` and so never reach the
+    ``vox install`` command. Idempotent: the global ``CLAUDE.md`` is rewritten
+    only when the import line actually changes.
+    """
+    from punt_vox.claude_md import VoxGuidance
+
+    guide = VoxGuidance.for_current_user()
+    try:
+        typer.echo(guide.uninstall() if remove else guide.install())
+    except OSError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 # ---------------------------------------------------------------------------
 # install-desktop (Claude Desktop MCP server registration)
 # ---------------------------------------------------------------------------
