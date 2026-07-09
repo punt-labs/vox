@@ -69,6 +69,43 @@ def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
     assert sorted(p.name for p in tmp_path.iterdir()) == []
 
 
+def test_write_keys_env_cleanup_never_masks_the_write_error(
+    writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising unlink is suppressed so the caller sees the real write error."""
+    keys_path = tmp_path / "keys.env"
+
+    def _write_boom(*_args: object, **_kwargs: object) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    def _unlink_boom(*_args: object, **_kwargs: object) -> None:
+        msg = "unlink refused"
+        raise OSError(msg)
+
+    monkeypatch.setattr(os, "fsync", _write_boom)  # fail mid-write
+    monkeypatch.setattr(Path, "unlink", _unlink_boom)  # cleanup also fails
+    # The caller sees the real cause ("disk full"), not the cleanup's "unlink refused".
+    with pytest.raises(OSError, match="disk full"):
+        writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
+
+
+def test_write_keys_env_fdopen_failure_leaves_no_temp(
+    writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising fdopen closes the raw fd and orphans no temp file."""
+    keys_path = tmp_path / "keys.env"
+
+    def _fdopen_boom(*_args: object, **_kwargs: object) -> None:
+        msg = "fdopen refused"
+        raise OSError(msg)
+
+    monkeypatch.setattr(os, "fdopen", _fdopen_boom)
+    with pytest.raises(OSError, match="fdopen refused"):
+        writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
 def test_write_keys_env_preserves_existing_keys(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:

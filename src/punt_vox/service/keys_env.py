@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -140,12 +141,22 @@ class KeysEnvWriter:
         fd, tmp_name = tempfile.mkstemp(dir=keys_path.parent, prefix=".keys.env.")
         tmp = Path(tmp_name)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)  # fdopen did not take ownership -- close the raw fd
+            tmp.unlink(missing_ok=True)
+            raise
+        try:
+            with handle:  # owns fd now; closes it on every exit path
                 os.fchmod(handle.fileno(), 0o600)
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
             tmp.replace(keys_path)
         except OSError:
-            tmp.unlink(missing_ok=True)
+            # Best-effort cleanup that never masks the original write error: a
+            # raising unlink is suppressed so the bare ``raise`` re-raises the
+            # real cause, not the cleanup failure.
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
             raise
