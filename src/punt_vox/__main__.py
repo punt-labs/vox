@@ -697,7 +697,7 @@ _PLUGIN_ID = "vox@punt-labs"
 def install() -> None:
     """Install the Claude Code plugin and daemon service."""
     # Step 1: Claude Code plugin
-    typer.echo("[1/2] Installing Claude Code plugin...")
+    typer.echo("[1/3] Installing Claude Code plugin...")
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
@@ -717,7 +717,7 @@ def install() -> None:
     # OSError/CalledProcessError: subprocess and filesystem failures during install.
     # LaunchctlError: macOS bring-up (bootstrap/kickstart) fails on a GUI-less host.
     # ServiceHealthError: voxd registered but never answered health (silent-down).
-    typer.echo("[2/2] Registering vox daemon...")
+    typer.echo("[2/3] Registering vox daemon...")
     from punt_vox.service import install as svc_install
     from punt_vox.service.health_verify import ServiceHealthError
     from punt_vox.service.launchctl import LaunchctlError
@@ -734,6 +734,17 @@ def install() -> None:
     ) as exc:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
+
+    # Step 3: write the usage guide and register its @-import so it loads in
+    # every Claude Code session. OSError only -- a read-only home should warn,
+    # not abort an otherwise-successful plugin install.
+    typer.echo("[3/3] Registering vox usage guide...")
+    from punt_vox.claude_md import VoxGuidance
+
+    try:
+        typer.echo(f"  ✓ {VoxGuidance.for_current_user().install()}")
+    except OSError as exc:
+        typer.echo(f"  • Skipped: {exc}")
 
     typer.echo()
     _formatter.emit(
@@ -757,6 +768,16 @@ def uninstall() -> None:
     if result.returncode != 0:
         typer.echo("Error: plugin uninstall failed", err=True)
         raise typer.Exit(code=1)
+
+    # Delete the usage guide and prune its @-import. OSError only -- a
+    # filesystem hiccup should not fail the plugin uninstall.
+    from punt_vox.claude_md import VoxGuidance
+
+    try:
+        typer.echo(VoxGuidance.for_current_user().uninstall())
+    except OSError as exc:
+        typer.echo(f"  • Skipped guide removal: {exc}")
+
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
 
