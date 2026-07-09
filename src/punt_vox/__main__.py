@@ -739,7 +739,7 @@ def install() -> None:
     # every Claude Code session. OSError only -- a read-only home should warn,
     # not abort an otherwise-successful plugin install.
     typer.echo("[3/3] Registering vox usage guide...")
-    from punt_vox.claude_md import VoxGuidance
+    from punt_vox.guidance import VoxGuidance
 
     try:
         typer.echo(f"  ✓ {VoxGuidance.for_current_user().install()}")
@@ -774,7 +774,7 @@ def uninstall() -> None:
     # (e.g. the plugin was already gone) must not orphan ~/.punt-labs/vox/CLAUDE.md
     # or its global import line. OSError only -- a filesystem hiccup should not
     # mask the plugin result.
-    from punt_vox.claude_md import VoxGuidance
+    from punt_vox.guidance import VoxGuidance
 
     try:
         typer.echo(VoxGuidance.for_current_user().uninstall())
@@ -802,7 +802,7 @@ def register_guidance(
     ``vox install`` command. Idempotent: the global ``CLAUDE.md`` is rewritten
     only when the import line actually changes.
     """
-    from punt_vox.claude_md import VoxGuidance
+    from punt_vox.guidance import VoxGuidance
 
     guide = VoxGuidance.for_current_user()
     try:

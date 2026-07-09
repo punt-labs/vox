@@ -1,22 +1,17 @@
-"""Register vox's usage guide as a CLAUDE.md ``@``-import.
+"""Own the punt-managed ``@``-import section of ``~/.claude/CLAUDE.md``.
 
-Claude Code loads ``~/.claude/CLAUDE.md`` into every session and resolves
-any top-level ``@path`` line as an included file. Vox owns a usage guide at
-``~/.punt-labs/vox/CLAUDE.md`` and self-registers the line
-``@~/.punt-labs/vox/CLAUDE.md`` inside a shared, punt-managed section so the
-guide loads in every project without a per-project edit.
+Claude Code loads ``~/.claude/CLAUDE.md`` into every session and resolves any
+top-level ``@path`` line as an included file. Punt tools register their usage
+guides as such lines inside a shared managed section so the guides load in
+every project without a per-project edit.
 
-Two responsibilities live here:
-
-* :class:`GlobalClaudeImports` owns ``~/.claude/CLAUDE.md``. It splices the
-  managed ``<!-- punt:mandatory-reading -->`` section deterministically
-  (import lines sorted), repairs a half-written section instead of appending
-  a second one, and writes only when the rendered text differs from what is
-  already on disk -- so re-running never churns the file's mtime.
-* :class:`VoxGuidance` owns the vox-side artifact: it writes the usage guide
-  on install and deletes it plus its import line on uninstall. The installer
-  rewrites the guide every run, so it is the single source of truth and can
-  never drift from the running vox version.
+:class:`GlobalClaudeImports` owns ``~/.claude/CLAUDE.md``. It splices the
+managed ``<!-- punt:mandatory-reading -->`` section deterministically (import
+lines sorted), repairs a half-written section instead of appending a second
+one, and writes only when the rendered text differs from what is already on
+disk -- so re-running never churns the file's mtime. The vox-side artifact that
+writes a usage guide and registers its own import line lives in
+:mod:`punt_vox.guidance`.
 
 The ``@``-lines are emitted at top level (never inside a code fence): Claude
 Code does not resolve imports written inside code spans. For the same reason
@@ -36,17 +31,16 @@ is out of scope here (a lock would be overkill for manual, infrequent installs).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.paths import user_state_dir
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["GlobalClaudeImports", "VoxGuidance"]
+__all__ = ["GlobalClaudeImports"]
 
 
 @final
@@ -183,8 +177,14 @@ class GlobalClaudeImports:
         (macOS and Linux, the only supported platforms) -- so an interrupted
         write (SIGKILL, power loss) leaves the original ``CLAUDE.md`` untouched
         rather than truncated: the user's hand-authored content is never at
-        risk, only the pending replacement. The temporary file is unlinked if
-        any step fails before the rename.
+        risk, only the pending replacement.
+
+        ``os.fdopen`` takes ownership of the ``mkstemp`` descriptor *first* so
+        the ``with`` block always closes it on every exit path. If ``fdopen``
+        itself raises, the raw fd is closed explicitly (it never took
+        ownership) -- otherwise a repeated install would leak a descriptor per
+        failure. The temp file is unlinked on any failure before the rename,
+        so no ``.claude-md-*.tmp`` is orphaned.
         """
         directory = self._path.parent
         directory.mkdir(parents=True, exist_ok=True)
@@ -192,17 +192,24 @@ class GlobalClaudeImports:
             dir=directory, prefix=".claude-md-", suffix=".tmp"
         )
         tmp = Path(tmp_name)
-        replaced = False
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)  # fdopen did not take ownership -- close the raw fd
+            tmp.unlink(missing_ok=True)
+            raise
+        try:
+            with handle:  # owns fd now; closes it on every exit path
                 handle.write(text)
                 handle.flush()
                 os.fsync(handle.fileno())
             tmp.replace(self._path)
-            replaced = True
-        finally:
-            if not replaced:
+        except OSError:
+            # Best-effort cleanup that never masks the original error: a raising
+            # unlink is suppressed so the bare ``raise`` re-raises the real cause.
+            with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
+            raise
 
     def _read(self) -> str:
         """Return the file's text, or ``""`` when it does not exist."""
@@ -223,6 +230,12 @@ class GlobalClaudeImports:
         markers is preserved rather than destroyed. The result is that
         re-rendering always yields exactly one canonical section.
 
+        The newline terminating the line immediately before a real ``OPEN``
+        marker is the separator :meth:`_render` injects to anchor the marker
+        on its own line, so it is stripped back off here. That makes the
+        write/parse pair lossless: a body with no final newline round-trips
+        to no final newline, and one that ends in blank lines keeps every one.
+
         Parsing is fence-aware: any line inside a Markdown code fence (a
         ```` ``` ```` or ``~~~`` block) is literal text and is preserved
         byte-for-byte, so a ``<!-- punt:mandatory-reading -->`` marker that
@@ -241,19 +254,41 @@ class GlobalClaudeImports:
                 kept.append(line)
                 continue
             if stripped == self._OPEN:
+                self._drop_separator(kept)
                 inside = True
                 continue
             if stripped == self._CLOSE:
                 inside = False
                 continue
             if inside:
-                if stripped.startswith("@"):
-                    imports.add(stripped)
-                elif stripped and stripped != self._HEADER:
-                    kept.append(line)
+                self._absorb_managed(line, stripped, kept, imports)
                 continue
             kept.append(line)
         return kept, imports
+
+    @staticmethod
+    def _drop_separator(kept: list[str]) -> None:
+        """Remove the render-injected newline that anchors ``OPEN`` on its line.
+
+        The separator lives on the last kept line before the marker; stripping
+        exactly that one newline is what makes an install->uninstall round-trip
+        preserve the user's final-newline state byte-for-byte.
+        """
+        if kept and kept[-1].endswith("\n"):
+            kept[-1] = kept[-1][:-1]
+
+    def _absorb_managed(
+        self, line: str, stripped: str, kept: list[str], imports: set[str]
+    ) -> None:
+        """Route a line found between ``OPEN`` and ``CLOSE``.
+
+        Import lines feed the managed set; the canonical header and its blank
+        padding are dropped; anything else is preserved rather than destroyed.
+        """
+        if stripped.startswith("@"):
+            imports.add(stripped)
+        elif stripped and stripped != self._HEADER:
+            kept.append(line)
 
     def _render(self, kept: list[str], imports: frozenset[str]) -> str:
         """Rebuild the file from the verbatim non-managed content plus one section.
@@ -269,88 +304,13 @@ class GlobalClaudeImports:
         section = self._build_section(imports)
         if not body:
             return f"{section}\n"
-        # Anchor the OPEN marker to its own line without mutating the user's
-        # trailing whitespace: no separator when the body already ends in a
-        # newline (trailing blank lines included), one added when it does not.
-        # No blank line is injected -- anything beyond OPEN..CLOSE would survive
-        # the prune and break the byte-for-byte round-trip.
-        separator = "" if body.endswith("\n") else "\n"
-        return f"{body}{separator}{section}\n"
+        # Always inject exactly one newline between the user's content and the
+        # managed section. :meth:`_parse` strips exactly this newline off the
+        # line before OPEN, so the pair round-trips losslessly: no final newline
+        # stays no final newline, and trailing blank lines are all preserved.
+        return f"{body}\n{section}\n"
 
     def _build_section(self, imports: frozenset[str]) -> str:
         """Render the canonical managed section with sorted import lines."""
         lines = [self._OPEN, self._HEADER, "", *sorted(imports), self._CLOSE]
         return "\n".join(lines)
-
-
-@final
-class VoxGuidance:
-    """Owns vox's usage guide and its registration in ``~/.claude/CLAUDE.md``.
-
-    The guide is written to ``~/.punt-labs/vox/CLAUDE.md`` -- distinct from
-    the repo-local ``.punt-labs/vox/vox.md`` config, so there is no
-    collision. The installer rewrites the guide every run; uninstall deletes
-    it and prunes its import line.
-    """
-
-    __slots__ = ("_doc_path", "_global", "_import_line")
-
-    _doc_path: Path
-    _global: GlobalClaudeImports
-    _import_line: str
-
-    _ASSET_NAME = "global-guidance.md"
-
-    def __new__(
-        cls, doc_path: Path, global_imports: GlobalClaudeImports, import_line: str
-    ) -> Self:
-        self = super().__new__(cls)
-        self._doc_path = doc_path
-        self._global = global_imports
-        self._import_line = import_line
-        return self
-
-    @classmethod
-    def for_current_user(cls) -> Self:
-        """Wire the real per-user paths for the running install."""
-        home = Path.home()
-        doc_path = user_state_dir() / "CLAUDE.md"
-        import_line = "@~/" + doc_path.relative_to(home).as_posix()
-        global_path = home / ".claude" / "CLAUDE.md"
-        return cls(doc_path, GlobalClaudeImports(global_path), import_line)
-
-    @property
-    def doc_path(self) -> Path:
-        """Return the path of the vox usage guide."""
-        return self._doc_path
-
-    @property
-    def import_line(self) -> str:
-        """Return the ``@``-import line registered in the global CLAUDE.md."""
-        return self._import_line
-
-    def install(self) -> str:
-        """Write the guide and register its import. Return a status message."""
-        self._doc_path.parent.mkdir(parents=True, exist_ok=True)
-        self._doc_path.write_text(self._load_doc(), encoding="utf-8")
-        wrote = self._global.register(self._import_line)
-        state = "registered" if wrote else "already registered"
-        return (
-            f"vox usage guide written to {self._doc_path}; "
-            f"import {state} in {self._global.path}"
-        )
-
-    def uninstall(self) -> str:
-        """Delete the guide and prune its import. Return a status message."""
-        if self._doc_path.is_file():
-            self._doc_path.unlink()
-        self._global.prune(self._import_line)
-        return (
-            f"vox usage guide removed ({self._doc_path}); "
-            f"import pruned from {self._global.path}"
-        )
-
-    def _load_doc(self) -> str:
-        """Read the usage guide bundled beside this package."""
-        asset = Path(__file__).resolve().parent / "assets" / self._ASSET_NAME
-        return asset.read_text(encoding="utf-8")
