@@ -112,8 +112,12 @@ class VoxGuidance:
         """
         errors: list[OSError] = []
         try:
-            if self._doc_path.is_file():
-                self._doc_path.unlink()
+            # ``missing_ok=True`` makes an already-gone guide a clean no-op
+            # atomically -- an ``is_file()`` guard would leave a TOCTOU window
+            # where a concurrent removal (or a re-run after a partial teardown)
+            # between the check and the unlink raises ``FileNotFoundError``.
+            # A real failure (a permissions error) still surfaces below.
+            self._doc_path.unlink(missing_ok=True)
         except OSError as exc:
             errors.append(exc)
         try:

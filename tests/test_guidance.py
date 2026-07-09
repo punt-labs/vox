@@ -110,6 +110,39 @@ def test_uninstall_missing_doc_is_safe(tmp_path: Path) -> None:
     assert not guide.doc_path.exists()
 
 
+def test_uninstall_already_gone_doc_is_clean_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A guide removed between install and uninstall (a concurrent teardown, or a
+    # re-run) must not raise: uninstall unlinks with missing_ok=True, so a gone
+    # doc is a clean no-op that still prunes the import and returns a message.
+    guide = _guidance(tmp_path)
+    guide.install()
+    global_path = tmp_path / ".claude" / "CLAUDE.md"
+    assert _VOX in global_path.read_text(encoding="utf-8")
+
+    # Simulate the race: the doc vanishes before uninstall's unlink runs.
+    guide.doc_path.unlink()
+    assert not guide.doc_path.exists()
+
+    real_unlink = Path.unlink
+    seen: dict[str, bool] = {}
+
+    def spy_unlink(self: Path, *, missing_ok: bool = False) -> None:
+        if self == guide.doc_path:
+            # The unlink must pass missing_ok=True so the gone file is a no-op.
+            seen["missing_ok"] = missing_ok
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", spy_unlink)
+
+    # No exception despite the doc being gone, and the import is still pruned.
+    message = guide.uninstall()
+    assert seen["missing_ok"] is True
+    assert _VOX not in global_path.read_text(encoding="utf-8")
+    assert "import pruned" in message
+
+
 def test_uninstall_prunes_import_even_when_unlink_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
