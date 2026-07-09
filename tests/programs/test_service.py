@@ -19,7 +19,7 @@ import pytest
 from punt_vox.music_prompts import PromptSet
 from punt_vox.voxd.programs import Format, Mode
 from punt_vox.voxd.programs.album_id import AlbumId
-from punt_vox.voxd.programs.album_tags import TagQuery
+from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
 
 from .conftest import make_service, seed_album
 
@@ -101,13 +101,64 @@ class TestResumeVsMint:
         service.shutdown()
         assert len(service.catalog_albums()) == 2
 
-    def test_named_resume_wins_regardless_of_fingerprint(self, tmp_path: Path) -> None:
-        # A --name pool keeps playing even when the incoming prompt-set differs.
+    def test_named_partial_foreign_prompts_mints_fresh(self, tmp_path: Path) -> None:
+        # A partly-filled named album must never have its remaining tracks
+        # generated from a foreign prompt set -- that blends two prompt sets into
+        # one pool. A mismatch mints a fresh, auto-suffixed album instead.
+        root = tmp_path / "programs"
+        fp_alpha = PromptFingerprint.from_prompts("alpha", ())
+        seed_album(root, 1, 2, name="mix", fingerprint=fp_alpha)  # partial: 2 of 12
         service = _service(tmp_path)
-        service.turn_on(style="techno", vibe="calm", name="mix", prompts=_ONE)
-        service.turn_on(style="techno", vibe="calm", name="mix", prompts=_TWO)
+        service.turn_on(
+            style="techno",
+            vibe="calm",
+            name="mix",
+            prompts=PromptSet(base="beta", variations=()),
+        )
         service.shutdown()
-        assert len(service.catalog_albums()) == 1
+        by_name = {a.manifest.tags.name: a for a in service.catalog_albums()}
+        assert set(by_name) == {"mix", "mix1"}  # foreign fingerprint minted fresh
+        # The original mix is untouched: still 2 parts, still the alpha fingerprint.
+        assert by_name["mix"].manifest.prompt_fingerprint == fp_alpha
+        assert len(by_name["mix"].ready_parts()) == 2
+        # The fresh album carries beta's fingerprint, so no pool spans two of them.
+        fp_beta = PromptFingerprint.from_prompts("beta", ())
+        assert by_name["mix1"].manifest.prompt_fingerprint == fp_beta
+
+    def test_named_partial_matching_fingerprint_resumes(self, tmp_path: Path) -> None:
+        # A partial named album resumes when the incoming prompts match its identity.
+        root = tmp_path / "programs"
+        fp_alpha = PromptFingerprint.from_prompts("alpha", ())
+        seed_album(root, 1, 2, name="mix", fingerprint=fp_alpha)
+        service = _service(tmp_path)
+        service.turn_on(
+            style="techno",
+            vibe="calm",
+            name="mix",
+            prompts=PromptSet(base="alpha", variations=()),
+        )
+        service.shutdown()
+        assert len(service.catalog_albums()) == 1  # same fingerprint -> resumed
+
+    def test_named_full_album_resumes_regardless_of_fingerprint(
+        self, tmp_path: Path
+    ) -> None:
+        # A full named album never fills, so a foreign prompt set mixes nothing --
+        # it resumes as-is rather than minting a fresh album.
+        root = tmp_path / "programs"
+        fp_alpha = PromptFingerprint.from_prompts("alpha", ())
+        seed_album(root, *range(1, _POOL_SIZE + 1), name="mix", fingerprint=fp_alpha)
+        service = _service(tmp_path)
+        service.turn_on(
+            style="techno",
+            vibe="calm",
+            name="mix",
+            prompts=PromptSet(base="beta", variations=()),
+        )
+        service.shutdown()
+        albums = service.catalog_albums()
+        assert len(albums) == 1  # resumed the full album, no fresh mint
+        assert albums[0].manifest.tags.name == "mix"
 
     def test_resume_a_saved_pool_plays_without_regenerating(
         self, tmp_path: Path

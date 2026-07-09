@@ -237,13 +237,32 @@ class ProgramService:
         handle = (name or "").strip()
         if handle:
             existing = self._catalog.by_name(handle)
-            if existing is not None:
+            if existing is not None and self._safe_to_resume(existing, fingerprint):
                 return existing
             return self._mint(style, vibe, handle, fingerprint)
         resumed = self._catalog.resume(style, vibe, fingerprint)
         if resumed is not None:
             return resumed
         return self._mint(style, vibe, None, fingerprint)
+
+    def _safe_to_resume(self, album: Album, fingerprint: PromptFingerprint) -> bool:
+        """Return whether resuming ``album`` cannot blend two prompt sets in one pool.
+
+        A named resume attaches the *incoming* prompt set to the album's continued
+        fill. Generating a partly-filled album's remaining tracks from a prompt set
+        other than the one that authored it would mix two identities in one pool,
+        so a partial album resumes only when the incoming fingerprint matches its
+        own. A full album never fills, so any prompt set is safe. On a mismatch the
+        caller mints a fresh, auto-suffixed album instead of filling foreign prompts.
+        """
+        if album.manifest.prompt_fingerprint == fingerprint:
+            return True
+        return self._is_full(album)
+
+    def _is_full(self, album: Album) -> bool:
+        """Return whether ``album`` already holds a full pool for its format."""
+        ready = self._store.open(album.locator).ready_parts()
+        return len(ready) >= album.manifest.format.pool_size
 
     def _mint(
         self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
