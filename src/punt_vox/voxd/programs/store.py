@@ -9,12 +9,14 @@ in :mod:`punt_vox.voxd.programs.filesystem_store`.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from punt_vox.voxd.programs.catalog import Album
-from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry, ProgramManifest
-from punt_vox.voxd.programs.part import Part
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.voxd.programs.catalog import Album
+    from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
+    from punt_vox.voxd.programs.part import Part
 
 __all__ = ["PartStore", "ProgramStore"]
 
@@ -39,7 +41,7 @@ class PartStore(Protocol):
         """Append ``entry`` to the manifest and persist it durably."""
         ...
 
-    def manifest(self) -> ProgramManifest:
+    def manifest(self) -> AlbumManifest:
         """Return the current manifest."""
         ...
 

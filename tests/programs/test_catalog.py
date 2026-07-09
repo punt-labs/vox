@@ -15,7 +15,9 @@ from punt_vox.voxd.programs import Format, PartStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.catalog import Album, Catalog
-from punt_vox.voxd.programs.manifest import PartEntry, ProgramManifest
+from punt_vox.voxd.programs.manifest import AlbumManifest, PartEntry
+
+from .conftest import InMemoryProgramStore
 
 _BASE = datetime(2026, 7, 8, tzinfo=UTC)
 _FP_ONE = PromptFingerprint("11111111")
@@ -32,7 +34,7 @@ def _album(
     created: datetime = _BASE,
     ready: int = 2,
 ) -> Album:
-    manifest = ProgramManifest(
+    manifest = AlbumManifest(
         album_id=AlbumId(album_id),
         fmt=Format.PLAYLIST,
         tags=AlbumTags(style=style, vibe=vibe, name=name),
@@ -43,7 +45,12 @@ def _album(
             for i in range(1, ready + 1)
         ),
     )
-    return Album(manifest, f"{style}--{vibe}-{album_id}")
+    # Wire the album to a live in-memory store so ready_parts/select read from
+    # the store, not a frozen snapshot (F1) -- one store per album, each keyed by
+    # its own locator.
+    store = InMemoryProgramStore()
+    store.preload(manifest)
+    return store.scan()[0]
 
 
 class TestByIdAndName:

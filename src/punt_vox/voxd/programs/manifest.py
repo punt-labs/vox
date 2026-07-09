@@ -1,6 +1,6 @@
 """The on-disk album manifest -- the source of truth CLI, MCP, and daemon share.
 
-A :class:`ProgramManifest` is the persisted description of one album: its unique
+An :class:`AlbumManifest` is the persisted description of one album: its unique
 :class:`AlbumId`, its queryable :class:`AlbumTags`, the tz-aware ``created``
 stamp, the hidden :class:`PromptFingerprint` of the authoring prompt-set, and the
 ordered Parts. The directory name is *never* parsed back -- identity lives in the
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Self, final
 
 from punt_vox.voxd.programs.album_id import AlbumId
@@ -23,7 +23,7 @@ from punt_vox.voxd.programs.identifiers import PartRef
 from punt_vox.voxd.programs.part import Part, PartStatus
 from punt_vox.voxd.programs.wire import JsonObject
 
-__all__ = ["ManifestDraft", "PartEntry", "ProgramManifest"]
+__all__ = ["AlbumManifest", "ManifestDraft", "PartEntry"]
 
 
 @final
@@ -88,7 +88,7 @@ def _sorted_parts(parts: tuple[PartEntry, ...]) -> tuple[PartEntry, ...]:
 
 
 @final
-class ProgramManifest:
+class AlbumManifest:
     """The persisted description of one album -- id, tags, timestamp, and Parts."""
 
     __slots__ = (
@@ -178,9 +178,9 @@ class ProgramManifest:
         """Return the 1-based index the next recorded Part will take."""
         return 1 + max((entry.index for entry in self._parts), default=0)
 
-    def with_part(self, entry: PartEntry) -> ProgramManifest:
+    def with_part(self, entry: PartEntry) -> AlbumManifest:
         """Return a successor manifest with ``entry`` appended (re-sorted)."""
-        return ProgramManifest(
+        return AlbumManifest(
             album_id=self._id,
             fmt=self._format,
             tags=self._tags,
@@ -228,15 +228,15 @@ class ProgramManifest:
         )
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ProgramManifest):
+        if not isinstance(other, AlbumManifest):
             return NotImplemented
         return self._identity() == other._identity()
 
     def __hash__(self) -> int:
-        return hash((ProgramManifest, *self._identity()))
+        return hash((AlbumManifest, *self._identity()))
 
     def __repr__(self) -> str:
-        return f"ProgramManifest(id={self._id!s}, parts={len(self._parts)})"
+        return f"AlbumManifest(id={self._id!s}, parts={len(self._parts)})"
 
     def _identity(
         self,
@@ -275,9 +275,14 @@ class ManifestDraft:
         """Return the ``<slug>-<id>`` directory name the store materialises into."""
         return f"{self.tags.slug()}-{self.album_id.value}"
 
-    def stamped(self, created: datetime) -> ProgramManifest:
-        """Return the manifest for this draft stamped with ``created``."""
-        return ProgramManifest(
+    def stamped(self, created: datetime) -> AlbumManifest:
+        """Return the manifest for this draft stamped with ``created``.
+
+        The store is the sole clock owner (finding #6): it calls this with
+        ``datetime.now(UTC)`` at materialisation, so the draft stays a pure value
+        object no caller can use to forge a creation time.
+        """
+        return AlbumManifest(
             album_id=self.album_id,
             fmt=self.fmt,
             tags=self.tags,
@@ -285,7 +290,3 @@ class ManifestDraft:
             fingerprint=self.fingerprint,
             parts=self.parts,
         )
-
-    def materialise(self) -> ProgramManifest:
-        """Return the manifest stamped with the current UTC time (store clock)."""
-        return self.stamped(datetime.now(UTC))

@@ -181,9 +181,12 @@ class ProgramService:
             directory=self._root / album.locator,
             prompts=prompt_set,
         )
+        # Seed the pool from the freshly-opened store, never a catalog snapshot
+        # (F1): a re-``on`` of a filled album must restore its live parts, or the
+        # fill would see disk already full, start nothing, and the loop would hang.
         program = Program(
             ProgramState.restored(
-                album.manifest.format, frozenset(album.ready_parts())
+                album.manifest.format, frozenset(active.store.ready_parts())
             ),
             RotatePolicy(),
         )
@@ -254,7 +257,7 @@ class ProgramService:
             album_id=self._catalog.mint_id(), tags=tags, fingerprint=fingerprint
         )
         store = self._store.create(draft)
-        album = Album(store.manifest(), draft.locator)
+        album = Album(store.manifest(), draft.locator, self._store)
         self._catalog.add(album)
         return album
 

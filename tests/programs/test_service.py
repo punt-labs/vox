@@ -10,12 +10,14 @@ cap-free union replay -- are asserted here by name.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import TYPE_CHECKING
 
 import pytest
 
 from punt_vox.music_prompts import PromptSet
-from punt_vox.voxd.programs import Mode
+from punt_vox.voxd.programs import Format, Mode
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import TagQuery
 
@@ -28,10 +30,33 @@ if TYPE_CHECKING:
 
 _ONE = PromptSet(base="one", variations=())
 _TWO = PromptSet(base="two", variations=())
+_POOL_SIZE = Format.PLAYLIST.pool_size
 
 
 def _service(tmp_path: Path) -> ProgramService:
     return make_service(tmp_path / "programs")
+
+
+async def _drive_fill_to_full(service: ProgramService) -> None:
+    """Run the control writer until the sole minted album fills its pool on disk.
+
+    Exercises the *real* fill: the writer applies the switch, the reconciler arms
+    the background fill, and each produced Part is recorded to disk and applied.
+    Polls the album's *live* ``ready_parts`` (a disk read, F1) until it is full.
+    """
+    writer = asyncio.ensure_future(service.serve_control())
+    try:
+        for _ in range(2000):
+            await asyncio.sleep(0)
+            albums = service.catalog_albums()
+            if albums and len(albums[0].ready_parts()) >= _POOL_SIZE:
+                return
+        pytest.fail("the background fill never reached a full pool")
+    finally:
+        writer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await writer
+        service.shutdown()
 
 
 class TestTurnOn:
@@ -99,6 +124,46 @@ class TestResumeVsMint:
         service.shutdown()
         # A fresh vibe ("ambient") mints a new album, so the seeded one is intact.
         assert len(service.catalog_albums()) >= 1
+
+
+class TestFilledAlbumLiveReads:
+    """F1: after a real fill grows the pool, every read reflects the live parts.
+
+    Before the fix, ``Album`` froze a 0-part snapshot at mint, so ``select`` saw
+    an empty pool ("no albums match"), ``list`` showed 0/0, and a re-``on`` seeded
+    an empty pool -- the fill then saw disk already full, started nothing, and the
+    playback loop hung in ``_wait_for_playable``.
+    """
+
+    async def test_select_list_and_resume_all_see_the_filled_pool(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="lofi", vibe="calm", name=None, prompts=_ONE)
+        await _drive_fill_to_full(service)
+
+        album = service.catalog_albums()[0]
+        # list/select read parts live from the store, not the mint snapshot.
+        assert len(album.ready_parts()) == _POOL_SIZE
+        assert len(album.read().ready_parts()) == _POOL_SIZE
+
+        # /music play lofi calm builds a non-empty Selection over the filled pool.
+        service.replay(TagQuery(style="lofi", vibe="calm"))
+        await service.run_once()
+        now_playing = service.status().now_playing
+        assert now_playing is not None
+        assert now_playing.of == _POOL_SIZE
+
+        # A re-on resumes the full album and comes up playing, seeded from the live
+        # store -- it does not strand an empty pool, so the loop cannot hang.
+        service.turn_on(style="lofi", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()
+        service.shutdown()
+        resumed = service.status()
+        assert not resumed.is_idle
+        assert resumed.now_playing is not None
+        assert resumed.now_playing.of == _POOL_SIZE
+        assert len(service.catalog_albums()) == 1  # resumed, never minted twice
 
 
 class TestReplay:

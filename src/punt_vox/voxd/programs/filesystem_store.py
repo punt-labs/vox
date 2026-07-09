@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
 
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.identifiers import ProgramName
-from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry, ProgramManifest
+from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.wire import JsonObject
 
@@ -34,9 +35,9 @@ class FilesystemPartStore:
 
     __slots__ = ("_directory", "_manifest")
     _directory: Path
-    _manifest: ProgramManifest
+    _manifest: AlbumManifest
 
-    def __new__(cls, directory: Path, manifest: ProgramManifest) -> Self:
+    def __new__(cls, directory: Path, manifest: AlbumManifest) -> Self:
         self = super().__new__(cls)
         self._directory = directory
         self._manifest = manifest
@@ -59,7 +60,7 @@ class FilesystemPartStore:
         """Return the ``NNN.mp3`` audio path for a new Part at ``index``."""
         return self._directory / f"{index:03d}.mp3"
 
-    def manifest(self) -> ProgramManifest:
+    def manifest(self) -> AlbumManifest:
         """Return the current manifest."""
         return self._manifest
 
@@ -101,13 +102,15 @@ class FilesystemProgramStore:
         return self._root
 
     def scan(self) -> tuple[Album, ...]:
-        """Return every saved album, skipping idless legacy and escaping dirs.
+        """Return every saved album, skipping idless legacy, escaping, and corrupt.
 
         The one startup disk walk: for each ``*/manifest.json`` it resolves the
         directory and confirms it is contained under the root (rejecting symlinks
         and escapes, F#1), peeks ``opt_str("id")`` to skip idless legacy dirs
         (no-migration, debug-logged), then pairs the parsed manifest with its
-        directory name as an :class:`Album`.
+        directory name as an :class:`Album`. Each album is scanned in isolation
+        (F4): one corrupt id-bearing manifest is logged at ERROR and skipped, so a
+        single torn file can never brick the catalog -- nor the whole daemon.
         """
         if not self._root.is_dir():
             return ()
@@ -125,7 +128,7 @@ class FilesystemProgramStore:
         if not manifest_path.is_file():
             msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
-        manifest = ProgramManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        manifest = AlbumManifest.from_json(manifest_path.read_text(encoding="utf-8"))
         return FilesystemPartStore(path, manifest)
 
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
@@ -138,26 +141,36 @@ class FilesystemProgramStore:
         segment = ProgramName(draft.locator)
         directory = self._contained_dir(segment.value)
         directory.mkdir(parents=True, exist_ok=False)
-        store = FilesystemPartStore(directory, draft.materialise())
+        store = FilesystemPartStore(directory, draft.stamped(datetime.now(UTC)))
         store.save_manifest()
         return store
 
     def _scan_one(self, manifest_path: Path) -> Album | None:
         """Return the Album for one manifest, or ``None`` to skip it.
 
-        ``None`` is the documented "skip this dir" contract (escaping or idless
-        legacy), not a parse failure -- a malformed *id-bearing* manifest still
-        raises through ``from_wire``.
+        ``None`` covers three skips with two log levels. An escaping or idless
+        legacy dir is an *intentional* skip (debug-logged). A corrupt id-bearing
+        manifest is a real *fault* (F4): the parse raises, and rather than let it
+        propagate out of ``scan`` and brick the whole daemon, it is logged at
+        ERROR with the offending directory and that one album is dropped -- the
+        rest of the catalog survives.
         """
         directory = manifest_path.parent
         if not self._is_contained(directory):
             logger.debug("skipping album dir outside root: %s", directory)
             return None
-        obj = JsonObject.parse(manifest_path.read_text(encoding="utf-8"), "manifest")
-        if obj.opt_str("id") is None:
-            logger.debug("skipping idless legacy album dir: %s", directory)
+        try:
+            text = manifest_path.read_text(encoding="utf-8")
+            obj = JsonObject.parse(text, "manifest")
+            if obj.opt_str("id") is None:
+                logger.debug("skipping idless legacy album dir: %s", directory)
+                return None
+            return Album(AlbumManifest.from_wire(obj), directory.name, self)
+        except (ValueError, OSError) as exc:
+            logger.error(
+                "skipping corrupt album manifest in %s: %s", directory.name, exc
+            )
             return None
-        return Album(ProgramManifest.from_wire(obj), directory.name)
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory``, raising if it escapes the programs root."""

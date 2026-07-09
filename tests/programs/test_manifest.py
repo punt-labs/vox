@@ -11,9 +11,9 @@ from punt_vox.voxd.programs import Format, Part, PartStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.manifest import (
+    AlbumManifest,
     ManifestDraft,
     PartEntry,
-    ProgramManifest,
 )
 from punt_vox.voxd.programs.wire import JsonObject
 
@@ -26,8 +26,8 @@ def _obj(data: Mapping[str, object]) -> JsonObject:
     return JsonObject.coerce(dict(data), "test")
 
 
-def _manifest(*entries: PartEntry, album_id: str = "a3f1c9") -> ProgramManifest:
-    return ProgramManifest(
+def _manifest(*entries: PartEntry, album_id: str = "a3f1c9") -> AlbumManifest:
+    return AlbumManifest(
         album_id=AlbumId(album_id),
         fmt=Format.PLAYLIST,
         tags=AlbumTags(style="trance", vibe="calm"),
@@ -63,7 +63,7 @@ class TestPartEntry:
             assert PartEntry.from_wire(_obj(entry.to_dict())) == entry
 
 
-class TestProgramManifest:
+class TestAlbumManifest:
     def test_accessors(self) -> None:
         manifest = _manifest(_READY)
         assert manifest.id == AlbumId("a3f1c9")
@@ -85,16 +85,16 @@ class TestProgramManifest:
 
     def test_json_round_trip(self) -> None:
         manifest = _manifest(_READY, _FAILED)
-        assert ProgramManifest.from_json(manifest.to_json()) == manifest
+        assert AlbumManifest.from_json(manifest.to_json()) == manifest
 
     def test_created_round_trips_tz_aware(self) -> None:
         # finding #6: the timestamp stays tz-aware so newest() never raises.
-        restored = ProgramManifest.from_json(_manifest(_READY).to_json())
+        restored = AlbumManifest.from_json(_manifest(_READY).to_json())
         assert restored.created == _CREATED
         assert restored.created.tzinfo is not None
 
     def test_json_round_trip_non_ascii(self) -> None:
-        manifest = ProgramManifest(
+        manifest = AlbumManifest(
             album_id=AlbumId("1f9a30"),
             fmt=Format.PLAYLIST,
             tags=AlbumTags(style="lo-fi ♪", vibe="néon 夜"),
@@ -102,7 +102,7 @@ class TestProgramManifest:
             fingerprint=_FINGERPRINT,
             parts=(_READY,),
         )
-        restored = ProgramManifest.from_json(manifest.to_json())
+        restored = AlbumManifest.from_json(manifest.to_json())
         assert restored.tags.vibe == "néon 夜"
         assert restored == manifest
 
@@ -116,14 +116,14 @@ class TestProgramManifest:
 
     def test_from_json_rejects_non_object(self) -> None:
         with pytest.raises(ValueError, match="must be a JSON object"):
-            ProgramManifest.from_json("[]")
+            AlbumManifest.from_json("[]")
 
     def test_from_json_raises_on_idless_record(self) -> None:
         # A total from_json (PY-EH-8): an idless legacy record raises rather than
         # returning a half-built manifest -- scan() skips these before from_json.
         legacy = '{"format": "playlist", "tags": {}, "parts": []}'
         with pytest.raises(ValueError, match="missing required field 'id'"):
-            ProgramManifest.from_json(legacy)
+            AlbumManifest.from_json(legacy)
 
 
 class TestManifestDraft:
@@ -138,9 +138,8 @@ class TestManifestDraft:
         assert self._draft().locator == "trance--calm-a3f1c9"
 
     def test_stamped_carries_the_stamp(self) -> None:
+        # The store is the sole clock owner: it calls stamped(now(UTC)); the draft
+        # stays a pure value object with no wall-clock read of its own.
         manifest = self._draft().stamped(_CREATED)
         assert manifest.created == _CREATED
         assert manifest.id == AlbumId("a3f1c9")
-
-    def test_materialise_stamps_a_tz_aware_time(self) -> None:
-        assert self._draft().materialise().created.tzinfo is not None

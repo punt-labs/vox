@@ -38,8 +38,14 @@ class ListHandler:
 
     @staticmethod
     def _row(album: Album) -> dict[str, object]:
-        """Return the catalogue row for one album (id, tags, counts, created)."""
-        manifest = album.manifest
+        """Return the catalogue row for one album (id, tags, counts, created).
+
+        Part counts are read *live* from the store (F1): the background fill grows
+        the album after the catalog registers it, so a catalog-snapshot count
+        would report ``0/0`` for a pool that has since filled. Metadata (id, tags,
+        format, ``created``) is durable, so it comes from the live manifest too.
+        """
+        manifest = album.read()
         tags = manifest.tags
         return {
             "id": manifest.id.value,

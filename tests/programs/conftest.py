@@ -35,7 +35,7 @@ from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
-from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry, ProgramManifest
+from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.producer import PartSpec
 from punt_vox.voxd.programs.service import ProgramService
@@ -178,9 +178,9 @@ def make_manifest(
     album_id: str = "a3f1c9",
     fingerprint: PromptFingerprint = _FINGERPRINT,
     created: datetime = _EPOCH,
-) -> ProgramManifest:
+) -> AlbumManifest:
     """Build a playlist manifest with ready Parts at ``indices``."""
-    return ProgramManifest(
+    return AlbumManifest(
         album_id=AlbumId(album_id),
         fmt=Format.PLAYLIST,
         tags=AlbumTags(style=style, vibe=vibe, name=name),
@@ -190,7 +190,7 @@ def make_manifest(
     )
 
 
-def locator_of(manifest: ProgramManifest) -> str:
+def locator_of(manifest: AlbumManifest) -> str:
     """Return the ``<slug>-<id>`` locator a store would give this manifest."""
     return f"{manifest.tags.slug()}-{manifest.id.value}"
 
@@ -200,9 +200,9 @@ class InMemoryPartStore:
     """A dict-backed PartStore: holds one album's manifest in memory."""
 
     __slots__ = ("_manifest",)
-    _manifest: ProgramManifest
+    _manifest: AlbumManifest
 
-    def __new__(cls, manifest: ProgramManifest) -> Self:
+    def __new__(cls, manifest: AlbumManifest) -> Self:
         self = super().__new__(cls)
         self._manifest = manifest
         return self
@@ -220,7 +220,7 @@ class InMemoryPartStore:
     def record(self, entry: PartEntry) -> None:
         self._manifest = self._manifest.with_part(entry)
 
-    def manifest(self) -> ProgramManifest:
+    def manifest(self) -> AlbumManifest:
         return self._manifest
 
     def prepare(self) -> None:
@@ -239,13 +239,13 @@ class InMemoryProgramStore:
         self._stores = {}
         return self
 
-    def preload(self, manifest: ProgramManifest) -> None:
+    def preload(self, manifest: AlbumManifest) -> None:
         """Seed a pre-existing album (as ``scan`` would surface it at startup)."""
         self._stores[locator_of(manifest)] = InMemoryPartStore(manifest)
 
     def scan(self) -> tuple[Album, ...]:
         return tuple(
-            Album(store.manifest(), locator)
+            Album(store.manifest(), locator, self)
             for locator, store in sorted(self._stores.items())
         )
 
@@ -257,7 +257,7 @@ class InMemoryProgramStore:
         return store
 
     def create(self, draft: ManifestDraft) -> InMemoryPartStore:
-        store = InMemoryPartStore(draft.materialise())
+        store = InMemoryPartStore(draft.stamped(datetime.now(UTC)))
         self._stores[draft.locator] = store
         return store
 
@@ -269,7 +269,7 @@ def program_store() -> InMemoryProgramStore:
 
 
 @pytest.fixture
-def manifest_of() -> Callable[..., ProgramManifest]:
+def manifest_of() -> Callable[..., AlbumManifest]:
     """Return the playlist-manifest factory."""
     return make_manifest
 

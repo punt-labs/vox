@@ -11,34 +11,55 @@ service owns the mint *side-effect* (a domain object must not call ``store.creat
 
 from __future__ import annotations
 
-from typing import Self, final
+from datetime import datetime
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
-from punt_vox.voxd.programs.manifest import ProgramManifest
-from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.selection import Selection
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.manifest import AlbumManifest
+    from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.store import ProgramStore
 
 __all__ = ["Album", "Catalog"]
 
 
 @final
 class Album:
-    """One catalog entry: a manifest paired with its opaque directory locator."""
+    """One catalog entry: durable album metadata whose Parts are read live.
 
-    __slots__ = ("_locator", "_manifest")
-    _manifest: ProgramManifest
+    An Album conflates nothing: its :attr:`manifest` snapshot carries only the
+    *durable* metadata (id, tags, ``created``, fingerprint, format) established at
+    creation and never mutated, while its Parts are a *disk read*. The background
+    fill grows the on-disk manifest after the catalog registers the album, so a
+    frozen parts snapshot would go stale the instant the fill writes (F1).
+    :meth:`read` and :meth:`ready_parts` therefore dereference the store live; the
+    snapshot's own ``parts`` are never consulted for playback state.
+    """
+
+    __slots__ = ("_locator", "_manifest", "_store")
+    _manifest: AlbumManifest
     _locator: str
+    _store: ProgramStore
 
-    def __new__(cls, manifest: ProgramManifest, locator: str) -> Self:
+    def __new__(
+        cls, manifest: AlbumManifest, locator: str, store: ProgramStore
+    ) -> Self:
         self = super().__new__(cls)
         self._manifest = manifest
         self._locator = locator
+        self._store = store
         return self
 
     @property
-    def manifest(self) -> ProgramManifest:
-        """Return the album's persisted manifest."""
+    def manifest(self) -> AlbumManifest:
+        """Return the album's *durable metadata* snapshot (never its live Parts).
+
+        Read id, tags, ``created``, fingerprint, and format here; for Parts use
+        :meth:`read` or :meth:`ready_parts`, which dereference the store live.
+        """
         return self._manifest
 
     @property
@@ -51,17 +72,21 @@ class Album:
         """Return the album's unique id."""
         return self._manifest.id
 
+    def read(self) -> AlbumManifest:
+        """Return the manifest read live from disk -- Parts are never snapshotted."""
+        return self._store.open(self._locator).manifest()
+
     def ready_parts(self) -> tuple[Part, ...]:
-        """Return the album's ready Parts, ordered by intrinsic index."""
-        return self._manifest.ready_parts()
+        """Return the album's ready Parts, read live from the store (F1)."""
+        return self._store.open(self._locator).ready_parts()
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Album):
             return NotImplemented
-        return self._manifest == other._manifest and self._locator == other._locator
+        return self.id == other.id and self._locator == other._locator
 
     def __hash__(self) -> int:
-        return hash((Album, self._manifest, self._locator))
+        return hash((Album, self.id, self._locator))
 
     def __repr__(self) -> str:
         return f"Album(id={self._manifest.id!s}, locator={self._locator!r})"
@@ -151,6 +176,6 @@ class Catalog:
         )
 
     @staticmethod
-    def _recency(album: Album) -> tuple[object, str]:
+    def _recency(album: Album) -> tuple[datetime, str]:
         """Return the sort key ranking albums by ``created`` then id (deterministic)."""
         return (album.manifest.created, album.id.value)
