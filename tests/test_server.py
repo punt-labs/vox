@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, final
 from unittest.mock import MagicMock
 
 import pytest
@@ -58,6 +58,35 @@ class _StatusPolicy:
         return Advance(pool[0])
 
 
+_DAEMON_DOWN = "voxd unreachable (hermetic test default)"
+
+
+@final
+class _UnreachableClient:
+    """A ``VoxClientSync`` stand-in whose every RPC reports that voxd is down.
+
+    Models "the daemon is not running" so a synthesis or voice test that forgets
+    to install its own mock fails loudly with ``VoxdConnectionError`` -- instead
+    of silently reaching, or mutating, the real daemon (the vox-73m5 class).
+    """
+
+    __slots__ = ()
+
+    def synthesize(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise VoxdConnectionError(_DAEMON_DOWN)
+
+    def record(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise VoxdConnectionError(_DAEMON_DOWN)
+
+    def voices(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise VoxdConnectionError(_DAEMON_DOWN)
+
+
+def _unreachable_client() -> _UnreachableClient:
+    """Return a synthesis client whose every RPC models an unreachable daemon."""
+    return _UnreachableClient()
+
+
 @pytest.fixture()
 def _patch_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -87,6 +116,25 @@ def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
 
     monkeypatch.setattr(srv, "_session", SessionConfig())
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_daemon(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Neutralize both daemon-facing seams so no test reads or mutates the real voxd.
+
+    ``status`` and the music tools drive ``_program_tools``; ``speak`` / ``unmute``
+    / ``record`` / ``who`` drive ``_voxd_client``. Left un-patched, both reach the
+    live daemon -- a test asserting ``music_mode == "off"`` then fails whenever
+    music is actually playing (the vox-73m5 config/state-pollution class). The
+    defaults installed here are a clean *idle* ``FakeProgramGateway`` and an
+    *unreachable* synthesis client, so every test starts hermetic. Tests that need
+    a specific Program state override ``_program_tools`` via ``_install_fake``;
+    synthesis tests override ``_voxd_client`` with their own mock.
+    """
+    import punt_vox.server as srv
+
+    monkeypatch.setattr(srv, "_program_tools", FakeProgramGateway())
+    monkeypatch.setattr(srv, "_voxd_client", _unreachable_client)
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1078,13 @@ class TestStatusTool:
         assert result["vibe_signals"] == "tests-pass@12:00"
 
     def test_defaults_when_no_state_set(self) -> None:
+        """A bare ``status`` reads the hermetic idle default, never the live daemon.
+
+        ``music_mode`` is "off" because the autouse ``_hermetic_daemon`` fixture
+        installs an idle ``FakeProgramGateway`` -- not because ``voxd`` happens to
+        be unreachable. Without that fixture this test read the real daemon and
+        failed whenever music was actually playing.
+        """
         result = json.loads(status())
         assert result["voice"] is None
         assert result["provider"] is None
@@ -1075,6 +1130,37 @@ class TestStatusTool:
         program.first_track_ok(Part("id001", 1))
         fake.set_status(ProgramStatus.of(program, ProgramName("amb")))
         assert json.loads(status())["music_mode"] == "on"
+
+
+class TestSuiteDoesNotTouchRealDaemon:
+    """The autouse daemon redirect must be active and total for every test.
+
+    Analogous to ``TestSuiteDoesNotTouchRealConfig`` (test_config_isolation): it
+    fails loudly if the hermetic default ever regresses and a server-tool test can
+    once again read or mutate the live ``voxd`` (the vox-73m5 class).
+    """
+
+    def test_program_seam_defaults_to_a_fake(self) -> None:
+        """The status/music seam defaults to an in-memory fake, not a live client."""
+        import punt_vox.server as srv
+
+        assert isinstance(srv._program_tools, FakeProgramGateway)
+
+    def test_status_reads_the_fake_not_the_daemon(self) -> None:
+        """A bare ``status`` reads the idle default -- off -- through the fake seam."""
+        import punt_vox.server as srv
+
+        assert json.loads(status())["music_mode"] == "off"
+        gateway = srv._program_tools
+        assert isinstance(gateway, FakeProgramGateway)
+        assert gateway.verbs() == ["status"]
+
+    def test_synthesis_seam_is_unreachable_by_default(self) -> None:
+        """The default synthesis client models 'voxd down', never the real daemon."""
+        import punt_vox.server as srv
+
+        with pytest.raises(VoxdConnectionError):
+            srv._voxd_client().voices()
 
 
 # ---------------------------------------------------------------------------
