@@ -213,6 +213,10 @@ class GlobalClaudeImports:
     def _parse(self, text: str) -> tuple[list[str], set[str]]:
         """Split *text* into non-managed lines and the managed import set.
 
+        Non-managed lines keep their original endings
+        (``splitlines(keepends=True)``), so ``"".join(kept)`` reproduces the
+        user's content byte-for-byte -- trailing blank lines and all.
+
         Every managed marker (well-formed pair, a lone open that never
         closes, or a stray close) is consumed, and the managed header and
         its padding are dropped. Unknown content that somehow sits between
@@ -229,7 +233,7 @@ class GlobalClaudeImports:
         imports: set[str] = set()
         inside = False
         fence = _Fence()
-        for line in text.splitlines():
+        for line in text.splitlines(keepends=True):
             stripped = line.strip()
             was_fenced = fence.inside
             if fence.feed(stripped) or was_fenced:
@@ -252,16 +256,26 @@ class GlobalClaudeImports:
         return kept, imports
 
     def _render(self, kept: list[str], imports: frozenset[str]) -> str:
-        """Rebuild the file from non-managed lines plus one managed section."""
-        while kept and not kept[-1].strip():
-            kept.pop()
-        body = "\n".join(kept)
+        """Rebuild the file from the verbatim non-managed content plus one section.
+
+        *kept* holds the user's lines verbatim (see :meth:`_parse`), so content
+        outside the managed section is preserved byte-for-byte. When no import
+        remains the result is exactly the user's content -- uninstalling a file
+        that had no section before install restores it byte-for-byte.
+        """
+        body = "".join(kept)
         if not imports:
-            return f"{body}\n" if body else ""
+            return body
         section = self._build_section(imports)
-        if body:
-            return f"{body}\n\n{section}\n"
-        return f"{section}\n"
+        if not body:
+            return f"{section}\n"
+        # Anchor the OPEN marker to its own line without mutating the user's
+        # trailing whitespace: no separator when the body already ends in a
+        # newline (trailing blank lines included), one added when it does not.
+        # No blank line is injected -- anything beyond OPEN..CLOSE would survive
+        # the prune and break the byte-for-byte round-trip.
+        separator = "" if body.endswith("\n") else "\n"
+        return f"{body}{separator}{section}\n"
 
     def _build_section(self, imports: frozenset[str]) -> str:
         """Render the canonical managed section with sorted import lines."""

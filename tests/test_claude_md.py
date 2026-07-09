@@ -264,6 +264,31 @@ def test_prune_keeps_section_when_other_imports_remain(tmp_path: Path) -> None:
     assert _OPEN in text
 
 
+def test_uninstall_restores_no_section_file_byte_for_byte(tmp_path: Path) -> None:
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    # A user file that intentionally ends in trailing blank lines. Registering
+    # then pruning the only import must leave content outside the managed
+    # section untouched -- including those trailing blanks and the exact ending.
+    original = "# My rules\n\nkeep me\n\n\n"
+    reg.path.write_text(original, encoding="utf-8")
+    assert reg.register(_VOX) is True
+    assert reg.prune(_VOX) is True
+    assert reg.path.read_text(encoding="utf-8") == original
+
+
+def test_register_preserves_trailing_blank_lines(tmp_path: Path) -> None:
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    # The user's trailing blank lines survive registration verbatim; only the
+    # machine-owned section is appended after them.
+    reg.path.write_text("# rules\n\ncontent\n\n\n", encoding="utf-8")
+    reg.register(_VOX)
+    text = reg.path.read_text(encoding="utf-8")
+    assert text.startswith("# rules\n\ncontent\n\n\n")
+    assert _VOX in text
+
+
 def test_prune_absent_line_is_no_op(tmp_path: Path) -> None:
     reg = _global(tmp_path)
     reg.register("@~/other.md")
