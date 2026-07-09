@@ -132,13 +132,23 @@ class TestPartStore:
 
 
 class TestPathTraversalGuard:
-    """The store refuses directories that resolve outside the programs root."""
+    """A locator must be a single safe segment produced by scan()/create()."""
 
-    @pytest.mark.parametrize("escape", ["..", "../../etc"])
-    def test_open_rejects_traversal(self, tmp_path: Path, escape: str) -> None:
+    @pytest.mark.parametrize("locator", ["..", "../../etc", "a/b", "sub/mix-a3f1c9"])
+    def test_open_rejects_multi_segment_locator(
+        self, tmp_path: Path, locator: str
+    ) -> None:
+        # Traversal and any multi-segment locator are rejected up front, before
+        # the containment check -- restoring the single-segment invariant even for
+        # "a/b" that would otherwise resolve under the root (defense in depth).
         store = FilesystemProgramStore(tmp_path / "root")
-        with pytest.raises(ValueError, match="escapes the programs root"):
-            store.open(escape)
+        with pytest.raises(ValueError, match="single path segment"):
+            store.open(locator)
+
+    def test_open_rejects_empty_locator(self, tmp_path: Path) -> None:
+        store = FilesystemProgramStore(tmp_path / "root")
+        with pytest.raises(ValueError, match="single path segment"):
+            store.open("")
 
 
 class TestProtocolConformance:

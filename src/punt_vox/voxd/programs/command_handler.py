@@ -60,6 +60,17 @@ class ProgramCommandHandler(ABC):
 
     @staticmethod
     def _opt_str(msg: dict[str, object], key: str) -> str | None:
-        """Return a present string field, or ``None`` when absent (the contract)."""
+        """Return a present string field, or ``None`` when absent or null.
+
+        Absence (missing key or ``null``) is the documented "not supplied"
+        contract. A present-but-wrong-typed value (e.g. a JSON number) is a
+        malformed request, not an absent field: it raises so the boundary answers
+        with a wire error rather than silently ignoring it and falling through to
+        a different resolution path (a numeric ``album_id`` must not become a
+        catch-all tag query).
+        """
         value = msg.get(key)
-        return value if isinstance(value, str) else None
+        if value is None or isinstance(value, str):
+            return value
+        msg_text = f"field {key!r} must be a string, got {type(value).__name__}"
+        raise ValueError(msg_text)

@@ -123,6 +123,18 @@ class TestMutatingHandlers:
         # No 'id' field -> tag query over nothing -> no match error.
         assert reply["type"] == "error"
 
+    @pytest.mark.parametrize("field", ["album_id", "style", "name"])
+    async def test_select_non_string_field_is_an_error(
+        self, tmp_path: Path, field: str
+    ) -> None:
+        # A present-but-wrong-typed field is a malformed request, not an absent
+        # one: it must reply with an error rather than silently ignoring the field
+        # and falling through to a catch-all tag query.
+        reply = await _reply(SelectHandler(_service(tmp_path)), {"id": "3", field: 123})
+        assert reply["type"] == "error"
+        assert field in str(reply["message"])
+        assert "must be a string" in str(reply["message"])
+
 
 class TestListHandler:
     async def test_lists_albums_with_tags_and_counts(self, tmp_path: Path) -> None:

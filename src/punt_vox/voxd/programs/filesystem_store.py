@@ -164,7 +164,18 @@ class FilesystemProgramStore:
             return None
 
     def _contained_dir(self, directory: str) -> Path:
-        """Return ``root/directory``, raising if it escapes the programs root."""
+        """Return ``root/directory`` for a single validated segment, else raise.
+
+        A locator is always one directory-name segment produced by ``scan`` or
+        ``create``, never a path. Rejecting any empty or multi-segment locator
+        before the containment check restores that single-segment invariant
+        (defense in depth): ``a/b`` cannot slip through merely because it happens
+        to resolve under the root.
+        """
+        parts = Path(directory).parts
+        if len(parts) != 1 or parts[0] == "..":
+            msg = f"album locator must be a single path segment: {directory!r}"
+            raise ValueError(msg)
         path = self._root / directory
         if not self._is_contained(path):
             msg = f"album directory escapes the programs root: {directory!r}"
