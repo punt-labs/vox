@@ -242,7 +242,10 @@ class GlobalClaudeImports:
         )
         tmp = Path(tmp_name)
         try:
-            handle = os.fdopen(fd, "w", encoding="utf-8")
+            # newline="" writes the bytes verbatim -- no translation of "\n" to
+            # os.linesep. The rendered text already carries the user's original
+            # line endings (preserved by _read); translating defeats that.
+            handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
         except BaseException:
             os.close(fd)  # fdopen did not take ownership -- close the raw fd
             tmp.unlink(missing_ok=True)
@@ -309,10 +312,18 @@ class GlobalClaudeImports:
         return 0o644
 
     def _read(self) -> str:
-        """Return the file's text, or ``""`` when it does not exist."""
+        """Return the file's text verbatim, or ``""`` when it does not exist.
+
+        ``newline=""`` disables universal-newline translation: without it
+        ``read_text`` rewrites every ``\\r\\n`` and lone ``\\r`` to ``\\n`` on
+        read, normalizing a CRLF (or old-Mac CR) ``CLAUDE.md`` to LF before the
+        section is even parsed -- silently altering the user's content outside
+        the managed markers. Reading bytes as-is is what lets a register->prune
+        round-trip stay byte-identical for LF, CRLF, and lone-CR alike.
+        """
         if not self._path.is_file():
             return ""
-        return self._path.read_text(encoding="utf-8")
+        return self._path.read_text(encoding="utf-8", newline="")
 
     def _parse(self, text: str) -> tuple[list[str], set[str]]:
         """Split *text* into non-managed lines and the managed import set.
@@ -321,29 +332,19 @@ class GlobalClaudeImports:
         (``splitlines(keepends=True)``), so ``"".join(kept)`` reproduces the
         user's content byte-for-byte -- trailing blank lines and all.
 
-        Every managed marker (well-formed pair, a lone open that never
-        closes, or a stray close) is consumed, and the managed header and
-        its padding are dropped. Unknown content that somehow sits between
-        markers is preserved rather than destroyed. The result is that
-        re-rendering always yields exactly one canonical section.
+        Every managed marker (well-formed pair, a lone open that never closes,
+        or a stray close) is consumed, and the managed header and its padding
+        are dropped; unknown content between markers is preserved rather than
+        destroyed. Re-rendering thus yields exactly one canonical section.
 
-        The newline terminating the line immediately before a real ``OPEN``
-        marker is the separator :meth:`_render` injects to anchor the marker
-        on its own line, so it is stripped back off here. That makes the
-        write/parse pair lossless: a body with no final newline round-trips
-        to no final newline, and one that ends in blank lines keeps every one.
+        The newline before a real ``OPEN`` marker is the separator
+        :meth:`_render` injects; :meth:`_drop_separator` strips it back off so
+        the write/parse pair is lossless.
 
-        Marker detection is column-0 only (see :meth:`_is_marker`): an indented
-        marker is literal content, matching Markdown's own rule that four-space
-        indentation opens a code block. Combined with the fence-awareness below,
-        both ways of writing a marker as documentation -- indented or fenced --
-        survive a reconcile.
-
-        Parsing is fence-aware: any line inside a Markdown code fence (a
-        ```` ``` ```` or ``~~~`` block) is literal text and is preserved
-        byte-for-byte, so a ``<!-- punt:mandatory-reading -->`` marker that
-        someone documented inside a fenced block is never mistaken for a real
-        delimiter and never eaten.
+        Marker detection is column-0 only (see :meth:`_is_marker`) and
+        fence-aware: an indented marker (Markdown code block) or one inside a
+        ```` ``` ````/``~~~`` fence is literal content, preserved byte-for-byte,
+        so a marker written as documentation is never mistaken for a delimiter.
         """
         kept: list[str] = []
         imports: set[str] = set()
@@ -373,21 +374,14 @@ class GlobalClaudeImports:
     def _is_marker(line: str, marker: str) -> bool:
         """Return whether *line* is *marker* sitting flush at column 0.
 
-        :meth:`_render` always emits the ``OPEN``/``CLOSE`` markers with no
-        leading whitespace, so only a column-0 match is a real managed
-        delimiter. Comparing the raw line (line ending stripped, indentation
-        kept) rather than ``line.strip()`` means an *indented* marker -- a
-        Markdown indented code block, or one pasted into prose -- stays literal
-        content instead of being consumed and its section mangled. Trailing
-        spaces likewise disqualify it, since ``_render`` never writes any.
-
-        The strip covers ``\\r`` as well as ``\\n``: a ``~/.claude/CLAUDE.md``
-        saved with CRLF (or lone-CR) endings would otherwise leave the marker
-        line as ``...-->\\r``, fail this exact-match, and go unrecognized -- so
-        the existing section is never seen, a duplicate is appended on register
-        and prune silently no-ops. ``rstrip("\\r\\n")`` removes the line ending
-        only (a trailing space is not in the set), keeping the space-disqualifies
-        contract intact.
+        :meth:`_render` emits the markers at column 0 with no surrounding
+        whitespace, so only an exact column-0 match is a real delimiter.
+        Comparing the raw line (ending stripped, indentation kept) rather than
+        ``line.strip()`` keeps an *indented* or trailing-space marker -- pasted
+        prose or a Markdown code block -- as literal content instead of eating
+        its section. ``rstrip("\\r\\n")`` strips the ending only (not a trailing
+        space), so a CRLF/lone-CR marker line ``...-->\\r`` still matches and its
+        existing section is recognized rather than duplicated on register.
         """
         return line.rstrip("\r\n") == marker
 
@@ -395,9 +389,15 @@ class GlobalClaudeImports:
     def _drop_separator(kept: list[str]) -> None:
         """Remove the render-injected newline that anchors ``OPEN`` on its line.
 
-        The separator lives on the last kept line before the marker; stripping
-        exactly that one newline is what makes an install->uninstall round-trip
-        preserve the user's final-newline state byte-for-byte.
+        :meth:`_render` injects exactly one ``\\n`` between the user's content
+        and the section; this strips exactly that one ``\\n`` back off, so an
+        install->uninstall round-trip preserves the user's content byte-for-byte
+        regardless of line ending. Because ``_read`` keeps endings verbatim, one
+        rule covers all: a LF/CRLF body puts the separator on its own line
+        (dropped whole); a no-final-newline body has it appended to the last
+        line (``\\n`` peels off); a lone-CR body fuses ``\\r`` with the injected
+        ``\\n`` into ``\\r\\n`` that ``splitlines`` rejoins, and dropping the
+        ``\\n`` restores the lone ``\\r``.
         """
         if kept and kept[-1].endswith("\n"):
             kept[-1] = kept[-1][:-1]
@@ -429,10 +429,8 @@ class GlobalClaudeImports:
         section = self._build_section(imports)
         if not body:
             return f"{section}\n"
-        # Always inject exactly one newline between the user's content and the
-        # managed section. :meth:`_parse` strips exactly this newline off the
-        # line before OPEN, so the pair round-trips losslessly: no final newline
-        # stays no final newline, and trailing blank lines are all preserved.
+        # Inject exactly one newline between the user's content and the section;
+        # :meth:`_drop_separator` strips exactly this newline back off on parse.
         return f"{body}\n{section}\n"
 
     def _build_section(self, imports: frozenset[str]) -> str:

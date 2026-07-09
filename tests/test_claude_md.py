@@ -577,13 +577,57 @@ def test_crlf_existing_section_reconciles_idempotently(tmp_path: Path) -> None:
     assert text.count(_CLOSE) == 1
     assert text.count(_VOX) == 1
 
-    # Now that the file is the canonical (LF) rendering, a re-register is a
-    # true no-op -- the reconcile converged.
+    # The reconcile converged: the user's CRLF content is preserved verbatim
+    # and the machine section is canonical LF, so a re-register is a true no-op.
     assert reg.register(_VOX) is False
 
     # Prune works: the section is recognized and removed, not left orphaned.
     assert reg.prune(_VOX) is True
     assert _OPEN not in reg.path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        pytest.param(b"# My rules\r\n\r\nkeep me\r\n", id="crlf-trailing-nl"),
+        pytest.param(b"# My rules\r\nkeep me", id="crlf-no-final-nl"),
+        pytest.param(b"# a\r\n# b\r\n\r\n# c\r\n", id="crlf-multi-line"),
+        pytest.param(b"# My rules\rkeep me\r", id="cr-trailing-cr"),
+        pytest.param(b"# My rules\rkeep me", id="cr-no-final-cr"),
+        pytest.param(b"# My rules\n\nkeep me\n", id="lf-trailing-nl"),
+        pytest.param(b"# My rules\n\nkeep me", id="lf-no-final-nl"),
+    ],
+)
+def test_register_then_prune_is_byte_identical(tmp_path: Path, original: bytes) -> None:
+    # The reconcile must be a pure no-op on the bytes OUTSIDE the managed
+    # markers, whatever the user's line endings are. read_text used to apply
+    # universal-newline translation, normalizing every CRLF / lone-CR to LF on
+    # the way in, so a Windows- or old-Mac-authored CLAUDE.md was silently
+    # rewritten to LF on the FIRST register -- before the section was even
+    # spliced in. Reading and writing the bytes untranslated makes an
+    # install->uninstall round-trip restore the file exactly: no changed line
+    # endings, no stray \r, no added or dropped newline.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    reg.path.write_bytes(original)
+    assert reg.register(_VOX) is True
+    assert reg.prune(_VOX) is True
+    assert reg.path.read_bytes() == original
+
+
+def test_register_preserves_crlf_line_endings_verbatim(tmp_path: Path) -> None:
+    # After register, the user's CRLF content is preserved byte-for-byte; only
+    # the machine-owned section (canonical LF) is appended. The stray-\r
+    # regression rewrote the user's \r\n to \n; this pins the exact bytes.
+    reg = _global(tmp_path)
+    reg.path.parent.mkdir(parents=True)
+    original = b"# rules\r\n\r\ncontent\r\n"
+    reg.path.write_bytes(original)
+    assert reg.register(_VOX) is True
+    after = reg.path.read_bytes()
+    # The user's exact CRLF prefix is intact -- not normalized to LF.
+    assert after.startswith(b"# rules\r\n\r\ncontent\r\n")
+    assert _VOX.encode() in after
 
 
 def test_lone_cr_marker_is_recognized(tmp_path: Path) -> None:
