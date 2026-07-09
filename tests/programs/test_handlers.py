@@ -131,12 +131,17 @@ class TestMutatingHandlers:
         assert reply["type"] == "error"
         assert "no albums match" in str(reply["message"])
 
-    async def test_select_bad_id_is_an_error(self, tmp_path: Path) -> None:
+    async def test_select_ignores_unknown_field_and_matches_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        # An unknown field ("id_arg") is neither the album_id nor a tag axis, so it
+        # is ignored: the query is all-wildcards, and over an empty catalog that
+        # replies with a "no albums match" error.
         reply = await _reply(
             SelectHandler(_service(tmp_path)), {"id": "3", "id_arg": "x"}
         )
-        # No 'id' field -> tag query over nothing -> no match error.
         assert reply["type"] == "error"
+        assert "no albums match" in str(reply["message"])
 
     @pytest.mark.parametrize("field", ["album_id", "style", "name"])
     async def test_select_non_string_field_is_an_error(

@@ -41,6 +41,17 @@ def test_write_keys_env_mode_0600(writer: KeysEnvWriter, tmp_path: Path) -> None
     assert mode == 0o600, f"keys.env mode is {oct(mode)}, expected 0o600"
 
 
+def test_write_keys_env_is_atomic_and_leaves_no_temp(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """The atomic temp+replace write leaves only keys.env, no temp files behind."""
+    keys_path = tmp_path / "keys.env"
+    writer.write({"OPENAI_API_KEY": "sk-clean"}, keys_path)
+    survivors = sorted(p.name for p in tmp_path.iterdir())
+    assert survivors == ["keys.env"]  # the temp was renamed into place, not orphaned
+    assert "OPENAI_API_KEY=sk-clean" in keys_path.read_text(encoding="utf-8")
+
+
 def test_write_keys_env_preserves_existing_keys(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:

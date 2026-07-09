@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Self
 
@@ -31,9 +32,9 @@ class KeysEnvWriter:
         """Write ``keys.env`` at *keys_path* (mode 0600), merging existing keys.
 
         Preserves any keys already present that the caller did not override; an
-        empty value in *env* removes the key. The write is atomic (explicit
-        ``O_CREAT`` mode 0600, no umask-widened instant) so a secret file never
-        exists at wider-than-0600 permissions.
+        empty value in *env* removes the key. The write is atomic (temp file at
+        mode 0600 + fsync + ``os.replace``) so a crash never leaves a partial
+        credentials file and the secret never exists at wider-than-0600 perms.
         """
         self._harden_parent(keys_path)
         self._reject_irregular(keys_path)
@@ -126,10 +127,23 @@ class KeysEnvWriter:
             )
 
     def _write_atomic(self, keys_path: Path, content: str) -> None:
-        """Create *keys_path* at mode 0600 and write *content*, pinning the mode."""
-        fd = os.open(str(keys_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        """Write *content* to *keys_path* atomically at mode 0600.
+
+        Write a temp file in the same directory at 0600, fsync it, then
+        ``os.replace`` it into place. The replace is atomic, so a crash mid-write
+        can never leave a partially-written credentials file (losing provider
+        keys); and because the temp is created and chmod'd to 0600 before the
+        rename, the secret never exists at wider-than-0600 permissions.
+        """
+        fd, tmp_name = tempfile.mkstemp(dir=keys_path.parent, prefix=".keys.env.")
+        tmp = Path(tmp_name)
         try:
-            os.write(fd, content.encode("utf-8"))
-        finally:
-            os.close(fd)
-        keys_path.chmod(0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(keys_path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise

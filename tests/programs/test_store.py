@@ -134,21 +134,29 @@ class TestPartStore:
 class TestPathTraversalGuard:
     """A locator must be a single safe segment produced by scan()/create()."""
 
-    @pytest.mark.parametrize("locator", ["..", "../../etc", "a/b", "sub/mix-a3f1c9"])
-    def test_open_rejects_multi_segment_locator(
+    @pytest.mark.parametrize(
+        "locator",
+        [
+            "..",
+            "../../etc",
+            "a/b",
+            "sub/mix-a3f1c9",
+            "",
+            ".",
+            "./foo",  # normalizes to "foo" -- rejected as non-canonical
+            "foo/",  # trailing separator -- rejected as non-canonical
+        ],
+    )
+    def test_open_rejects_non_canonical_locator(
         self, tmp_path: Path, locator: str
     ) -> None:
-        # Traversal and any multi-segment locator are rejected up front, before
-        # the containment check -- restoring the single-segment invariant even for
-        # "a/b" that would otherwise resolve under the root (defense in depth).
+        # Only a plain single segment (exactly as scan()/create() produce) is
+        # accepted. Empty, ".", "..", multi-segment, and non-canonical spellings
+        # that would silently normalize to a segment are all refused up front,
+        # before the containment check (defense in depth).
         store = FilesystemProgramStore(tmp_path / "root")
         with pytest.raises(ValueError, match="single path segment"):
             store.open(locator)
-
-    def test_open_rejects_empty_locator(self, tmp_path: Path) -> None:
-        store = FilesystemProgramStore(tmp_path / "root")
-        with pytest.raises(ValueError, match="single path segment"):
-            store.open("")
 
 
 class TestProtocolConformance:
