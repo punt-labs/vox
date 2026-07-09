@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -69,6 +70,21 @@ class TestCreateAndScan:
         FilesystemProgramStore(tmp_path).create(_draft("a3f1c9", "lofi", "calm"))
         albums = FilesystemProgramStore(tmp_path).scan()
         assert [a.id.value for a in albums] == ["a3f1c9"]
+
+    def test_scan_isolates_a_corrupt_manifest(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A truncated id-bearing manifest is a real fault, not an intentional skip:
+        # scan logs it at ERROR and drops that one album, keeping the rest of the
+        # catalog -- and the daemon that scans at boot -- alive.
+        broken = tmp_path / "corrupt-dir"
+        broken.mkdir(parents=True)
+        (broken / "manifest.json").write_text('{"id": "bad123"}', encoding="utf-8")
+        FilesystemProgramStore(tmp_path).create(_draft("a3f1c9", "lofi", "calm"))
+        with caplog.at_level(logging.ERROR):
+            albums = FilesystemProgramStore(tmp_path).scan()
+        assert [a.id.value for a in albums] == ["a3f1c9"]  # the healthy album survives
+        assert any("corrupt manifest" in r.getMessage() for r in caplog.records)
 
     def test_manifest_written_utf8(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
