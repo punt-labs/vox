@@ -14,15 +14,15 @@ import hashlib
 import re
 from collections.abc import Container, Sequence
 from dataclasses import dataclass
-from typing import Final, Self, final
+from typing import ClassVar, Final, Self, final
 
+from punt_vox.voxd.programs.hex_token import HexToken
 from punt_vox.voxd.programs.wire import JsonObject
 
 __all__ = ["AlbumTags", "PromptFingerprint", "TagQuery"]
 
 _UNSAFE: Final = re.compile(r"[^a-z0-9]+")
 _FINGERPRINT_CHARS: Final = 16  # 64-bit truncation of the sha256 hex digest
-_HEX_DIGITS: Final = frozenset("0123456789abcdef")
 
 
 @final
@@ -105,29 +105,19 @@ class TagQuery:
 
 
 @final
-class PromptFingerprint:
+class PromptFingerprint(HexToken):
     """A stable hash of the authored prompt-set (base + variations, vox-1uo5).
 
     Two albums authored from the same prompt-set share a fingerprint; any change
     to the base or a variation yields a different one. It is hidden album
-    metadata -- never a user-facing tag -- so ``catalog.bind``/``newest`` resume
-    only a pool whose fingerprint equals the incoming prompt-set's.
+    metadata -- never a user-facing tag -- so ``catalog.resume``/``newest`` resume
+    only a pool whose fingerprint equals the incoming prompt-set's. Validation and
+    the value-object dunders come from :class:`HexToken`; this subclass adds only
+    the prompt-set hashing factory.
     """
 
-    __slots__ = ("_value",)
-    _value: str
-
-    def __new__(cls, value: str) -> Self:
-        cleaned = value.strip()
-        if not cleaned:
-            msg = "prompt fingerprint must be non-empty"
-            raise ValueError(msg)
-        if not all(char in _HEX_DIGITS for char in cleaned):
-            msg = f"prompt fingerprint must be lowercase hex: {value!r}"
-            raise ValueError(msg)
-        self = super().__new__(cls)
-        self._value = cleaned
-        return self
+    __slots__ = ()
+    _LABEL: ClassVar[str] = "prompt fingerprint"
 
     @classmethod
     def from_prompts(cls, base: str, variations: Sequence[str]) -> Self:
@@ -135,22 +125,3 @@ class PromptFingerprint:
         canonical = "\n".join([base, *variations])
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return cls(digest[:_FINGERPRINT_CHARS])
-
-    @property
-    def value(self) -> str:
-        """Return the hex fingerprint string."""
-        return self._value
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, PromptFingerprint):
-            return NotImplemented
-        return self._value == other._value
-
-    def __hash__(self) -> int:
-        return hash((PromptFingerprint, self._value))
-
-    def __repr__(self) -> str:
-        return f"PromptFingerprint({self._value!r})"
-
-    def __str__(self) -> str:
-        return self._value

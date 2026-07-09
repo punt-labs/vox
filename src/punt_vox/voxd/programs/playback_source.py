@@ -42,11 +42,12 @@ class PlaybackSource(Protocol):
         ...
 
     @property
-    def is_playing(self) -> bool:
+    def advances_on_end(self) -> bool:
         """Whether the loop should auto-advance this source on a track end.
 
-        The source-agnostic advance gate (F#6): a :class:`Program` reports its
-        mode gate, a Selection reports ``playing is not None`` -- so a radio
+        The source-agnostic advance gate (F#6), named for its contract rather than
+        for playing-status (it is *not* ``playing``): a :class:`Program` reports
+        its mode gate, a Selection reports ``playing is not None`` -- so a radio
         auto-advances on track-end exactly as a generate pool does.
         """
         ...

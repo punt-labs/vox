@@ -155,13 +155,13 @@ class ProgramLoop:
         wait for the single writer to apply it; the loop then plays the advanced
         Part. If ``playing`` already changed (a retune finished mid-track), the
         loop simply re-reads and plays the new pool's Part -- no advance. The
-        advance gate is source-agnostic (F#6): ``source.is_playing`` is the
+        advance gate is source-agnostic (F#6): ``source.advances_on_end`` is the
         Program mode gate for a generate pool and ``playing is not None`` for a
         replay Selection, so a radio auto-advances on track-end exactly as a
         generate pool does.
         """
         source = self._channel.source
-        if source.playing == target and source.is_playing:
+        if source.playing == target and source.advances_on_end:
             self._channel.changed.clear()
             self._channel.post(Rotate())
             await self._channel.changed.wait()

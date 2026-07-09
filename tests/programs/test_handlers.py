@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, cast, final
 
+import pytest
+
+from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.off_handler import OffHandler
@@ -137,3 +140,48 @@ class TestListHandler:
     async def test_empty_catalogue(self, tmp_path: Path) -> None:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
+
+
+@final
+class _RaisingHandler(ProgramCommandHandler):
+    """A handler whose ``_run`` raises a chosen exception -- exercises the boundary."""
+
+    __slots__ = ("_error",)
+    _error: Exception
+    _WIRE_TYPE = "program_probe"
+
+    def __new__(cls, error: Exception) -> Self:
+        self = super().__new__(cls, cast("ProgramService", None))
+        self._error = error
+        return self
+
+    def _run(self, msg: dict[str, object], /) -> None:
+        raise self._error
+
+
+class TestMutatingBoundary:
+    """F2: every expected domain failure becomes a wire error, not a torn socket.
+
+    ``store.open`` on a deleted album dir raises ``LookupError``; ``store.create``'s
+    ``mkdir(exist_ok=False)`` mint-race guard raises ``FileExistsError`` and a full
+    or read-only disk raises ``OSError``. Before the fix the boundary caught only
+    ``ValueError``, so these escaped, the router tore the socket down, and the
+    client saw a generic "connection closed" instead of the cause.
+    """
+
+    @pytest.mark.parametrize(
+        ("error", "needle"),
+        [
+            (ValueError("bad request"), "bad request"),
+            (LookupError("no saved album at directory 'x'"), "no saved album"),
+            (FileExistsError("File exists: 'x'"), "File exists"),
+            (OSError("No space left on device"), "No space left"),
+        ],
+    )
+    async def test_expected_failures_reply_with_an_error(
+        self, error: Exception, needle: str
+    ) -> None:
+        reply = await _reply(_RaisingHandler(error), {"id": "7"})
+        assert reply["type"] == "error"
+        assert reply["id"] == "7"
+        assert needle in str(reply["message"])

@@ -77,6 +77,6 @@ class SelectionPlayback:
         return False
 
     @property
-    def is_playing(self) -> bool:
+    def advances_on_end(self) -> bool:
         """Whether the loop should auto-advance this radio on a track end (F#6)."""
         return self._playing is not None

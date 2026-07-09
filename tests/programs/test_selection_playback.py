@@ -64,15 +64,15 @@ class TestNeverGenerates:
     def test_wants_generation_is_false(self) -> None:
         assert SelectionPlayback(_union(), RotatePolicy()).wants_generation is False
 
-    def test_is_playing_tracks_the_cursor(self) -> None:
-        assert SelectionPlayback(_union(), RotatePolicy()).is_playing is True
+    def test_advances_on_end_tracks_the_cursor(self) -> None:
+        assert SelectionPlayback(_union(), RotatePolicy()).advances_on_end is True
 
 
 class TestEmptyBoundary:
     def test_empty_selection_holds_no_cursor(self) -> None:
         source = SelectionPlayback(Selection.from_albums([]), RotatePolicy())
         assert source.playing is None
-        assert source.is_playing is False
+        assert source.advances_on_end is False
 
     def test_rotate_on_empty_is_a_no_op(self) -> None:
         source = SelectionPlayback(Selection.from_albums([]), RotatePolicy())

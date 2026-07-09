@@ -275,7 +275,7 @@ class Program:
         return self._state.filling or self._state.mode is Mode.RETRYING
 
     @property
-    def is_playing(self) -> bool:
+    def advances_on_end(self) -> bool:
         """Whether the loop should auto-advance on a track end (the mode gate, F#6)."""
         return self._state.mode in _PLAYING_MODES
 

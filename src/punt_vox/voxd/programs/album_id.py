@@ -11,32 +11,26 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Container
-from typing import Final, Self, final
+from typing import ClassVar, Final, Self, final
+
+from punt_vox.voxd.programs.hex_token import HexToken
 
 __all__ = ["AlbumId"]
 
 _ID_BYTES: Final = 3  # six hex chars -- 16.7M ids, ample for a personal library
-_HEX_DIGITS: Final = frozenset("0123456789abcdef")
 
 
 @final
-class AlbumId:
-    """A short, unique, lowercase-hex album identity (``secrets.token_hex(3)``)."""
+class AlbumId(HexToken):
+    """A short, unique, lowercase-hex album identity (``secrets.token_hex(3)``).
 
-    __slots__ = ("_value",)
-    _value: str
+    Validation, the ``value`` accessor, and the value-object dunders come from
+    :class:`HexToken`; this subclass adds only the collision-avoiding mint factory
+    (finding #8), so :meth:`Catalog.mint_id` delegates to it.
+    """
 
-    def __new__(cls, value: str) -> Self:
-        cleaned = value.strip()
-        if not cleaned:
-            msg = "album id must be non-empty"
-            raise ValueError(msg)
-        if not all(char in _HEX_DIGITS for char in cleaned):
-            msg = f"album id must be lowercase hex: {value!r}"
-            raise ValueError(msg)
-        self = super().__new__(cls)
-        self._value = cleaned
-        return self
+    __slots__ = ()
+    _LABEL: ClassVar[str] = "album id"
 
     @classmethod
     def mint(cls, taken: Container[AlbumId]) -> Self:
@@ -45,22 +39,3 @@ class AlbumId:
             candidate = cls(secrets.token_hex(_ID_BYTES))
             if candidate not in taken:
                 return candidate
-
-    @property
-    def value(self) -> str:
-        """Return the hex id string."""
-        return self._value
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, AlbumId):
-            return NotImplemented
-        return self._value == other._value
-
-    def __hash__(self) -> int:
-        return hash((AlbumId, self._value))
-
-    def __repr__(self) -> str:
-        return f"AlbumId({self._value!r})"
-
-    def __str__(self) -> str:
-        return self._value

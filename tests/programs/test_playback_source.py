@@ -38,13 +38,13 @@ class _ConformingSource:
         return False
 
     @property
-    def is_playing(self) -> bool:
+    def advances_on_end(self) -> bool:
         return self._playing is not None
 
 
 @final
 class _MissingMembers:
-    """A source missing ``wants_generation``/``is_playing`` -- not conforming."""
+    """A source missing ``wants_generation``/``advances_on_end`` -- not conforming."""
 
     __slots__ = ()
 
@@ -64,6 +64,6 @@ class TestProtocolConformance:
     def test_source_missing_members_is_not_instance(self) -> None:
         assert not isinstance(_MissingMembers(), PlaybackSource)
 
-    def test_is_playing_tracks_the_cursor(self) -> None:
-        assert _ConformingSource(Part("001.mp3", 1)).is_playing is True
-        assert _ConformingSource(None).is_playing is False
+    def test_advances_on_end_tracks_the_cursor(self) -> None:
+        assert _ConformingSource(Part("001.mp3", 1)).advances_on_end is True
+        assert _ConformingSource(None).advances_on_end is False

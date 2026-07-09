@@ -4,9 +4,16 @@ Every mutating ``program_*`` handler is the same thin adapter: parse the wire
 message, hand the work to the :class:`ProgramService` (which POSTs one serialized
 :class:`ControlSignal` -- the handler never touches the Program), and reply. Only
 the parse-and-dispatch step differs per command, so it is the one abstract hook;
-the request-id plumbing, the applied ack, and the boundary ``ValueError`` -> error
-reply live here once (DRY, replacing the copy-pasted try/except of the old music
-handlers). Handlers hold no session and no owner -- ``voxd`` is machine-universal.
+the request-id plumbing, the applied ack, and the boundary error reply live here
+once (DRY, replacing the copy-pasted try/except of the old music handlers).
+
+The boundary catches every *expected* domain failure and turns it into a wire
+``{"type": "error"}`` a client can read: a ``ValueError`` (a bad request or a
+lost-race guard), a ``LookupError`` (``store.open`` on a deleted album dir), and
+an ``OSError`` (``store.create``'s ``mkdir(exist_ok=False)`` mint-race guard,
+disk-full, permissions). Letting any of these escape would tear the socket down,
+leaving the client a generic "connection closed" instead of the cause. Handlers
+hold no session and no owner -- ``voxd`` is machine-universal.
 """
 
 from __future__ import annotations
@@ -40,7 +47,7 @@ class ProgramCommandHandler(ABC):
         request_id = str(msg.get("id", ""))
         try:
             self._run(msg)
-        except ValueError as exc:
+        except (ValueError, LookupError, OSError) as exc:
             await websocket.send_json(
                 {"type": "error", "id": request_id, "message": str(exc)}
             )
