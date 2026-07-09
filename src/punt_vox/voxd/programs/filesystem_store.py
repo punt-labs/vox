@@ -102,15 +102,11 @@ class FilesystemProgramStore:
         return self._root
 
     def scan(self) -> tuple[Album, ...]:
-        """Return every saved album, skipping idless legacy, escaping, and corrupt.
+        """Return every saved album, in per-album isolation (F#1, F4).
 
-        The one startup disk walk: for each ``*/manifest.json`` it resolves the
-        directory and confirms it is contained under the root (rejecting symlinks
-        and escapes, F#1), peeks ``opt_str("id")`` to skip idless legacy dirs
-        (no-migration, debug-logged), then pairs the parsed manifest with its
-        directory name as an :class:`Album`. Each album is scanned in isolation
-        (F4): one corrupt id-bearing manifest is logged at ERROR and skipped, so a
-        single torn file can never brick the catalog -- nor the whole daemon.
+        The one startup disk walk. Each ``*/manifest.json`` is scanned alone, so a
+        single escaping, idless-legacy, or corrupt directory is skipped without
+        aborting the walk -- one torn file can never brick the catalog or daemon.
         """
         if not self._root.is_dir():
             return ()
@@ -134,9 +130,9 @@ class FilesystemProgramStore:
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
         """Materialise ``draft`` into a fresh ``<slug>-<id>`` directory (finding #6).
 
-        The directory name is a single validated segment (``ProgramName``), so it
-        cannot traverse; ``mkdir(exist_ok=False)`` is the second-line race guard
-        behind ``AlbumId.mint`` (finding #8). The store stamps ``created``.
+        The name is a single validated segment (``ProgramName``), so it cannot
+        traverse; ``mkdir(exist_ok=False)`` is the race guard behind
+        ``AlbumId.mint`` (finding #8). The store owns the clock -- it stamps now.
         """
         segment = ProgramName(draft.locator)
         directory = self._contained_dir(segment.value)
@@ -146,30 +142,25 @@ class FilesystemProgramStore:
         return store
 
     def _scan_one(self, manifest_path: Path) -> Album | None:
-        """Return the Album for one manifest, or ``None`` to skip it.
+        """Return the Album for one manifest, or ``None`` to skip the directory (F4).
 
-        ``None`` covers three skips with two log levels. An escaping or idless
-        legacy dir is an *intentional* skip (debug-logged). A corrupt id-bearing
-        manifest is a real *fault* (F4): the parse raises, and rather than let it
-        propagate out of ``scan`` and brick the whole daemon, it is logged at
-        ERROR with the offending directory and that one album is dropped -- the
-        rest of the catalog survives.
+        Three skips, two log levels: an escaping dir (F#1) and an idless legacy
+        record are intentional debug-logged skips; a corrupt id-bearing manifest
+        is a real fault -- caught here and logged at ERROR with its directory
+        rather than propagated out of ``scan`` to brick the whole daemon.
         """
         directory = manifest_path.parent
         if not self._is_contained(directory):
             logger.debug("skipping album dir outside root: %s", directory)
             return None
         try:
-            text = manifest_path.read_text(encoding="utf-8")
-            obj = JsonObject.parse(text, "manifest")
+            obj = JsonObject.parse(manifest_path.read_text("utf-8"), "manifest")
             if obj.opt_str("id") is None:
                 logger.debug("skipping idless legacy album dir: %s", directory)
                 return None
             return Album(AlbumManifest.from_wire(obj), directory.name, self)
         except (ValueError, OSError) as exc:
-            logger.error(
-                "skipping corrupt album manifest in %s: %s", directory.name, exc
-            )
+            logger.error("skipping corrupt manifest in %s: %s", directory.name, exc)
             return None
 
     def _contained_dir(self, directory: str) -> Path:

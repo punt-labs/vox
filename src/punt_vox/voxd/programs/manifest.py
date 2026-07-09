@@ -82,11 +82,6 @@ class PartEntry:
         )
 
 
-def _sorted_parts(parts: tuple[PartEntry, ...]) -> tuple[PartEntry, ...]:
-    """Return the parts ordered by intrinsic index (the stable manifest order)."""
-    return tuple(sorted(parts, key=lambda entry: entry.index))
-
-
 @final
 class AlbumManifest:
     """The persisted description of one album -- id, tags, timestamp, and Parts."""
@@ -122,8 +117,13 @@ class AlbumManifest:
         self._tags = tags
         self._created = created
         self._fingerprint = fingerprint
-        self._parts = _sorted_parts(parts)
+        self._parts = cls._sorted(parts)
         return self
+
+    @staticmethod
+    def _sorted(parts: tuple[PartEntry, ...]) -> tuple[PartEntry, ...]:
+        """Return the parts ordered by intrinsic index (the stable manifest order)."""
+        return tuple(sorted(parts, key=lambda entry: entry.index))
 
     @property
     def id(self) -> AlbumId:
