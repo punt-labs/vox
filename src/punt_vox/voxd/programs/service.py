@@ -292,11 +292,17 @@ class ProgramService:
 
     @staticmethod
     def _radio_now_playing(source: SelectionPlayback) -> NowPlaying | None:
-        """Return the replay cursor's "Part N of M" view, or ``None`` when idle."""
+        """Return the replay cursor's "Part N of M" view, or ``None`` when idle.
+
+        ``N`` is the playing track's 1-based *position* in the selection and ``M``
+        is the selection's size, so ``N <= M`` always holds -- the same
+        position-of-count contract the generate-Program status uses.
+        """
+        pool = source.selection.playable_pool()
         playing = source.playing
         if playing is None:
             return None
-        return NowPlaying(index=playing.index, of=len(source.selection))
+        return NowPlaying(index=pool.index(playing) + 1, of=len(pool))
 
     @staticmethod
     def _idle_program() -> Program:

@@ -24,6 +24,7 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.interrupt_race import InterruptRace
+from punt_vox.voxd.programs.playback_health import PlaybackFaultKind
 from punt_vox.voxd.programs.playback_signal import Rotate
 
 if TYPE_CHECKING:
@@ -128,7 +129,7 @@ class ProgramLoop:
 
     async def _back_off_spawn(self, target: Part, exc: OSError) -> None:
         """Record the spawn failure observably, then pause so it cannot spin."""
-        self._health.record(target, str(exc))
+        self._health.record(target, str(exc), PlaybackFaultKind.SPAWN)
         logger.error(
             "player spawn failed for part %s; backing off %ss",
             target.index,
@@ -144,7 +145,7 @@ class ProgramLoop:
         backoff bounds the rate at which a wholly-corrupt pool would rotate.
         """
         reason = f"player exited with code {exit_code}"
-        self._health.record(target, reason)
+        self._health.record(target, reason, PlaybackFaultKind.TRACK_EXIT)
         logger.warning("player exited non-zero for part %s: %s", target.index, reason)
         await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
 

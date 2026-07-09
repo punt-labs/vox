@@ -125,14 +125,18 @@ class ProgramStatus:
 
     @staticmethod
     def _now_playing(program: Program) -> NowPlaying | None:
-        """Return the "Part N of M" view, or ``None`` when nothing plays."""
+        """Return the "Part N of M" view, or ``None`` when nothing plays.
+
+        ``N`` is the playing Part's 1-based *position* in the ordered ready pool and
+        ``M`` is the pool's size, so ``N <= M`` always holds. A gap from a permanent
+        fill failure (ready indices 1, 2, 4) reports "part 3 of 3", never the
+        intrinsic-index "4 of 3" that would read as nonsense.
+        """
+        pool = program.pool
         playing = program.playing
         if playing is None:
             return None
-        # "N" is the playing Part's intrinsic manifest index, not its
-        # ordinal position in the pool: a gap from a permanent fill failure (e.g.
-        # ready indices 1, 2, 4) must report "4", never the position-3 it holds.
-        return NowPlaying(index=playing.index, of=len(program.pool))
+        return NowPlaying(index=pool.index(playing) + 1, of=len(pool))
 
     @property
     def is_idle(self) -> bool:
