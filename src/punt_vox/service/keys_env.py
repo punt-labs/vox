@@ -130,16 +130,18 @@ class KeysEnvWriter:
         """Write *content* to *keys_path* atomically at mode 0600.
 
         Write a temp file in the same directory at 0600, fsync it, then
-        ``os.replace`` it into place. The replace is atomic, so a crash mid-write
-        can never leave a partially-written credentials file (losing provider
-        keys); and because the temp is created and chmod'd to 0600 before the
-        rename, the secret never exists at wider-than-0600 permissions.
+        ``Path.replace`` it into place. The replace is atomic, so a crash
+        mid-write can never leave a partially-written credentials file (losing
+        provider keys); ``mkstemp`` already creates the temp at 0600, so the
+        secret is never wider-than-0600 in the window. ``os.fdopen`` takes
+        ownership of the descriptor *first* so the ``with`` block always closes
+        it -- even if the ``fchmod`` (a belt-and-suspenders re-assert) raises.
         """
         fd, tmp_name = tempfile.mkstemp(dir=keys_path.parent, prefix=".keys.env.")
         tmp = Path(tmp_name)
         try:
-            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())

@@ -52,6 +52,23 @@ def test_write_keys_env_is_atomic_and_leaves_no_temp(
     assert "OPENAI_API_KEY=sk-clean" in keys_path.read_text(encoding="utf-8")
 
 
+def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
+    writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising fchmod still closes the fd (via fdopen) and orphans no temp file."""
+    keys_path = tmp_path / "keys.env"
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        msg = "chmod refused"
+        raise OSError(msg)
+
+    monkeypatch.setattr(os, "fchmod", _boom)
+    with pytest.raises(OSError, match="chmod refused"):
+        writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
+    # No orphaned temp, and the failed write never created keys.env.
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
 def test_write_keys_env_preserves_existing_keys(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:
