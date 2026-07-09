@@ -122,8 +122,9 @@ def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
 def _hermetic_daemon(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Neutralize both daemon-facing seams so no test reads or mutates the real voxd.
 
-    ``status`` and the music tools drive ``_program_tools``; ``speak`` / ``unmute``
-    / ``record`` / ``who`` drive ``_voxd_client``. Left un-patched, both reach the
+    ``status`` and the music tools drive ``_program_tools``; ``unmute`` / ``record``
+    / ``who`` drive ``_voxd_client`` (``speak`` / ``notify`` / ``vibe`` touch neither
+    seam -- they only read and write config). Left un-patched, both reach the
     live daemon -- a test asserting ``music_mode == "off"`` then fails whenever
     music is actually playing (the vox-73m5 config/state-pollution class). The
     defaults installed here are a clean *idle* ``FakeProgramGateway`` and an
