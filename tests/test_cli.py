@@ -1544,6 +1544,20 @@ class TestDoctorCommand:
 
 
 class TestInstallCommand:
+    @pytest.fixture(autouse=True)
+    def _redirect_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Redirect ``Path.home()`` so no install test writes the real home.
+
+        Step 3 of ``install`` calls ``VoxGuidance.for_current_user()``, which
+        resolves both the guide path (``~/.punt-labs/vox/CLAUDE.md`` via
+        ``user_state_dir``) and the global import target
+        (``~/.claude/CLAUDE.md``) from ``Path.home()``. Patching the classmethod
+        redirects both to the per-test temp tree, so the command exercises its
+        real write path against a redirected home rather than the developer's
+        (the vox-73m5 class of test-suite pollution).
+        """
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
     def test_install_success(self) -> None:
         runner = CliRunner()
         with (
@@ -1619,8 +1633,46 @@ class TestInstallCommand:
         assert "Skipped" in result.output
         assert "Restart Claude Code" in result.output
 
+    def test_install_writes_under_redirected_home_only(self, tmp_path: Path) -> None:
+        """Guard: the install path never escapes the redirected home.
+
+        Mirrors ``TestSuiteDoesNotTouchRealDaemon``. The guide + global import
+        are resolved entirely from ``Path.home()``, so with the autouse redirect
+        active every write lands under the temp tree. If that redirect
+        regresses, ``Path.home()`` resolves the developer's real home and these
+        assertions fail loudly -- making a real-home write structurally
+        impossible to ship silently (the vox-73m5 class).
+        """
+        assert Path.home() == tmp_path
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+            patch("punt_vox.service.install", return_value="voxd running"),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        # Both artifacts landed under the redirected home, proving the command
+        # resolved neither the real ~/.punt-labs nor the real ~/.claude.
+        assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
+        assert (tmp_path / ".claude" / "CLAUDE.md").is_file()
+
 
 class TestUninstallCommand:
+    @pytest.fixture(autouse=True)
+    def _redirect_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Redirect ``Path.home()`` so no uninstall test writes the real home.
+
+        ``uninstall`` calls ``VoxGuidance.for_current_user().uninstall()``,
+        which deletes ``~/.punt-labs/vox/CLAUDE.md`` and prunes the
+        ``~/.claude/CLAUDE.md`` import -- both resolved from ``Path.home()``.
+        Patching the classmethod keeps the teardown inside the per-test temp
+        tree (the vox-73m5 class of test-suite pollution).
+        """
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
     def test_uninstall_success(self) -> None:
         runner = CliRunner()
         with (
@@ -1632,6 +1684,76 @@ class TestUninstallCommand:
 
         assert result.exit_code == 0
         assert "Uninstalled." in result.output
+
+    def test_uninstall_reports_failure_when_teardown_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A raising guide teardown exits non-zero and names what survives.
+
+        ``uninstall`` writes the user's global ``~/.claude/CLAUDE.md``, so a
+        teardown that fails (permissions, filesystem error) must not print
+        ``Uninstalled.`` and exit 0 -- that would be a silent failure hiding an
+        orphaned guide or ``@``-import. The command surfaces the error, names
+        the paths that may remain, and exits 1, distinct from a healthy
+        plugin-step outcome.
+        """
+        from punt_vox.guidance import VoxGuidance
+
+        def boom_uninstall(_self: VoxGuidance) -> str:
+            raise OSError("simulated teardown failure")
+
+        monkeypatch.setattr(VoxGuidance, "uninstall", boom_uninstall)
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)  # plugin step succeeds
+            result = runner.invoke(app, ["uninstall"])
+
+        assert result.exit_code == 1
+        assert "Uninstalled." not in result.output
+        assert "teardown failed" in result.stderr
+        assert "simulated teardown failure" in result.stderr
+        # Names the surviving artifacts so the user can finish by hand.
+        assert ".punt-labs/vox/CLAUDE.md" in result.stderr
+        assert "@~/.punt-labs/vox/CLAUDE.md" in result.stderr
+        assert ".claude/CLAUDE.md" in result.stderr
+
+    def test_uninstall_operates_under_redirected_home_only(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard: the uninstall teardown never escapes the redirected home.
+
+        With a guide installed under the temp home, ``uninstall`` removes it and
+        prunes its import in place -- touching only the redirected tree. A
+        regressed redirect makes ``Path.home()`` real and fails this loudly, so
+        the real ``~/.claude`` / ``~/.punt-labs`` can never be torn down by the
+        suite (the vox-73m5 class).
+        """
+        assert Path.home() == tmp_path
+        from punt_vox.guidance import VoxGuidance
+
+        VoxGuidance.for_current_user().install()
+        doc = tmp_path / ".punt-labs" / "vox" / "CLAUDE.md"
+        global_md = tmp_path / ".claude" / "CLAUDE.md"
+        assert doc.is_file()
+        assert "@~/.punt-labs/vox/CLAUDE.md" in global_md.read_text(encoding="utf-8")
+
+        runner = CliRunner()
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(app, ["uninstall"])
+
+        assert result.exit_code == 0
+        assert not doc.exists()
+        assert "@~/.punt-labs/vox/CLAUDE.md" not in global_md.read_text(
+            encoding="utf-8"
+        )
 
 
 # ---------------------------------------------------------------------------

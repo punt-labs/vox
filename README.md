@@ -352,11 +352,16 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 | Purpose | Path |
 |---------|------|
 | Config (API keys) | `~/.punt-labs/vox/keys.env` |
+| Agent usage guide | `~/.punt-labs/vox/CLAUDE.md` |
 | Logs | `~/.punt-labs/vox/logs/voxd.log` |
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
 | Service unit (Linux) | `/etc/systemd/system/voxd.service` |
 | Service plist (macOS) | `~/Library/LaunchAgents/com.punt-labs.voxd.plist` |
+
+### Agent usage guide
+
+`vox install` writes an agent-facing usage guide to `~/.punt-labs/vox/CLAUDE.md` — how to drive the `mic` MCP tools and the vox slash commands — and registers the line `@~/.punt-labs/vox/CLAUDE.md` in `~/.claude/CLAUDE.md` inside a shared `<!-- punt:mandatory-reading -->` section. Claude Code resolves that top-level `@`-import into every session's context, so agents get vox guidance in any project without a per-project edit. The installer rewrites the guide on every install (single source of truth), and the registration is a no-op when already present — it never rewrites `~/.claude/CLAUDE.md` unnecessarily. `vox uninstall` deletes the guide and prunes the import line.
 
 ### Service Install
 
@@ -399,7 +404,7 @@ vox music off                                  # Stop background music
 vox status                                     # Current state
 vox version                                    # Print version
 vox doctor                                     # Check setup
-vox install                                    # Install Claude Code plugin
+vox install                                    # Install Claude Code plugin + register usage guide
 vox mcp                                        # Start MCP server (stdio)
 voxd                                           # Start audio daemon
 vox daemon install                             # Register voxd as system service + write API keys (prompts once for sudo)

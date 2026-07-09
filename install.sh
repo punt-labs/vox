@@ -216,6 +216,25 @@ if ! claude plugin list < /dev/null 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETP
 fi
 ok "$PLUGIN_NAME plugin installed"
 
+# Register the agent usage guide as a CLAUDE.md @-import so it loads in every
+# session. This path installs the plugin directly (never via `vox install`),
+# so the registration must happen here too. Idempotent + best-effort.
+#
+# `register-guidance` is unreleased plumbing: a punt-vox pinned to an older
+# VERSION won't have the subcommand, so probe with `--help` (typer exits
+# non-zero on an unknown command) before invoking. An older install no-ops
+# cleanly instead of emitting a failure every run; a new enough install
+# registers. Do not couple this to a lockstep version bump.
+if "$BINARY" register-guidance --help < /dev/null >/dev/null 2>&1; then
+  if "$BINARY" register-guidance < /dev/null 2>/dev/null; then
+    ok "usage guide registered"
+  else
+    warn "Could not register usage guide (run '$BINARY register-guidance' manually)"
+  fi
+else
+  info "usage guide registration not supported by $PACKAGE $VERSION (skipped)"
+fi
+
 cleanup_https_rewrite
 
 # --- Step 9: Verify ---
