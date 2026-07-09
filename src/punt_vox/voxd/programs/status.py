@@ -98,6 +98,22 @@ class ProgramStatus:
             playback_error=playback_error,
         )
 
+    @classmethod
+    def radio(cls, name: ProgramName | None, now_playing: NowPlaying | None) -> Self:
+        """Assemble the status of an active consume-only replay Selection.
+
+        A replay generates nothing, so the generation surface is idle and the
+        coarse mode is ``playing_rotating`` (a full, rotating pool). ``name`` is
+        the replay's display handle; ``now_playing`` is the cursor's position.
+        """
+        return cls(
+            format=Format.PLAYLIST,
+            mode=Mode.PLAYING_ROTATING,
+            generation=_NO_GENERATION,
+            name=name,
+            now_playing=now_playing,
+        )
+
     @staticmethod
     def _now_playing(program: Program) -> NowPlaying | None:
         """Return the "Part N of M" view, or ``None`` when nothing plays."""

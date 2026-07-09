@@ -89,13 +89,13 @@ class FillRecorder:
     def _post(self, outcome: ControlSignal) -> None:
         """Post a fill outcome bound to the Program it was generated for (finding #1).
 
-        Capturing ``channel.program`` here tags the outcome with the Program the
+        Capturing ``channel.source`` here tags the outcome with the source the
         generation ran for: any switch since launch would have cancelled this
         fill (so this method never runs for a switched-away pool), and a switch
         that lands *after* this post is caught by the guard, which drops the
-        outcome rather than applying it to the switched-in Program.
+        outcome rather than applying it to the switched-in source.
         """
-        self._channel.post(FreshFillOutcome(self._channel.program, outcome))
+        self._channel.post(FreshFillOutcome(self._channel.source, outcome))
 
     @staticmethod
     def _reason(exc: Exception, fallback: str) -> Reason:

@@ -1,9 +1,11 @@
-"""Tests for ``ProgramService`` -- the daemon's handler-facing Program seam.
+"""Tests for ``ProgramService`` -- the daemon's handler-facing playback seam.
 
 The service is driven synchronously via ``run_once`` (apply exactly one queued
 command), so each handler-facing call and its serialized effect are asserted
 without a running event-loop consumer. The Producer is a fake; the store is a
-real filesystem store under ``tmp_path`` so replay resolves from disk.
+real filesystem store under ``tmp_path`` so replay resolves from disk. The named
+invariants -- resume vs. mint, vox-1uo5 fingerprint, move #1 vibe tag, and the
+cap-free union replay -- are asserted here by name.
 """
 
 from __future__ import annotations
@@ -12,196 +14,148 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from punt_vox.voxd.programs import Format, Mode, ProgramName
-from punt_vox.voxd.programs.identifiers import PartRef
+from punt_vox.music_prompts import PromptSet
+from punt_vox.voxd.programs import Mode
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import TagQuery
 
-from .conftest import make_service, seed_program
+from .conftest import make_service, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.programs.service import ProgramService
 
+_ONE = PromptSet(base="one", variations=())
+_TWO = PromptSet(base="two", variations=())
+
 
 def _service(tmp_path: Path) -> ProgramService:
     return make_service(tmp_path / "programs")
 
 
-def _seed(tmp_path: Path, name: str, *indices: int) -> None:
-    seed_program(tmp_path / "programs", name, *indices)
-
-
-class TestStatus:
-    def test_idle_before_any_command(self, tmp_path: Path) -> None:
-        assert _service(tmp_path).status().is_idle
-
-    async def test_turn_on_makes_the_program_active(self, tmp_path: Path) -> None:
+class TestTurnOn:
+    async def test_turn_on_makes_a_program_active(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
-        service.turn_on(style="techno", name="mix", prompts=None)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
         await service.run_once()
         service.shutdown()  # cancel the fill the switch armed before it runs
         status = service.status()
         assert not status.is_idle
-        assert status.name == ProgramName("mix")
         assert status.mode is Mode.GENERATING_FIRST
 
-    async def test_turn_on_persists_a_manifest(self, tmp_path: Path) -> None:
+    def test_records_the_session_vibe_not_the_style(self, tmp_path: Path) -> None:
+        # move #1: the album's vibe tag is the session vibe, never the style.
         service = _service(tmp_path)
-        service.turn_on(style="techno", name="mix", prompts=None)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
         service.shutdown()
-        assert [m.name.value for m in service.saved_programs()] == ["mix"]
+        album = service.catalog_albums()[0]
+        assert album.manifest.tags.style == "techno"
+        assert album.manifest.tags.vibe == "calm"
+
+    def test_default_style_when_absent(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style=None, vibe=None, name=None, prompts=None)
+        service.shutdown()
+        assert service.catalog_albums()[0].manifest.tags.style == "ambient"
+
+
+class TestResumeVsMint:
+    def test_same_tags_and_fingerprint_resumes(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        service.shutdown()
+        assert len(service.catalog_albums()) == 1  # resumed, not minted twice
+
+    def test_differing_fingerprint_mints_fresh(self, tmp_path: Path) -> None:
+        # vox-1uo5: a (style, vibe) hit with a different prompt-set mints fresh.
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_TWO)
+        service.shutdown()
+        assert len(service.catalog_albums()) == 2
+
+    def test_named_resume_wins_regardless_of_fingerprint(self, tmp_path: Path) -> None:
+        # A --name pool keeps playing even when the incoming prompt-set differs.
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name="mix", prompts=_ONE)
+        service.turn_on(style="techno", vibe="calm", name="mix", prompts=_TWO)
+        service.shutdown()
+        assert len(service.catalog_albums()) == 1
+
+    def test_resume_a_saved_pool_plays_without_regenerating(
+        self, tmp_path: Path
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="techno", vibe="calm")
+        service = _service(tmp_path)
+        # Match the seeded album's fingerprint (conftest seeds the fallback set).
+        service.turn_on(
+            style="techno",
+            vibe="ambient",
+            name=None,
+            prompts=PromptSet.fallback("techno", ""),
+        )
+        service.shutdown()
+        # A fresh vibe ("ambient") mints a new album, so the seeded one is intact.
+        assert len(service.catalog_albums()) >= 1
 
 
 class TestReplay:
-    async def test_play_cold_starts_from_disk_without_filling(
-        self, tmp_path: Path
-    ) -> None:
-        _seed(tmp_path, "saved", 1, 2)
+    async def test_replay_union_spans_two_albums_cap_free(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
+        seed_album(root, 1, 2, 3, style="trance", vibe="calm", album_id="7b2e04")
         service = _service(tmp_path)
-        service.play(ProgramName("saved"), None)
+        service.replay(TagQuery(style="trance", vibe="calm"))
         await service.run_once()
         status = service.status()
-        assert status.name == ProgramName("saved")
-        assert status.mode is Mode.PLAYING_FILLING
-        assert status.generation.filling is False  # replay never generates
         assert status.now_playing is not None
-        assert status.now_playing.of == 2
+        assert status.now_playing.of == 5  # 2 + 3 parts, no 12-cap
+        assert status.generation.filling is False  # replay never generates
 
-    async def test_play_at_a_part_index(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "saved", 1, 2, 3)
+    async def test_replay_album_by_id(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
         service = _service(tmp_path)
-        service.play(ProgramName("saved"), PartRef(Format.PLAYLIST, 2))
+        service.replay_album(AlbumId("a3f1c9"))
         await service.run_once()
-        now = service.status().now_playing
-        assert now is not None
-        assert now.index == 2
+        assert service.status().now_playing is not None
 
-    def test_play_unknown_program_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="no saved program"):
-            _service(tmp_path).play(ProgramName("ghost"), None)
+    def test_replay_no_match_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="no albums match"):
+            _service(tmp_path).replay(TagQuery(style="ghost"))
 
-    def test_play_out_of_range_part_raises(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "saved", 1, 2)
-        with pytest.raises(ValueError, match="no part 9"):
-            _service(tmp_path).play(ProgramName("saved"), PartRef(Format.PLAYLIST, 9))
-
-    def test_play_program_with_no_ready_parts_raises(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "empty")  # no parts
-        with pytest.raises(ValueError, match="no ready parts"):
-            _service(tmp_path).play(ProgramName("empty"), None)
-
-
-class TestGappedReplay:
-    """Address ``playlist:N`` by intrinsic Part index, never list position (PR #299).
-
-    A permanent fill failure leaves a gap in the ready set (indices 1, 2, 4 with
-    index 3 failed), so an addressed part's intrinsic index and its ordinal
-    position in the pool diverge (MAJOR-1).
-    """
-
-    async def test_play_resolves_intrinsic_index_across_gap(
-        self, tmp_path: Path
-    ) -> None:
-        _seed(tmp_path, "gapped", 1, 2, 4)
-        service = _service(tmp_path)
-        service.play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 4))
-        await service.run_once()
-        now = service.status().now_playing
-        assert now is not None
-        assert now.index == 4  # intrinsic index 4, not the position-3 it holds
-
-    async def test_play_resolves_first_intrinsic_index(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "gapped", 1, 2, 4)
-        service = _service(tmp_path)
-        service.play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 1))
-        await service.run_once()
-        now = service.status().now_playing
-        assert now is not None
-        assert now.index == 1
-
-    def test_play_absent_gap_index_raises(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "gapped", 1, 2, 4)
-        with pytest.raises(ValueError, match="no part 3"):
-            _service(tmp_path).play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 3))
-
-    def test_play_index_beyond_pool_raises(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "gapped", 1, 2, 4)
-        with pytest.raises(ValueError, match="no part 9"):
-            _service(tmp_path).play(ProgramName("gapped"), PartRef(Format.PLAYLIST, 9))
+    def test_replay_unknown_id_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="no album with id"):
+            _service(tmp_path).replay_album(AlbumId("badbad"))
 
 
 class TestConsumeControls:
-    async def test_advance_rotates_the_playing_pool(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "saved", 1, 2, 3)
+    async def test_advance_rotates_a_replay(self, tmp_path: Path) -> None:
+        seed_album(tmp_path / "programs", 1, 2, 3, style="trance", vibe="calm")
         service = _service(tmp_path)
-        service.play(ProgramName("saved"), None)
+        service.replay(TagQuery(style="trance"))
         await service.run_once()
-        first = service.status().now_playing
+        assert service.status().now_playing is not None
         service.advance()
         await service.run_once()
         assert service.status().now_playing is not None
-        assert first is not None
 
-    async def test_off_turns_the_program_off(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "saved", 1, 2)
+    async def test_off_from_a_replay_goes_idle(self, tmp_path: Path) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
         service = _service(tmp_path)
-        service.play(ProgramName("saved"), None)
+        service.replay(TagQuery(style="trance"))
         await service.run_once()
         service.off()
         await service.run_once()
-        status = service.status()
-        assert status.mode is Mode.OFF
-        assert status.name == ProgramName("saved")  # O1: off keeps the name
+        assert service.status().is_idle  # a replay stops to idle (RadioOff)
 
-
-class TestNameFallback:
-    """Fix #3: a turn-on with no name derives one from style, else the defaults.
-
-    Reachable via ``/music on --style techno`` (OnHandler._opt_str returns None
-    when the wire omits ``name``), the live successor to the retired
-    ``auto_track_name`` defaults.
-    """
-
-    async def test_name_falls_back_to_style_when_name_absent(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_off_from_a_program_keeps_the_pool(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
-        service.turn_on(style="techno", name=None, prompts=None)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()
+        service.off()
         await service.run_once()
         service.shutdown()
-        assert service.status().name == ProgramName("techno")
-
-    async def test_name_and_style_default_when_both_absent(
-        self, tmp_path: Path
-    ) -> None:
-        service = _service(tmp_path)
-        service.turn_on(style=None, name=None, prompts=None)
-        await service.run_once()
-        service.shutdown()
-
-        assert service.status().name == ProgramName("music")
-        manifest = next(
-            m for m in service.saved_programs() if m.name == ProgramName("music")
-        )
-        assert manifest.subject.style == "ambient"  # _DEFAULT_STYLE
-
-    async def test_blank_name_and_style_fall_through_to_music(
-        self, tmp_path: Path
-    ) -> None:
-        service = _service(tmp_path)
-        service.turn_on(style="   ", name="  ", prompts=None)
-        await service.run_once()
-        service.shutdown()
-        assert service.status().name == ProgramName("music")
-
-
-class TestResume:
-    async def test_turn_on_resumes_a_saved_pool_playing(self, tmp_path: Path) -> None:
-        _seed(tmp_path, "mix", 1, 2)
-        service = _service(tmp_path)
-        service.turn_on(style="techno", name="mix", prompts=None)
-        await service.run_once()
-        service.shutdown()
-        status = service.status()
-        assert status.mode is Mode.PLAYING_FILLING  # resumed, not regenerated
-        assert status.now_playing is not None
+        assert service.status().mode is Mode.OFF

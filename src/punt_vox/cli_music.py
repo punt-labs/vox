@@ -1,15 +1,15 @@
-"""The consume-only ``vox music`` CLI -- play and manage saved audio Programs.
+"""The consume-only ``vox music`` CLI -- play and manage saved audio albums.
 
-The CLI never authors (no LLM, no generation): it lists, plays, loops, advances,
-and shows status. :class:`MusicCli` is a humble object testable with an in-memory
-gateway and formatter; playback crosses to ``voxd`` via a :class:`ProgramGateway`,
-other reads hit the store (design §4).
+The CLI never authors (no LLM, no generation): it lists, plays a Selection,
+advances, and shows status. :class:`MusicCli` is a humble object testable with an
+in-memory gateway and formatter; every read and command crosses to ``voxd`` via a
+:class:`ProgramGateway`. The daemon owns the catalog -- the CLI never touches the
+store directly (R2 layering fix).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Annotated, NoReturn, Self, final
 
 import typer
@@ -18,11 +18,9 @@ from websockets.exceptions import WebSocketException
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.dirs import default_output_dir
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.program_control import SelectionRequest
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
 from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
@@ -62,68 +60,64 @@ class MusicCli:
         return ClientProgramGateway(VoxClientSync())
 
     @staticmethod
-    def _programs_root() -> Path:
-        """Return the root directory under which saved Programs live.
-
-        Each Program is a pool directory directly under the music root
-        (``~/Music/vox/<name>/``), so macOS Music.app and Ubuntu players scan
-        the pools without an intervening ``programs/`` segment to descend past.
-        """
-        return default_output_dir()
-
-    @staticmethod
     def _fail(message: str) -> NoReturn:
         """Print an error to stderr and exit non-zero -- a clean CLI failure."""
         typer.echo(f"Error: {message}", err=True)
         raise typer.Exit(code=1)
 
     def list_programs(self) -> None:
-        """List saved Programs, grouped by name with their ready/total counts."""
-        programs = FilesystemProgramStore(self._programs_root()).list_programs()
-        if not programs:
-            self._formatter.emit({"programs": []}, "No saved programs.")
+        """List catalog albums via the daemon, with their ready/total counts."""
+        try:
+            albums = self._gateway_factory().catalog()
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
+        if not albums:
+            self._formatter.emit({"programs": []}, "No saved albums.")
             return
-        rows = [(m.name.value, len(m.ready_parts()), len(m.parts)) for m in programs]
-        entries = [{"name": n, "ready": r, "total": t} for n, r, t in rows]
-        listing = "\n".join(f"  {n} — {r}/{t} part(s)" for n, r, t in rows)
-        payload = {"programs": entries}
-        self._formatter.emit(payload, f"{len(rows)} saved program(s):\n{listing}")
+        entries = [
+            {
+                "id": a.id,
+                "style": a.style,
+                "vibe": a.vibe,
+                "name": a.name,
+                "ready": a.ready,
+                "total": a.total,
+            }
+            for a in albums
+        ]
+        listing = "\n".join(f"  {a.display_line()}" for a in albums)
+        self._formatter.emit(
+            {"programs": entries}, f"{len(albums)} saved album(s):\n{listing}"
+        )
 
     def play(
         self,
-        name: Annotated[str, typer.Argument(help="Saved Program name to play.")],
-        part: Annotated[
-            str | None,
-            typer.Argument(help="Optional part address, e.g. 'playlist:2'."),
+        style: Annotated[
+            str | None, typer.Argument(help="Style tag to replay, e.g. 'trance'.")
+        ] = None,
+        vibe: Annotated[
+            str | None, typer.Argument(help="Vibe tag to replay, e.g. 'calm'.")
+        ] = None,
+        name: Annotated[
+            str | None, typer.Option("--name", help="Curated album name to replay.")
+        ] = None,
+        album_id: Annotated[
+            str | None, typer.Option("--id", help="Exact album id to replay.")
         ] = None,
     ) -> None:
-        """Play a saved Program from disk, optionally at a specific part."""
-        ref = self._resolve_part(name, part)
+        """Replay a Selection resolved by style/vibe/name tags or an exact id."""
+        request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
         try:
-            outcome = self._gateway_factory().play(ProgramName(name), ref)
+            outcome = self._gateway_factory().select(request)
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
         self._formatter.emit(
-            {"music": "play", "name": name, "applied": outcome.applied},
-            outcome.display(f"Playing {name}."),
-        )
-
-    def loop(
-        self,
-        name: Annotated[str, typer.Argument(help="Saved Program name to loop.")],
-    ) -> None:
-        """Play a saved Program and rotate on every track end."""
-        try:
-            outcome = self._gateway_factory().loop(ProgramName(name))
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
-        self._formatter.emit(
-            {"music": "loop", "name": name, "applied": outcome.applied},
-            outcome.display(f"Looping {name}."),
+            {"music": "play", "applied": outcome.applied},
+            outcome.display("Playing selection."),
         )
 
     def advance(self) -> None:
-        """Advance the active Program to another Part."""
+        """Advance the active source to another Part."""
         try:
             outcome = self._gateway_factory().advance()
         except _GATEWAY_ERRORS as exc:
@@ -134,30 +128,12 @@ class MusicCli:
         )
 
     def status(self) -> None:
-        """Show the active Program's authoritative status."""
+        """Show the active source's authoritative status."""
         try:
             report = self._gateway_factory().status()
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
         self._formatter.emit(report.to_dict(), self._render_status(report))
-
-    def _resolve_part(self, name: str, token: str | None) -> PartRef | None:
-        """Resolve an optional ``playlist:N`` token, or ``None`` when none is given.
-
-        A bad token/program/format/index fails cleanly before any transition (#7).
-        """
-        if token is None:
-            return None
-        store = FilesystemProgramStore(self._programs_root())
-        try:
-            ref = PartRef.parse(token)
-            manifest = store.open(ProgramName(name)).manifest()
-            if ref.format is not manifest.format:
-                raise ValueError(f"{name} is not a {ref.format.value} program")
-            manifest.resolve_part(ref)  # validate by intrinsic index, not position
-        except (ValueError, LookupError) as exc:
-            self._fail(str(exc))
-        return ref
 
     @staticmethod
     def _render_status(status: ProgramStatus) -> str:
@@ -178,12 +154,11 @@ def build_music_app(formatter: OutputFormatter) -> typer.Typer:
     """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
     cli = MusicCli(formatter)
     app = typer.Typer(
-        help="Play and manage saved audio Programs (consume-only).",
+        help="Play and manage saved audio albums (consume-only).",
         no_args_is_help=True,
     )
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
-    app.command("loop")(cli.loop)
     app.command("next")(cli.advance)
     app.command("status")(cli.status)
     return app

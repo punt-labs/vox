@@ -265,6 +265,21 @@ class Program:
         return self._state.playing
 
     @property
+    def wants_generation(self) -> bool:
+        """Whether the fill reconciler should keep generation running (finding #1).
+
+        ``filling`` OR ``retrying`` -- the load-bearing vox-ig52 clause: a
+        transient backoff has ``filling`` false but must keep the retry engine
+        running, so a single transient error never strands the Program.
+        """
+        return self._state.filling or self._state.mode is Mode.RETRYING
+
+    @property
+    def is_playing(self) -> bool:
+        """Whether the loop should auto-advance on a track end (the mode gate, F#6)."""
+        return self._state.mode in _PLAYING_MODES
+
+    @property
     def pool(self) -> tuple[Part, ...]:
         """Return the ready Parts sorted by intrinsic index (stable, MAJOR-1)."""
         return self._state.ordered_pool

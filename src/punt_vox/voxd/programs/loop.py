@@ -24,7 +24,6 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.interrupt_race import InterruptRace
-from punt_vox.voxd.programs.mode import Mode
 from punt_vox.voxd.programs.playback_signal import Rotate
 
 if TYPE_CHECKING:
@@ -38,7 +37,6 @@ __all__ = ["ProgramLoop"]
 
 logger = logging.getLogger(__name__)
 
-_PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
 _SPAWN_BACKOFF_SECONDS = 2.0
 """Bounded pause before retrying a player that could not spawn (no CPU spin)."""
 
@@ -89,7 +87,7 @@ class ProgramLoop:
 
     async def _step(self) -> None:
         """Play the current Part, or wait until one becomes playable."""
-        target = self._channel.program.playing
+        target = self._channel.source.playing
         if target is not None:
             await self._play(target)
             return
@@ -98,7 +96,7 @@ class ProgramLoop:
     async def _wait_for_playable(self) -> None:
         """Block until a Part becomes playable (first track, or a retune)."""
         self._channel.changed.clear()
-        if self._channel.program.playing is not None:
+        if self._channel.source.playing is not None:
             return  # became available between the read and the clear
         await self._channel.changed.wait()
 
@@ -138,10 +136,14 @@ class ProgramLoop:
         If ``playing`` is still the track that just ended, post a Rotate and
         wait for the single writer to apply it; the loop then plays the advanced
         Part. If ``playing`` already changed (a retune finished mid-track), the
-        loop simply re-reads and plays the new pool's Part -- no advance.
+        loop simply re-reads and plays the new pool's Part -- no advance. The
+        advance gate is source-agnostic (F#6): ``source.is_playing`` is the
+        Program mode gate for a generate pool and ``playing is not None`` for a
+        replay Selection, so a radio auto-advances on track-end exactly as a
+        generate pool does.
         """
-        prog = self._channel.program
-        if prog.playing == target and prog.mode in _PLAYING_MODES:
+        source = self._channel.source
+        if source.playing == target and source.is_playing:
             self._channel.changed.clear()
             self._channel.post(Rotate())
             await self._channel.changed.wait()

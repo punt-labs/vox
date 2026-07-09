@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
     from punt_vox.voxd.programs.program import Program
 
 __all__ = ["SwitchProgram"]
@@ -48,11 +49,12 @@ class SwitchProgram:
         """A switch stops whatever was playing at once and begins the new Program."""
         return True
 
-    def apply(self, _program: Program, /) -> None:
+    def apply(self, _source: PlaybackSource, /) -> None:
         """Retarget the channel and context, then drive the seeded transition.
 
-        The prior Program (the positional argument) is discarded outright -- the
-        switch animates the freshly seeded :attr:`program` instead.
+        The prior source (the positional argument) is discarded outright -- the
+        switch animates the freshly seeded :attr:`program` instead, whether the
+        displaced source was a generate Program or a replay Selection.
         """
         self.channel.retarget(self.program)
         self.context.switch(self.active)

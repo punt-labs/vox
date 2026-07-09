@@ -82,9 +82,9 @@ class SubprocessPlayer:
         return self
 
     async def play(self, part: Part) -> SubprocessHandle:
-        """Spawn the player for ``part`` in the active directory, resolved now."""
+        """Spawn the player for ``part`` at its active-source path, resolved now."""
         proc = await asyncio.create_subprocess_exec(
-            *self._command(self._directories.active_directory() / part.identity),
+            *self._command(self._directories.locate(part)),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

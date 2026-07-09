@@ -14,10 +14,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode import Mode
+from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.programs.program import Program
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["RecoveringFillOutcome"]
 
@@ -25,12 +27,13 @@ __all__ = ["RecoveringFillOutcome"]
 class RecoveringFillOutcome(ABC):
     """A fill outcome that recovers a retrying Program, then dispatches by mode.
 
-    A produced Part and a permanent per-Part failure share one spine: if the
-    Program is retrying, ``recover`` first; then apply the mode-appropriate
-    transition for ``generating_first`` or ``playing_filling``, and drop the
-    outcome in any other mode (the pool has moved on -- off, rotating, failed).
-    Only the two mode hooks differ per outcome. A fill outcome never interrupts
-    what is playing, so ``interrupts`` is shared here too.
+    A produced Part and a permanent per-Part failure share one spine: narrow the
+    active source to a generate ``Program`` (rejecting as a lost race when a
+    replay Selection is active -- finding #4); if it is retrying, ``recover``
+    first; then apply the mode-appropriate transition for ``generating_first`` or
+    ``playing_filling``, and drop the outcome in any other mode (the pool has
+    moved on -- off, rotating, failed). Only the two mode hooks differ per
+    outcome. A fill outcome never interrupts what is playing.
     """
 
     __slots__ = ()
@@ -40,8 +43,16 @@ class RecoveringFillOutcome(ABC):
         """A fill outcome joins the pool or records a failure; it never interrupts."""
         return False
 
-    def apply(self, program: Program) -> None:
-        """Recover a retrying Program, then apply the mode-appropriate transition."""
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Recover a retrying Program, then apply the mode-appropriate transition.
+
+        A fill outcome landing while a replay Selection is active is a benign
+        lost race (finding #4): the ``isinstance`` narrow fails and the writer
+        rejects via ``GuardViolationError`` (INFO-logged) instead of crashing.
+        """
+        if not isinstance(source, Program):
+            GuardViolationError.reject("fill outcome dropped: replay source active")
+        program = source
         if program.mode is Mode.RETRYING:
             program.recover()
         match program.mode:

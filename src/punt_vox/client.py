@@ -435,13 +435,16 @@ class VoxClient:
         self,
         *,
         style: str | None = None,
+        vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
-        """Turn a Program on, forwarding the agent-authored prompts when present."""
+        """Turn a Program on, forwarding the session vibe and authored prompts."""
         fields: dict[str, object] = {}
         if style is not None:
             fields["style"] = style
+        if vibe is not None:
+            fields["vibe"] = vibe
         if name is not None:
             fields["name"] = name
         if prompts is not None:
@@ -457,19 +460,26 @@ class VoxClient:
         """Advance to another Part (the one ungated skip/next/loop transition)."""
         return await self._command("program_next")
 
-    async def program_play(
-        self, name: str, *, part: int | None = None
+    async def program_select(
+        self,
+        *,
+        style: str | None = None,
+        vibe: str | None = None,
+        name: str | None = None,
+        album_id: str | None = None,
     ) -> dict[str, Any]:
-        """Play a saved Program from disk, optionally at a specific 1-based part."""
-        fields: dict[str, object] = {"name": name}
-        if part is not None:
-            fields["part"] = part
-        return await self._command("program_play", **fields)
-
-    async def program_loop(self, name: str) -> dict[str, Any]:
-        """Play a saved Program and rotate on every track end."""
-        return await self._command("program_loop", name=name)
+        """Replay a Selection resolved by album id (direct) or by tags (F#7)."""
+        fields: dict[str, object] = {}
+        if album_id is not None:
+            fields["album_id"] = album_id
+        if style is not None:
+            fields["style"] = style
+        if vibe is not None:
+            fields["vibe"] = vibe
+        if name is not None:
+            fields["name"] = name
+        return await self._command("program_select", **fields)
 
     async def program_list(self) -> dict[str, Any]:
-        """List every saved Program, grouped."""
+        """List every album, grouped."""
         return await self._command("program_list")

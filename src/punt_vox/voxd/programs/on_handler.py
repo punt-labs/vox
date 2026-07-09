@@ -12,21 +12,16 @@ __all__ = ["OnHandler"]
 
 @final
 class OnHandler(ProgramCommandHandler):
-    """Handle ``program_on``: create or resume a Program and start it."""
+    """Handle ``program_on``: bind or mint an album by tags/name and start it."""
 
     __slots__ = ()
     _WIRE_TYPE = "program_on"
 
     def _run(self, msg: dict[str, object], /) -> None:
-        """Parse style/name/prompts and turn the Program on."""
+        """Parse style/vibe/name/prompts and turn the Program on."""
         self._service.turn_on(
             style=self._opt_str(msg, "style"),
+            vibe=self._opt_str(msg, "vibe"),
             name=self._opt_str(msg, "name"),
             prompts=PromptSet.from_wire(msg),
         )
-
-    @staticmethod
-    def _opt_str(msg: dict[str, object], key: str) -> str | None:
-        """Return a present string field, or ``None`` when absent (the contract)."""
-        value = msg.get(key)
-        return value if isinstance(value, str) else None

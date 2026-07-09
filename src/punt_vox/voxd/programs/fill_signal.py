@@ -16,12 +16,14 @@ from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.programs.fill_outcome import RecoveringFillOutcome
 from punt_vox.voxd.programs.format import MAX_RETRY
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode import Mode
+from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.identifiers import Reason
     from punt_vox.voxd.programs.part import Part
-    from punt_vox.voxd.programs.program import Program
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["PermanentFailure", "Produced", "TransientFailure"]
 
@@ -67,8 +69,16 @@ class TransientFailure:
         """A transient backoff pauses generation, never the existing playback."""
         return False
 
-    def apply(self, program: Program) -> None:
-        """Drive the modeled retry machine by the Program's current mode."""
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Drive the retry machine by mode, rejecting against a replay Selection.
+
+        A transient outcome landing while a replay Selection is active is a
+        benign lost race (finding #4): the narrow fails and the writer rejects
+        via ``GuardViolationError`` (INFO-logged) instead of crashing.
+        """
+        if not isinstance(source, Program):
+            GuardViolationError.reject("transient outcome dropped: replay active")
+        program = source
         mode = program.mode
         if mode is Mode.GENERATING_FIRST:
             program.first_track_transient(self.reason)

@@ -1,10 +1,11 @@
-"""Filesystem implementations of the Program/Part persistence protocols.
+"""Filesystem implementations of the album persistence protocols.
 
-These are the *only* modules that touch the disk for Program data: all
-``pathlib`` access, directory globbing, and atomic manifest writes live here.
-Each Program is a directory under a shared root, holding a ``manifest.json``
-(UTF-8) and its ``NNN.mp3`` Part files. Manifest writes are atomic and fsynced
-(temp file + ``os.replace``) so a crash mid-write never leaves a torn manifest.
+These are the *only* modules that touch the disk for album data: all ``pathlib``
+access, directory globbing, and atomic manifest writes live here. Each album is a
+``<slug>-<id>`` directory under a shared root, holding a ``manifest.json`` (UTF-8)
+and its ``NNN.mp3`` Part files. Manifest writes are atomic and fsynced (temp file
++ ``os.replace``) so a crash mid-write never leaves a torn manifest. This is the
+seam that dereferences an opaque locator to a ``Path`` (finding #3).
 """
 
 from __future__ import annotations
@@ -14,9 +15,11 @@ import os
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.identifiers import ProgramName
-from punt_vox.voxd.programs.manifest import PartEntry, ProgramManifest
+from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry, ProgramManifest
 from punt_vox.voxd.programs.part import Part
+from punt_vox.voxd.programs.wire import JsonObject
 
 __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 
@@ -27,7 +30,7 @@ _MANIFEST_NAME = "manifest.json"
 
 @final
 class FilesystemPartStore:
-    """One Program directory: its ``manifest.json`` and ``NNN.mp3`` Part files."""
+    """One album directory: its ``manifest.json`` and ``NNN.mp3`` Part files."""
 
     __slots__ = ("_directory", "_manifest")
     _directory: Path
@@ -41,7 +44,7 @@ class FilesystemPartStore:
 
     @property
     def directory(self) -> Path:
-        """Return the Program directory this store backs."""
+        """Return the album directory this store backs."""
         return self._directory
 
     def ready_parts(self) -> tuple[Part, ...]:
@@ -61,7 +64,7 @@ class FilesystemPartStore:
         return self._manifest
 
     def prepare(self) -> None:
-        """Ensure the Program directory exists before a write."""
+        """Ensure the album directory exists before a write."""
         self._directory.mkdir(parents=True, exist_ok=True)
 
     def record(self, entry: PartEntry) -> None:
@@ -82,7 +85,7 @@ class FilesystemPartStore:
 
 @final
 class FilesystemProgramStore:
-    """The set of Programs under one root directory (``~/Music/vox``)."""
+    """The set of albums under one root directory (``~/Music/vox``)."""
 
     __slots__ = ("_root",)
     _root: Path
@@ -97,56 +100,75 @@ class FilesystemProgramStore:
         """Return the programs root directory."""
         return self._root
 
-    def list_programs(self) -> tuple[ProgramManifest, ...]:
-        """Return every saved Program's manifest, ordered by name."""
+    def scan(self) -> tuple[Album, ...]:
+        """Return every saved album, skipping idless legacy and escaping dirs.
+
+        The one startup disk walk: for each ``*/manifest.json`` it resolves the
+        directory and confirms it is contained under the root (rejecting symlinks
+        and escapes, F#1), peeks ``opt_str("id")`` to skip idless legacy dirs
+        (no-migration, debug-logged), then pairs the parsed manifest with its
+        directory name as an :class:`Album`.
+        """
         if not self._root.is_dir():
             return ()
-        manifests = tuple(
-            self._read(path) for path in sorted(self._root.glob(f"*/{_MANIFEST_NAME}"))
-        )
-        return tuple(sorted(manifests, key=lambda m: m.name.value))
+        albums = [
+            album
+            for path in sorted(self._root.glob(f"*/{_MANIFEST_NAME}"))
+            if (album := self._scan_one(path)) is not None
+        ]
+        return tuple(albums)
 
-    def resolve(self, name: ProgramName) -> ProgramManifest | None:
-        """Return the manifest for ``name``, or ``None`` if none is saved."""
-        path = self._manifest_path(name)
-        if not path.is_file():
-            return None
-        return self._read(path)
-
-    def open(self, name: ProgramName) -> FilesystemPartStore:
-        """Return the PartStore for an existing Program, raising if absent."""
-        manifest = self.resolve(name)
-        if manifest is None:
-            msg = f"no saved program named {name.value!r}"
+    def open(self, directory: str) -> FilesystemPartStore:
+        """Return the PartStore for a scan/create-validated directory, else raise."""
+        path = self._contained_dir(directory)
+        manifest_path = path / _MANIFEST_NAME
+        if not manifest_path.is_file():
+            msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
-        return FilesystemPartStore(self._program_dir(name), manifest)
+        manifest = ProgramManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        return FilesystemPartStore(path, manifest)
 
-    def create(self, manifest: ProgramManifest) -> FilesystemPartStore:
-        """Create a new Program from ``manifest`` and return its PartStore."""
-        store = FilesystemPartStore(self._program_dir(manifest.name), manifest)
+    def create(self, draft: ManifestDraft) -> FilesystemPartStore:
+        """Materialise ``draft`` into a fresh ``<slug>-<id>`` directory (finding #6).
+
+        The directory name is a single validated segment (``ProgramName``), so it
+        cannot traverse; ``mkdir(exist_ok=False)`` is the second-line race guard
+        behind ``AlbumId.mint`` (finding #8). The store stamps ``created``.
+        """
+        segment = ProgramName(draft.locator)
+        directory = self._contained_dir(segment.value)
+        directory.mkdir(parents=True, exist_ok=False)
+        store = FilesystemPartStore(directory, draft.materialise())
         store.save_manifest()
         return store
 
-    def _program_dir(self, name: ProgramName) -> Path:
-        """Return the Program directory, refusing any path outside the root.
+    def _scan_one(self, manifest_path: Path) -> Album | None:
+        """Return the Album for one manifest, or ``None`` to skip it.
 
-        Defense-in-depth against path traversal (PY-EH-1): even if a name that
-        escapes the root reaches the store, the resolved directory must stay
-        under ``root``. ``ProgramName`` already blocks separators and dot
-        components, so this guard should never fire -- it exists to fail loud
-        if that value-object invariant is ever bypassed.
+        ``None`` is the documented "skip this dir" contract (escaping or idless
+        legacy), not a parse failure -- a malformed *id-bearing* manifest still
+        raises through ``from_wire``.
         """
-        directory = self._root / name.value
+        directory = manifest_path.parent
+        if not self._is_contained(directory):
+            logger.debug("skipping album dir outside root: %s", directory)
+            return None
+        obj = JsonObject.parse(manifest_path.read_text(encoding="utf-8"), "manifest")
+        if obj.opt_str("id") is None:
+            logger.debug("skipping idless legacy album dir: %s", directory)
+            return None
+        return Album(ProgramManifest.from_wire(obj), directory.name)
+
+    def _contained_dir(self, directory: str) -> Path:
+        """Return ``root/directory``, raising if it escapes the programs root."""
+        path = self._root / directory
+        if not self._is_contained(path):
+            msg = f"album directory escapes the programs root: {directory!r}"
+            raise ValueError(msg)
+        return path
+
+    def _is_contained(self, directory: Path) -> bool:
+        """Return whether ``directory`` resolves to a path under the root."""
         root = self._root.resolve()
         resolved = directory.resolve()
-        if resolved != root and root not in resolved.parents:
-            msg = f"program name escapes the programs root: {name.value!r}"
-            raise ValueError(msg)
-        return directory
-
-    def _manifest_path(self, name: ProgramName) -> Path:
-        return self._program_dir(name) / _MANIFEST_NAME
-
-    @staticmethod
-    def _read(path: Path) -> ProgramManifest:
-        return ProgramManifest.from_json(path.read_text(encoding="utf-8"))
+        return resolved == root or root in resolved.parents

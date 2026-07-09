@@ -28,9 +28,9 @@ from punt_vox.voxd.programs.wire import JsonObject
 from .conftest import AvoidRepeatPolicy, build_rotating, make_manifest
 
 
-def _restored(name: str, *indices: int) -> Program:
+def _restored(*indices: int) -> Program:
     """Return an idle Program over a saved pool (mode off, nothing playing)."""
-    manifest = make_manifest(name, *indices)
+    manifest = make_manifest(*indices)
     state = ProgramState.restored(Format.PLAYLIST, frozenset(manifest.ready_parts()))
     return Program(state, AvoidRepeatPolicy())
 
@@ -48,7 +48,7 @@ def test_idle_has_no_name() -> None:
 
 def test_off_with_saved_pool_names_the_program() -> None:
     """An off Program with a disk pool reports name set, off, nothing playing (O1)."""
-    status = ProgramStatus.of(_restored("ambient_techno", 1, 2, 3), ProgramName("x"))
+    status = ProgramStatus.of(_restored(1, 2, 3), ProgramName("x"))
 
     assert status.name == ProgramName("x")
     assert not status.is_idle
@@ -121,7 +121,7 @@ def test_program_level_failure_sets_last_error() -> None:
     "build",
     [
         ProgramStatus.idle,
-        lambda: ProgramStatus.of(_restored("saved", 1, 2), ProgramName("saved")),
+        lambda: ProgramStatus.of(_restored(1, 2), ProgramName("saved")),
         lambda: ProgramStatus.of(build_rotating(AvoidRepeatPolicy()), ProgramName("r")),
     ],
 )

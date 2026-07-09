@@ -1,12 +1,14 @@
-"""The ``ControlSignal`` command interface -- one serialized Program mutation.
+"""The ``ControlSignal`` command interface -- one serialized source mutation.
 
-Every mutation of the Program -- a user command (turn on, rotate, retune, off),
-an automatic advance, or a fill outcome from the :class:`Filler` -- is a
-``ControlSignal`` posted to the single-consumer :class:`ControlChannel`. The
-consumer applies signals one at a time, so the Z sequential semantics are real:
-no two commands ever interleave against a stale Program. Each signal is a typed
-command that knows its own transition (Command pattern, PY-DP-11) -- replacing
-the old string ``Literal`` control and the conditional forest that read it.
+Every mutation of the active playback source -- a user command (turn on, rotate,
+retune, off), an automatic advance, a switch to a replay Selection, or a fill
+outcome from the :class:`Filler` -- is a ``ControlSignal`` posted to the
+single-consumer :class:`ControlChannel`. The consumer applies signals one at a
+time, so the Z sequential semantics are real: no two commands ever interleave
+against a stale source. Each signal is a typed command that knows its own
+transition (Command pattern, PY-DP-11). A generate-family signal narrows
+``isinstance(source, Program)`` and rejects as a lost race when the active source
+is a consume-only :class:`SelectionPlayback` (finding #4).
 """
 
 from __future__ import annotations
@@ -14,13 +16,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.programs.program import Program
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["ControlSignal"]
 
 
 class ControlSignal(Protocol):
-    """A single command applied to the Program by the sole control consumer."""
+    """A single command applied to the active source by the sole control consumer."""
 
     @property
     def interrupts(self) -> bool:
@@ -32,6 +34,6 @@ class ControlSignal(Protocol):
         """
         ...
 
-    def apply(self, program: Program, /) -> None:
-        """Apply this command's transition to ``program`` (positional-only write)."""
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Apply this command's transition to ``source`` (positional-only write)."""
         ...

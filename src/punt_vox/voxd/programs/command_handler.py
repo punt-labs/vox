@@ -50,3 +50,9 @@ class ProgramCommandHandler(ABC):
     @abstractmethod
     def _run(self, msg: dict[str, object], /) -> None:
         """Parse ``msg`` and issue the one serialized command to the service."""
+
+    @staticmethod
+    def _opt_str(msg: dict[str, object], key: str) -> str | None:
+        """Return a present string field, or ``None`` when absent (the contract)."""
+        value = msg.get(key)
+        return value if isinstance(value, str) else None

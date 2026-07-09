@@ -1202,33 +1202,36 @@ class TestMusicTool:
 
 
 class TestMusicPlayTool:
-    """music_play routes a saved-Program replay through the gateway."""
+    """music_play routes a Selection replay through the gateway."""
 
-    def test_play_forwards_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_play_forwards_the_tag_query(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
 
-        result = json.loads(music_play("ambient_techno"))
+        result = json.loads(music_play(style="trance", vibe="calm"))
 
         assert result["applied"] is True
-        assert fake.calls[0].verb == "play"
-        assert fake.calls[0].name == "ambient_techno"
+        assert fake.calls[0].verb == "select"
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.style == "trance"
 
-    def test_play_empty_name_reports_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake(monkeypatch, FakeProgramGateway())
-        result = json.loads(music_play("   "))
-        assert "error" in result
+    def test_play_forwards_the_album_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        json.loads(music_play(album_id="a3f1c9"))
+
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.id == "a3f1c9"
 
     def test_play_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
         fake = MagicMock()
-        fake.play.side_effect = VoxdConnectionError("not running")
+        fake.select.side_effect = VoxdConnectionError("not running")
         monkeypatch.setattr(srv, "_program_tools", fake)
 
-        result = json.loads(music_play("ambient_techno"))
+        result = json.loads(music_play(style="trance"))
 
         assert "error" in result
 
@@ -1236,23 +1239,27 @@ class TestMusicPlayTool:
 class TestMusicListTool:
     """music_list groups saved Programs, not loose files."""
 
-    def test_list_groups_programs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_groups_albums(self, monkeypatch: pytest.MonkeyPatch) -> None:
         catalog = (
-            ProgramSummary(name="ambient_techno", format="music", ready=5, total=12),
-            ProgramSummary(name="jazz", format="music", ready=1, total=1),
+            ProgramSummary(
+                id="a3f1c9", style="trance", vibe="calm", format="music", ready=5
+            ),
+            ProgramSummary(
+                id="7b2e04", style="lofi", vibe="focus", format="music", ready=1
+            ),
         )
         _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
 
         result = json.loads(music_list())
 
-        assert [p["name"] for p in result["programs"]] == ["ambient_techno", "jazz"]
-        assert "ambient_techno" in result["message"]
+        assert [p["id"] for p in result["programs"]] == ["a3f1c9", "7b2e04"]
+        assert "a3f1c9" in result["message"]
 
     def test_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake(monkeypatch, FakeProgramGateway())
         result = json.loads(music_list())
         assert result["programs"] == []
-        assert "No saved programs" in result["message"]
+        assert "No saved albums" in result["message"]
 
     def test_list_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv

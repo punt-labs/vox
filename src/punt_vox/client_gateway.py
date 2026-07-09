@@ -13,8 +13,12 @@ from __future__ import annotations
 from typing import Any, Self, final
 
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.program_control import CommandOutcome, ProgramSummary, StartRequest
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
+from punt_vox.program_control import (
+    CommandOutcome,
+    ProgramSummary,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.voxd.programs.status import ProgramStatus
 from punt_vox.voxd.programs.wire import JsonObject
 
@@ -40,9 +44,12 @@ class ClientProgramGateway:
         return ProgramStatus.from_wire(obj.require_object("status"))
 
     def start(self, request: StartRequest) -> CommandOutcome:
-        """Turn a Program on from the authored ``request``."""
+        """Turn a Program on from the authored ``request`` (carrying the vibe)."""
         resp = self._client.program_on(
-            style=request.style, name=request.name, prompts=request.prompts
+            style=request.style,
+            vibe=request.vibe,
+            name=request.name,
+            prompts=request.prompts,
         )
         return self._outcome(resp)
 
@@ -54,17 +61,19 @@ class ClientProgramGateway:
         """Advance to another Part."""
         return self._outcome(self._client.program_next())
 
-    def play(self, name: ProgramName, part: PartRef | None) -> CommandOutcome:
-        """Play saved Program ``name`` from disk, optionally at a specific ``part``."""
-        index = None if part is None else part.index
-        return self._outcome(self._client.program_play(name.value, part=index))
-
-    def loop(self, name: ProgramName) -> CommandOutcome:
-        """Play saved Program ``name`` and rotate on every track end."""
-        return self._outcome(self._client.program_loop(name.value))
+    def select(self, request: SelectionRequest) -> CommandOutcome:
+        """Replay a Selection resolved by id (direct) or by tags (F#7)."""
+        return self._outcome(
+            self._client.program_select(
+                style=request.style,
+                vibe=request.vibe,
+                name=request.name,
+                album_id=request.id,
+            )
+        )
 
     def catalog(self) -> tuple[ProgramSummary, ...]:
-        """Return every saved Program, parsed from the ``program_list`` reply."""
+        """Return every album, parsed from the ``program_list`` reply."""
         obj = JsonObject.coerce(self._client.program_list(), "program_list")
         return tuple(
             self._summary(JsonObject.coerce(item, "program_list.programs"))
@@ -88,10 +97,13 @@ class ClientProgramGateway:
 
     @staticmethod
     def _summary(obj: JsonObject) -> ProgramSummary:
-        """Parse one catalogue entry from the wire."""
+        """Parse one catalogue entry (id, tags, counts) from the wire."""
         return ProgramSummary(
-            name=obj.require_str("name"),
+            id=obj.require_str("id"),
+            style=obj.require_str("style"),
+            vibe=obj.require_str("vibe"),
             format=obj.require_str("format"),
             ready=obj.require_int("ready"),
             total=obj.opt_int("total") or 0,
+            name=obj.opt_str("name"),
         )

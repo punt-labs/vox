@@ -134,12 +134,13 @@ class VoxClientSync:
         self,
         *,
         style: str | None = None,
+        vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
     ) -> dict[str, Any]:
-        """Turn a Program on from authored prompts."""
+        """Turn a Program on from the session vibe and authored prompts."""
         return self._runner.run(  # type: ignore[no-any-return]
-            self._call("program_on", style=style, name=name, prompts=prompts)
+            self._call("program_on", style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
     def program_off(self) -> dict[str, Any]:
@@ -150,16 +151,21 @@ class VoxClientSync:
         """Advance to another Part."""
         return self._runner.run(self._call("program_next"))  # type: ignore[no-any-return]
 
-    def program_play(self, name: str, *, part: int | None = None) -> dict[str, Any]:
-        """Play a saved Program from disk, optionally at a specific 1-based part."""
+    def program_select(
+        self,
+        *,
+        style: str | None = None,
+        vibe: str | None = None,
+        name: str | None = None,
+        album_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replay a Selection resolved by album id (direct) or by tags (F#7)."""
         return self._runner.run(  # type: ignore[no-any-return]
-            self._call("program_play", name, part=part)
+            self._call(
+                "program_select", style=style, vibe=vibe, name=name, album_id=album_id
+            )
         )
 
-    def program_loop(self, name: str) -> dict[str, Any]:
-        """Play a saved Program and rotate on every track end."""
-        return self._runner.run(self._call("program_loop", name))  # type: ignore[no-any-return]
-
     def program_list(self) -> dict[str, Any]:
-        """List every saved Program, grouped."""
+        """List every album, grouped."""
         return self._runner.run(self._call("program_list"))  # type: ignore[no-any-return]

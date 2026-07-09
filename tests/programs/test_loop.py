@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.programs import (
     Format,
@@ -23,6 +23,7 @@ from punt_vox.voxd.programs import (
     Program,
     ProgramState,
 )
+from punt_vox.voxd.programs.active_context import ActiveContext
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.fill_signal import Produced
@@ -31,13 +32,24 @@ from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
 
-from .conftest import FakeSleeper
+from .conftest import AvoidRepeatPolicy, FakeSleeper
 
 if TYPE_CHECKING:
     import pytest
 
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
+
+
+def _prog(channel: ControlChannel) -> Program:
+    """Return the channel's active source narrowed to the Program under test."""
+    return cast("Program", channel.source)
+
+
+def _turn_off(channel: ControlChannel) -> TurnOff:
+    """Build a source-agnostic TurnOff (idle program used only for the replay path)."""
+    idle = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    return TurnOff(channel, ActiveContext(), idle)
 
 
 @final
@@ -189,10 +201,10 @@ class TestOffInterrupts:
     async def test_off_kills_current_and_stops(self, rotating: Program) -> None:
         harness = _Harness(rotating)
         await harness.player.wait_for(1)
-        harness.channel.post(TurnOff())  # interrupts
+        harness.channel.post(_turn_off(harness.channel))  # interrupts
         await _settle()
         assert harness.player.procs[0].rc == -9  # player killed, not ended
-        assert harness.channel.program.mode is Mode.OFF
+        assert _prog(harness.channel).mode is Mode.OFF
         await harness.stop()
 
 
@@ -216,7 +228,7 @@ class TestGeneratingFirstThenPlays:
         harness.channel.post(TurnOn())  # empty pool -> generating_first
         await _settle()
         assert harness.player.parts == []  # nothing plays before the first track
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
         harness.channel.post(Produced(Part("id001", 1)))  # the fill delivers #1
         await harness.player.wait_for(1)
         assert harness.player.parts[0] == Part("id001", 1)
@@ -234,13 +246,13 @@ class TestSkipInGeneratingFirst:
             TurnOn()
         )  # empty pool -> generating_first, nothing playing
         await _settle()
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
 
         harness.channel.post(Rotate())  # a skip here has no playing Part to advance
         await _settle()
         assert harness.player.parts == []  # NO player spawned
         # The lost-race guard is swallowed: the mode is unchanged and nothing crashed.
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
         await harness.stop()
 
 
@@ -254,7 +266,7 @@ class TestRetuneDuringGeneratingFirst:
         harness = _Harness(Program(ProgramState.initial(), policy))
         harness.channel.post(TurnOn())  # generating_first, parked in _wait_for_playable
         await _settle()
-        mode_before = harness.channel.program.mode
+        mode_before = _prog(harness.channel).mode
         assert mode_before is Mode.GENERATING_FIRST
         assert harness.player.parts == []  # nothing playing yet
 
@@ -262,7 +274,7 @@ class TestRetuneDuringGeneratingFirst:
         harness.channel.post(VibeStyleChange(full))  # full pool -> playing_rotating
         # The loop wakes on `changed` and plays a saved Part at once -- no hang.
         await harness.player.wait_for(1)
-        assert harness.channel.program.mode is Mode.PLAYING_ROTATING
+        assert _prog(harness.channel).mode is Mode.PLAYING_ROTATING
         assert harness.player.parts[0] in full
         await harness.stop()
 
@@ -285,7 +297,7 @@ class TestConcurrentControlsStaySequential:
             _post(harness.channel, Produced(Part("id020", 20))),
         )
         await harness.channel.join()
-        prog = harness.channel.program
+        prog = _prog(harness.channel)
         # The Program is always a legal state; the last retune won the pool.
         assert {p.index for p in prog.pool} <= {20, 21}
         assert prog.mode in {Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING}

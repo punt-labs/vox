@@ -94,7 +94,7 @@ async def test_lifespan_starts_tasks_and_applies_a_command(
             )
             # (b) a posted command is applied end-to-end by the running writer.
             assert service.status().mode is Mode.OFF
-            service.turn_on(style="techno", name="mix", prompts=None)
+            service.turn_on(style="techno", vibe="calm", name="mix", prompts=None)
             applied = await _wait_for_mode(daemon, Mode.GENERATING_FIRST)
 
     assert applied  # the control writer listened and applied turn_on

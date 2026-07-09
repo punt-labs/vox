@@ -30,8 +30,8 @@ class FixedDirectory:
     def switch(self, directory: Path) -> None:
         self._directory = directory
 
-    def active_directory(self) -> Path:
-        return self._directory
+    def locate(self, part: Part) -> Path:
+        return self._directory / part.identity
 
 
 async def _spawn(*argv: str) -> asyncio.subprocess.Process:
