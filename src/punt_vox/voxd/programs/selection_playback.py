@@ -23,11 +23,14 @@ __all__ = ["SelectionPlayback"]
 class SelectionPlayback:
     """A cursor over a Selection: begins at the first track, rotates on advance."""
 
-    __slots__ = ("_last_played", "_playing", "_policy", "_selection")
+    __slots__ = ("_last_played", "_playing", "_policy", "_position", "_selection")
     _selection: Selection
     _policy: PlaybackPolicy
     _playing: Part | None
     _last_played: Part | None
+    # The playing track's 0-based index in the ordered pool; None when idle/empty.
+    # Maintained on each rotate so ``position`` is O(1) over an uncapped selection.
+    _position: int | None
 
     def __new__(cls, selection: Selection, policy: PlaybackPolicy) -> Self:
         self = super().__new__(cls)
@@ -35,6 +38,7 @@ class SelectionPlayback:
         self._policy = policy
         pool = selection.playable_pool()
         self._playing = pool[0] if pool else None
+        self._position = 0 if pool else None
         self._last_played = None
         return self
 
@@ -47,6 +51,16 @@ class SelectionPlayback:
     def playing(self) -> Part | None:
         """Return the (selection-unique) Part currently playing, or ``None``."""
         return self._playing
+
+    @property
+    def position(self) -> int | None:
+        """Return the playing track's 1-based position in the selection, or ``None``.
+
+        O(1): the cursor is maintained on each rotate, so a status read never
+        rescans the (uncapped, possibly cross-library) selection. ``None`` when
+        idle or empty, mirroring :attr:`playing`.
+        """
+        return None if self._position is None else self._position + 1
 
     @property
     def last_played(self) -> Part | None:
@@ -70,6 +84,9 @@ class SelectionPlayback:
             raise AssertionError(msg)
         self._last_played = self._playing
         self._playing = result.part
+        # One index scan here (rotate is infrequent -- once per track/skip) keeps
+        # the status read O(1).
+        self._position = pool.index(result.part)
 
     @property
     def wants_generation(self) -> bool:

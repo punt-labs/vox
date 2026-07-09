@@ -60,6 +60,30 @@ class TestRotate:
         assert source.playing == only
 
 
+class TestPosition:
+    def test_position_begins_at_one(self) -> None:
+        source = SelectionPlayback(_union(), RotatePolicy())
+        assert source.position == 1
+
+    def test_position_agrees_with_the_scanned_index_across_rotations(self) -> None:
+        selection = _union()
+        source = SelectionPlayback(selection, RotatePolicy())
+        pool = selection.playable_pool()
+        for _ in range(20):
+            source.rotate()
+            playing = source.playing
+            position = source.position
+            assert playing is not None
+            assert position is not None
+            # The O(1) cursor matches the O(n) scan it replaces, and is 1-based.
+            assert position == pool.index(playing) + 1
+            assert 1 <= position <= len(pool)
+
+    def test_position_is_none_when_empty(self) -> None:
+        source = SelectionPlayback(Selection.from_albums([]), RotatePolicy())
+        assert source.position is None
+
+
 class TestNeverGenerates:
     def test_wants_generation_is_false(self) -> None:
         assert SelectionPlayback(_union(), RotatePolicy()).wants_generation is False

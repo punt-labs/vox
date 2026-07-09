@@ -296,13 +296,13 @@ class ProgramService:
 
         ``N`` is the playing track's 1-based *position* in the selection and ``M``
         is the selection's size, so ``N <= M`` always holds -- the same
-        position-of-count contract the generate-Program status uses.
+        position-of-count contract the generate-Program status uses. The cursor is
+        read O(1) from the source, never rescanned over an uncapped selection.
         """
-        pool = source.selection.playable_pool()
-        playing = source.playing
-        if playing is None:
+        position = source.position
+        if position is None:
             return None
-        return NowPlaying(index=pool.index(playing) + 1, of=len(pool))
+        return NowPlaying(index=position, of=len(source.selection))
 
     @staticmethod
     def _idle_program() -> Program:
