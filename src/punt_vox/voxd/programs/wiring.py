@@ -14,11 +14,10 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.loop_handler import LoopHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.off_handler import OffHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
-from punt_vox.voxd.programs.play_handler import PlayHandler
+from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.sleeper import RealSleeper
 from punt_vox.voxd.programs.status_handler import StatusHandler
@@ -54,14 +53,13 @@ class ProgramSubsystem:
         return self._service
 
     def handlers(self) -> dict[str, MessageHandler]:
-        """Return the seven ``program_*`` wire handlers bound to the service."""
+        """Return the six ``program_*`` wire handlers bound to the service."""
         service = self._service
         return {
             "program_on": OnHandler(service),
             "program_off": OffHandler(service),
             "program_next": NextHandler(service),
-            "program_play": PlayHandler(service),
-            "program_loop": LoopHandler(service),
+            "program_select": SelectHandler(service),
             "program_list": ListHandler(service),
             "program_status": StatusHandler(service),
         }

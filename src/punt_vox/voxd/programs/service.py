@@ -1,62 +1,68 @@
-"""The ``ProgramService`` composition root -- the daemon's one Program seam.
+"""The ``ProgramService`` composition root -- the daemon's one playback seam.
 
-``ProgramService`` owns the whole live orchestration for the single active
-Program: the :class:`Program` entity, the single-writer :class:`ControlChannel`,
-the background :class:`Filler`, the :class:`ProgramLoop` and its player, and the
-:class:`ActiveContext` that names which pool is animated. The daemon constructs
-one service and registers thin wire handlers that call its handler-facing methods
-(:meth:`turn_on`, :meth:`play`, :meth:`advance`, :meth:`off`) and read its
-authoritative :meth:`status` per call. Every mutation is posted to the channel and
-applied by the sole consumer, so nothing a handler does races the Program (O2).
-
-The service is both the :class:`FillPlanSource` (the fill asks it for the active
-plan) and the ``PlayerDirectory`` (the player asks it for the active directory),
-delegating both to the one :class:`ActiveContext` the single writer swaps.
+``ProgramService`` owns the whole live orchestration: the single-writer
+:class:`ControlChannel` over the active :class:`PlaybackSource`, the background
+:class:`Filler`, the :class:`ProgramLoop` and its player, the :class:`Catalog`
+built once from ``store.scan()``, and the :class:`ActiveContext` that names which
+source is animated. It is an *orchestrator, not an algorithm*: the
+catalog owns query resolution (``by_name``/``resume``/``select``/``by_id``); the
+service owns only the mint side-effect (a domain object must not call
+``store.create``), seeds a source, and posts one serialized signal.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.music_prompts import PromptSet
-from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
+from punt_vox.voxd.programs.active_context import (
+    ActiveContext,
+    ActiveProgram,
+    ActiveSelection,
+)
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
+from punt_vox.voxd.programs.catalog import Album, Catalog
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
-from punt_vox.voxd.programs.format import Format
-from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
-from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
+from punt_vox.voxd.programs.manifest import ManifestDraft
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
+from punt_vox.voxd.programs.select_signal import SwitchSelection
+from punt_vox.voxd.programs.selection import Selection
+from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
 from punt_vox.voxd.programs.status import ProgramStatus
+from punt_vox.voxd.programs.status_views import NowPlaying
 from punt_vox.voxd.programs.subprocess_player import SubprocessPlayer
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.filler import FillPlan
-    from punt_vox.voxd.programs.identifiers import PartRef
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.programs.sleeper import Sleeper
-    from punt_vox.voxd.programs.store import PartStore, ProgramStore
+    from punt_vox.voxd.programs.store import ProgramStore
 
 __all__ = ["ProgramService"]
 
-_DEFAULT_STYLE = "ambient"
+_DEFAULT_STYLE: Final = "ambient"
+_RADIO_LABEL: Final = "radio"
 
 
 @final
 class ProgramService:
-    """Own and drive the one active Program; the handler-facing daemon seam."""
+    """Own and drive the one active source; the handler-facing daemon seam."""
 
     __slots__ = (
+        "_catalog",
         "_channel",
         "_context",
         "_filler",
@@ -67,6 +73,7 @@ class ProgramService:
     )
     _store: ProgramStore
     _root: Path
+    _catalog: Catalog
     _context: ActiveContext
     _channel: ControlChannel
     _filler: Filler
@@ -79,8 +86,9 @@ class ProgramService:
         self = super().__new__(cls)
         self._store = store
         self._root = root
+        self._catalog = Catalog(store.scan())
         self._context = ActiveContext()
-        self._channel = ControlChannel(Program(ProgramState.initial(), RotatePolicy()))
+        self._channel = ControlChannel(cls._idle_program())
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._health = PlaybackHealth()
@@ -95,9 +103,9 @@ class ProgramService:
         """Return the active fill plan -- the fill reconciliation's source."""
         return self._context.plan()
 
-    def active_directory(self) -> Path:
-        """Return the active Program's directory -- the player's source."""
-        return self._context.directory()
+    def locate(self, part: Part) -> Path:
+        """Return the on-disk path of ``part`` for the active source (the player)."""
+        return self._context.locate(part)
 
     # -- daemon lifecycle --------------------------------------------------
 
@@ -120,125 +128,183 @@ class ProgramService:
     # -- observation (authoritative, read per call, never cached) ----------
 
     def status(self) -> ProgramStatus:
-        """Return the daemon's authoritative Program status (vox-73m5, per call)."""
+        """Return the daemon's authoritative status, read fresh per call.
+
+        A generate Program reports the full Program status; a replay Selection
+        reports the consume-only radio status; an idle daemon reports idle.
+        """
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
-        return ProgramStatus.of(self._channel.program, active.name, self._health.fault)
+        source = self._channel.source
+        if isinstance(source, Program):
+            return ProgramStatus.of(source, active.name, self._health.fault)
+        if isinstance(source, SelectionPlayback):
+            return ProgramStatus.radio(
+                active.name, self._radio_now_playing(source), self._health.fault
+            )
+        return ProgramStatus.idle()
 
-    def saved_programs(self) -> tuple[ProgramManifest, ...]:
-        """Return every saved Program's manifest, by name (the ``list`` view)."""
-        return self._store.list_programs()
+    def catalog_albums(self) -> tuple[Album, ...]:
+        """Return every catalog album, newest first (the ``list`` view)."""
+        return self._catalog.by_tags(TagQuery())
 
     # -- handler-facing mutators (each POSTs one serialized command) --------
 
     def turn_on(
-        self, *, style: str | None, name: str | None, prompts: PromptSet | None
+        self,
+        *,
+        style: str | None,
+        vibe: str | None,
+        name: str | None,
+        prompts: PromptSet | None,
     ) -> None:
-        """Turn a Program on: create or resume its pool, then generate/play.
+        """Bind an album by tags/name (+ fingerprint) or mint one, then generate.
 
-        A brand-new name creates an empty Program that generates its first Part;
-        an existing name resumes its saved pool (playing at once, filling only
-        below full). Never regenerates a full pool.
+        Resolution is the catalog's: ``--name`` resumes the named album (or mints
+        an auto-suffixed one on a fresh name); otherwise the newest album matching
+        the ``(style, vibe)`` tags *and* the incoming prompt fingerprint resumes,
+        and a fingerprint mismatch mints a fresh album rather than growing a
+        foreign pool. The recorded vibe tag is the session vibe, not the style.
         """
-        program_name = self._name_for(name, style)
-        subject, disk_pool, store = self._prepare_on(program_name, style)
-        active = ActiveProgram(
-            name=program_name,
-            store=store,
-            subject=subject,
-            directory=self._root / program_name.value,
-            prompts=self._resolve_prompts(prompts, subject.style),
+        clean_style = AlbumTags.canonical(style or "") or _DEFAULT_STYLE
+        clean_vibe = AlbumTags.canonical(vibe or "") or clean_style
+        prompt_set = (
+            prompts if prompts is not None else PromptSet.fallback(clean_style, "")
         )
-        self._switch(Format.PLAYLIST, active, disk_pool, target=None)
+        fingerprint = PromptFingerprint.from_prompts(
+            prompt_set.base, prompt_set.variations
+        )
+        album = self._bind(clean_style, clean_vibe, name, fingerprint)
+        active = ActiveProgram(
+            album_id=album.id,
+            store=self._store.open(album.locator),
+            tags=album.manifest.tags,
+            directory=self._root / album.locator,
+            prompts=prompt_set,
+        )
+        # Seed the pool from the freshly-opened store, never a catalog snapshot:
+        # a re-``on`` of a filled album must restore its live parts, or the fill
+        # would see disk already full, start nothing, and the loop would hang.
+        program = Program(
+            ProgramState.restored(
+                album.manifest.format, frozenset(active.store.ready_parts())
+            ),
+            RotatePolicy(),
+        )
+        self._channel.post(
+            SwitchProgram(self._channel, self._context, program, active, target=None)
+        )
 
-    def play(self, name: ProgramName, part: PartRef | None) -> None:
-        """Cold-start replay of a saved Program from disk -- no generation (finding #2).
+    def replay(self, query: TagQuery) -> None:
+        """Replay the union Selection of every album matching ``query`` (no fill)."""
+        self._start_replay(self._catalog.select(query), _RADIO_LABEL)
 
-        Raises ``ValueError`` when the Program is unknown, has no ready Part, or
-        the addressed part index is out of range (resolved before any transition,
-        finding #7).
+    def replay_album(self, album_id: AlbumId) -> None:
+        """Replay a single album resolved by its id -- a direct lookup.
+
+        Distinguishes an unknown id from a known-but-empty album: a resolved
+        album with zero ready tracks reports "no playable tracks yet" rather than
+        the generic tag-miss message, which would misread as an unknown album.
         """
-        manifest = self._store.resolve(name)
-        if manifest is None:
-            msg = f"no saved program named {name.value!r}"
+        album = self._catalog.by_id(album_id)
+        if album is None:
+            msg = f"no album with id {album_id.value!r}"
             raise ValueError(msg)
-        ready = manifest.ready_parts()
-        if not ready:
-            msg = f"{name.value!r} has no ready parts to play"
+        selection = Selection.from_albums([(album.locator, album.ready_parts())])
+        if not selection:
+            msg = f"album {album_id.value!r} has no playable tracks yet"
             raise ValueError(msg)
-        target = ready[0] if part is None else manifest.resolve_part(part)
-        active = ActiveProgram(
-            name=name,
-            store=self._store.open(name),
-            subject=manifest.subject,
-            directory=self._root / name.value,
-            prompts=self._resolve_prompts(None, manifest.subject.style),
-        )
-        self._switch(manifest.format, active, frozenset(ready), target=target)
-
-    def loop(self, name: ProgramName) -> None:
-        """Replay a saved Program and rotate on every track end (play, no part)."""
-        self.play(name, None)
+        self._start_replay(selection, album.locator)
 
     def advance(self) -> None:
         """Advance to another Part -- the one ungated skip/next/loop transition."""
         self._channel.post(Rotate())
 
     def off(self) -> None:
-        """Turn the active Program off (stop playback, cancel the fill)."""
-        self._channel.post(TurnOff())
+        """Stop the active source (a Program keeps its pool; a replay goes idle)."""
+        self._channel.post(TurnOff(self._channel, self._context, self._idle_program()))
 
     # -- internals ---------------------------------------------------------
 
-    def _switch(
-        self,
-        fmt: Format,
-        active: ActiveProgram,
-        disk_pool: frozenset[Part],
-        target: Part | None,
-    ) -> None:
-        """Post a switch to a freshly seeded Program over ``disk_pool``."""
-        program = Program(ProgramState.restored(fmt, disk_pool), RotatePolicy())
+    def _start_replay(self, selection: Selection, label: str) -> None:
+        """Seed a replay over ``selection`` and post the switch, rejecting empty."""
+        if not selection:
+            msg = "no albums match the selection"
+            raise ValueError(msg)
+        playback = SelectionPlayback(selection, RotatePolicy())
+        active = ActiveSelection(self._root, selection, label)
         self._channel.post(
-            SwitchProgram(self._channel, self._context, program, active, target)
+            SwitchSelection(self._channel, self._context, playback, active)
         )
 
-    def _prepare_on(
-        self, name: ProgramName, style: str | None
-    ) -> tuple[PlaylistSubject, frozenset[Part], PartStore]:
-        """Resolve the subject, saved pool, and store for a ``turn_on``."""
-        existing = self._store.resolve(name)
-        if existing is not None:
-            return (
-                existing.subject,
-                frozenset(existing.ready_parts()),
-                self._store.open(name),
-            )
-        subject = self._subject_for(style)
-        store = self._store.create(
-            ProgramManifest(name=name, fmt=Format.PLAYLIST, subject=subject, parts=())
-        )
-        return subject, frozenset(), store
+    def _bind(
+        self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
+    ) -> Album:
+        """Resolve the album to bind: named resume, tag+fingerprint resume, or mint."""
+        handle = (name or "").strip()
+        if handle:
+            existing = self._catalog.by_name(handle)
+            if existing is not None and self._safe_to_resume(existing, fingerprint):
+                return existing
+            return self._mint(style, vibe, handle, fingerprint)
+        resumed = self._catalog.resume(style, vibe, fingerprint)
+        if resumed is not None:
+            return resumed
+        return self._mint(style, vibe, None, fingerprint)
 
-    @staticmethod
-    def _name_for(name: str | None, style: str | None) -> ProgramName:
-        """Derive the Program's addressable name from the request (name, else style)."""
-        raw = (name or "").strip() or (style or "").strip() or "music"
-        return ProgramName(raw)
+    def _safe_to_resume(self, album: Album, fingerprint: PromptFingerprint) -> bool:
+        """Return whether resuming ``album`` cannot blend two prompt sets in one pool.
 
-    @staticmethod
-    def _subject_for(style: str | None) -> PlaylistSubject:
-        """Build the authoring subject for a new Program (style is the only axis)."""
-        clean = (style or "").strip() or _DEFAULT_STYLE
-        return PlaylistSubject(vibe=clean, style=clean)
-
-    @staticmethod
-    def _resolve_prompts(prompts: PromptSet | None, style: str) -> PromptSet:
-        """Return the pool's prompt set: the agent's, or the minimal fallback.
-
-        The fill composes each Part's generation prompt and title from the set,
-        so composition is deferred to :meth:`FillPlan.spec_for` rather than
-        flattened here -- the raw variation clause survives to title the Part.
+        A named resume attaches the *incoming* prompt set to the album's continued
+        fill. Generating a partly-filled album's remaining tracks from a prompt set
+        other than the one that authored it would mix two identities in one pool,
+        so a partial album resumes only when the incoming fingerprint matches its
+        own. A full album never fills, so any prompt set is safe. On a mismatch the
+        caller mints a fresh, auto-suffixed album instead of filling foreign prompts.
         """
-        return prompts if prompts is not None else PromptSet.fallback(style, "")
+        if album.manifest.prompt_fingerprint == fingerprint:
+            return True
+        return self._is_full(album)
+
+    def _is_full(self, album: Album) -> bool:
+        """Return whether ``album`` already holds a full pool for its format."""
+        ready = self._store.open(album.locator).ready_parts()
+        return len(ready) >= album.manifest.format.pool_size
+
+    def _mint(
+        self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
+    ) -> Album:
+        """Create a fresh album (auto-suffixing a colliding name), register it."""
+        final_name = (
+            None
+            if name is None
+            else AlbumTags.mint_unique_name(name, self._catalog.taken_names())
+        )
+        tags = AlbumTags(style=style, vibe=vibe, name=final_name)
+        draft = ManifestDraft(
+            album_id=self._catalog.mint_id(), tags=tags, fingerprint=fingerprint
+        )
+        store = self._store.create(draft)
+        album = Album(store.manifest(), draft.locator, self._store)
+        self._catalog.add(album)
+        return album
+
+    @staticmethod
+    def _radio_now_playing(source: SelectionPlayback) -> NowPlaying | None:
+        """Return the replay cursor's "Part N of M" view, or ``None`` when idle.
+
+        ``N`` is the playing track's 1-based *position* in the selection and ``M``
+        is the selection's size, so ``N <= M`` always holds -- the same
+        position-of-count contract the generate-Program status uses. The cursor is
+        read O(1) from the source, never rescanned over an uncapped selection.
+        """
+        position = source.position
+        if position is None:
+            return None
+        return NowPlaying(index=position, of=len(source.selection))
+
+    @staticmethod
+    def _idle_program() -> Program:
+        """Return a fresh idle Program -- the off/initial source (mode off)."""
+        return Program(ProgramState.initial(), RotatePolicy())

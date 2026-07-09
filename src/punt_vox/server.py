@@ -26,12 +26,11 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_prompts import PromptSet
-from punt_vox.program_control import StartRequest
+from punt_vox.program_control import SelectionRequest, StartRequest
 from punt_vox.program_gateway import ProgramGateway
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 from punt_vox.voices import VOICE_BLURBS
-from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.mode import Mode
 
 logger = logging.getLogger(__name__)
@@ -202,7 +201,7 @@ class SessionConfig:
         """Return the music-on success line (the caller adds the ♪ marker).
 
         Reads the session vibe (``self._vibe``) only to *personalise the display*
-        -- it is never fed back as an input to a Program transition (vox-73m5).
+        -- it is never fed back as an input to a Program transition.
         """
         prefix = "Music on — generating"
         vibe = self._vibe
@@ -617,9 +616,9 @@ def vibe(
         return _error("Provide at least one of: mood, tags, mode.")
 
     # Persist to disk so hooks (which read config independently) see the change.
-    # The session vibe is NOT pushed to the Program here: vox-73m5 shipped broken
-    # because a stale session vibe was replayed as an authoritative music
-    # transition. The vibe is display/record state; a Program retune is a
+    # The session vibe is NOT pushed to the Program here: a stale session vibe
+    # must not be replayed as an authoritative music transition. The vibe is
+    # display/record state; a Program retune is a
     # deliberate music command, never a side effect of setting the session mood.
     ConfigStore(_find_config_dir()).write_fields(updates)
 
@@ -656,7 +655,9 @@ def music(
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
             outcome = _program_tools.start(
-                StartRequest(style=style, name=name, prompts=prompts)
+                StartRequest(
+                    style=style, vibe=_session.vibe, name=name, prompts=prompts
+                )
             )
             message = f"\u266a {outcome.display(_session.generating_message(style))}"
         else:
@@ -670,29 +671,38 @@ def music(
 
 
 @mcp.tool()
-def music_play(name: str) -> str:
-    """Replay a saved Program by name -- from disk, no generation, no credits.
+def music_play(
+    style: str | None = None,
+    vibe: str | None = None,
+    name: str | None = None,
+    album_id: str | None = None,
+) -> str:
+    """Replay a Selection -- from disk, no generation, no credits.
 
-    Args:
-        name: Program name (as shown by ``music_list``).
+    Resolve a replay by tags or by an exact id: ``style``/``vibe``/``name`` build
+    a tag query (a match on multiple albums plays a union radio), while
+    ``album_id`` is a direct single-album lookup. Omit all four to replay every
+    album (the cross-genre radio).
 
     Returns:
         JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
     try:
-        outcome = _program_tools.play(ProgramName(name), None)
-    except ValueError as exc:  # empty or path-bearing name
+        outcome = _program_tools.select(
+            SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
+        )
+    except ValueError as exc:  # bad id / no match
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    message = f"\u266a {outcome.display(f'Playing {name}.')}"
+    message = f"\u266a {outcome.display('Playing selection.')}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 
 @mcp.tool()
 def music_list() -> str:
-    """Show saved Programs, grouped by name with their ready/total part counts.
+    """Show saved albums with their tags and ready/total part counts.
 
     Returns:
         JSON string with a ``message`` line and a ``programs`` list.
@@ -703,13 +713,21 @@ def music_list() -> str:
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
     if not summaries:
-        message = "\u266a No saved programs."
+        message = "\u266a No saved albums."
     else:
-        lines = [f"\u266a {len(summaries)} saved program(s):"]
+        lines = [f"\u266a {len(summaries)} saved album(s):"]
         lines.extend(f"  \u266a {summary.display_line()}" for summary in summaries)
         message = "\n".join(lines)
     programs = [
-        {"name": s.name, "format": s.format, "ready": s.ready, "total": s.total}
+        {
+            "id": s.id,
+            "style": s.style,
+            "vibe": s.vibe,
+            "name": s.name,
+            "format": s.format,
+            "ready": s.ready,
+            "total": s.total,
+        }
         for s in summaries
     ]
     return json.dumps({"message": message, "programs": programs})
@@ -863,8 +881,8 @@ def status() -> str:
 
     Both the ``program`` block and the ``music_mode`` label are the daemon's
     *authoritative* Program status, read fresh from ``voxd`` on every call --
-    never a server-side cache. vox-73m5 shipped broken because the server served
-    a stale music shadow: ``music_mode`` is derived from ``program.mode`` here,
+    never a server-side cache, which could serve a stale music shadow:
+    ``music_mode`` is derived from ``program.mode`` here,
     so another client stopping or starting music can never leave the two fields
     contradicting each other. When ``voxd`` is unreachable the block carries an
     ``error`` and ``music_mode`` reports ``off`` (nothing can be confirmed playing).

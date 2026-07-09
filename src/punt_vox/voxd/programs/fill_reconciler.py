@@ -12,11 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, Self, final
 
-from punt_vox.voxd.programs.mode import Mode
-
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.filler import FillPlan, FillPlanSource
-    from punt_vox.voxd.programs.program import Program
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["Fill", "FillReconciler"]
 
@@ -47,17 +45,17 @@ class FillReconciler:
         self._plan_source = plan_source
         return self
 
-    def reconcile(self, program: Program) -> None:
-        """Keep the fill running while the Program wants generation, else cancel it.
+    def reconcile(self, source: PlaybackSource) -> None:
+        """Keep the fill running while the source wants generation, else cancel it.
 
-        "Wants generation" is ``filling`` OR ``retrying``. During a transient
-        backoff the model's ``filling`` flag is false (``FillOk`` is disabled),
-        but generation is paused, not stopped: the fill task is the retry engine
-        that keeps trying at the capped backoff and resumes via ``recover`` when
-        a Part finally lands (finding #4). Cancelling it there would strand the
-        Program in ``retrying`` forever after a single transient error.
+        ``source.wants_generation`` is ``filling`` OR ``retrying`` for a Program.
+        During a transient backoff the model's ``filling`` flag is false, but
+        generation is paused, not stopped: the fill task is the retry engine that
+        keeps trying at the capped backoff and resumes via ``recover`` when a Part
+        finally lands -- so a Program keeps it running.
+        A replay Selection returns ``False``, so the reconciler cancels and idles.
         """
-        if program.state.filling or program.mode is Mode.RETRYING:
+        if source.wants_generation:
             self._filler.ensure_running(self._plan_source.current_plan())
         else:
             self._filler.cancel()

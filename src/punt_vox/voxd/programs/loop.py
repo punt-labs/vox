@@ -6,9 +6,9 @@ directly) so the single :class:`ControlChannel` writer advances the cursor, then
 plays the new ``program.playing``. It never generates. A skip / play-a-part /
 off interrupts the current track at once (the channel's ``interrupt`` event); a
 retune does not -- the current track finishes first, then the loop plays the new
-pool's Part (finish-current-then-switch). This closes the bas7 gap: the advance
-is a real, listened-to transition, proven by a test that asserts the loop
-spawned a *different* file on track-end.
+pool's Part (finish-current-then-switch). The auto-advance is a real,
+listened-to transition, proven by a test that asserts the loop spawned a
+*different* file on track-end.
 
 The interrupt-vs-natural-end race lives in :class:`InterruptRace`; a player
 *spawn* failure (a missing ``afplay``/``ffplay`` binary, or an OS resource limit)
@@ -24,7 +24,7 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.interrupt_race import InterruptRace
-from punt_vox.voxd.programs.mode import Mode
+from punt_vox.voxd.programs.playback_health import PlaybackFaultKind
 from punt_vox.voxd.programs.playback_signal import Rotate
 
 if TYPE_CHECKING:
@@ -38,7 +38,6 @@ __all__ = ["ProgramLoop"]
 
 logger = logging.getLogger(__name__)
 
-_PLAYING_MODES = frozenset({Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING, Mode.RETRYING})
 _SPAWN_BACKOFF_SECONDS = 2.0
 """Bounded pause before retrying a player that could not spawn (no CPU spin)."""
 
@@ -89,7 +88,7 @@ class ProgramLoop:
 
     async def _step(self) -> None:
         """Play the current Part, or wait until one becomes playable."""
-        target = self._channel.program.playing
+        target = self._channel.source.playing
         if target is not None:
             await self._play(target)
             return
@@ -98,16 +97,20 @@ class ProgramLoop:
     async def _wait_for_playable(self) -> None:
         """Block until a Part becomes playable (first track, or a retune)."""
         self._channel.changed.clear()
-        if self._channel.program.playing is not None:
+        if self._channel.source.playing is not None:
             return  # became available between the read and the clear
         await self._channel.changed.wait()
 
     async def _play(self, target: Part) -> None:
-        """Play ``target``: race its end against an interrupt, then advance.
+        """Play ``target``: settle its end against an interrupt, then advance.
 
         A spawn failure is turned into an observable fault plus a bounded backoff
         (``_back_off_spawn``) rather than a raise into ``run``'s guard, which
-        would re-enter ``_step`` on the same still-unplayable target and spin.
+        would re-enter ``_step`` on the same still-unplayable target and spin. A
+        non-zero *exit* (a missing/corrupt track file -- reachable now that replay
+        plays arbitrary saved albums) is likewise made observable on
+        ``PlaybackHealth`` before advancing past the bad track, never a
+        WARNING-only log that leaves status reporting "playing" while it skips.
         """
         self._channel.interrupt.clear()
         try:
@@ -116,14 +119,17 @@ class ProgramLoop:
             await self._back_off_spawn(target, exc)
             return
         self._health.clear()
-        if await self._race.interrupted(proc):
+        end = await self._race.settle(proc)
+        if end.interrupted:
             await proc.kill()
-        else:
-            await self._advance_after(target)
+            return
+        if end.faulted:
+            await self._note_exit_fault(target, end.exit_code)
+        await self._advance_after(target)
 
     async def _back_off_spawn(self, target: Part, exc: OSError) -> None:
         """Record the spawn failure observably, then pause so it cannot spin."""
-        self._health.record(target, str(exc))
+        self._health.record(target, str(exc), PlaybackFaultKind.SPAWN)
         logger.error(
             "player spawn failed for part %s; backing off %ss",
             target.index,
@@ -132,16 +138,31 @@ class ProgramLoop:
         )
         await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
 
+    async def _note_exit_fault(self, target: Part, exit_code: int | None) -> None:
+        """Record a non-zero player exit observably, then pause so it cannot spin.
+
+        The track spawned but exited non-zero, so the loop advances past it; the
+        backoff bounds the rate at which a wholly-corrupt pool would rotate.
+        """
+        reason = f"player exited with code {exit_code}"
+        self._health.record(target, reason, PlaybackFaultKind.TRACK_EXIT)
+        logger.warning("player exited non-zero for part %s: %s", target.index, reason)
+        await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
+
     async def _advance_after(self, target: Part) -> None:
         """After a natural track end, post the advance (or play the retune target).
 
         If ``playing`` is still the track that just ended, post a Rotate and
         wait for the single writer to apply it; the loop then plays the advanced
         Part. If ``playing`` already changed (a retune finished mid-track), the
-        loop simply re-reads and plays the new pool's Part -- no advance.
+        loop simply re-reads and plays the new pool's Part -- no advance. The
+        advance gate is source-agnostic: ``source.advances_on_end`` is the
+        Program mode gate for a generate pool and ``playing is not None`` for a
+        replay Selection, so a radio auto-advances on track-end exactly as a
+        generate pool does.
         """
-        prog = self._channel.program
-        if prog.playing == target and prog.mode in _PLAYING_MODES:
+        source = self._channel.source
+        if source.playing == target and source.advances_on_end:
             self._channel.changed.clear()
             self._channel.post(Rotate())
             await self._channel.changed.wait()

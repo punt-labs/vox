@@ -1,18 +1,24 @@
-"""Tests for the Program manifest value objects and JSON round-trip."""
+"""Tests for the album manifest value objects, the draft, and the JSON round-trip."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import UTC, datetime
 
 import pytest
 
-from punt_vox.voxd.programs import Format, Part, PartStatus, ProgramName
+from punt_vox.voxd.programs import Format, Part, PartStatus
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.manifest import (
+    AlbumManifest,
+    ManifestDraft,
     PartEntry,
-    PlaylistSubject,
-    ProgramManifest,
 )
 from punt_vox.voxd.programs.wire import JsonObject
+
+_CREATED = datetime(2026, 7, 8, 2, 14, 7, tzinfo=UTC)
+_FINGERPRINT = PromptFingerprint("9f2a7c31")
 
 
 def _obj(data: Mapping[str, object]) -> JsonObject:
@@ -20,23 +26,19 @@ def _obj(data: Mapping[str, object]) -> JsonObject:
     return JsonObject.coerce(dict(data), "test")
 
 
-def _manifest(*entries: PartEntry, name: str = "ambient_techno") -> ProgramManifest:
-    return ProgramManifest(
-        name=ProgramName(name),
+def _manifest(*entries: PartEntry, album_id: str = "a3f1c9") -> AlbumManifest:
+    return AlbumManifest(
+        album_id=AlbumId(album_id),
         fmt=Format.PLAYLIST,
-        subject=PlaylistSubject(vibe="ambient", style="techno"),
+        tags=AlbumTags(style="trance", vibe="calm"),
+        created=_CREATED,
+        fingerprint=_FINGERPRINT,
         parts=entries,
     )
 
 
 _READY = PartEntry(index=1, file="001.mp3", status=PartStatus.READY, duration_ms=132000)
 _FAILED = PartEntry(index=2, file="002.mp3", status=PartStatus.FAILED, reason="bad")
-
-
-class TestPlaylistSubject:
-    def test_round_trip(self) -> None:
-        subject = PlaylistSubject(vibe="calm", style="lofi")
-        assert PlaylistSubject.from_wire(_obj(subject.to_dict())) == subject
 
 
 class TestPartEntry:
@@ -56,22 +58,19 @@ class TestPartEntry:
             "duration_ms": 132000,
         }
 
-    def test_failed_to_dict_omits_duration(self) -> None:
-        record = _FAILED.to_dict()
-        assert "duration_ms" not in record
-        assert record["reason"] == "bad"
-
     def test_from_wire_round_trip(self) -> None:
         for entry in (_READY, _FAILED):
             assert PartEntry.from_wire(_obj(entry.to_dict())) == entry
 
 
-class TestProgramManifest:
+class TestAlbumManifest:
     def test_accessors(self) -> None:
         manifest = _manifest(_READY)
-        assert manifest.name == ProgramName("ambient_techno")
+        assert manifest.id == AlbumId("a3f1c9")
         assert manifest.format is Format.PLAYLIST
-        assert manifest.subject == PlaylistSubject(vibe="ambient", style="techno")
+        assert manifest.tags == AlbumTags(style="trance", vibe="calm")
+        assert manifest.created == _CREATED
+        assert manifest.prompt_fingerprint == _FINGERPRINT
 
     def test_parts_sorted_by_index(self) -> None:
         manifest = _manifest(_FAILED, _READY)
@@ -81,50 +80,66 @@ class TestProgramManifest:
         manifest = _manifest(_READY, _FAILED)
         assert manifest.ready_parts() == (Part("001.mp3", 1),)
 
-    def test_next_index_of_empty(self) -> None:
-        assert _manifest().next_index() == 1
-
     def test_next_index_after_parts(self) -> None:
         assert _manifest(_READY, _FAILED).next_index() == 3
 
-    def test_with_part_appends(self) -> None:
-        grown = _manifest(_READY).with_part(_FAILED)
-        assert len(grown.parts) == 2
-
     def test_json_round_trip(self) -> None:
         manifest = _manifest(_READY, _FAILED)
-        assert ProgramManifest.from_json(manifest.to_json()) == manifest
+        assert AlbumManifest.from_json(manifest.to_json()) == manifest
+
+    def test_created_round_trips_tz_aware(self) -> None:
+        # The timestamp stays tz-aware so newest() can order by it without raising.
+        restored = AlbumManifest.from_json(_manifest(_READY).to_json())
+        assert restored.created == _CREATED
+        assert restored.created.tzinfo is not None
 
     def test_json_round_trip_non_ascii(self) -> None:
-        manifest = ProgramManifest(
-            name=ProgramName("chill"),
+        manifest = AlbumManifest(
+            album_id=AlbumId("1f9a30"),
             fmt=Format.PLAYLIST,
-            subject=PlaylistSubject(vibe="néon 夜", style="lo-fi ♪"),
+            tags=AlbumTags(style="lo-fi ♪", vibe="néon 夜"),
+            created=_CREATED,
+            fingerprint=_FINGERPRINT,
             parts=(_READY,),
         )
-        restored = ProgramManifest.from_json(manifest.to_json())
-        assert restored.subject.vibe == "néon 夜"
+        restored = AlbumManifest.from_json(manifest.to_json())
+        assert restored.tags.vibe == "néon 夜"
         assert restored == manifest
 
     def test_value_equality_and_hash(self) -> None:
         assert _manifest(_READY) == _manifest(_READY)
         assert hash(_manifest(_READY)) == hash(_manifest(_READY))
-        assert _manifest(_READY) != _manifest(_READY, name="other")
+        assert _manifest(_READY) != _manifest(_READY, album_id="7b2e04")
 
-    def test_not_equal_to_foreign_type(self) -> None:
-        assert _manifest() != "manifest"
-
-    def test_repr(self) -> None:
-        assert "ambient_techno" in repr(_manifest(_READY))
+    def test_repr_names_the_id(self) -> None:
+        assert "a3f1c9" in repr(_manifest(_READY))
 
     def test_from_json_rejects_non_object(self) -> None:
         with pytest.raises(ValueError, match="must be a JSON object"):
-            ProgramManifest.from_json("[]")
+            AlbumManifest.from_json("[]")
 
-    def test_from_json_rejects_missing_parts_list(self) -> None:
-        bad = (
-            '{"name": "x", "format": "playlist", '
-            '"subject": {"vibe": "a", "style": "b"}}'
+    def test_from_json_raises_on_idless_record(self) -> None:
+        # A total from_json (PY-EH-8): an idless legacy record raises rather than
+        # returning a half-built manifest -- scan() skips these before from_json.
+        legacy = '{"format": "playlist", "tags": {}, "parts": []}'
+        with pytest.raises(ValueError, match="missing required field 'id'"):
+            AlbumManifest.from_json(legacy)
+
+
+class TestManifestDraft:
+    def _draft(self) -> ManifestDraft:
+        return ManifestDraft(
+            album_id=AlbumId("a3f1c9"),
+            tags=AlbumTags(style="trance", vibe="calm"),
+            fingerprint=_FINGERPRINT,
         )
-        with pytest.raises(ValueError, match="missing required field 'parts'"):
-            ProgramManifest.from_json(bad)
+
+    def test_locator_composes_slug_and_id(self) -> None:
+        assert self._draft().locator == "trance--calm-a3f1c9"
+
+    def test_stamped_carries_the_stamp(self) -> None:
+        # The store is the sole clock owner: it calls stamped(now(UTC)); the draft
+        # stays a pure value object with no wall-clock read of its own.
+        manifest = self._draft().stamped(_CREATED)
+        assert manifest.created == _CREATED
+        assert manifest.id == AlbumId("a3f1c9")

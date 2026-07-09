@@ -1063,8 +1063,8 @@ class TestStatusTool:
         """A Program mode change made elsewhere flips ``music_mode`` with no shadow.
 
         No music tool runs on this server, yet ``music_mode`` follows the daemon's
-        authoritative ``program.mode`` -- the vox-73m5 drift class, closed by
-        deriving the label instead of caching a session copy.
+        authoritative ``program.mode`` -- no drift, because the label is derived
+        instead of caching a session copy.
         """
         fake = FakeProgramGateway(status=ProgramStatus.idle())
         _install_fake(monkeypatch, fake)
@@ -1167,7 +1167,7 @@ class TestMusicTool:
     def test_rejected_start_surfaces_not_applied(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A lost-race start (F7) reaches the caller as applied=false."""
+        """A lost-race start reaches the caller as applied=false."""
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
         result = json.loads(music(mode="on", style="techno"))
@@ -1177,7 +1177,7 @@ class TestMusicTool:
     def test_rejected_on_surfaces_reason_not_success_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A rejected 'on' shows the daemon's reason, not the generating line (F4)."""
+        """A rejected 'on' shows the daemon's reason, not the generating line."""
         _install_fake(
             monkeypatch,
             FakeProgramGateway(applied=False, reason="already generating"),
@@ -1202,33 +1202,36 @@ class TestMusicTool:
 
 
 class TestMusicPlayTool:
-    """music_play routes a saved-Program replay through the gateway."""
+    """music_play routes a Selection replay through the gateway."""
 
-    def test_play_forwards_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_play_forwards_the_tag_query(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
 
-        result = json.loads(music_play("ambient_techno"))
+        result = json.loads(music_play(style="trance", vibe="calm"))
 
         assert result["applied"] is True
-        assert fake.calls[0].verb == "play"
-        assert fake.calls[0].name == "ambient_techno"
+        assert fake.calls[0].verb == "select"
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.style == "trance"
 
-    def test_play_empty_name_reports_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake(monkeypatch, FakeProgramGateway())
-        result = json.loads(music_play("   "))
-        assert "error" in result
+    def test_play_forwards_the_album_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        json.loads(music_play(album_id="a3f1c9"))
+
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.id == "a3f1c9"
 
     def test_play_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
 
         fake = MagicMock()
-        fake.play.side_effect = VoxdConnectionError("not running")
+        fake.select.side_effect = VoxdConnectionError("not running")
         monkeypatch.setattr(srv, "_program_tools", fake)
 
-        result = json.loads(music_play("ambient_techno"))
+        result = json.loads(music_play(style="trance"))
 
         assert "error" in result
 
@@ -1236,23 +1239,27 @@ class TestMusicPlayTool:
 class TestMusicListTool:
     """music_list groups saved Programs, not loose files."""
 
-    def test_list_groups_programs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_groups_albums(self, monkeypatch: pytest.MonkeyPatch) -> None:
         catalog = (
-            ProgramSummary(name="ambient_techno", format="music", ready=5, total=12),
-            ProgramSummary(name="jazz", format="music", ready=1, total=1),
+            ProgramSummary(
+                id="a3f1c9", style="trance", vibe="calm", format="music", ready=5
+            ),
+            ProgramSummary(
+                id="7b2e04", style="lofi", vibe="focus", format="music", ready=1
+            ),
         )
         _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
 
         result = json.loads(music_list())
 
-        assert [p["name"] for p in result["programs"]] == ["ambient_techno", "jazz"]
-        assert "ambient_techno" in result["message"]
+        assert [p["id"] for p in result["programs"]] == ["a3f1c9", "7b2e04"]
+        assert "a3f1c9" in result["message"]
 
     def test_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake(monkeypatch, FakeProgramGateway())
         result = json.loads(music_list())
         assert result["programs"] == []
-        assert "No saved programs" in result["message"]
+        assert "No saved albums" in result["message"]
 
     def test_list_daemon_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import punt_vox.server as srv
@@ -1335,7 +1342,7 @@ class TestStatusProgramSurface:
     def test_status_reads_fresh_no_server_cache(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A state change made via another path is reflected next call (vox-73m5)."""
+        """A state change made via another path is reflected next call."""
         fake = FakeProgramGateway(status=ProgramStatus.idle())
         _install_fake(monkeypatch, fake)
 
@@ -1560,7 +1567,7 @@ class TestRefreshIntegrationWithTools:
         """music reads fresh config for its display line, not stale in-memory.
 
         The session vibe personalises the generating *message* only -- it is
-        never forwarded as a Program transition input (vox-73m5).
+        never forwarded as a Program transition input.
         """
         import punt_vox.server as srv
 

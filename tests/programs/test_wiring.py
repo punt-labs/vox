@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 
-from .conftest import QuietProducer, seed_program
+from .conftest import QuietProducer, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,8 +25,7 @@ _EXPECTED_HANDLERS = frozenset(
         "program_on",
         "program_off",
         "program_next",
-        "program_play",
-        "program_loop",
+        "program_select",
         "program_list",
         "program_status",
     }
@@ -34,9 +33,9 @@ _EXPECTED_HANDLERS = frozenset(
 
 
 class TestHandlerRoster:
-    """handlers() exposes exactly the seven program_* wire adapters."""
+    """handlers() exposes exactly the six program_* wire adapters."""
 
-    def test_exactly_the_seven_program_handlers(self, tmp_path: Path) -> None:
+    def test_exactly_the_six_program_handlers(self, tmp_path: Path) -> None:
         subsystem = _subsystem(tmp_path / "programs")
         assert set(subsystem.handlers()) == _EXPECTED_HANDLERS
 
@@ -61,9 +60,9 @@ class TestHandlersBoundToService:
         assert reply["type"] == "program_status"
         assert reply["status"]["mode"] == "off"
 
-    def test_list_handler_reports_saved_programs(self, tmp_path: Path) -> None:
+    def test_list_handler_reports_albums(self, tmp_path: Path) -> None:
         root = tmp_path / "programs"
-        seed_program(root, "ambient_calm", 1, 2)
+        seed_album(root, 1, 2, style="ambient", vibe="calm", album_id="a3f1c9")
         subsystem = _subsystem(root)
         ws = MagicMock()
         ws.send_json = AsyncMock()
@@ -72,4 +71,4 @@ class TestHandlersBoundToService:
 
         reply = ws.send_json.await_args.args[0]
         assert reply["type"] == "program_list"
-        assert [p["name"] for p in reply["programs"]] == ["ambient_calm"]
+        assert [p["id"] for p in reply["programs"]] == ["a3f1c9"]

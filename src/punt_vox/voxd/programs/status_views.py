@@ -21,7 +21,13 @@ __all__ = ["FailedPartView", "GenerationStatus", "NowPlaying"]
 @final
 @dataclass(frozen=True, slots=True)
 class NowPlaying:
-    """The playing Part's position in the ordered pool -- "Part ``index`` of ``of``"."""
+    """The playing Part's position in the ordered pool -- "Part ``index`` of ``of``".
+
+    ``index`` is the 1-based *position* of the playing Part in the ordered pool and
+    ``of`` is the pool's size, so ``index <= of`` always holds -- it is a
+    position-of-count, not an intrinsic track number, so a gapped pool never
+    reports a nonsensical "4 of 3".
+    """
 
     index: int  # 1-based position of the playing Part in the ordered pool
     of: int  # total Parts currently in the pool (the "M" in "N of M")

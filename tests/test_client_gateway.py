@@ -12,7 +12,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from punt_vox.client_gateway import ClientProgramGateway
-from punt_vox.program_control import CommandOutcome, ProgramSummary, StartRequest
+from punt_vox.program_control import (
+    CommandOutcome,
+    ProgramSummary,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.voxd.programs import (
     Format,
     Mode,
@@ -21,7 +26,7 @@ from punt_vox.voxd.programs import (
     ProgramState,
     ProgramStatus,
 )
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
+from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
 
 
@@ -66,12 +71,15 @@ def test_start_request_defaults_to_fallback() -> None:
 
 
 def test_program_summary_display_line() -> None:
-    """A summary renders name, ready/total counts, and the format label."""
-    summary = ProgramSummary(name="ambient_techno", format="music", ready=5, total=12)
+    """A summary renders the handle, id, ready/total counts, and format label."""
+    summary = ProgramSummary(
+        id="a3f1c9", style="trance", vibe="calm", format="music", ready=5, total=12
+    )
 
     line = summary.display_line()
 
-    assert "ambient_techno" in line
+    assert "trance--calm" in line
+    assert "a3f1c9" in line
     assert "5/12" in line
     assert "music" in line
 
@@ -107,12 +115,14 @@ def test_start_forwards_request_and_reads_applied() -> None:
 
     outcome = ClientProgramGateway(client).start(StartRequest(style="techno"))
 
-    client.program_on.assert_called_once_with(style="techno", name=None, prompts=None)
+    client.program_on.assert_called_once_with(
+        style="techno", vibe=None, name=None, prompts=None
+    )
     assert outcome == CommandOutcome(applied=True, message="on")
 
 
 def test_rejected_command_surfaces_as_not_applied() -> None:
-    """A daemon reply of applied=false becomes a rejected CommandOutcome (F7)."""
+    """A daemon reply of applied=false becomes a rejected CommandOutcome."""
     client = MagicMock()
     client.program_next.return_value = {"applied": False, "message": "lost race"}
 
@@ -155,51 +165,70 @@ def test_command_outcome_display_prefers_reason_over_default() -> None:
     assert CommandOutcome.ok("live line").display("Playing.") == "live line"
 
 
-def test_play_forwards_part_index() -> None:
-    """play() forwards the resolved 1-based part index to the wire."""
+def test_select_by_tags_forwards_the_query() -> None:
+    """select() forwards the tag query (style/vibe/name) to the wire."""
     client = MagicMock()
-    client.program_play.return_value = {"applied": True, "message": "ok"}
+    client.program_select.return_value = {"applied": True, "message": "ok"}
 
-    ClientProgramGateway(client).play(ProgramName("saved"), PartRef(Format.PLAYLIST, 2))
+    ClientProgramGateway(client).select(SelectionRequest(style="trance", vibe="calm"))
 
-    client.program_play.assert_called_once_with("saved", part=2)
+    client.program_select.assert_called_once_with(
+        style="trance", vibe="calm", name=None, album_id=None
+    )
 
 
-def test_play_without_part_sends_none() -> None:
-    """play() with no PartRef sends part=None (whole-Program playback)."""
+def test_select_by_id_forwards_the_album_id() -> None:
+    """select() forwards an exact album id as a direct lookup."""
     client = MagicMock()
-    client.program_play.return_value = {"applied": True, "message": "ok"}
+    client.program_select.return_value = {"applied": True, "message": "ok"}
 
-    ClientProgramGateway(client).play(ProgramName("saved"), None)
+    ClientProgramGateway(client).select(SelectionRequest(id="a3f1c9"))
 
-    client.program_play.assert_called_once_with("saved", part=None)
-
-
-def test_loop_forwards_name() -> None:
-    """loop() forwards the Program name to the wire."""
-    client = MagicMock()
-    client.program_loop.return_value = {"applied": True, "message": "ok"}
-
-    ClientProgramGateway(client).loop(ProgramName("saved"))
-
-    client.program_loop.assert_called_once_with("saved")
+    client.program_select.assert_called_once_with(
+        style=None, vibe=None, name=None, album_id="a3f1c9"
+    )
 
 
 def test_catalog_parses_summaries() -> None:
-    """catalog() parses the program list into typed summaries."""
+    """catalog() parses the album list into typed summaries (id + tags)."""
     client = MagicMock()
     client.program_list.return_value = {
         "programs": [
-            {"name": "ambient_techno", "format": "music", "ready": 5, "total": 12},
-            {"name": "jazz", "format": "music", "ready": 1},
+            {
+                "id": "a3f1c9",
+                "style": "trance",
+                "vibe": "calm",
+                "name": "mix",
+                "format": "music",
+                "ready": 5,
+                "total": 12,
+            },
+            {
+                "id": "7b2e04",
+                "style": "lofi",
+                "vibe": "focus",
+                "name": None,
+                "format": "music",
+                "ready": 1,
+            },
         ]
     }
 
     catalog = ClientProgramGateway(client).catalog()
 
     assert catalog == (
-        ProgramSummary(name="ambient_techno", format="music", ready=5, total=12),
-        ProgramSummary(name="jazz", format="music", ready=1, total=0),
+        ProgramSummary(
+            id="a3f1c9",
+            style="trance",
+            vibe="calm",
+            format="music",
+            ready=5,
+            total=12,
+            name="mix",
+        ),
+        ProgramSummary(
+            id="7b2e04", style="lofi", vibe="focus", format="music", ready=1
+        ),
     )
 
 

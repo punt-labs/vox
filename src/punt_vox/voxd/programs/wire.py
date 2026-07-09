@@ -89,28 +89,25 @@ class JsonObject:
         return JsonObject.coerce(value, f"{self._where}.{field}")
 
     def opt_int(self, field: str) -> int | None:
-        """Return an integer field, or ``None`` when the key is absent.
+        """Return an integer field, or ``None`` when the key is absent or null.
 
         ``None`` here is the documented "field not present" contract, not a
-        parse failure -- a present-but-wrong-typed value still raises.
+        parse failure -- a present-but-wrong-typed value still raises. A JSON
+        ``null`` is treated as absence, matching :meth:`opt_object`.
         """
-        if field not in self._data:
+        if self._data.get(field) is None:
             return None
         return self.require_int(field)
 
     def opt_str(self, field: str) -> str | None:
-        """Return a string field, or ``None`` when the key is absent."""
-        if field not in self._data:
+        """Return a string field, or ``None`` when the key is absent or null."""
+        if self._data.get(field) is None:
             return None
         return self.require_str(field)
 
     def opt_bool(self, field: str) -> bool | None:
-        """Return a boolean field, or ``None`` when the key is absent.
-
-        ``None`` is the documented "field not present" contract; a present but
-        wrong-typed value still raises.
-        """
-        if field not in self._data:
+        """Return a boolean field, or ``None`` when absent or null; else raises."""
+        if self._data.get(field) is None:
             return None
         return self.require_bool(field)
 

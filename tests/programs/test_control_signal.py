@@ -12,12 +12,23 @@ from punt_vox.voxd.programs import (
     Program,
     ProgramState,
 )
+from punt_vox.voxd.programs.active_context import ActiveContext
+from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.playback_signal import PlayPart, Rotate, StartFromDisk
+
+from .conftest import AvoidRepeatPolicy
 
 PartFactory = Callable[[int], Part]
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
+
+
+def _off(program: Program | None = None) -> TurnOff:
+    """Build a source-agnostic TurnOff (idle program used only for the replay path)."""
+    base = program or Program(ProgramState.initial(), AvoidRepeatPolicy())
+    idle = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    return TurnOff(ControlChannel(base), ActiveContext(), idle)
 
 
 class TestLifecycleSignals:
@@ -30,7 +41,7 @@ class TestLifecycleSignals:
         self, make_rotating: RotatingFactory, policy: PlaybackPolicy
     ) -> None:
         prog = make_rotating(policy)
-        TurnOff().apply(prog)
+        _off(prog).apply(prog)
         assert prog.mode is Mode.OFF
 
     def test_vibe_style_change(
@@ -67,7 +78,7 @@ class TestPlaybackSignals:
 
 class TestInterrupts:
     def test_interrupting_commands(self, mk: PartFactory) -> None:
-        assert TurnOff().interrupts is True
+        assert _off().interrupts is True
         assert Rotate().interrupts is True
         assert PlayPart(mk(1)).interrupts is True
 

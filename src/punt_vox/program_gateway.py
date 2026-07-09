@@ -13,8 +13,12 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from punt_vox.program_control import CommandOutcome, ProgramSummary, StartRequest
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
+from punt_vox.program_control import (
+    CommandOutcome,
+    ProgramSummary,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["ProgramGateway"]
@@ -28,7 +32,7 @@ class ProgramGateway(Protocol):
         """Return the daemon's authoritative Program status, read fresh per call.
 
         Never a client-side cache: a caller asking "what is playing?" gets what
-        the daemon actually holds, so no stale shadow can drift (vox-73m5).
+        the daemon actually holds, so no stale shadow can drift.
         """
         ...
 
@@ -44,14 +48,10 @@ class ProgramGateway(Protocol):
         """Advance to another Part -- the one ungated skip/next/loop transition."""
         ...
 
-    def play(self, name: ProgramName, part: PartRef | None) -> CommandOutcome:
-        """Play saved Program ``name`` from disk, optionally at a specific ``part``."""
-        ...
-
-    def loop(self, name: ProgramName) -> CommandOutcome:
-        """Play saved Program ``name`` and rotate on every track end."""
+    def select(self, request: SelectionRequest) -> CommandOutcome:
+        """Replay a Selection resolved by id (direct) or by tags (the ``play`` path)."""
         ...
 
     def catalog(self) -> tuple[ProgramSummary, ...]:
-        """Return every saved Program, grouped for a ``list`` surface."""
+        """Return every album, grouped for a ``list`` surface."""
         ...

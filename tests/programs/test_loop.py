@@ -2,9 +2,10 @@
 
 Every test drives the REAL loop + the REAL ControlChannel consumer with a fake
 player whose process end the test controls. Assertions are on what the loop
-actually *spawned* -- a different file on track-end (the bas7 gap), no advance
-past a retune's finish, the current player surviving a retune, the player killed
-on off/skip -- and on the Program mode, never on removed scheduler internals.
+actually *spawned* -- a different file on track-end (the auto-advance is a real,
+listened-to transition), no advance past a retune's finish, the current player
+surviving a retune, the player killed on off/skip -- and on the Program mode,
+never on removed scheduler internals.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.programs import (
     Format,
@@ -23,6 +24,7 @@ from punt_vox.voxd.programs import (
     Program,
     ProgramState,
 )
+from punt_vox.voxd.programs.active_context import ActiveContext
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.fill_signal import Produced
@@ -31,13 +33,24 @@ from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
 
-from .conftest import FakeSleeper
+from .conftest import AvoidRepeatPolicy, FakeSleeper
 
 if TYPE_CHECKING:
     import pytest
 
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
+
+
+def _prog(channel: ControlChannel) -> Program:
+    """Return the channel's active source narrowed to the Program under test."""
+    return cast("Program", channel.source)
+
+
+def _turn_off(channel: ControlChannel) -> TurnOff:
+    """Build a source-agnostic TurnOff (idle program used only for the replay path)."""
+    idle = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    return TurnOff(channel, ActiveContext(), idle)
 
 
 @final
@@ -189,10 +202,10 @@ class TestOffInterrupts:
     async def test_off_kills_current_and_stops(self, rotating: Program) -> None:
         harness = _Harness(rotating)
         await harness.player.wait_for(1)
-        harness.channel.post(TurnOff())  # interrupts
+        harness.channel.post(_turn_off(harness.channel))  # interrupts
         await _settle()
         assert harness.player.procs[0].rc == -9  # player killed, not ended
-        assert harness.channel.program.mode is Mode.OFF
+        assert _prog(harness.channel).mode is Mode.OFF
         await harness.stop()
 
 
@@ -208,6 +221,70 @@ class TestSkipInterrupts:
         await harness.stop()
 
 
+@final
+class _GateSleeper:
+    """A Sleeper whose ``sleep`` blocks until released -- pins the backoff window."""
+
+    __slots__ = ("_gate", "sleeps")
+    _gate: asyncio.Event
+    sleeps: list[float]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._gate = asyncio.Event()
+        self.sleeps = []
+        return self
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        await self._gate.wait()
+
+    def release(self) -> None:
+        self._gate.set()
+
+
+class TestExitFault:
+    """A non-zero player exit is observable via status, not a silent skip.
+
+    The fault clears on the *next* successful spawn (the ``PlaybackHealth``
+    contract), so the test pins the loop in the exit-fault backoff with a gated
+    sleeper to observe the standing fault before the loop advances and clears it.
+    """
+
+    async def test_non_zero_exit_records_a_fault_and_advances(
+        self, rotating: Program
+    ) -> None:
+        health = PlaybackHealth()
+        sleeper = _GateSleeper()
+        player = FakePlayer()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player, sleeper, health)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+
+        await player.wait_for(1)
+        first = player.parts[0]
+        player.procs[0].end(rc=1)  # a corrupt/missing track exits non-zero
+        for _ in range(500):  # let the loop record the fault and park in the backoff
+            if health.fault is not None and sleeper.sleeps:
+                break
+            await asyncio.sleep(0)
+
+        fault = health.fault
+        assert fault is not None  # surfaced on the status health surface, not swallowed
+        assert fault.part_index == first.index
+        assert "code 1" in fault.reason
+        assert sleeper.sleeps  # backed off so a corrupt pool cannot spin hot
+
+        sleeper.release()  # let the loop advance past the bad track
+        await player.wait_for(2)
+        assert player.parts[1] != first  # skipped forward, radio kept playing
+        for task in (run, serve):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 class TestGeneratingFirstThenPlays:
     async def test_empty_pool_awaits_then_plays_first_track(
         self, policy: PlaybackPolicy
@@ -216,7 +293,7 @@ class TestGeneratingFirstThenPlays:
         harness.channel.post(TurnOn())  # empty pool -> generating_first
         await _settle()
         assert harness.player.parts == []  # nothing plays before the first track
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
         harness.channel.post(Produced(Part("id001", 1)))  # the fill delivers #1
         await harness.player.wait_for(1)
         assert harness.player.parts[0] == Part("id001", 1)
@@ -224,7 +301,7 @@ class TestGeneratingFirstThenPlays:
 
 
 class TestSkipInGeneratingFirst:
-    """Z finding #1 (modeled property): a skip while nothing plays is a no-op."""
+    """A skip while nothing plays is a no-op (the modeled empty-pool property)."""
 
     async def test_skip_in_generating_first_is_noop(
         self, policy: PlaybackPolicy
@@ -234,13 +311,13 @@ class TestSkipInGeneratingFirst:
             TurnOn()
         )  # empty pool -> generating_first, nothing playing
         await _settle()
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
 
         harness.channel.post(Rotate())  # a skip here has no playing Part to advance
         await _settle()
         assert harness.player.parts == []  # NO player spawned
         # The lost-race guard is swallowed: the mode is unchanged and nothing crashed.
-        assert harness.channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(harness.channel).mode is Mode.GENERATING_FIRST
         await harness.stop()
 
 
@@ -254,7 +331,7 @@ class TestRetuneDuringGeneratingFirst:
         harness = _Harness(Program(ProgramState.initial(), policy))
         harness.channel.post(TurnOn())  # generating_first, parked in _wait_for_playable
         await _settle()
-        mode_before = harness.channel.program.mode
+        mode_before = _prog(harness.channel).mode
         assert mode_before is Mode.GENERATING_FIRST
         assert harness.player.parts == []  # nothing playing yet
 
@@ -262,7 +339,7 @@ class TestRetuneDuringGeneratingFirst:
         harness.channel.post(VibeStyleChange(full))  # full pool -> playing_rotating
         # The loop wakes on `changed` and plays a saved Part at once -- no hang.
         await harness.player.wait_for(1)
-        assert harness.channel.program.mode is Mode.PLAYING_ROTATING
+        assert _prog(harness.channel).mode is Mode.PLAYING_ROTATING
         assert harness.player.parts[0] in full
         await harness.stop()
 
@@ -285,7 +362,7 @@ class TestConcurrentControlsStaySequential:
             _post(harness.channel, Produced(Part("id020", 20))),
         )
         await harness.channel.join()
-        prog = harness.channel.program
+        prog = _prog(harness.channel)
         # The Program is always a legal state; the last retune won the pool.
         assert {p.index for p in prog.pool} <= {20, 21}
         assert prog.mode in {Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING}
@@ -341,7 +418,7 @@ class _ErrThenBlockPlayer:
 
 
 class TestPlayerWaitError:
-    """F8: a raised player wait() is a player error, never a clean advance.
+    """A raised player wait() is a player error, never a clean advance.
 
     The unit-level ``_player_errored`` assertions moved to ``test_interrupt_race``
     with the extracted :class:`InterruptRace`; this end-to-end test proves the loop

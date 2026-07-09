@@ -1,9 +1,10 @@
 """Tests for the format-spanning ``ProgramStatus`` observability surface.
 
-Covers the three "not playing / playing" situations that decision O1 turns on
-(idle vs off-with-saved-pool vs playing), that both failure surfaces (finding #5)
-reach a client distinctly, and that the value round-trips through the wire so a
-client reads the daemon's authoritative state rather than a log.
+Covers the three "not playing / playing" situations a client distinguishes
+(idle vs off-with-saved-pool vs playing), that both failure surfaces (the
+program-level error and the per-Part failures) reach a client distinctly, and
+that the value round-trips through the wire so a client reads the daemon's
+authoritative state rather than a log.
 """
 
 from __future__ import annotations
@@ -22,15 +23,15 @@ from punt_vox.voxd.programs import (
     ProgramStatus,
     Reason,
 )
-from punt_vox.voxd.programs.playback_health import PlaybackFault
+from punt_vox.voxd.programs.playback_health import PlaybackFault, PlaybackFaultKind
 from punt_vox.voxd.programs.wire import JsonObject
 
 from .conftest import AvoidRepeatPolicy, build_rotating, make_manifest
 
 
-def _restored(name: str, *indices: int) -> Program:
+def _restored(*indices: int) -> Program:
     """Return an idle Program over a saved pool (mode off, nothing playing)."""
-    manifest = make_manifest(name, *indices)
+    manifest = make_manifest(*indices)
     state = ProgramState.restored(Format.PLAYLIST, frozenset(manifest.ready_parts()))
     return Program(state, AvoidRepeatPolicy())
 
@@ -48,7 +49,7 @@ def test_idle_has_no_name() -> None:
 
 def test_off_with_saved_pool_names_the_program() -> None:
     """An off Program with a disk pool reports name set, off, nothing playing (O1)."""
-    status = ProgramStatus.of(_restored("ambient_techno", 1, 2, 3), ProgramName("x"))
+    status = ProgramStatus.of(_restored(1, 2, 3), ProgramName("x"))
 
     assert status.name == ProgramName("x")
     assert not status.is_idle
@@ -68,12 +69,12 @@ def test_playing_reports_part_n_of_m() -> None:
     assert 1 <= status.now_playing.index <= status.now_playing.of
 
 
-def test_now_playing_uses_intrinsic_index_across_a_gap() -> None:
-    """A gap from a permanent fill failure keeps intrinsic ``part N`` (MAJOR-1).
+def test_now_playing_reports_position_not_intrinsic_index_across_a_gap() -> None:
+    """A gapped pool reports position-of-count, so ``index`` never exceeds ``of``.
 
     Ready indices 1, 2, 4 (index 3 failed) with the index-4 Part playing must
-    report ``index == 4`` -- its intrinsic manifest index -- never the ordinal
-    position 3 it holds in the pool, and ``of == 3`` (the ready count).
+    report "part 3 of 3" -- its 1-based position in the ordered pool -- never the
+    intrinsic-index "4 of 3", which would read as nonsense.
     """
     pool = frozenset({Part("id001", 1), Part("id002", 2), Part("id004", 4)})
     program = Program(ProgramState.restored(Format.PLAYLIST, pool), AvoidRepeatPolicy())
@@ -82,8 +83,9 @@ def test_now_playing_uses_intrinsic_index_across_a_gap() -> None:
     status = ProgramStatus.of(program, ProgramName("gapped"))
 
     assert status.now_playing is not None
-    assert status.now_playing.index == 4  # intrinsic, not the position-3 it holds
+    assert status.now_playing.index == 3  # the position-3 it holds, not intrinsic 4
     assert status.now_playing.of == 3
+    assert status.now_playing.index <= status.now_playing.of
 
 
 def test_both_failure_surfaces_present_and_distinct() -> None:
@@ -121,7 +123,7 @@ def test_program_level_failure_sets_last_error() -> None:
     "build",
     [
         ProgramStatus.idle,
-        lambda: ProgramStatus.of(_restored("saved", 1, 2), ProgramName("saved")),
+        lambda: ProgramStatus.of(_restored(1, 2), ProgramName("saved")),
         lambda: ProgramStatus.of(build_rotating(AvoidRepeatPolicy()), ProgramName("r")),
     ],
 )
@@ -135,9 +137,13 @@ def test_wire_round_trips(build: Callable[[], ProgramStatus]) -> None:
 
 
 def test_playback_error_surfaces_and_round_trips() -> None:
-    """A player spawn fault reaches a client via status, not a log (Fix #2)."""
+    """A player spawn fault reaches a client via status, not a log."""
     program = build_rotating(AvoidRepeatPolicy())
-    fault = PlaybackFault(part_index=2, reason="afplay: No such file or directory")
+    fault = PlaybackFault(
+        part_index=2,
+        reason="afplay: No such file or directory",
+        kind=PlaybackFaultKind.SPAWN,
+    )
 
     original = ProgramStatus.of(program, ProgramName("ambient_techno"), fault)
 
@@ -147,6 +153,36 @@ def test_playback_error_surfaces_and_round_trips() -> None:
     assert restored.playback_error is not None
     assert restored.playback_error.part_index == 2
     assert "No such file" in restored.playback_error.reason
+    assert restored.playback_error.kind is PlaybackFaultKind.SPAWN
+
+
+def test_radio_surfaces_a_playback_fault() -> None:
+    """A replay/radio track fault reaches a client via status, not only a log.
+
+    A missing or corrupt saved track exits non-zero; the fault must be as visible
+    on a consume-only radio as on a generate Program.
+    """
+    fault = PlaybackFault(
+        part_index=3,
+        reason="player exited with code 1",
+        kind=PlaybackFaultKind.TRACK_EXIT,
+    )
+
+    status = ProgramStatus.radio(ProgramName("radio"), None, fault)
+
+    assert status.playback_error == fault
+    restored = ProgramStatus.from_wire(JsonObject.coerce(status.to_dict(), "status"))
+    assert restored == status
+    assert restored.playback_error is not None
+    assert restored.playback_error.part_index == 3
+    assert restored.playback_error.kind is PlaybackFaultKind.TRACK_EXIT
+
+
+def test_healthy_radio_has_no_playback_error() -> None:
+    """A radio with no fault carries playback_error None (the healthy contract)."""
+    status = ProgramStatus.radio(ProgramName("radio"), None)
+
+    assert status.playback_error is None
 
 
 def test_healthy_player_has_no_playback_error() -> None:

@@ -1,10 +1,12 @@
-"""Shared fixtures and in-memory playback-policy fakes for the domain tests.
+"""Shared fixtures and in-memory doubles for the audio-programs domain tests.
 
-The domain is pure, so the only injected seam Phase-1 tests need is the
+The domain is pure, so the only injected seam most tests need is the
 ``PlaybackPolicy``. Three fakes cover the branches ``Program.rotate`` cares
 about: one that avoids an immediate repeat (stands in for the real
 ``RotatePolicy``), one that always returns a named Part, and one that signals
-``COMPLETE`` (to exercise the "a playlist has no end" assertion arm).
+``COMPLETE`` (to exercise the "a playlist has no end" assertion arm). The
+persistence doubles model the catalog-era store: ``scan``/``open(directory)``/
+``create(draft)`` over an in-memory dict keyed by the album's ``<slug>-<id>``.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
 
@@ -28,16 +31,17 @@ from punt_vox.voxd.programs import (
     ProgramState,
     Reason,
 )
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
+from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
-from punt_vox.voxd.programs.identifiers import ProgramName
-from punt_vox.voxd.programs.manifest import (
-    PartEntry,
-    PlaylistSubject,
-    ProgramManifest,
-)
+from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.producer import PartSpec
 from punt_vox.voxd.programs.service import ProgramService
+
+_EPOCH = datetime(2026, 7, 8, 2, 0, 0, tzinfo=UTC)
+_FINGERPRINT = PromptFingerprint("deadbeef")
 
 
 @final
@@ -152,10 +156,7 @@ def make_rotating() -> Callable[[PlaybackPolicy], Program]:
 
 
 # ---------------------------------------------------------------------------
-# In-memory persistence fakes -- structural PartStore/ProgramStore doubles.
-# They generalize today's FakeTrackStore: dict-backed, filesystem-free, so the
-# domain and (slice-3) loop tests never touch the disk. Parity with the
-# filesystem impls is asserted in test_store.py.
+# Album/manifest factories (the catalog-era schema: id + tags + created + fp).
 # ---------------------------------------------------------------------------
 
 
@@ -169,24 +170,39 @@ def ready_entry(index: int, duration_ms: int = 120_000) -> PartEntry:
     )
 
 
-def make_manifest(name: str = "ambient_techno", *indices: int) -> ProgramManifest:
-    """Build a playlist manifest named ``name`` with ready Parts at ``indices``."""
-    return ProgramManifest(
-        name=ProgramName(name),
+def make_manifest(
+    *indices: int,
+    style: str = "techno",
+    vibe: str = "ambient",
+    name: str | None = None,
+    album_id: str = "a3f1c9",
+    fingerprint: PromptFingerprint = _FINGERPRINT,
+    created: datetime = _EPOCH,
+) -> AlbumManifest:
+    """Build a playlist manifest with ready Parts at ``indices``."""
+    return AlbumManifest(
+        album_id=AlbumId(album_id),
         fmt=Format.PLAYLIST,
-        subject=PlaylistSubject(vibe="ambient", style="techno"),
+        tags=AlbumTags(style=style, vibe=vibe, name=name),
+        created=created,
+        fingerprint=fingerprint,
         parts=tuple(ready_entry(i) for i in indices),
     )
 
 
+def locator_of(manifest: AlbumManifest) -> str:
+    """Return the ``<slug>-<id>`` locator a store would give this manifest."""
+    return f"{manifest.tags.slug()}-{manifest.id.value}"
+
+
 @final
 class InMemoryPartStore:
-    """A dict-backed PartStore: holds one Program's manifest in memory."""
+    """A dict-backed PartStore: holds one album's manifest in memory."""
 
     __slots__ = ("_manifest",)
-    _manifest: ProgramManifest
+    _manifest: AlbumManifest
 
-    def __new__(cls, manifest: ProgramManifest) -> Self:
+    def __new__(cls, manifest: AlbumManifest) -> Self:
         self = super().__new__(cls)
         self._manifest = manifest
         return self
@@ -204,7 +220,7 @@ class InMemoryPartStore:
     def record(self, entry: PartEntry) -> None:
         self._manifest = self._manifest.with_part(entry)
 
-    def manifest(self) -> ProgramManifest:
+    def manifest(self) -> AlbumManifest:
         return self._manifest
 
     def prepare(self) -> None:
@@ -213,7 +229,7 @@ class InMemoryPartStore:
 
 @final
 class InMemoryProgramStore:
-    """A dict-backed ProgramStore keyed by Program name."""
+    """A dict-backed ProgramStore keyed by the album's ``<slug>-<id>`` locator."""
 
     __slots__ = ("_stores",)
     _stores: dict[str, InMemoryPartStore]
@@ -223,28 +239,26 @@ class InMemoryProgramStore:
         self._stores = {}
         return self
 
-    def list_programs(self) -> tuple[ProgramManifest, ...]:
+    def preload(self, manifest: AlbumManifest) -> None:
+        """Seed a pre-existing album (as ``scan`` would surface it at startup)."""
+        self._stores[locator_of(manifest)] = InMemoryPartStore(manifest)
+
+    def scan(self) -> tuple[Album, ...]:
         return tuple(
-            sorted(
-                (store.manifest() for store in self._stores.values()),
-                key=lambda m: m.name.value,
-            )
+            Album(store.manifest(), locator, self)
+            for locator, store in sorted(self._stores.items())
         )
 
-    def resolve(self, name: ProgramName) -> ProgramManifest | None:
-        store = self._stores.get(name.value)
-        return None if store is None else store.manifest()
-
-    def open(self, name: ProgramName) -> InMemoryPartStore:
-        store = self._stores.get(name.value)
+    def open(self, directory: str) -> InMemoryPartStore:
+        store = self._stores.get(directory)
         if store is None:
-            msg = f"no saved program named {name.value!r}"
+            msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
         return store
 
-    def create(self, manifest: ProgramManifest) -> InMemoryPartStore:
-        store = InMemoryPartStore(manifest)
-        self._stores[manifest.name.value] = store
+    def create(self, draft: ManifestDraft) -> InMemoryPartStore:
+        store = InMemoryPartStore(draft.stamped(datetime.now(UTC)))
+        self._stores[draft.locator] = store
         return store
 
 
@@ -255,7 +269,7 @@ def program_store() -> InMemoryProgramStore:
 
 
 @pytest.fixture
-def manifest_of() -> Callable[..., ProgramManifest]:
+def manifest_of() -> Callable[..., AlbumManifest]:
     """Return the playlist-manifest factory."""
     return make_manifest
 
@@ -267,9 +281,7 @@ def entry_of() -> Callable[..., PartEntry]:
 
 
 # ---------------------------------------------------------------------------
-# Daemon-orchestration doubles -- a filesystem-backed service for handler/service
-# tests. The Producer writes a byte so ``FilesystemPartStore`` records a real
-# Part; the store is real (under ``tmp_path``) so replay resolves from disk.
+# Daemon-orchestration doubles -- a filesystem-backed service for service tests.
 # ---------------------------------------------------------------------------
 
 
@@ -299,15 +311,23 @@ def make_service(root: Path) -> ProgramService:
     )
 
 
-def seed_program(root: Path, name: str, *indices: int) -> None:
-    """Create a saved Program on disk with ready Parts at ``indices``."""
-    store = FilesystemProgramStore(root).create(
-        ProgramManifest(
-            name=ProgramName(name),
-            fmt=Format.PLAYLIST,
-            subject=PlaylistSubject(vibe="ambient", style="techno"),
-            parts=tuple(ready_entry(i) for i in indices),
-        )
+def seed_album(
+    root: Path,
+    *indices: int,
+    style: str = "techno",
+    vibe: str = "ambient",
+    name: str | None = None,
+    album_id: str = "a3f1c9",
+    fingerprint: PromptFingerprint = _FINGERPRINT,
+) -> str:
+    """Create a saved album on disk and return its locator (``<slug>-<id>``)."""
+    draft = ManifestDraft(
+        album_id=AlbumId(album_id),
+        tags=AlbumTags(style=style, vibe=vibe, name=name),
+        fingerprint=fingerprint,
+        parts=tuple(ready_entry(i) for i in indices),
     )
+    store = FilesystemProgramStore(root).create(draft)
     for i in indices:
         store.write_target(i).write_bytes(b"audio")
+    return draft.locator

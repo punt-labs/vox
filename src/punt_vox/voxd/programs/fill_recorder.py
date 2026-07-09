@@ -5,7 +5,7 @@ The :class:`Filler` owns the single-flight task machinery; turning a generation
 separate concern that lives here, so the filler stays focused on cancellation and
 the shield. A ready Part records its file and posts :class:`Produced`; a permanent
 failure records a ``FAILED`` entry with its reason (the observable Z ``FillBadPart``
-surface, vox-ig52) and posts :class:`PermanentFailure`; a transient failure posts
+surface) and posts :class:`PermanentFailure`; a transient failure posts
 :class:`TransientFailure` and records nothing, so the capped-backoff retry is
 untouched.
 """
@@ -87,15 +87,15 @@ class FillRecorder:
         self._post(PermanentFailure(Part(target.name, index), reason))
 
     def _post(self, outcome: ControlSignal) -> None:
-        """Post a fill outcome bound to the Program it was generated for (finding #1).
+        """Post a fill outcome bound to the Program it was generated for.
 
-        Capturing ``channel.program`` here tags the outcome with the Program the
+        Capturing ``channel.source`` here tags the outcome with the source the
         generation ran for: any switch since launch would have cancelled this
         fill (so this method never runs for a switched-away pool), and a switch
         that lands *after* this post is caught by the guard, which drops the
-        outcome rather than applying it to the switched-in Program.
+        outcome rather than applying it to the switched-in source.
         """
-        self._channel.post(FreshFillOutcome(self._channel.program, outcome))
+        self._channel.post(FreshFillOutcome(self._channel.source, outcome))
 
     @staticmethod
     def _reason(exc: Exception, fallback: str) -> Reason:

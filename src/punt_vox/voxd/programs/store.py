@@ -9,19 +9,21 @@ in :mod:`punt_vox.voxd.programs.filesystem_store`.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from punt_vox.voxd.programs.identifiers import ProgramName
-from punt_vox.voxd.programs.manifest import PartEntry, ProgramManifest
-from punt_vox.voxd.programs.part import Part
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.voxd.programs.catalog import Album
+    from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
+    from punt_vox.voxd.programs.part import Part
 
 __all__ = ["PartStore", "ProgramStore"]
 
 
 @runtime_checkable
 class PartStore(Protocol):
-    """One Program's Parts on disk, scoped to a single directory."""
+    """One album's Parts on disk, scoped to a single directory."""
 
     def ready_parts(self) -> tuple[Part, ...]:
         """Return the ready Parts, ordered by intrinsic index."""
@@ -39,7 +41,7 @@ class PartStore(Protocol):
         """Append ``entry`` to the manifest and persist it durably."""
         ...
 
-    def manifest(self) -> ProgramManifest:
+    def manifest(self) -> AlbumManifest:
         """Return the current manifest."""
         ...
 
@@ -50,24 +52,29 @@ class PartStore(Protocol):
 
 @runtime_checkable
 class ProgramStore(Protocol):
-    """The set of persisted Programs -- the only place the programs root is read."""
+    """The set of persisted albums -- the only place the programs root is read."""
 
-    def list_programs(self) -> tuple[ProgramManifest, ...]:
-        """Return every saved Program's manifest, ordered by name."""
-        ...
+    def scan(self) -> tuple[Album, ...]:
+        """Return every saved album, pairing each manifest with its locator.
 
-    def resolve(self, name: ProgramName) -> ProgramManifest | None:
-        """Return the manifest for ``name``, or ``None`` if none is saved.
-
-        Absence-by-name is the documented contract (PY-EH-8): a caller asking
-        "is there a Program called X?" gets ``None`` for no, not an exception.
+        The one startup disk walk that builds the catalog. Idless legacy dirs are
+        skipped at this boundary, and every candidate directory is
+        resolved-and-contained under the root so a symlink cannot escape.
         """
         ...
 
-    def open(self, name: ProgramName) -> PartStore:
-        """Return the PartStore for an existing Program, raising if absent."""
+    def open(self, directory: str) -> PartStore:
+        """Return the PartStore for a scan/create-validated directory, else raise.
+
+        The ``open``-guard invariant: ``directory`` is only ever a
+        locator produced by :meth:`scan` or :meth:`create`, so no wire/CLI path
+        can hand this a directory that resolves outside the root.
+        """
         ...
 
-    def create(self, manifest: ProgramManifest) -> PartStore:
-        """Create a new Program from ``manifest`` and return its PartStore."""
+    def create(self, draft: ManifestDraft) -> PartStore:
+        """Materialise ``draft`` into a fresh album directory and return its store.
+
+        The store owns the clock: it stamps ``created = now(UTC)``.
+        """
         ...

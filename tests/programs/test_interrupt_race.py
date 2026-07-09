@@ -1,10 +1,10 @@
-"""Tests for :class:`InterruptRace` -- the interrupt-vs-natural-end decision.
+"""Tests for :class:`InterruptRace` -- the "how did the track stop?" decision.
 
-These port the unit-level ``_player_errored`` assertions that lived on
-``ProgramLoop`` before the race machinery was extracted, and add the three
-outcomes ``interrupted`` decides between: a user interrupt wins outright, a clean
-player exit is a natural end (not interrupted), and a *raised* ``wait`` is a
-player error retrieved and logged here so it never masquerades as a clean advance.
+These port the unit-level ``_exit_code`` assertions that lived on ``ProgramLoop``
+before the race machinery was extracted, and cover the four outcomes ``settle``
+decides between: a user interrupt wins outright, a clean player exit (code 0) is a
+natural end, a *raised* ``wait`` is a player error retrieved and logged so it never
+masquerades as a clean advance, and a non-zero exit is a fault.
 """
 
 from __future__ import annotations
@@ -61,8 +61,8 @@ class _RaisingProcess:
         return None
 
 
-class TestPlayerErrored:
-    """A settled ``wait`` that raised is a player error; a clean one is not."""
+class TestExitCode:
+    """A settled ``wait`` that raised yields ``None`` (error); a clean one, its code."""
 
     async def test_flags_a_raised_wait(self, caplog: pytest.LogCaptureFixture) -> None:
         async def _boom() -> int:
@@ -73,21 +73,21 @@ class TestPlayerErrored:
         with contextlib.suppress(RuntimeError):
             await task
         with caplog.at_level(logging.ERROR):
-            errored = InterruptRace._player_errored(task)
-        assert errored is True
+            code = InterruptRace._exit_code(task)
+        assert code is None
         assert any("player wait failed" in r.getMessage() for r in caplog.records)
 
-    async def test_passes_a_clean_wait(self) -> None:
+    async def test_returns_a_clean_exit_code(self) -> None:
         async def _clean() -> int:
             return 0
 
         task: asyncio.Task[int] = asyncio.ensure_future(_clean())
         await task
-        assert InterruptRace._player_errored(task) is False
+        assert InterruptRace._exit_code(task) == 0
 
 
-class TestInterrupted:
-    """The three outcomes ``interrupted`` decides between."""
+class TestSettle:
+    """The four outcomes ``settle`` decides between (F3 adds the non-zero exit)."""
 
     async def test_user_interrupt_wins_over_a_running_player(self) -> None:
         interrupt = asyncio.Event()
@@ -95,22 +95,39 @@ class TestInterrupted:
         race = InterruptRace(interrupt)
         proc = _CleanProcess()  # still playing -- wait() would block
 
-        assert await race.interrupted(proc) is True
+        end = await race.settle(proc)
+        assert end.interrupted is True
+        assert end.faulted is False
 
-    async def test_clean_end_is_not_interrupted(self) -> None:
+    async def test_clean_end_is_neither_interrupted_nor_faulted(self) -> None:
         interrupt = asyncio.Event()
         race = InterruptRace(interrupt)
         proc = _CleanProcess()
         proc.end(0)  # a natural end, no interrupt pending
 
-        assert await race.interrupted(proc) is False
+        end = await race.settle(proc)
+        assert end.interrupted is False
+        assert end.faulted is False
+        assert end.exit_code == 0
 
-    async def test_raised_wait_counts_as_interrupted_and_logs(
+    async def test_non_zero_exit_is_a_fault(self) -> None:
+        interrupt = asyncio.Event()
+        race = InterruptRace(interrupt)
+        proc = _CleanProcess()
+        proc.end(1)  # a missing/corrupt track -- the player exits non-zero
+
+        end = await race.settle(proc)
+        assert end.interrupted is False
+        assert end.faulted is True  # surfaced, not swallowed as a clean advance
+        assert end.exit_code == 1
+
+    async def test_raised_wait_is_interrupted_and_logs(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         interrupt = asyncio.Event()
         race = InterruptRace(interrupt)
         with caplog.at_level(logging.ERROR):
-            interrupted = await race.interrupted(_RaisingProcess())
-        assert interrupted is True  # a player error is not a clean advance
+            end = await race.settle(_RaisingProcess())
+        assert end.interrupted is True  # a player error is not a clean advance
+        assert end.faulted is False
         assert any("player wait failed" in r.getMessage() for r in caplog.records)

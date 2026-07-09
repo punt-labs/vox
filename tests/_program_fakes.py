@@ -3,9 +3,9 @@
 The surfaces are thin adapters over :class:`~punt_vox.program_gateway.ProgramGateway`,
 so their tests inject this fake instead of a live daemon: it records every call,
 returns a caller-controlled :class:`ProgramStatus`, and lets a test flip the
-applied/rejected result (design F7) or mutate the status between calls (to prove
-the surface re-reads authoritatively -- vox-73m5). It is a structural stand-in
-(no inheritance), matching the Protocol by shape.
+applied/rejected result or mutate the status between calls (to prove the surface
+re-reads authoritatively rather than caching a stale shadow). It is a structural
+stand-in (no inheritance), matching the Protocol by shape.
 """
 
 from __future__ import annotations
@@ -13,8 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self, final
 
-from punt_vox.program_control import CommandOutcome, ProgramSummary, StartRequest
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName
+from punt_vox.program_control import (
+    CommandOutcome,
+    ProgramSummary,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.voxd.programs.status import ProgramStatus
 
 
@@ -24,9 +28,8 @@ class GatewayCall:
     """One recorded call against the fake: the verb and its salient argument."""
 
     verb: str
-    name: str | None = None
-    part: int | None = None
     request: StartRequest | None = None
+    selection: SelectionRequest | None = None
 
 
 @final
@@ -90,14 +93,9 @@ class FakeProgramGateway:
         self.calls.append(GatewayCall("advance"))
         return self._outcome("advanced")
 
-    def play(self, name: ProgramName, part: PartRef | None) -> CommandOutcome:
-        index = None if part is None else part.index
-        self.calls.append(GatewayCall("play", name=name.value, part=index))
-        return self._outcome(f"playing {name.value}")
-
-    def loop(self, name: ProgramName) -> CommandOutcome:
-        self.calls.append(GatewayCall("loop", name=name.value))
-        return self._outcome(f"looping {name.value}")
+    def select(self, request: SelectionRequest) -> CommandOutcome:
+        self.calls.append(GatewayCall("select", selection=request))
+        return self._outcome("playing selection")
 
     def catalog(self) -> tuple[ProgramSummary, ...]:
         self.calls.append(GatewayCall("catalog"))

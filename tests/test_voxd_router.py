@@ -175,8 +175,7 @@ class TestHandlerRegistration:
             "program_on",
             "program_off",
             "program_next",
-            "program_play",
-            "program_loop",
+            "program_select",
             "program_list",
             "program_status",
         }

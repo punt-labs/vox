@@ -26,17 +26,14 @@ from punt_vox.voxd.programs import (
     PartStatus,
     PlaybackPolicy,
     Program,
-    ProgramName,
     ProgramState,
 )
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.filler import Filler, FillPlan
-from punt_vox.voxd.programs.manifest import (
-    PartEntry,
-    PlaylistSubject,
-    ProgramManifest,
-)
+from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
@@ -70,23 +67,23 @@ class WritingProducer:
         return Part(target.name, spec.index)
 
 
-def _seeded_store(tmp_path: Path, count: int, name: str = "prog") -> PartStore:
+def _seeded_store(tmp_path: Path, count: int, album_id: str = "a3f1c9") -> PartStore:
     """Build a filesystem PartStore seeded with ``count`` ready Parts."""
-    manifest = ProgramManifest(
-        name=ProgramName(name),
-        fmt=Format.PLAYLIST,
-        subject=PlaylistSubject(vibe="calm", style="jazz"),
+    draft = ManifestDraft(
+        album_id=AlbumId(album_id),
+        tags=AlbumTags(style="jazz", vibe="calm"),
+        fingerprint=PromptFingerprint("deadbeef"),
         parts=tuple(
             PartEntry(index=i, file=f"{i:03d}.mp3", status=PartStatus.READY)
             for i in range(1, count + 1)
         ),
     )
-    return FilesystemProgramStore(tmp_path).create(manifest)
+    return FilesystemProgramStore(tmp_path).create(draft)
 
 
 def _plan(store: PartStore, vibe: str = "calm", style: str = "jazz") -> FillPlan:
     prompts = PromptSet(base="pad", variations=("p1", "p2", "p3"))
-    return FillPlan(store, PlaylistSubject(vibe=vibe, style=style), prompts)
+    return FillPlan(store, AlbumTags(style=style, vibe=vibe), prompts)
 
 
 def _channel(policy: PlaybackPolicy) -> ControlChannel:

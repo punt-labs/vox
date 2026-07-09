@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
@@ -22,6 +22,9 @@ from punt_vox.voxd.programs import (
     ProgramState,
     Reason,
 )
+from punt_vox.voxd.programs.active_context import ActiveContext
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
@@ -30,14 +33,48 @@ from punt_vox.voxd.programs.fill_signal import TransientFailure
 from punt_vox.voxd.programs.filler import Filler, FillPlan
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
-from punt_vox.voxd.programs.manifest import PlaylistSubject, ProgramManifest
+from punt_vox.voxd.programs.manifest import ManifestDraft
 from punt_vox.voxd.programs.playback_signal import Rotate
 from punt_vox.voxd.programs.producer import PartSpec
 from punt_vox.voxd.programs.sleeper import Sleeper
 
+from .conftest import AvoidRepeatPolicy
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
+    from punt_vox.voxd.programs.store import PartStore
+
 PoolFactory = Callable[..., frozenset[Part]]
 RotatingFactory = Callable[[PlaybackPolicy], Program]
-ManifestFactory = Callable[..., ProgramManifest]
+
+_TAGS = AlbumTags(style="jazz", vibe="calm")
+_PROMPTS = PromptSet(base="p", variations=())
+
+
+def _prog(channel: ControlChannel) -> Program:
+    """Return the channel's active source narrowed to a Program."""
+    return cast("Program", channel.source)
+
+
+def _turn_off(channel: ControlChannel) -> TurnOff:
+    """Build a source-agnostic TurnOff for a Program channel."""
+    idle = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    return TurnOff(channel, ActiveContext(), idle)
+
+
+def _make_store(root: Path) -> PartStore:
+    """Create a fresh album directory and return its PartStore."""
+    draft = ManifestDraft(
+        album_id=AlbumId("a3f1c9"),
+        tags=_TAGS,
+        fingerprint=PromptFingerprint("deadbeef"),
+    )
+    return FilesystemProgramStore(root).create(draft)
+
+
+def _plan(store: PartStore) -> FillPlan:
+    """Return a fill plan over ``store`` with the shared tags and prompts."""
+    return FillPlan(store, _TAGS, _PROMPTS)
 
 
 async def _drain(channel: ControlChannel) -> None:
@@ -54,7 +91,7 @@ class TestSingleWriter:
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         channel.post(TurnOn())
         await channel.apply_next()
-        assert channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(channel).mode is Mode.GENERATING_FIRST
 
     async def test_changed_event_set_after_apply(self, policy: PlaybackPolicy) -> None:
         channel = ControlChannel(Program(ProgramState.initial(), policy))
@@ -69,7 +106,7 @@ class TestSingleWriter:
         channel.post(TurnOn())
         channel.post(TurnOn())
         await _drain(channel)
-        assert channel.program.mode is Mode.GENERATING_FIRST
+        assert _prog(channel).mode is Mode.GENERATING_FIRST
 
     async def test_serves_a_batch_in_order(
         self,
@@ -82,7 +119,7 @@ class TestSingleWriter:
         channel.post(VibeStyleChange(pool_of(20, 21)))
         await _drain(channel)
         # Vibe applied last -> the pool is the retuned one.
-        assert {p.index for p in channel.program.pool} == {20, 21}
+        assert {p.index for p in _prog(channel).pool} == {20, 21}
 
 
 class TestO2Concurrency:
@@ -118,10 +155,10 @@ class TestO2Concurrency:
         with contextlib.suppress(asyncio.CancelledError):
             await server
 
-        result = channel.program.state
+        result = _prog(channel).state
         assert result in {rotate_then_vibe, vibe_then_rotate}  # never interleaved
         # The pool is the retuned one under both orderings (rotate never repools).
-        assert {p.index for p in channel.program.pool} == {20, 21}
+        assert {p.index for p in _prog(channel).pool} == {20, 21}
 
 
 async def _post_soon(channel: ControlChannel, signal: ControlSignal) -> None:
@@ -160,14 +197,9 @@ class TestFillReconciliation:
         tmp_path: Path,
         policy: PlaybackPolicy,
         sleeper: Sleeper,
-        manifest_of: ManifestFactory,
     ) -> None:
-        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(
-            store,
-            PlaylistSubject(vibe="calm", style="jazz"),
-            PromptSet(base="p", variations=()),
-        )
+        store = _make_store(tmp_path)
+        plan = _plan(store)
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_HoldingProducer(), channel, sleeper)
         channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
@@ -176,7 +208,7 @@ class TestFillReconciliation:
         await channel.apply_next()
         assert filler.is_running  # the consumer started the fill
 
-        channel.post(TurnOff())  # -> off -> filling False
+        channel.post(_turn_off(channel))  # -> off -> filling False
         await channel.apply_next()
         assert not filler.is_running  # the consumer cancelled the fill
 
@@ -209,7 +241,7 @@ class _CountingHoldingProducer:
 
 
 class TestTerminalStateCancelsFill:
-    """F6: reaching a terminal, non-filling state cancels the fill so a Program
+    """Reaching a terminal, non-filling state cancels the fill so a Program
     that has given up makes no further provider calls -- no leftover window."""
 
     async def test_retry_exhausted_to_failed_cancels_the_fill(
@@ -217,14 +249,9 @@ class TestTerminalStateCancelsFill:
         tmp_path: Path,
         policy: PlaybackPolicy,
         sleeper: Sleeper,
-        manifest_of: ManifestFactory,
     ) -> None:
-        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(
-            store,
-            PlaylistSubject(vibe="calm", style="jazz"),
-            PromptSet(base="p", variations=()),
-        )
+        store = _make_store(tmp_path)
+        plan = _plan(store)
         # Drive a Program to retrying at the cap with an empty pool.
         prog = Program(ProgramState.initial(), policy)
         prog.turn_on()
@@ -256,7 +283,7 @@ class TestTerminalStateCancelsFill:
 
 
 class TestUnexpectedFillErrorIsObservable:
-    """F3 + F6: an unexpected fill error drives the Program to an observable
+    """An unexpected fill error drives the Program to an observable
     failed state through the posted outcome, and the reconcile then cancels the
     dead-ended fill -- never a silent hang with filling still True."""
 
@@ -265,14 +292,9 @@ class TestUnexpectedFillErrorIsObservable:
         tmp_path: Path,
         policy: PlaybackPolicy,
         sleeper: Sleeper,
-        manifest_of: ManifestFactory,
     ) -> None:
-        store = FilesystemProgramStore(tmp_path).create(manifest_of("prog"))
-        plan = FillPlan(
-            store,
-            PlaylistSubject(vibe="calm", style="jazz"),
-            PromptSet(base="p", variations=()),
-        )
+        store = _make_store(tmp_path)
+        plan = _plan(store)
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         filler = Filler(_BoomProducer(), channel, sleeper)
         channel.attach_reconciler(FillReconciler(filler, _FixedPlanSource(plan)))
@@ -284,8 +306,8 @@ class TestUnexpectedFillErrorIsObservable:
         with contextlib.suppress(asyncio.CancelledError):
             await server
 
-        assert channel.program.mode is Mode.FAILED  # OBSERVABLE, not a silent hang
-        assert not filler.is_running  # F6: reconcile cancelled the dead-ended fill
+        assert _prog(channel).mode is Mode.FAILED  # OBSERVABLE, not a silent hang
+        assert not filler.is_running  # reconcile cancelled the dead-ended fill
         failed = [e for e in store.manifest().parts if not e.is_ready]
         assert failed and failed[0].reason is not None
         assert failed[0].reason.startswith("unexpected:")
@@ -294,7 +316,7 @@ class TestUnexpectedFillErrorIsObservable:
 async def _reach(channel: ControlChannel, mode: Mode, *, spins: int = 500) -> None:
     """Spin the event loop until the Program reaches ``mode`` (or give up)."""
     for _ in range(spins):
-        if channel.program.mode is mode:
+        if _prog(channel).mode is mode:
             return
         await asyncio.sleep(0)
 
@@ -318,12 +340,12 @@ class _Boom:
     def interrupts(self) -> bool:
         return False
 
-    def apply(self, program: Program) -> None:
+    def apply(self, source: PlaybackSource, /) -> None:
         raise self.error
 
 
 class TestWriterSurvivesFailures:
-    """F1/F2: a non-guard failure surfaces at ERROR, never masquerades as a race,
+    """A non-guard failure surfaces at ERROR, never masquerades as a race,
     and always sets ``changed`` so the playback loop can never block forever."""
 
     async def test_guard_violation_is_swallowed_and_logs_the_mode(
@@ -335,18 +357,18 @@ class TestWriterSurvivesFailures:
             await channel.apply_next()  # a benign race -> does NOT raise
         assert channel.changed.is_set()
         messages = [r.getMessage() for r in caplog.records]
-        assert any("lost race" in m and "off" in m for m in messages)  # F7: mode logged
+        assert any("lost race" in m and "off" in m for m in messages)  # mode logged
 
     async def test_plain_valueerror_is_not_swallowed_as_a_race(
         self, policy: PlaybackPolicy
     ) -> None:
-        # F1: a corrupt-successor ValueError is a bug, not a race -- it propagates
+        # A corrupt-successor ValueError is a bug, not a race -- it propagates
         # (to the serve guard), and is NOT logged as a lost race.
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         channel.post(_Boom(ValueError("S13: corrupt successor")))
         with pytest.raises(ValueError, match="corrupt successor"):
             await channel.apply_next()
-        assert channel.changed.is_set()  # F2: still woke the loop
+        assert channel.changed.is_set()  # still woke the loop
 
     async def test_unexpected_error_sets_changed_and_propagates(
         self, policy: PlaybackPolicy
@@ -355,7 +377,7 @@ class TestWriterSurvivesFailures:
         channel.post(_Boom(RuntimeError("kaboom")))
         with pytest.raises(RuntimeError, match="kaboom"):
             await channel.apply_next()
-        assert channel.changed.is_set()  # F2: the finally always wakes the loop
+        assert channel.changed.is_set()  # the finally always wakes the loop
 
     async def test_serve_survives_a_crash_and_applies_the_next_command(
         self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
@@ -369,8 +391,8 @@ class TestWriterSurvivesFailures:
         server.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await server
-        # F2: the sole writer survived the crash and applied the next command.
-        assert channel.program.mode is Mode.GENERATING_FIRST
+        # The sole writer survived the crash and applied the next command.
+        assert _prog(channel).mode is Mode.GENERATING_FIRST
         assert any(
             "unexpected error" in r.getMessage() and r.levelno == logging.ERROR
             for r in caplog.records

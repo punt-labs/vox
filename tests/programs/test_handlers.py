@@ -1,25 +1,29 @@
-"""Tests for the seven program wire handlers -- thin adapters over the service.
+"""Tests for the program wire handlers -- thin adapters over the service.
 
 Each handler is driven with a fake WebSocket (records ``send_json``) and a real
 filesystem-backed :class:`ProgramService`; posted commands are applied via
 ``run_once`` so the reply shape *and* the resulting daemon state are asserted.
-The handlers never mutate the Program -- they POST a signal the sole writer
-applies -- so a rejected or out-of-range command surfaces as a boundary error.
+The handlers never mutate the source -- they POST a signal the sole writer
+applies -- so a rejected or unresolvable command surfaces as a boundary error.
 """
 
 from __future__ import annotations
 
+import logging
+import shutil
 from typing import TYPE_CHECKING, Self, cast, final
 
+import pytest
+
+from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.loop_handler import LoopHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.off_handler import OffHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
-from punt_vox.voxd.programs.play_handler import PlayHandler
+from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.status_handler import StatusHandler
 
-from .conftest import make_service, seed_program
+from .conftest import make_service, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -65,15 +69,14 @@ class TestStatusHandler:
         assert isinstance(reply["status"], dict)
         assert reply["status"]["mode"] == "off"
 
-    async def test_status_reflects_a_played_program(self, tmp_path: Path) -> None:
+    async def test_status_reflects_a_replayed_selection(self, tmp_path: Path) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
         service = _service(tmp_path)
-        seed_program(tmp_path / "programs", "saved", 1, 2)
-        await _reply(PlayHandler(service), {"id": "p", "name": "saved"})
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
         await service.run_once()
         reply = await _reply(StatusHandler(service), {"id": "s"})
         status = reply["status"]
         assert isinstance(status, dict)
-        assert status["name"] == "saved"
         assert status["now_playing"] is not None
 
 
@@ -81,17 +84,12 @@ class TestMutatingHandlers:
     async def test_on_acks_and_activates(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
         reply = await _reply(
-            OnHandler(service), {"id": "1", "style": "t", "name": "mix"}
+            OnHandler(service), {"id": "1", "style": "t", "vibe": "calm", "name": "mix"}
         )
         assert reply == {"type": "program_on", "id": "1"}
         await service.run_once()
         service.shutdown()
         assert not service.status().is_idle
-
-    async def test_on_rejects_a_path_bearing_name(self, tmp_path: Path) -> None:
-        reply = await _reply(OnHandler(_service(tmp_path)), {"id": "1", "name": "a/b"})
-        assert reply["type"] == "error"
-        assert "path separators" in str(reply["message"])
 
     async def test_off_acks(self, tmp_path: Path) -> None:
         reply = await _reply(OffHandler(_service(tmp_path)), {"id": "9"})
@@ -101,56 +99,142 @@ class TestMutatingHandlers:
         reply = await _reply(NextHandler(_service(tmp_path)), {"id": "2"})
         assert reply == {"type": "program_next", "id": "2"}
 
-    async def test_play_acks_and_plays(self, tmp_path: Path) -> None:
+    async def test_select_by_tags_acks_and_plays(self, tmp_path: Path) -> None:
+        seed_album(tmp_path / "programs", 1, 2, 3, style="trance", vibe="calm")
         service = _service(tmp_path)
-        seed_program(tmp_path / "programs", "saved", 1, 2, 3)
         reply = await _reply(
-            PlayHandler(service), {"id": "3", "name": "saved", "part": 2}
+            SelectHandler(service), {"id": "3", "style": "trance", "vibe": "calm"}
         )
-        assert reply == {"type": "program_play", "id": "3"}
+        assert reply == {"type": "program_select", "id": "3"}
         await service.run_once()
-        now = service.status().now_playing
-        assert now is not None
-        assert now.index == 2
+        assert service.status().now_playing is not None
 
-    async def test_play_unknown_is_an_error(self, tmp_path: Path) -> None:
-        reply = await _reply(
-            PlayHandler(_service(tmp_path)), {"id": "3", "name": "ghost"}
-        )
-        assert reply["type"] == "error"
-        assert "no saved program" in str(reply["message"])
-
-    async def test_play_out_of_range_part_is_an_error(self, tmp_path: Path) -> None:
-        seed_program(tmp_path / "programs", "saved", 1, 2)
-        reply = await _reply(
-            PlayHandler(_service(tmp_path)), {"id": "3", "name": "saved", "part": 9}
-        )
-        assert reply["type"] == "error"
-        assert "no part 9" in str(reply["message"])
-
-    async def test_play_missing_name_is_an_error(self, tmp_path: Path) -> None:
-        reply = await _reply(PlayHandler(_service(tmp_path)), {"id": "3"})
-        assert reply["type"] == "error"
-
-    async def test_loop_acks(self, tmp_path: Path) -> None:
+    async def test_select_normalizes_tags_to_match_the_mint_form(
+        self, tmp_path: Path
+    ) -> None:
+        # The on-path stores canonical (trimmed) tags; the select path must apply
+        # the same normalization, so a whitespace-padded query still matches.
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
         service = _service(tmp_path)
-        seed_program(tmp_path / "programs", "saved", 1, 2)
-        reply = await _reply(LoopHandler(service), {"id": "4", "name": "saved"})
-        assert reply == {"type": "program_loop", "id": "4"}
+        reply = await _reply(
+            SelectHandler(service), {"id": "3", "style": "  trance  ", "vibe": " calm "}
+        )
+        # Matched despite the whitespace, rather than a "no albums match" error.
+        assert reply == {"type": "program_select", "id": "3"}
+        await service.run_once()
+        assert service.status().now_playing is not None
+
+    async def test_select_no_match_is_an_error(self, tmp_path: Path) -> None:
+        reply = await _reply(
+            SelectHandler(_service(tmp_path)), {"id": "3", "style": "ghost"}
+        )
+        assert reply["type"] == "error"
+        assert "no albums match" in str(reply["message"])
+
+    async def test_select_ignores_unknown_field_and_matches_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        # An unknown field ("id_arg") is neither the album_id nor a tag axis, so it
+        # is ignored: the query is all-wildcards, and over an empty catalog that
+        # replies with a "no albums match" error.
+        reply = await _reply(
+            SelectHandler(_service(tmp_path)), {"id": "3", "id_arg": "x"}
+        )
+        assert reply["type"] == "error"
+        assert "no albums match" in str(reply["message"])
+
+    @pytest.mark.parametrize("field", ["album_id", "style", "name"])
+    async def test_select_non_string_field_is_an_error(
+        self, tmp_path: Path, field: str
+    ) -> None:
+        # A present-but-wrong-typed field is a malformed request, not an absent
+        # one: it must reply with an error rather than silently ignoring the field
+        # and falling through to a catch-all tag query.
+        reply = await _reply(SelectHandler(_service(tmp_path)), {"id": "3", field: 123})
+        assert reply["type"] == "error"
+        assert field in str(reply["message"])
+        assert "must be a string" in str(reply["message"])
 
 
 class TestListHandler:
-    async def test_lists_saved_programs_with_counts(self, tmp_path: Path) -> None:
-        seed_program(tmp_path / "programs", "alpha", 1, 2)
-        seed_program(tmp_path / "programs", "beta", 1)
+    async def test_lists_albums_with_tags_and_counts(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
+        seed_album(root, 1, style="lofi", vibe="focus", album_id="7b2e04")
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "5"})
         assert reply["type"] == "program_list"
         programs = reply["programs"]
         assert isinstance(programs, list)
-        assert {p["name"] for p in programs} == {"alpha", "beta"}
-        alpha = next(p for p in programs if p["name"] == "alpha")
-        assert alpha == {"name": "alpha", "format": "music", "ready": 2, "total": 2}
+        assert {p["id"] for p in programs} == {"a3f1c9", "7b2e04"}
+        trance = next(p for p in programs if p["id"] == "a3f1c9")
+        assert trance["style"] == "trance"
+        assert trance["vibe"] == "calm"
+        assert trance["ready"] == 2
 
     async def test_empty_catalogue(self, tmp_path: Path) -> None:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
+
+    async def test_lists_survive_an_album_gone_unreadable(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A list row reads Parts live from disk, so an album deleted after startup
+        # raises when its row is built. The query isolates per album -- the broken
+        # one is skipped (ERROR-logged) and the healthy album is still returned,
+        # rather than the whole list tearing the socket down.
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
+        gone = seed_album(root, 1, style="lofi", vibe="focus", album_id="7b2e04")
+        service = _service(tmp_path)  # scans both into the catalog
+        shutil.rmtree(root / gone)  # the album vanishes after startup
+        with caplog.at_level(logging.ERROR):
+            reply = await _reply(ListHandler(service), {"id": "5"})
+        programs = reply["programs"]
+        assert isinstance(programs, list)
+        assert {p["id"] for p in programs} == {"a3f1c9"}  # the healthy album remains
+        assert any("7b2e04" in r.getMessage() for r in caplog.records)
+
+
+@final
+class _RaisingHandler(ProgramCommandHandler):
+    """A handler whose ``_run`` raises a chosen exception -- exercises the boundary."""
+
+    __slots__ = ("_error",)
+    _error: Exception
+    _WIRE_TYPE = "program_probe"
+
+    def __new__(cls, error: Exception) -> Self:
+        self = super().__new__(cls, cast("ProgramService", None))
+        self._error = error
+        return self
+
+    def _run(self, msg: dict[str, object], /) -> None:
+        raise self._error
+
+
+class TestMutatingBoundary:
+    """Every expected domain failure becomes a wire error, not a torn socket.
+
+    ``store.open`` on a deleted album dir raises ``LookupError``; ``store.create``'s
+    ``mkdir(exist_ok=False)`` mint-race guard raises ``FileExistsError`` and a full
+    or read-only disk raises ``OSError``. Before the fix the boundary caught only
+    ``ValueError``, so these escaped, the router tore the socket down, and the
+    client saw a generic "connection closed" instead of the cause.
+    """
+
+    @pytest.mark.parametrize(
+        ("error", "needle"),
+        [
+            (ValueError("bad request"), "bad request"),
+            (LookupError("no saved album at directory 'x'"), "no saved album"),
+            (FileExistsError("File exists: 'x'"), "File exists"),
+            (OSError("No space left on device"), "No space left"),
+        ],
+    )
+    async def test_expected_failures_reply_with_an_error(
+        self, error: Exception, needle: str
+    ) -> None:
+        reply = await _reply(_RaisingHandler(error), {"id": "7"})
+        assert reply["type"] == "error"
+        assert reply["id"] == "7"
+        assert needle in str(reply["message"])

@@ -1,7 +1,7 @@
 """The ``SwitchProgram`` control signal -- swap the animated Program atomically.
 
 Turning a Program on or playing a saved one replaces *which* Program the daemon
-animates. Doing that swap in the handler thread is the vox-73m5 lost-update: a
+animates. Doing that swap in the handler thread would be a lost update: a
 second client's command could interleave against a half-swapped state. So the
 switch is a :class:`ControlSignal` posted to the single :class:`ControlChannel`
 writer, which applies it atomically -- retarget the channel to the freshly seeded
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
     from punt_vox.voxd.programs.program import Program
 
 __all__ = ["SwitchProgram"]
@@ -48,11 +49,12 @@ class SwitchProgram:
         """A switch stops whatever was playing at once and begins the new Program."""
         return True
 
-    def apply(self, _program: Program, /) -> None:
+    def apply(self, _source: PlaybackSource, /) -> None:
         """Retarget the channel and context, then drive the seeded transition.
 
-        The prior Program (the positional argument) is discarded outright -- the
-        switch animates the freshly seeded :attr:`program` instead.
+        The prior source (the positional argument) is discarded outright -- the
+        switch animates the freshly seeded :attr:`program` instead, whether the
+        displaced source was a generate Program or a replay Selection.
         """
         self.channel.retarget(self.program)
         self.context.switch(self.active)

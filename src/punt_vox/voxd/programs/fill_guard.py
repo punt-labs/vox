@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.control_signal import ControlSignal
-    from punt_vox.voxd.programs.program import Program
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["FreshFillOutcome"]
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class FreshFillOutcome:
     """Apply a fill outcome only while its origin Program is still the active one."""
 
-    origin: Program
+    origin: PlaybackSource
     inner: ControlSignal
 
     @property
@@ -44,18 +44,19 @@ class FreshFillOutcome:
         """Delegate to the wrapped outcome -- a fill outcome never interrupts."""
         return self.inner.interrupts
 
-    def apply(self, program: Program, /) -> None:
-        """Apply the wrapped outcome, unless the writer has switched Programs.
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Apply the wrapped outcome, unless the writer has switched sources.
 
-        ``program`` is the writer's *current* Program; ``origin`` is the one the
-        generation ran for. A mismatch means a ``SwitchProgram`` overtook this
-        outcome in the queue, so the outcome is an orphan of an abandoned pool
-        and is dropped rather than polluting the switched-in Program (finding #1).
+        ``source`` is the writer's *current* source; ``origin`` is the Program
+        the generation ran for. A mismatch means a switch overtook this outcome
+        in the queue (to another Program or a replay Selection), so the outcome
+        is an orphan of an abandoned pool and is dropped rather than polluting
+        the switched-in source.
         """
-        if program is not self.origin:
+        if source is not self.origin:
             logger.info(
-                "dropped a stale fill outcome: its Program was switched away "
+                "dropped a stale fill outcome: its source was switched away "
                 "before the control writer could apply it"
             )
             return
-        self.inner.apply(program)
+        self.inner.apply(source)
