@@ -9,6 +9,8 @@ applies -- so a rejected or unresolvable command surfaces as a boundary error.
 
 from __future__ import annotations
 
+import logging
+import shutil
 from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
@@ -140,6 +142,25 @@ class TestListHandler:
     async def test_empty_catalogue(self, tmp_path: Path) -> None:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
+
+    async def test_lists_survive_an_album_gone_unreadable(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A list row reads Parts live from disk, so an album deleted after startup
+        # raises when its row is built. The query isolates per album -- the broken
+        # one is skipped (ERROR-logged) and the healthy album is still returned,
+        # rather than the whole list tearing the socket down.
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
+        gone = seed_album(root, 1, style="lofi", vibe="focus", album_id="7b2e04")
+        service = _service(tmp_path)  # scans both into the catalog
+        shutil.rmtree(root / gone)  # the album vanishes after startup
+        with caplog.at_level(logging.ERROR):
+            reply = await _reply(ListHandler(service), {"id": "5"})
+        programs = reply["programs"]
+        assert isinstance(programs, list)
+        assert {p["id"] for p in programs} == {"a3f1c9"}  # the healthy album remains
+        assert any("7b2e04" in r.getMessage() for r in caplog.records)
 
 
 @final

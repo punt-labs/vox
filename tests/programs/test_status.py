@@ -149,6 +149,30 @@ def test_playback_error_surfaces_and_round_trips() -> None:
     assert "No such file" in restored.playback_error.reason
 
 
+def test_radio_surfaces_a_playback_fault() -> None:
+    """A replay/radio track fault reaches a client via status, not only a log.
+
+    A missing or corrupt saved track exits non-zero; the fault must be as visible
+    on a consume-only radio as on a generate Program.
+    """
+    fault = PlaybackFault(part_index=3, reason="player exited with code 1")
+
+    status = ProgramStatus.radio(ProgramName("radio"), None, fault)
+
+    assert status.playback_error == fault
+    restored = ProgramStatus.from_wire(JsonObject.coerce(status.to_dict(), "status"))
+    assert restored == status
+    assert restored.playback_error is not None
+    assert restored.playback_error.part_index == 3
+
+
+def test_healthy_radio_has_no_playback_error() -> None:
+    """A radio with no fault carries playback_error None (the healthy contract)."""
+    status = ProgramStatus.radio(ProgramName("radio"), None)
+
+    assert status.playback_error is None
+
+
 def test_healthy_player_has_no_playback_error() -> None:
     """Absent a spawn fault, status carries playback_error None (healthy contract)."""
     program = build_rotating(AvoidRepeatPolicy())

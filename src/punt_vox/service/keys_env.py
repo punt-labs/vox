@@ -68,7 +68,7 @@ class KeysEnvWriter:
         if not keys_path.exists():
             return {}, False
         try:
-            text = keys_path.read_text()
+            text = keys_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
                 "Could not read existing %s: %s — will overwrite with env values",

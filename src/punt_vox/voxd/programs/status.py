@@ -99,12 +99,20 @@ class ProgramStatus:
         )
 
     @classmethod
-    def radio(cls, name: ProgramName | None, now_playing: NowPlaying | None) -> Self:
+    def radio(
+        cls,
+        name: ProgramName | None,
+        now_playing: NowPlaying | None,
+        playback_error: PlaybackFault | None = None,
+    ) -> Self:
         """Assemble the status of an active consume-only replay Selection.
 
         A replay generates nothing, so the generation surface is idle and the
         coarse mode is ``playing_rotating`` (a full, rotating pool). ``name`` is
-        the replay's display handle; ``now_playing`` is the cursor's position.
+        the replay's display handle; ``now_playing`` is the cursor's position. A
+        radio track can still fault (a missing/corrupt file exits non-zero), so
+        the daemon's live ``playback_error`` is surfaced here exactly as it is for
+        a generate Program -- a replay fault is never invisible to a client.
         """
         return cls(
             format=Format.PLAYLIST,
@@ -112,6 +120,7 @@ class ProgramStatus:
             generation=_NO_GENERATION,
             name=name,
             now_playing=now_playing,
+            playback_error=playback_error,
         )
 
     @staticmethod

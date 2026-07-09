@@ -140,7 +140,9 @@ class ProgramService:
         if isinstance(source, Program):
             return ProgramStatus.of(source, active.name, self._health.fault)
         if isinstance(source, SelectionPlayback):
-            return ProgramStatus.radio(active.name, self._radio_now_playing(source))
+            return ProgramStatus.radio(
+                active.name, self._radio_now_playing(source), self._health.fault
+            )
         return ProgramStatus.idle()
 
     def catalog_albums(self) -> tuple[Album, ...]:
