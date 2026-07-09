@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-07-09
+
 ### Security
 
 - **`vox install-desktop` no longer writes the provider API key in plaintext into `claude_desktop_config.json` (PL-PP-4)**: the command previously resolved `ELEVENLABS_API_KEY`/`OPENAI_API_KEY` and embedded it as `"env": {"ELEVENLABS_API_KEY": "sk_..."}` in a file that is world-readable in practice, cloud-synced, and captured in backups — spraying a long-lived secret into an unprotected config. The MCP server (`vox mcp`) is a thin WebSocket client of `voxd` and never needs the key; the daemon reads it from `keys.env` (mode 0600, in the 0700 state dir) at startup. The registration now carries only non-secret routing config (`TTS_PROVIDER`, `VOX_OUTPUT_DIR`), and the new `DesktopInstaller` (`desktop_install.py`) verifies the daemon can reach the credential from `keys.env` — the daemon's only key source, since a detached service never inherits the installing shell's environment — warning, without ever echoing the value, when it cannot (naming the variable and pointing at `vox daemon install`). No migration of key-bearing configs: the secret is simply never written going forward, and an overwritten `vox` entry drops it.

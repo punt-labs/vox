@@ -1,0 +1,107 @@
+mission_id: m-2026-07-05-004
+status: open
+type: implement
+created_at: "2026-07-05T23:59:24Z"
+updated_at: "2026-07-05T23:59:24Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-05T23:59:24Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-oayr
+write_set:
+    - src/punt_vox/voxd/programs/on_handler.py
+    - src/punt_vox/voxd/programs/off_handler.py
+    - src/punt_vox/voxd/programs/next_handler.py
+    - src/punt_vox/voxd/programs/play_handler.py
+    - src/punt_vox/voxd/programs/loop_handler.py
+    - src/punt_vox/voxd/programs/list_handler.py
+    - src/punt_vox/voxd/programs/vibe_handler.py
+    - src/punt_vox/voxd/programs/status_handler.py
+    - src/punt_vox/voxd/programs/__init__.py
+    - src/punt_vox/voxd/daemon.py
+    - src/punt_vox/voxd/__init__.py
+    - tests/programs/test_handlers.py
+    - tests/programs/test_filler.py
+    - tests/programs/test_loop.py
+    - src/punt_vox/voxd/music/
+    - tests/music/
+success_criteria:
+    - 'MAJOR-4 parity snapshot green: Filler + ProgramLoop assert the identical single-flight/orphan-discard/control-race/track-end-advance behavior as the old music tests, BEFORE any deletion.'
+    - programs wire handlers (on/off/next/play/loop/list/vibe/status) created; each POSTS a ControlSignal to ControlChannel and NEVER mutates the Program directly (single-writer O2); status_handler reads authoritative ProgramStatus per call, never cached.
+    - daemon.py rewired to the programs orchestration; program_* handlers registered in place of music_*; single ControlChannel consumer runs as the daemon task; legacy-tracks-dir start-up hint logged (no daemon disk mutation).
+    - voxd/music/ (17 modules) and tests/music/ (17 files) deleted; no remaining importer of voxd.music anywhere in the tree; MusicScheduler god-facade and owner-adoption methods gone (Sec 8 paydown realized).
+    - make check exits 0 on the full tree; make check-oo improves >=1 metric on touched files with zero regressions; no suppressions added.
+    - Commit incrementally — one commit per logical step (parity port, handlers, daemon rewire, deletion). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes. Do NOT open a PR; do NOT install/restart the daemon (the leader runs the operator-eared audio flight).
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    Slice 5 (the finish) of Audio Programs Phase 1 (vox-oayr): wire the daemon to the ownership-free programs/ orchestration and RETIRE voxd/music/ by forward integration (PY-RF-6). Branch: design/audio-programs-phase1 (already at HEAD bdbc039 — slices 1-4 landed; do NOT rebase or reset). Do NOT open a PR — the leader does that AFTER a mandatory audio flight with the operator (the human's ear judges playback; make check green is necessary, not sufficient).
+    READ FIRST, end to end:
+      - docs/audio-programs-phase1-design.md — the merged design. Slice 5 is its
+        "Modify" + "Delete" write-set groups (Sec 9), the migration mapping (Sec 3),
+        and the MusicScheduler debt paydown (Sec 8). Sec 1.6/1.7 describe the loop,
+        the ControlChannel, and the single-writer contract.
+      - docs/audio-programs.tex — the fuzz-clean, probcli-exhaustive Z model. The
+        handlers and daemon wiring must preserve every modeled invariant; the
+        transitions you route are the model's operations.
+
+    WHAT EXISTS (slices 1-4, do not rebuild): the whole programs/ core — ProgramState (16 invariants), Program (transitions), ControlChannel + ControlSignal (typed, no owner), Filler (single-flight fill), ProgramLoop + Sleeper, MusicProducer + LengthPolicy, FilesystemProgramStore/PartStore, ProgramStatus + status_views, migrate.py. server.py, client.py, __main__.py, cli_music.py are ALREADY retargeted to the program_* wire messages (client.program_status/on/off/next/play/loop/list). The ONLY missing link is the daemon: daemon.py still constructs MusicScheduler and registers Music*Handler, so nothing routes the program_* wire messages the client already sends.
+    THE TASK, forward-integration (create + wire + delete together — never leave a handler class with zero callers, PY-RF-6):
+    1. MAJOR-4 parity snapshot FIRST (the bas7 lesson, non-negotiable). Before ANY
+       deletion, verify tests/programs/test_filler.py and test_loop.py assert the
+       IDENTICAL single-flight asyncio.shield/orphan-discard behavior (Filler) and
+       control-race supervision + track-end advance behavior (ProgramLoop) that
+       tests/music/test_filler.py and test_loop.py assert. Coverage % is NOT
+       behavioral parity (PY-RF-2). If any behavior in the old tests is not asserted
+       by name on the new Filler/ProgramLoop, PORT IT 1:1 (retargeted names, same
+       assertions) before deletion. bas7 (#291) shipped a broken loop because an
+       advance transition was never listened to — this gate exists to prevent a
+       repeat.
+
+    2. Create the programs wire handlers (on/off/next/play/loop/list/vibe/status) —
+       the renamed + de-owned + extended replacements for the six Music*Handler.
+       These are THIN wire adapters. The single-writer O2 contract is absolute:
+       a handler NEVER mutates the Program directly. It POSTS a typed ControlSignal
+       to the ControlChannel; the ONE consumer task (ControlChannel.serve / the
+       loop) drains the FIFO and applies every mutation. This is what prevents the
+       vox-73m5 lost-update under concurrency. status_handler READS the daemon's
+       authoritative ProgramStatus per call (mode + now_playing + generation.last_error
+       + failed_parts) — never a cached copy (vox-ig52 / vox-73m5 client-observability:
+       every failure a client cares about surfaces through the API, never only a log).
+       No handler takes or checks a session or owner (ownership is removed).
+
+    3. Rewire daemon.py: construct the programs orchestration (FilesystemProgramStore,
+       MusicProducer, ControlChannel, Filler, ProgramLoop, the active Program from
+       on-disk restore) in place of MusicScheduler/MusicLoop; register the program_*
+       handlers in the dispatch table in place of music_*; run the single ControlChannel
+       consumer as the daemon's background task (replacing the music loop task). On
+       daemon start, if a legacy ~/Music/vox/tracks/ dir exists and no programs/ dir
+       does, log ONE one-line hint to run `vox music migrate` — do NO disk mutation
+       in the daemon (Sec 3; the operator runs migrate explicitly). Drop music
+       re-exports from voxd/__init__.py; grep the whole tree for any other importer
+       of voxd.music and forward-wire it to programs/ before deleting.
+
+    4. Delete voxd/music/ (all 17 modules) and tests/music/ (all 17 files) — ONLY
+       after step 1's parity snapshot is green and step 3 wires every caller forward.
+       This realizes the Sec 8 paydown: the 29-method MusicScheduler god-facade and
+       its 3 disjoint clusters dissolve into Program (transitions) + ControlChannel
+       (on/off + typed signal) + ProgramLoop (player process); the owner-adoption
+       methods are DELETED, not rehomed; the ~9 pool-selection pass-throughs vanish
+       (callers use the owning object directly, no middle man). Use `git rm`; the
+       org "mv over rm" rule is satisfied because the replacements are already in
+       programs/ and the parity snapshot proves behavior is preserved.
+
+    Constraints (operator-locked, still in force):
+      - make check MUST pass before EVERY commit (per-edit guardrail stays). No
+        suppressions (# noqa / type: ignore / pylint: disable / xfail) to make checks
+        pass — fix the code or escalate to the leader. make check-oo must not regress
+        any touched file and must improve at least one (the paydown does this
+        naturally). If update-oo deadlocks on a residual, STOP and tell the leader —
+        do not hand-edit the baseline.
+      - Keep the prompt logging in elevenlabs_music.py (operator-kept).
+      - voxd logs to stderr only — never print() in daemon/server code.
