@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Self
 
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.keys import PROVIDER_KEY_NAMES
 
 logger = logging.getLogger(__name__)
@@ -43,7 +41,9 @@ class KeysEnvWriter:
         content = _HEADER + self._render(self._merge(existing, env))
         if force_fresh:
             self._unlink_broken(keys_path)
-        self._write_atomic(keys_path, content)
+        # mode=0o600 forces the secret's perms even over an existing wider file;
+        # AtomicFile's default would preserve an existing mode (a leak risk here).
+        AtomicFile(keys_path).replace(content, mode=0o600)
         return keys_path
 
     def _harden_parent(self, keys_path: Path) -> None:
@@ -126,37 +126,3 @@ class KeysEnvWriter:
             logger.warning(
                 "Could not unlink unreadable %s: %s — write may fail", keys_path, exc
             )
-
-    def _write_atomic(self, keys_path: Path, content: str) -> None:
-        """Write *content* to *keys_path* atomically at mode 0600.
-
-        Write a temp file in the same directory at 0600, fsync it, then
-        ``Path.replace`` it into place. The replace is atomic, so a crash
-        mid-write can never leave a partially-written credentials file (losing
-        provider keys); ``mkstemp`` already creates the temp at 0600, so the
-        secret is never wider-than-0600 in the window. ``os.fdopen`` takes
-        ownership of the descriptor *first* so the ``with`` block always closes
-        it -- even if the ``fchmod`` (a belt-and-suspenders re-assert) raises.
-        """
-        fd, tmp_name = tempfile.mkstemp(dir=keys_path.parent, prefix=".keys.env.")
-        tmp = Path(tmp_name)
-        try:
-            handle = os.fdopen(fd, "w", encoding="utf-8")
-        except BaseException:
-            os.close(fd)  # fdopen did not take ownership -- close the raw fd
-            tmp.unlink(missing_ok=True)
-            raise
-        try:
-            with handle:  # owns fd now; closes it on every exit path
-                os.fchmod(handle.fileno(), 0o600)
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            tmp.replace(keys_path)
-        except OSError:
-            # Best-effort cleanup that never masks the original write error: a
-            # raising unlink is suppressed so the bare ``raise`` re-raises the
-            # real cause, not the cleanup failure.
-            with contextlib.suppress(OSError):
-                tmp.unlink(missing_ok=True)
-            raise

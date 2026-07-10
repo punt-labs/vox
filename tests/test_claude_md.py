@@ -275,7 +275,7 @@ def test_interrupted_write_leaves_original_intact(
     # The original file is untouched -- no truncation, no partial content.
     assert reg.path.read_text(encoding="utf-8") == original
     # No temp file was left behind in the directory.
-    leftovers = list(reg.path.parent.glob(".claude-md-*.tmp"))
+    leftovers = list(reg.path.parent.glob(".*.tmp"))
     assert leftovers == []
 
 
@@ -307,7 +307,7 @@ def test_fdopen_failure_closes_fd_and_leaves_no_temp(
 
     assert closed, "the raw fd was leaked -- os.close was never called"
     assert reg.path.read_text(encoding="utf-8") == original
-    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+    assert list(reg.path.parent.glob(".*.tmp")) == []
 
 
 def test_in_write_failure_leaves_no_temp_and_original_intact(
@@ -330,7 +330,7 @@ def test_in_write_failure_leaves_no_temp_and_original_intact(
         reg.register(_VOX)
 
     assert reg.path.read_text(encoding="utf-8") == original
-    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+    assert list(reg.path.parent.glob(".*.tmp")) == []
 
 
 def test_non_oserror_in_write_leaves_no_temp(
@@ -354,7 +354,7 @@ def test_non_oserror_in_write_leaves_no_temp(
         reg.register(_VOX)
 
     assert reg.path.read_text(encoding="utf-8") == original
-    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+    assert list(reg.path.parent.glob(".*.tmp")) == []
 
 
 def test_chmod_failure_leaves_no_temp(
@@ -376,7 +376,7 @@ def test_chmod_failure_leaves_no_temp(
         reg.register(_VOX)
 
     assert reg.path.read_text(encoding="utf-8") == original
-    assert list(reg.path.parent.glob(".claude-md-*.tmp")) == []
+    assert list(reg.path.parent.glob(".*.tmp")) == []
 
 
 def test_replace_preserves_existing_file_mode(tmp_path: Path) -> None:
@@ -441,8 +441,8 @@ def test_symlink_target_is_updated_and_link_preserved(tmp_path: Path) -> None:
     assert "keep me" in real_text
     assert _VOX in real_text
     # No regular file was dropped in place of the link, and no temp leaked.
-    assert list(link.parent.glob(".claude-md-*.tmp")) == []
-    assert list(real.parent.glob(".claude-md-*.tmp")) == []
+    assert list(link.parent.glob(".*.tmp")) == []
+    assert list(real.parent.glob(".*.tmp")) == []
 
 
 def test_symlink_target_mode_is_preserved(tmp_path: Path) -> None:

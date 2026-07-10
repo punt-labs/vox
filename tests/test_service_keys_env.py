@@ -16,6 +16,26 @@ def writer() -> KeysEnvWriter:
     return KeysEnvWriter()
 
 
+def _open_fd_count() -> int | None:
+    """Return this process's open-fd count, or None when it can't be read.
+
+    Prefer ``/proc/self/fd`` (canonical on Linux, present whenever /proc is
+    mounted); fall back to ``/dev/fd`` (macOS/BSD). The fd count is best-effort
+    defence-in-depth -- the caller's core secret-cleanup assertions are
+    unconditional -- so any OS-level failure to enumerate the directory
+    (missing, a non-directory, permission-denied, ...) returns None to skip only
+    the fd check, never to error the test over an environment quirk. ``OSError``
+    is the base of FileNotFoundError, NotADirectoryError, and PermissionError,
+    so catching it covers every such enumeration failure in one clause.
+    """
+    for fd_dir in (Path("/proc/self/fd"), Path("/dev/fd")):
+        try:
+            return sum(1 for _ in fd_dir.iterdir())
+        except OSError:
+            continue
+    return None
+
+
 def test_write_keys_env_creates_file_at_target_path(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:
@@ -55,18 +75,53 @@ def test_write_keys_env_is_atomic_and_leaves_no_temp(
 def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
     writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A raising fchmod still closes the fd (via fdopen) and orphans no temp file."""
+    """A mid-write fsync failure cleans up the secret-bearing temp and leaks no fd.
+
+    Inject the failure at ``os.fsync`` -- after the secret bytes are written and
+    flushed into the temp file but before the atomic rename -- so the test
+    actually reaches the state a naive writer would leave a plaintext-secret temp
+    behind. ``_harden_parent`` runs first and must succeed, so control genuinely
+    reaches ``AtomicFile.replace``; patching the parent ``chmod`` instead would
+    abort before any temp ever holds the secret and prove nothing.
+    """
     keys_path = tmp_path / "keys.env"
 
-    def _boom(*_args: object, **_kwargs: object) -> None:
-        msg = "chmod refused"
+    def _boom(_fd: int) -> None:
+        msg = "fsync refused"
         raise OSError(msg)
 
-    monkeypatch.setattr(os, "fchmod", _boom)
-    with pytest.raises(OSError, match="chmod refused"):
-        writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
-    # No orphaned temp, and the failed write never created keys.env.
+    fds_before = _open_fd_count()
+    monkeypatch.setattr(os, "fsync", _boom)
+    with pytest.raises(OSError, match="fsync refused"):
+        writer.write({"OPENAI_API_KEY": "sk-secret"}, keys_path)
+
+    # (b) no partial credentials file, (c) no orphaned secret-bearing temp.
+    assert not keys_path.exists()
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+    # (d) the temp's fd was closed on the failure path, not leaked. Only the
+    # fd-count check is environment-dependent; skip it (never error) where no
+    # kernel fd directory is exposed, leaving the guarantees above unconditional.
+    if fds_before is None:
+        pytest.skip("no /proc/self/fd or /dev/fd available for the fd-leak check")
+    assert _open_fd_count() == fds_before
+
+
+def test_write_keys_env_forces_0600_over_existing_wider_file(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """An existing world-readable keys.env is tightened to 0600 on rewrite.
+
+    AtomicFile preserves an existing file's mode by default; keys_env forces
+    0600 (``replace(mode=0o600)``) so a secrets file that was somehow left at a
+    wider mode is narrowed rather than preserved -- the security invariant that a
+    plain mode-preserving write would silently violate.
+    """
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("OPENAI_API_KEY=old\n", encoding="utf-8")
+    keys_path.chmod(0o644)
+    writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+    assert stat_mod.S_IMODE(keys_path.stat().st_mode) == 0o600
+    assert "OPENAI_API_KEY=sk-new" in keys_path.read_text(encoding="utf-8")
 
 
 def test_write_keys_env_cleanup_never_masks_the_write_error(
