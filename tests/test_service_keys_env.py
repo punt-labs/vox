@@ -16,6 +16,11 @@ def writer() -> KeysEnvWriter:
     return KeysEnvWriter()
 
 
+def _open_fd_count() -> int:
+    """Return this process's open file-descriptor count (macOS + Linux)."""
+    return sum(1 for _ in Path("/dev/fd").iterdir())
+
+
 def test_write_keys_env_creates_file_at_target_path(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:
@@ -55,18 +60,31 @@ def test_write_keys_env_is_atomic_and_leaves_no_temp(
 def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
     writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A raising chmod aborts the write, orphaning no keys.env and no temp file."""
+    """A mid-write fsync failure cleans up the secret-bearing temp and leaks no fd.
+
+    Inject the failure at ``os.fsync`` -- after the secret bytes are written and
+    flushed into the temp file but before the atomic rename -- so the test
+    actually reaches the state a naive writer would leave a plaintext-secret temp
+    behind. ``_harden_parent`` runs first and must succeed, so control genuinely
+    reaches ``AtomicFile.replace``; patching the parent ``chmod`` instead would
+    abort before any temp ever holds the secret and prove nothing.
+    """
     keys_path = tmp_path / "keys.env"
 
-    def _boom(*_args: object, **_kwargs: object) -> None:
-        msg = "chmod refused"
+    def _boom(_fd: int) -> None:
+        msg = "fsync refused"
         raise OSError(msg)
 
-    monkeypatch.setattr(Path, "chmod", _boom)
-    with pytest.raises(OSError, match="chmod refused"):
-        writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
-    # No orphaned temp, and the failed write never created keys.env.
+    fds_before = _open_fd_count()
+    monkeypatch.setattr(os, "fsync", _boom)
+    with pytest.raises(OSError, match="fsync refused"):
+        writer.write({"OPENAI_API_KEY": "sk-secret"}, keys_path)
+
+    # (b) no partial credentials file, (c) no orphaned secret-bearing temp.
+    assert not keys_path.exists()
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+    # (d) the temp's fd was closed on the failure path, not leaked.
+    assert _open_fd_count() == fds_before
 
 
 def test_write_keys_env_forces_0600_over_existing_wider_file(
