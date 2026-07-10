@@ -16,9 +16,20 @@ def writer() -> KeysEnvWriter:
     return KeysEnvWriter()
 
 
-def _open_fd_count() -> int:
-    """Return this process's open file-descriptor count (macOS + Linux)."""
-    return sum(1 for _ in Path("/dev/fd").iterdir())
+def _open_fd_count() -> int | None:
+    """Return this process's open-fd count, or None when unavailable.
+
+    Prefer ``/proc/self/fd`` (canonical on Linux, present whenever /proc is
+    mounted); fall back to ``/dev/fd`` (macOS/BSD). Some minimal Linux containers
+    expose neither -- return None so the caller can skip the fd-leak check
+    cleanly rather than erroring on a missing path.
+    """
+    for fd_dir in (Path("/proc/self/fd"), Path("/dev/fd")):
+        try:
+            return sum(1 for _ in fd_dir.iterdir())
+        except FileNotFoundError:
+            continue
+    return None
 
 
 def test_write_keys_env_creates_file_at_target_path(
@@ -83,7 +94,11 @@ def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
     # (b) no partial credentials file, (c) no orphaned secret-bearing temp.
     assert not keys_path.exists()
     assert sorted(p.name for p in tmp_path.iterdir()) == []
-    # (d) the temp's fd was closed on the failure path, not leaked.
+    # (d) the temp's fd was closed on the failure path, not leaked. Only the
+    # fd-count check is environment-dependent; skip it (never error) where no
+    # kernel fd directory is exposed, leaving the guarantees above unconditional.
+    if fds_before is None:
+        pytest.skip("no /proc/self/fd or /dev/fd available for the fd-leak check")
     assert _open_fd_count() == fds_before
 
 
