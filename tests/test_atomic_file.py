@@ -128,6 +128,33 @@ def test_failed_write_leaves_original_and_no_temp(
     assert list(af.path.parent.glob(".*.tmp")) == []
 
 
+def test_fdopen_failure_cleanup_never_masks_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fdopen-failure path unlinks its temp under contextlib.suppress, so a
+    # raising unlink cannot mask the real os.fdopen error -- parity with the main
+    # cleanup path. Before the suppress was added, the cleanup's "unlink refused"
+    # would propagate instead of the true "fdopen refused" cause.
+    af = _file(tmp_path)
+    af.path.parent.mkdir(parents=True)
+    original = "# keep\n"
+    af.path.write_text(original, encoding="utf-8")
+
+    def boom_fdopen(*_args: object, **_kwargs: object) -> None:
+        raise OSError("fdopen refused")
+
+    def boom_unlink(_self: Path, missing_ok: bool = False) -> None:
+        raise OSError("unlink refused")
+
+    monkeypatch.setattr(os, "fdopen", boom_fdopen)
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+    with pytest.raises(OSError, match="fdopen refused"):
+        af.replace("# doomed\n")
+
+    # The real cause surfaced, and the original file is untouched.
+    assert af.path.read_text(encoding="utf-8") == original
+
+
 def test_symlink_target_is_rewritten_and_link_preserved(tmp_path: Path) -> None:
     store = tmp_path / "store"
     store.mkdir()

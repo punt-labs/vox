@@ -91,7 +91,10 @@ class AtomicFile:
             handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
         except BaseException:
             os.close(fd)
-            tmp.unlink(missing_ok=True)
+            # Suppress a raising unlink so the original fdopen error propagates,
+            # not the cleanup failure -- parity with the main path below.
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
             raise
         try:
             with handle:
