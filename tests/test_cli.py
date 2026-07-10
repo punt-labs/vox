@@ -415,16 +415,34 @@ class TestApiKeyInputPaths:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A missing path is a BadParameter, not a crash."""
+        """A missing path is a BadParameter, not a crash.
+
+        Asserts against ``result.exception`` (the raw BadParameter) rather
+        than the rendered ``result.output``/``result.stderr`` because Click's
+        rich error box wraps the message at terminal width. On a narrow
+        terminal (``COLUMNS`` ~80, the no-tty default) "is not a file" splits
+        across lines, breaking the substring match. ``standalone_mode=False``
+        makes Click re-raise BadParameter instead of rendering it, so the
+        message is unwrapped -- the same fix its sibling mutual-exclusion tests
+        already carry.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("VOX_API_KEY", raising=False)
         missing = tmp_path / "does_not_exist"
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello", "--api-key-file", str(missing)])
+        result = runner.invoke(
+            app,
+            ["unmute", "hello", "--api-key-file", str(missing)],
+            standalone_mode=False,
+        )
 
         assert result.exit_code != 0
-        assert "is not a file" in result.output or "is not a file" in result.stderr
+        assert isinstance(result.exception, typer.BadParameter), (
+            f"expected BadParameter, got "
+            f"{type(result.exception).__name__}: {result.exception}"
+        )
+        assert "is not a file" in str(result.exception)
 
     def test_api_key_file_empty(
         self,
