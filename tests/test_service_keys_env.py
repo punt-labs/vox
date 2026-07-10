@@ -17,17 +17,21 @@ def writer() -> KeysEnvWriter:
 
 
 def _open_fd_count() -> int | None:
-    """Return this process's open-fd count, or None when unavailable.
+    """Return this process's open-fd count, or None when it can't be read.
 
     Prefer ``/proc/self/fd`` (canonical on Linux, present whenever /proc is
-    mounted); fall back to ``/dev/fd`` (macOS/BSD). Some minimal Linux containers
-    expose neither -- return None so the caller can skip the fd-leak check
-    cleanly rather than erroring on a missing path.
+    mounted); fall back to ``/dev/fd`` (macOS/BSD). The fd count is best-effort
+    defence-in-depth -- the caller's core secret-cleanup assertions are
+    unconditional -- so any OS-level failure to enumerate the directory
+    (missing, a non-directory, permission-denied, ...) returns None to skip only
+    the fd check, never to error the test over an environment quirk. ``OSError``
+    is the base of FileNotFoundError, NotADirectoryError, and PermissionError,
+    so catching it covers every such enumeration failure in one clause.
     """
     for fd_dir in (Path("/proc/self/fd"), Path("/dev/fd")):
         try:
             return sum(1 for _ in fd_dir.iterdir())
-        except FileNotFoundError:
+        except OSError:
             continue
     return None
 
