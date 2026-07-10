@@ -55,18 +55,36 @@ def test_write_keys_env_is_atomic_and_leaves_no_temp(
 def test_write_keys_env_mid_write_failure_leaks_no_fd_or_temp(
     writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A raising fchmod still closes the fd (via fdopen) and orphans no temp file."""
+    """A raising chmod aborts the write, orphaning no keys.env and no temp file."""
     keys_path = tmp_path / "keys.env"
 
     def _boom(*_args: object, **_kwargs: object) -> None:
         msg = "chmod refused"
         raise OSError(msg)
 
-    monkeypatch.setattr(os, "fchmod", _boom)
+    monkeypatch.setattr(Path, "chmod", _boom)
     with pytest.raises(OSError, match="chmod refused"):
         writer.write({"OPENAI_API_KEY": "sk-x"}, keys_path)
     # No orphaned temp, and the failed write never created keys.env.
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_write_keys_env_forces_0600_over_existing_wider_file(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """An existing world-readable keys.env is tightened to 0600 on rewrite.
+
+    AtomicFile preserves an existing file's mode by default; keys_env forces
+    0600 (``replace(mode=0o600)``) so a secrets file that was somehow left at a
+    wider mode is narrowed rather than preserved -- the security invariant that a
+    plain mode-preserving write would silently violate.
+    """
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("OPENAI_API_KEY=old\n", encoding="utf-8")
+    keys_path.chmod(0o644)
+    writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+    assert stat_mod.S_IMODE(keys_path.stat().st_mode) == 0o600
+    assert "OPENAI_API_KEY=sk-new" in keys_path.read_text(encoding="utf-8")
 
 
 def test_write_keys_env_cleanup_never_masks_the_write_error(

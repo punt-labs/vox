@@ -73,6 +73,42 @@ def test_replace_preserves_existing_mode(tmp_path: Path) -> None:
     assert stat.S_IMODE(af.path.stat().st_mode) == 0o600
 
 
+def test_replace_forces_mode_on_new_file(tmp_path: Path) -> None:
+    af = _file(tmp_path)
+    af.replace("# secret\n", mode=0o600)
+    assert stat.S_IMODE(af.path.stat().st_mode) == 0o600
+
+
+def test_replace_forces_mode_over_existing_wider_file(tmp_path: Path) -> None:
+    # A forced mode wins over the default preserve-existing policy: a 0644 file
+    # is narrowed to 0600 rather than kept, the invariant a secrets file needs.
+    af = _file(tmp_path)
+    af.path.parent.mkdir(parents=True)
+    af.path.write_text("# rules\n", encoding="utf-8")
+    af.path.chmod(0o644)
+    af.replace("# changed\n", mode=0o600)
+    assert stat.S_IMODE(af.path.stat().st_mode) == 0o600
+
+
+def test_failed_chmod_leaves_original_and_no_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    af = _file(tmp_path)
+    af.path.parent.mkdir(parents=True)
+    original = "# keep\n"
+    af.path.write_text(original, encoding="utf-8")
+
+    def boom_chmod(self: Path, mode: int) -> None:
+        raise OSError("simulated chmod failure")
+
+    monkeypatch.setattr(Path, "chmod", boom_chmod)
+    with pytest.raises(OSError, match="simulated chmod failure"):
+        af.replace("# doomed\n")
+
+    assert af.path.read_text(encoding="utf-8") == original
+    assert list(af.path.parent.glob(".*.tmp")) == []
+
+
 def test_failed_write_leaves_original_and_no_temp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -89,7 +125,7 @@ def test_failed_write_leaves_original_and_no_temp(
         af.replace("# doomed\n")
 
     assert af.path.read_text(encoding="utf-8") == original
-    assert list(af.path.parent.glob(".claude-md-*.tmp")) == []
+    assert list(af.path.parent.glob(".*.tmp")) == []
 
 
 def test_symlink_target_is_rewritten_and_link_preserved(tmp_path: Path) -> None:
@@ -107,5 +143,5 @@ def test_symlink_target_is_rewritten_and_link_preserved(tmp_path: Path) -> None:
     assert link.is_symlink()
     assert link.readlink() == real
     assert real.read_text(encoding="utf-8") == "# via link\n"
-    assert list(link.parent.glob(".claude-md-*.tmp")) == []
-    assert list(real.parent.glob(".claude-md-*.tmp")) == []
+    assert list(link.parent.glob(".*.tmp")) == []
+    assert list(real.parent.glob(".*.tmp")) == []

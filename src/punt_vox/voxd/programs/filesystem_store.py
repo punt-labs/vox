@@ -11,11 +11,11 @@ seam that dereferences an opaque locator to a ``Path``.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
@@ -74,14 +74,9 @@ class FilesystemPartStore:
         self.save_manifest()
 
     def save_manifest(self) -> None:
-        """Write the current manifest atomically (temp file + fsync + replace)."""
+        """Write the current manifest atomically via :class:`AtomicFile`."""
         self.prepare()
-        tmp = self._directory / f".{_MANIFEST_NAME}.tmp"
-        with tmp.open("w", encoding="utf-8") as handle:
-            handle.write(self._manifest.to_json())
-            handle.flush()
-            os.fsync(handle.fileno())
-        tmp.replace(self._directory / _MANIFEST_NAME)
+        AtomicFile(self._directory / _MANIFEST_NAME).replace(self._manifest.to_json())
 
 
 @final
