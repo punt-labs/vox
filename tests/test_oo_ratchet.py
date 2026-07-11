@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tools.oo_ratchet.baseline import Baseline
+from tools.oo_ratchet.cli import main
 from tools.oo_ratchet.gitio import GitError, GitRepo
 from tools.oo_ratchet.ratchet import Ratchet
 from tools.oo_ratchet.scorer import Scorer
@@ -700,6 +701,21 @@ class TestGitFailClosed:
         assert gr.available is False
         assert gr._git(["rev-parse", "HEAD"]) is None
         assert gr.show_baseline("HEAD") is None
+
+    def test_corrupt_audit_line_is_controlled_nonzero(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A malformed in-tree .oo-audit.jsonl must surface as a clean non-zero
+        # exit through the CLI, not a JSONDecodeError traceback (Bugbot #2).
+        fx.write("sub/w.py", WORSE)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", GOOD)  # improves vs base -> check reads the audit
+        fx.snapshot("sub")
+        fx.write(".oo-audit.jsonl", "<<<<<<< merge conflict\n")
+        fx.commit("corrupt audit")
+        monkeypatch.chdir(fx.root)
+        assert main(["sub", "--check", "--base-ref", base, "--require-base"]) == 1
 
 
 class TestBootstrap:

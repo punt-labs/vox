@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .apply import PlanApplier, UpdatePlan
-from .audit import AuditLog
+from .audit import AuditError, AuditLog
 from .baseline import Baseline
 from .cli import Cli, Options, main
 from .compare import FileReview, Review, Row
@@ -16,6 +16,7 @@ from .thresholds import Thresholds
 from .writer import BaselineWriter
 
 __all__ = [
+    "AuditError",
     "AuditLog",
     "Baseline",
     "BaselineWriter",

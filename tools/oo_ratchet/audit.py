@@ -8,6 +8,15 @@ from pathlib import Path
 from typing import Self
 
 
+class AuditError(Exception):
+    """A ``.oo-audit.jsonl`` line could not be parsed.
+
+    Raised instead of letting ``json.JSONDecodeError`` escape, so a conflict
+    marker or hand-edit in the audit log becomes a controlled non-zero outcome
+    (``Cli.run`` catches it) rather than a traceback out of the gate.
+    """
+
+
 class AuditLog:
     """Append and query ``.oo-audit.jsonl`` — the ratchet's decision trail."""
 
@@ -76,7 +85,7 @@ class AuditLog:
         base_keys = self._canonical_set(base_text)
         pairs: set[tuple[str, str]] = set()
         for line in self._raw_lines():
-            entry: dict[str, object] = json.loads(line)
+            entry = self._parse(line)
             if self._canonical(entry) in base_keys:
                 continue
             if entry.get("verdict") != "relaxed":
@@ -94,7 +103,7 @@ class AuditLog:
         if not base_text:
             return frozenset()
         return frozenset(
-            cls._canonical(json.loads(line))
+            cls._canonical(cls._parse(line))
             for line in base_text.splitlines()
             if line.strip()
         )
@@ -104,13 +113,23 @@ class AuditLog:
         """Return a formatting-independent identity for an audit entry."""
         return json.dumps(entry, sort_keys=True)
 
+    @staticmethod
+    def _parse(line: str) -> dict[str, object]:
+        """Parse one audit line, or raise ``AuditError`` naming the bad line."""
+        try:
+            parsed: dict[str, object] = json.loads(line)
+        except json.JSONDecodeError as exc:
+            msg = f"malformed audit entry {line[:80]!r}: {exc}"
+            raise AuditError(msg) from exc
+        return parsed
+
     def _raw_lines(self) -> list[str]:
         if not self._path.exists():
             return []
         return [ln for ln in self._path.read_text().splitlines() if ln.strip()]
 
     def _read(self) -> list[dict[str, object]]:
-        return [json.loads(line) for line in self._raw_lines()]
+        return [self._parse(line) for line in self._raw_lines()]
 
     def render_log(self) -> list[str]:
         """Return the audit history as report lines."""

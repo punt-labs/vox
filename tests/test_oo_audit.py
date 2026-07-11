@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.oo_ratchet.audit import AuditLog
+import pytest
+
+from tools.oo_ratchet.audit import AuditError, AuditLog
 
 
 def _relax(audit: AuditLog, path: str, metric: str) -> None:
@@ -48,3 +50,18 @@ class TestRelaxationsSince:
         _relax(audit, "sub/w.py", "max_complexity")
         other = json.dumps({"verdict": "relaxed", "deltas": {"sub/other.py": {}}})
         assert audit.relaxations_since(other) == {("sub/w.py", "max_complexity")}
+
+
+class TestMalformedAudit:
+    """A malformed audit line is a controlled AuditError, not a traceback."""
+
+    def test_bad_working_tree_line_raises_audit_error(self, tmp_path: Path) -> None:
+        (tmp_path / AuditLog.FILENAME).write_text("<<<<<<< conflict marker\n")
+        with pytest.raises(AuditError):
+            AuditLog(tmp_path).relaxations_since(None)
+
+    def test_bad_base_line_raises_audit_error(self, tmp_path: Path) -> None:
+        audit = AuditLog(tmp_path)
+        _relax(audit, "sub/w.py", "max_complexity")
+        with pytest.raises(AuditError):
+            audit.relaxations_since("{ not json")
