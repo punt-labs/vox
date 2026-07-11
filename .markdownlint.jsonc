@@ -1,6 +1,7 @@
 {
   "MD013": false,
   "MD060": false,
+  "MD010": { "code_blocks": false },
   "MD024": { "siblings_only": true },
   "MD033": { "allowed_elements": ["details", "img", "p", "summary"] }
 }
