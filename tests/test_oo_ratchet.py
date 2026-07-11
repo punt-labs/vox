@@ -499,6 +499,17 @@ class TestGitFailClosed:
         diff = GitRepo(fx.root).diff(head)  # HEAD vs work tree: no changes
         assert diff.touched == frozenset()
 
+    def test_corrupt_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
+        # A non-JSON baseline blob at the base is a controlled GitError, not a
+        # json traceback that crashes the gate (Bugbot #2).
+        fx.write("sub/w.py", GOOD)
+        fx.write_baseline({"sub/w.py": {"module_size": 5.0}})
+        fx.commit("valid base")
+        fx.write(".oo-baseline.json", "{ this is not json")
+        head = fx.commit("corrupt the baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
 
 class TestBootstrap:
     """Base resolution and the O2 bootstrap / require-base rules."""

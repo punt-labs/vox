@@ -144,7 +144,11 @@ class GitRepo:
         out = self._git(["show", f"{ref}:{self.BASELINE_FILE}"])
         if out is None:
             return None
-        parsed: dict[str, dict[str, float]] = json.loads(out)
+        try:
+            parsed: dict[str, dict[str, float]] = json.loads(out)
+        except json.JSONDecodeError as exc:
+            msg = f"corrupt baseline blob at {ref}:{self.BASELINE_FILE}: {exc}"
+            raise GitError(msg) from exc
         return parsed
 
     def show_audit(self, ref: str) -> str | None:
