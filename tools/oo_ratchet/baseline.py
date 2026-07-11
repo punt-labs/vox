@@ -9,6 +9,15 @@ from typing import Self
 from .thresholds import Thresholds
 
 
+class BaselineError(Exception):
+    """The in-tree ``.oo-baseline.json`` could not be parsed.
+
+    Raised instead of letting ``json.JSONDecodeError`` escape, so a corrupt or
+    hand-broken baseline becomes a controlled non-zero outcome (``Cli.run``
+    catches it) rather than a traceback out of the gate.
+    """
+
+
 class Baseline:
     """Read and write ``.oo-baseline.json`` — the committed metric snapshot."""
 
@@ -46,7 +55,11 @@ class Baseline:
     def _load(path: Path) -> dict[str, dict[str, float]]:
         if not path.exists():
             return {}
-        parsed: dict[str, dict[str, float]] = json.loads(path.read_text())
+        try:
+            parsed: dict[str, dict[str, float]] = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            msg = f"corrupt baseline file {path}: {exc}"
+            raise BaselineError(msg) from exc
         return parsed
 
     def save(self, data: dict[str, dict[str, float]]) -> None:

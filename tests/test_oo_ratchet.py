@@ -717,6 +717,18 @@ class TestGitFailClosed:
         monkeypatch.chdir(fx.root)
         assert main(["sub", "--check", "--base-ref", base, "--require-base"]) == 1
 
+    def test_corrupt_in_tree_baseline_is_controlled_nonzero(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A corrupt in-tree .oo-baseline.json must surface as a clean non-zero
+        # exit through the CLI, not a JSONDecodeError traceback (Bugbot #1).
+        fx.write("sub/w.py", GOOD)
+        fx.write(".oo-baseline.json", "{ not valid json")
+        fx.commit("corrupt baseline")
+        monkeypatch.chdir(fx.root)
+        result = main(["sub", "--check"])
+        assert result == 1
+
 
 class TestBootstrap:
     """Base resolution and the O2 bootstrap / require-base rules."""

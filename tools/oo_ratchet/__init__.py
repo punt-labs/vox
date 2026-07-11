@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .apply import PlanApplier, UpdatePlan
 from .audit import AuditError, AuditLog
-from .baseline import Baseline
+from .baseline import Baseline, BaselineError
 from .cli import Cli, Options, main
 from .compare import FileReview, Review, Row
 from .gitio import Diff, GitError, GitRepo
@@ -19,6 +19,7 @@ __all__ = [
     "AuditError",
     "AuditLog",
     "Baseline",
+    "BaselineError",
     "BaselineWriter",
     "Cli",
     "Diff",

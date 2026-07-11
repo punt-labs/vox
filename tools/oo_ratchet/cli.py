@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Self
 
 from .audit import AuditError
+from .baseline import BaselineError
 from .gitio import GitError, GitRepo
 from .outcome import Outcome
 from .ratchet import Ratchet
@@ -115,7 +116,7 @@ class Cli:
         try:
             action = self._run_action(scorer)
             outcome = action if action is not None else self._run_view(scorer)
-        except (GitError, AuditError) as exc:
+        except (GitError, AuditError, BaselineError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 
