@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self
 
-from .audit import AuditLog
 from .thresholds import Thresholds
 
 
@@ -51,7 +50,7 @@ class FileReview:
         current: dict[str, float],
         base: dict[str, float] | None,
         intree: dict[str, float] | None,
-        audit: AuditLog,
+        waivable: frozenset[tuple[str, str]],
     ) -> Self:
         self = super().__new__(cls)
         self._path = path
@@ -59,7 +58,7 @@ class FileReview:
         if base is None:
             self._review_new(current)
         else:
-            self._review_tracked(current, base, intree, audit)
+            self._review_tracked(current, base, intree, waivable)
         return self
 
     def _review_new(self, current: dict[str, float]) -> None:
@@ -85,7 +84,7 @@ class FileReview:
         current: dict[str, float],
         base: dict[str, float],
         intree: dict[str, float] | None,
-        audit: AuditLog,
+        waivable: frozenset[tuple[str, str]],
     ) -> None:
         rows: list[Row] = []
         regressed: list[str] = []
@@ -95,7 +94,7 @@ class FileReview:
             if metric not in current or metric not in base:
                 continue
             cur, base_val = current[metric], base[metric]
-            status = self._classify(metric, cur, base_val, intree, audit)
+            status = self._classify(metric, cur, base_val, intree, waivable)
             if status == "IMPROVED":
                 improved = True
             elif status == "REGRESSED":
@@ -126,14 +125,14 @@ class FileReview:
         cur: float,
         base_val: float,
         intree: dict[str, float] | None,
-        audit: AuditLog,
+        waivable: frozenset[tuple[str, str]],
     ) -> str:
         if Thresholds.strictly_better(metric, cur, base_val):
             return "IMPROVED"
         if Thresholds.better_or_equal(metric, cur, base_val):
             return "PASS"
         locked = intree is not None and intree.get(metric) == cur
-        if locked and audit.has_relaxation(self._path, metric):
+        if locked and (self._path, metric) in waivable:
             return "RELAXED"
         return "REGRESSED"
 

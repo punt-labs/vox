@@ -250,6 +250,28 @@ class TestRelaxWaiver:
         )
         assert outcome.exit_code == 1
 
+    def test_historical_relaxation_does_not_waive_fresh_regression(
+        self, fx: GitFixture
+    ) -> None:
+        # A relaxation committed at base must not bless a NEW regression that a
+        # later --rebaseline merely re-locks to a worse value (S7 / gvr).
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        fx.writer().relax(
+            fx.scorer(),
+            "sub/w.py",
+            justify="historical",
+            allow_ci_write=True,
+            source=None,
+        )
+        base = fx.commit("adopt with historical relaxation")
+        fx.write("sub/w.py", WORSE)  # fresh regression vs base
+        fx.writer().rebaseline(fx.scorer(), allow_ci_write=True, source=None)
+        fx.commit("regress then rebaseline")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("regression" in line for line in outcome.lines)
+
 
 class TestRenameCarry:
     """A renamed file inherits its predecessor's base entry (S8)."""

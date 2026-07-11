@@ -68,7 +68,10 @@ class Ratchet:
         if not touched:
             return Outcome.passed("No Python files touched -- trivial pass")
 
-        reviews = self._build_reviews(touched, current, base_baseline, diff.renames)
+        waivable = self._audit.relaxations_since(self._git.show_audit(base))
+        reviews = self._build_reviews(
+            touched, current, base_baseline, diff.renames, waivable
+        )
         lock_fail, missing = self._integrity(touched, current)
         return self._verdict(Review(reviews), lock_fail, missing)
 
@@ -97,6 +100,7 @@ class Ratchet:
         current: dict[str, dict[str, float]],
         base_baseline: dict[str, dict[str, float]],
         renames: dict[str, str],
+        waivable: frozenset[tuple[str, str]],
     ) -> tuple[FileReview, ...]:
         reviews: list[FileReview] = []
         for path in touched:
@@ -109,7 +113,7 @@ class Ratchet:
                     current[path],
                     base_entry,
                     self._baseline.get(path),
-                    self._audit,
+                    waivable,
                 )
             )
         return tuple(reviews)

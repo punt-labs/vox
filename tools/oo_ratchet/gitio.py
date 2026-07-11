@@ -41,6 +41,7 @@ class GitRepo:
     _root: Path | None
 
     BASELINE_FILE: str = ".oo-baseline.json"
+    AUDIT_FILE: str = ".oo-audit.jsonl"
 
     def __new__(cls, start: Path | None = None) -> Self:
         self = super().__new__(cls)
@@ -145,3 +146,11 @@ class GitRepo:
             return None
         parsed: dict[str, dict[str, float]] = json.loads(out)
         return parsed
+
+    def show_audit(self, ref: str) -> str | None:
+        """Return the raw audit-log text committed at ``ref``, or ``None``.
+
+        ``None`` means the audit blob does not exist at that ref; the caller
+        treats it as an empty history so every current relaxation counts as new.
+        """
+        return self._git(["show", f"{ref}:{self.AUDIT_FILE}"])
