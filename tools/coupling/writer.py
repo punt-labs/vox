@@ -92,6 +92,62 @@ class CouplingWriter:
             f"  files scored: {len(current)}",
         )
 
+    def relax(
+        self,
+        scorer: CouplingScorer,
+        file: str,
+        *,
+        justify: str,
+        allow_ci_write: bool,
+        source: str | None,
+    ) -> Outcome:
+        """Write ``file``'s current metrics even if looser, with justification.
+
+        The single sanctioned, audited loosening -- the escape hatch a legitimate
+        coupling increase needs. Records ONLY the metrics that actually worsened
+        against the pre-relax baseline, so relaxing one metric never blesses a
+        future regression of another metric on the same file.
+        """
+        blocked = self._guard(allow_ci_write=allow_ci_write)
+        if blocked is not None:
+            return blocked
+        if not justify.strip():
+            return Outcome.failed("FAIL: --relax requires a non-empty --justify")
+        current = CouplingBaseline.metrics_by_file(scorer.results)
+        entry = current.get(file)
+        if entry is None:
+            return Outcome.failed(f"FAIL: not a scored file: {file}")
+        base_entry = self._baseline.get(file)
+        if base_entry is None:
+            return Outcome.failed(
+                f"FAIL: {file} has no baseline entry to relax; "
+                "use --update or --rebaseline to add a new file"
+            )
+        loosened = self._regressed(entry, base_entry)
+        if not loosened:
+            return Outcome.failed(
+                f"FAIL: nothing to relax for {file} "
+                "(no metric is worse than its baseline)"
+            )
+        deltas = {file: {m: [base_entry.get(m, entry[m]), entry[m]] for m in loosened}}
+        new_baseline = dict(self._baseline.entries)
+        new_baseline[file] = entry
+        self._baseline.save(new_baseline)
+        self._audit.append(
+            files_scored=len(current),
+            files_improved=0,
+            files_regressed=1,
+            verdict="relaxed",
+            deltas=deltas,
+            commit=self._git.short_head(),
+            source=source,
+            reason=justify,
+        )
+        return Outcome.passed(
+            f"\nRelaxed {file} (reason: {justify})",
+            f"  baseline: {self._baseline.path}",
+        )
+
     def _apply(
         self,
         current: dict[str, dict[str, float]],

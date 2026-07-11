@@ -92,11 +92,7 @@ def resolve_voice_and_language(
         voice = provider.default_voice
 
     try:
-        if language is not None:
-            provider.resolve_voice(voice, language)
-        else:
-            provider.resolve_voice(voice)
-            language = provider.infer_language_from_voice(voice)
+        return voice, _validate_and_infer(provider, voice, language)
     except VoiceNotFoundError:
         if not voice_from_config:
             raise
@@ -107,13 +103,18 @@ def resolve_voice_and_language(
             provider.default_voice,
         )
         voice = provider.default_voice
-        if language is not None:
-            provider.resolve_voice(voice, language)
-        else:
-            provider.resolve_voice(voice)
-            language = provider.infer_language_from_voice(voice)
+        return voice, _validate_and_infer(provider, voice, language)
 
-    return voice, language
+
+def _validate_and_infer(
+    provider: TTSProvider, voice: str, language: str | None
+) -> str | None:
+    """Validate *voice* against *provider*; infer its language when unset."""
+    if language is not None:
+        provider.resolve_voice(voice, language)
+        return language
+    provider.resolve_voice(voice)
+    return provider.infer_language_from_voice(voice)
 
 
 def apply_vibe(

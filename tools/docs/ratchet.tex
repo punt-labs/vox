@@ -9,7 +9,9 @@
 % between check-oo and the other two tools -- base-baseline hardening, the
 % empty-baseline intercept, and the never-loosen update -- were closed, so
 % the three tools now share a uniform contract; section "Findings" records
-% this.
+% this. check-coupling has since gained the same audited waiver check-oo
+% carries (commit 0937d9d): the shared "Waiver" schema models it once, and
+% both OoCheck and CplCheck include it.
 %
 
 \documentclass[a4paper,10pt,fleqn]{article}
@@ -398,30 +400,63 @@ requireBase = ztrue \\
 out! = fail
 \end{schema}
 
-\subsection{Inputs}
+\subsection{The audited waiver}
 
-\texttt{OoCheck} carries the resolved base commit and the base-commit
-baseline (\texttt{baselineAt}$~$\texttt{baseCommit}, the authoritative
-comparison source --- \emph{never} the in-tree file); the in-tree baseline
-(read only for the lock-in and waiver checks); the current scores; the
-touched set (touched Python files that scored clean); the touched files
-that failed to parse; and the waivable \texttt{(file, metric)} pairs
-harvested from audit relaxations recorded since the base commit.
+check-oo and check-coupling both admit an audited waiver, and admit it on
+identical terms; only check-suppressions --- a single scalar --- does not. A
+touched file's metric is \emph{waived} (\texttt{RELAXED}) exactly when two
+conditions hold together: the in-tree baseline has locked the current value, so
+the regression was recorded rather than smuggled; and the audit log carries a
+matching \texttt{(file, metric)} relaxation recorded \emph{since} the base
+commit, so a historical relaxation cannot bless a fresh regression. The waiver
+is per-metric: a relaxation names only the metrics that actually worsened
+(\texttt{writer.py}'s \texttt{relax} records only the regressed metrics), so
+relaxing one metric never waives another.
 
-\begin{schema}{OoCheck}
-Proceed \\
-baseCommit : COMMIT \\
-baselineAt : COMMIT \pfun BLINE \\
-baseB : BLINE \\
+\texttt{Waiver} names this computation once, shared by both tools. It splits the
+raw regressions --- the touched \texttt{(file, metric)} pairs worse than the
+base-commit baseline --- into those a waiver covers (\texttt{waivedP}) and those
+it does not (\texttt{regressedP}). Only \texttt{regressedP} fails a gate.
+
+\begin{schema}{Waiver}
 inTree : BLINE \\
 current : BLINE \\
+baseB : BLINE \\
 touched : \finset FILE \\
-brokenTouched : \finset FILE \\
 waivable : \finset (FILE \cross METRIC) \\
 wvd : \finset (FILE \cross METRIC) \\
 rawRegressed : \finset (FILE \cross METRIC) \\
 regressedP : \finset (FILE \cross METRIC) \\
-waivedP : \finset (FILE \cross METRIC) \\
+waivedP : \finset (FILE \cross METRIC)
+\where
+wvd = \{ f : touched; m : METRIC | f \in \dom inTree \land m \in \dom (inTree~f) \land inTree~f~m = current~f~m \land (f, m) \in waivable \} \\
+rawRegressed = \{ f : touched; m : METRIC | f \in \dom baseB \land m \in worse(current~f, baseB~f) \} \\
+regressedP = rawRegressed \setminus wvd \\
+waivedP = rawRegressed \cap wvd
+\end{schema}
+
+The waiver is scoped to the change: \texttt{waivable} is the set of
+\texttt{(file, metric)} pairs harvested from audit relaxations recorded
+\emph{since} the base commit (\texttt{audit.py}'s \texttt{relaxations\_since}),
+never the whole audit history. A relaxation blessed on an earlier change is
+absent from this set, so it cannot waive a regression introduced now.
+
+\subsection{Inputs}
+
+\texttt{OoCheck} carries the resolved base commit and the base-commit
+baseline (\texttt{baselineAt}$~$\texttt{baseCommit}, the authoritative
+comparison source --- \emph{never} the in-tree file); the current scores; the
+touched set (touched Python files that scored clean); and the touched files
+that failed to parse. The in-tree baseline, the waivable \texttt{(file,
+metric)} pairs, and the derived waived/regressed partition all come from the
+included \texttt{Waiver} schema --- the same waiver check-coupling uses.
+
+\begin{schema}{OoCheck}
+Proceed \\
+Waiver \\
+baseCommit : COMMIT \\
+baselineAt : COMMIT \pfun BLINE \\
+brokenTouched : \finset FILE \\
 missingF : \finset FILE \\
 lockFailF : \finset FILE \\
 basePresent : \finset FILE \\
@@ -435,10 +470,6 @@ baseB = baselineAt~baseCommit \\
 \lnot (baseB = \emptyset \land requireBase = ztrue) \\
 touched \subseteq \dom current \\
 touched \cap brokenTouched = \emptyset \\
-wvd = \{ f : touched; m : METRIC | f \in \dom inTree \land m \in \dom (inTree~f) \land inTree~f~m = current~f~m \land (f, m) \in waivable \} \\
-rawRegressed = \{ f : touched; m : METRIC | f \in \dom baseB \land m \in worse(current~f, baseB~f) \} \\
-regressedP = rawRegressed \setminus wvd \\
-waivedP = rawRegressed \cap wvd \\
 missingF = \{ f : touched | f \notin \dom inTree \} \\
 lockFailF = \{ f : touched | f \in \dom inTree \land (\exists m : \dom (current~f) @ m \notin \dom (inTree~f) \lor inTree~f~m \neq current~f~m) \} \\
 basePresent = touched \cap \dom baseB \\
@@ -459,19 +490,20 @@ brokenTouched = \emptyset \land touched \neq \emptyset \implies \\
 out! \neq bootstrapPass \land out! \neq failClosedError
 \end{schema}
 
-The waiver is deliberately narrow: a metric is waived (\texttt{RELAXED})
-only when the in-tree baseline has locked the current value (so the
-regression was recorded, not smuggled) \emph{and} the audit log carries a
-matching relaxation. The improvement gate follows the code's S5: if any
-touched file is tracked in the base, the required improvement must come
-from such a file; a pure-add change is satisfied by a new file clearing all
-absolute thresholds; a change carrying a waiver is exempt.
+The waiver itself is modelled by \texttt{Waiver} above; \texttt{OoCheck} adds
+only the must-improve gate on top of it. That gate follows the code's S5: if any
+touched file is tracked in the base, the required improvement must come from
+such a file; a pure-add change is satisfied by a new file clearing all absolute
+thresholds; a change carrying a waiver ($\mathit{waivedP} \neq \emptyset$) is
+exempt.
 
 \section{check-coupling: The Regression-Only Ratchet}
 
-The coupling ratchet drops the must-improve gate, the waiver, the lock-in
-check, and the completeness check. A touched file fails only if a metric is
-strictly worse than its base-commit baseline; holding steady passes.
+The coupling ratchet drops the must-improve gate, the lock-in check, and the
+completeness check, but keeps check-oo's audited waiver (\texttt{Waiver}). A
+touched file fails only if a metric is strictly worse than its base-commit
+baseline \emph{and} the regression is not waived; holding steady passes, and so
+does a recorded, relaxation-blessed increase.
 
 \subsection{The empty-baseline intercept}
 
@@ -499,17 +531,18 @@ out! = fail
 
 The comparison runs when the base baseline is non-empty, or empty without
 \texttt{-{}-require-base} (in which case every file is new and passes). A
-file absent from the base is new: it never regresses.
+file absent from the base is new: it never regresses. The included
+\texttt{Waiver} supplies the same \texttt{regressedP} check-oo uses: a metric
+that is worse than the base but locked in the in-tree baseline and covered by a
+relaxation recorded since the base commit is waived, and so falls out of
+\texttt{regressedP}. Only the unwaived regressions fail the gate.
 
 \begin{schema}{CplCheck}
 Proceed \\
+Waiver \\
 baseCommit : COMMIT \\
 baselineAt : COMMIT \pfun BLINE \\
-baseB : BLINE \\
-current : BLINE \\
-touched : \finset FILE \\
 brokenTouched : \finset FILE \\
-regressedP : \finset (FILE \cross METRIC) \\
 out! : OUTCOME
 \where
 baseCommit \in \dom baselineAt \\
@@ -517,13 +550,18 @@ baseB = baselineAt~baseCommit \\
 \lnot (baseB = \emptyset \land requireBase = ztrue) \\
 touched \subseteq \dom current \\
 touched \cap brokenTouched = \emptyset \\
-regressedP = \{ f : touched; m : METRIC | f \in \dom baseB \land m \in worse(current~f, baseB~f) \} \\
 brokenTouched \neq \emptyset \implies out! = fail \\
 brokenTouched = \emptyset \land touched = \emptyset \implies out! = pass \\
 brokenTouched = \emptyset \land touched \neq \emptyset \implies \\
 \quad~ (out! = pass \iff regressedP = \emptyset) \\
 out! \neq bootstrapPass \land out! \neq failClosedError
 \end{schema}
+
+The waiver is why \texttt{CplCheck} still counts as \emph{regression-only}: the
+verdict turns solely on \texttt{regressedP}, the raw regressions minus the
+waived ones. A waived metric is not a passing metric that was forced to
+improve --- it is a recorded regression the audit log has blessed, so it never
+enters \texttt{regressedP} and never demands a compensating improvement.
 
 \section{check-suppressions: The Scalar-Count Ratchet}
 
@@ -712,8 +750,9 @@ this model:
   $\mathit{baselineAt}~\mathit{baseCommit}$, never the in-tree baseline:
   the equality $baseB = baselineAt~baseCommit$ in \texttt{OoCheck},
   \texttt{CplCheck}, and (as a total) \texttt{SupCheck}. The in-tree
-  baseline appears in \texttt{OoCheck} only for the lock-in and waiver
-  tests, and in \texttt{NeverLoosenUpdate} as the never-loosen target.
+  baseline appears in \texttt{OoCheck} for the lock-in and waiver tests, in
+  \texttt{CplCheck} (through \texttt{Waiver}) for the waiver test, and in
+  \texttt{NeverLoosenUpdate} as the never-loosen target.
 \end{itemize}
 
 \end{document}

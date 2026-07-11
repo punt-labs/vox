@@ -46,6 +46,7 @@ class GitRepo:
     _root: Path | None
 
     BASELINE_FILE: str = ".oo-coupling-baseline.json"
+    AUDIT_FILE: str = ".oo-coupling-audit.jsonl"
 
     def __new__(cls, start: Path | None = None) -> Self:
         self = super().__new__(cls)
@@ -179,6 +180,15 @@ class GitRepo:
             raise GitError(f"non-numeric metric in coupling baseline blob at {blob}")
         parsed: dict[str, dict[str, float]] = loaded
         return parsed
+
+    def show_audit(self, ref: str) -> str | None:
+        """Return the audit-log text committed at ``ref``, or ``None`` if absent.
+
+        ``None`` means the blob genuinely does not exist at that ref (no base
+        history); a real git error raises ``GitError`` rather than silently
+        reading as "no base relaxations" and over-waiving.
+        """
+        return self._show_file(ref, self.AUDIT_FILE)
 
     def _show_file(self, ref: str, path: str) -> str | None:
         """Return ``git show <ref>:<path>`` text, ``None`` if the path is absent.
