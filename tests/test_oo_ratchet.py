@@ -489,6 +489,28 @@ class TestRenameCarry:
         assert second.exit_code == 1
         assert Baseline(fx.root).get("sub/new.py") is None
 
+    def test_rename_to_unparseable_target_keeps_old_entry(self, fx: GitFixture) -> None:
+        # rename old->new where new is unparseable must NOT drop old's row: the
+        # drop is gated on the target being parse-clean AND written (Copilot #3).
+        # Keep the target a near-copy of old so git still detects the rename.
+        broken_similar = GOOD.replace('return "pos"', 'return "pos')  # unterminated
+        fx.write("sub/old.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.move("sub/old.py", "sub/new.py")
+        fx.write("sub/new.py", broken_similar)  # rename target is unparseable
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        assert any("parse error" in line for line in outcome.lines)
+        assert Baseline(fx.root).get("sub/old.py") is not None
+        assert Baseline(fx.root).get("sub/new.py") is None
+
 
 class TestCompleteness:
     """Whole-tree completeness enumerates from the scorer's own file set."""
