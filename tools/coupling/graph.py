@@ -35,7 +35,10 @@ class ImportGraph:
             key = layout.key_for(py_file)
             try:
                 tree = ast.parse(py_file.read_text(), filename=str(py_file))
-            except SyntaxError:
+            except (SyntaxError, OSError, UnicodeDecodeError):
+                # Unparseable/unreadable modules are omitted from the import
+                # graph; the scorer records the same file as an error so the
+                # ratchet still fails closed on it when it is touched.
                 continue
             resolver = ImportResolver(key, layout.modules, layout.name)
             edges[key] = resolver.internal_imports(tree)

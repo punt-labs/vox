@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
+from .audit import CouplingAuditError
 from .baseline import CouplingBaselineError
 from .gitio import GitError, GitRepo
 from .outcome import Outcome
@@ -102,7 +103,13 @@ class Cli:
             scorer = CouplingScorer(self._opts.src, self._root)
             action = self._run_action(scorer)
             outcome = action if action is not None else self._run_view(scorer)
-        except (GitError, CouplingBaselineError, OSError, UnicodeDecodeError) as exc:
+        except (
+            GitError,
+            CouplingBaselineError,
+            CouplingAuditError,
+            OSError,
+            UnicodeDecodeError,
+        ) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 

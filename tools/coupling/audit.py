@@ -8,6 +8,15 @@ from pathlib import Path
 from typing import Self
 
 
+class CouplingAuditError(Exception):
+    """The ``.oo-coupling-audit.jsonl`` log could not be read or parsed.
+
+    Raised instead of letting an OSError, UnicodeDecodeError, or JSONDecodeError
+    escape ``render_log`` (the ``--log`` view), so a corrupt or unreadable audit
+    log becomes a controlled non-zero the CLI catches, not a traceback.
+    """
+
+
 class CouplingAudit:
     """Append and render ``.oo-coupling-audit.jsonl`` — the ratchet's trail."""
 
@@ -59,15 +68,24 @@ class CouplingAudit:
         """Return the audit history as report lines."""
         if not self._path.exists():
             return ["No audit log found"]
+        try:
+            text = self._path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"unreadable coupling audit log {self._path}: {exc}"
+            raise CouplingAuditError(msg) from exc
         lines = [
             f"\n{'Timestamp':<22} {'Commit':<10} {'Scored':>7} "
             f"{'Improved':>9} {'Regressed':>10} {'Verdict':>12}",
             "-" * 74,
         ]
-        for raw in self._path.read_text().splitlines():
+        for raw in text.splitlines():
             if not raw.strip():
                 continue
-            entry = json.loads(raw)
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                msg = f"corrupt coupling audit log {self._path}: {exc}"
+                raise CouplingAuditError(msg) from exc
             commit = entry.get("commit") or "?"
             lines.append(
                 f"{entry.get('ts', '?')!s:<22} {commit!s:<10} "

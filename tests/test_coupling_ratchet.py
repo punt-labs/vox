@@ -16,6 +16,7 @@ from typing import Self
 
 import pytest
 
+from tools.coupling.audit import CouplingAudit, CouplingAuditError
 from tools.coupling.baseline import CouplingBaseline, CouplingBaselineError
 from tools.coupling.cli import main
 from tools.coupling.gitio import GitError, GitRepo
@@ -573,6 +574,35 @@ class TestFailClosed:
         fx.commit("valid in-tree baseline and regress")
         monkeypatch.chdir(fx.root)
         assert main(["pkg", "--check", "--base-ref", base, "--require-base"]) == 1
+
+    def test_non_utf8_touched_file_fails(self, fx: GitFixture) -> None:
+        # A touched .py file that cannot be decoded is scored as an error (like a
+        # syntax error), so the ratchet fails on it -- fail-closed, not a crash.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        (fx.root / "pkg" / "a.py").write_bytes(b"\xff\xfe# noqa\n")  # non-UTF8, touched
+        fx.commit("break encoding")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("failed to parse" in line for line in outcome.lines)
+
+    def test_render_log_raises_on_corrupt_audit(self, fx: GitFixture) -> None:
+        fx.write(".oo-coupling-audit.jsonl", "not json\n")
+        with pytest.raises(CouplingAuditError):
+            CouplingAudit(fx.root).render_log()
+
+    def test_corrupt_audit_log_is_controlled_nonzero_via_cli(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The --log view over a corrupt audit log surfaces a controlled non-zero,
+        # not a JSONDecodeError traceback.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        fx.write(".oo-coupling-audit.jsonl", "<<<< merge conflict not json\n")
+        fx.commit("corrupt audit")
+        monkeypatch.chdir(fx.root)
+        assert main(["pkg", "--log"]) == 1
 
     def test_git_degrades_to_none_without_a_repo(self) -> None:
         gr = GitRepo(Path("/nonexistent-coupling-ratchet-xyz"))

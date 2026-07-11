@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .audit import CouplingAudit
+from .audit import CouplingAudit, CouplingAuditError
 from .baseline import CouplingBaseline, CouplingBaselineError
 from .cli import Cli, Options, main
 from .compare import CouplingReview, Row
@@ -22,6 +22,7 @@ from .writer import CouplingWriter
 __all__ = [
     "Cli",
     "CouplingAudit",
+    "CouplingAuditError",
     "CouplingBaseline",
     "CouplingBaselineError",
     "CouplingRatchet",

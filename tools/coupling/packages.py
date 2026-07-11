@@ -111,7 +111,11 @@ class PackageScorer:
             return 0
         try:
             tree = ast.parse(init.read_text(), filename=str(init))
-        except SyntaxError:
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            # Package interface width is a display-only metric; an unreadable
+            # __init__.py contributes 0 here. The gate is unaffected: the scorer
+            # records the same file as an error and the ratchet fails on it when
+            # touched.
             return 0
         explicit = self._all_width(tree)
         return explicit if explicit is not None else self._import_width(tree)

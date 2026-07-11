@@ -96,7 +96,10 @@ class CouplingScorer:
         key = self._normalize(py_file, root)
         try:
             tree = ast.parse(py_file.read_text(), filename=str(py_file))
-        except SyntaxError as exc:
+        except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+            # A file that cannot be read or decoded is scored as an error, like a
+            # syntax error: the ratchet fails on it if it is a touched file
+            # (fail-closed), rather than crashing the whole scoring pass.
             return {"file": key, "error": str(exc)}
         mod_key = layout.key_for(py_file)
         resolver = ImportResolver(mod_key, layout.modules, layout.name)
