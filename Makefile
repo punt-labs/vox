@@ -20,8 +20,10 @@ docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
 # Base-comparison flags injected by CI (e.g. --base-ref <merge-base> --require-base).
-# Empty locally, where the tool defaults base to `git merge-base origin/main HEAD`.
+# Empty locally, where the tools default base to `git merge-base origin/main HEAD`.
 OO_BASE ?=
+COUPLING_BASE ?=
+SUPPRESSION_BASE ?=
 
 check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
@@ -31,14 +33,14 @@ check-oo: ## OO ratchet — must improve over baseline, never regress
 update-oo: ## Update OO baseline after improvements (stage .oo-baseline.json and .oo-audit.jsonl)
 	uv run python tools/oo_score.py src/punt_vox/ --update $(OO_BASE)
 
-check-coupling: ## Coupling analysis — informational
-	uv run python tools/oo_coupling.py src/punt_vox/ --check
+check-coupling: ## Coupling ratchet — merge-base scoped, must not regress
+	uv run python tools/oo_coupling.py src/punt_vox/ --check $(COUPLING_BASE)
 
-update-coupling: ## Update coupling baseline
-	uv run python tools/oo_coupling.py src/punt_vox/ --update
+update-coupling: ## Update coupling baseline (stage .oo-coupling-baseline.json and .oo-coupling-audit.jsonl)
+	uv run python tools/oo_coupling.py src/punt_vox/ --update $(COUPLING_BASE)
 
-check-suppressions: ## Suppression ratchet — count must not increase
-	uv run python tools/suppression_ratchet.py src/punt_vox/ --check
+check-suppressions: ## Suppression ratchet — base-commit scoped, count must not increase
+	uv run python tools/suppression_ratchet.py src/punt_vox/ --check $(SUPPRESSION_BASE)
 
 update-suppressions: ## Update suppression baseline
 	uv run python tools/suppression_ratchet.py src/punt_vox/ --update
