@@ -44,11 +44,7 @@ class Ratchet:
         """Compare touched files at HEAD against the base baseline."""
         base = self._git.resolve_base(base_ref)
         if base is None:
-            if require_base:
-                return Outcome.failed(
-                    "FAIL: base ref unresolvable and --require-base is set"
-                )
-            return Outcome.passed("No base to compare against -- bootstrap pass")
+            return self._no_base(require_base=require_base)
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
             return Outcome.passed(
@@ -74,6 +70,26 @@ class Ratchet:
         )
         lock_fail, missing = self._integrity(touched, current)
         return self._verdict(Review(reviews), lock_fail, missing)
+
+    def _no_base(self, *, require_base: bool) -> Outcome:
+        """Decide the verdict when no comparison base can be resolved.
+
+        Bootstrap-pass only in genuine first-adoption — no in-tree baseline
+        either. With a baseline present, an unresolvable base means a stale or
+        unfetched ``origin/main``; fail loud rather than silently no-op.
+        """
+        if require_base:
+            return Outcome.failed(
+                "FAIL: base ref unresolvable and --require-base is set"
+            )
+        if not self._baseline.exists:
+            return Outcome.passed(
+                "No base and no in-tree baseline -- first-adoption bootstrap pass"
+            )
+        return Outcome.failed(
+            "FAIL: cannot resolve merge-base (origin/main unfetched or stale) "
+            "with an in-tree baseline present; fetch origin/main or pass --base-ref"
+        )
 
     def show_log(self) -> Outcome:
         """Return the audit history as an outcome."""

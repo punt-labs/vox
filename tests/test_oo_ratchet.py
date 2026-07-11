@@ -395,9 +395,21 @@ class TestBootstrap:
         outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=True)
         assert outcome.exit_code == 1
 
-    def test_unresolvable_base_without_require_passes(self, fx: GitFixture) -> None:
+    def test_unresolvable_base_with_baseline_fails_loud(self, fx: GitFixture) -> None:
+        # Fail-closed: a stale/unfetched base with a baseline present must not
+        # silently pass a local check.
         fx.write("sub/w.py", GOOD)
         fx.snapshot("sub")
         fx.commit("base")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
+    def test_unresolvable_base_no_baseline_is_bootstrap_pass(
+        self, fx: GitFixture
+    ) -> None:
+        # Genuine first-adoption: no base AND no in-tree baseline.
+        fx.write("sub/w.py", GOOD)
+        fx.commit("pre-adoption")
         outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
         assert outcome.exit_code == 0
