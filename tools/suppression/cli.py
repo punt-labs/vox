@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Self
 
 from .baseline import SuppressionBaseline, SuppressionBaselineError
-from .gitio import GitError
+from .gitio import GitError, GitRepo
 from .outcome import Outcome
 from .report import SuppressionReport
 from .scanner import Scanner
@@ -68,10 +68,14 @@ class Cli:
     """Scan the target and route the request to the ratchet or a view."""
 
     _opts: Options
+    _git: GitRepo
+    _root: Path
 
     def __new__(cls, options: Options) -> Self:
         self = super().__new__(cls)
         self._opts = options
+        self._git = GitRepo()
+        self._root = self._git.root or Path.cwd()
         return self
 
     def run(self) -> int:
@@ -79,11 +83,14 @@ class Cli:
         if not self._opts.src.exists():
             return self._emit(Outcome.failed(f"not found: {self._opts.src}"))
         try:
+            # Anchor the scan's project root and the baseline path to the repo
+            # root (via GitRepo), not cwd, so running from a subdirectory still
+            # reads the right pyproject.toml and .suppression-baseline.json.
             # Scan and construct inside the try: an unreadable .py file (OSError)
             # or a corrupt in-tree baseline (eager load) must surface as a clean
             # non-zero, not a traceback.
-            report = Scanner(self._opts.src).report
-            outcome = self._dispatch(SuppressionBaseline(), report)
+            report = Scanner(self._opts.src, self._root).report
+            outcome = self._dispatch(SuppressionBaseline(self._root), report)
         except (GitError, SuppressionBaselineError, OSError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)

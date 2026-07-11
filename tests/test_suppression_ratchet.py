@@ -298,6 +298,23 @@ class TestCiWriteGuard:
         assert outcome.exit_code == 0
 
 
+class TestRepoRootResolution:
+    """The CLI anchors the baseline and pyproject to the repo root, not cwd."""
+
+    def test_cli_resolves_repo_root_from_subdir(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # From a subdirectory, the CLI resolves the repo root via GitRepo and
+        # reads the ROOT .suppression-baseline.json. With cwd anchoring it would
+        # miss the baseline and wrongly bootstrap-pass; anchored, the
+        # unresolvable-base + baseline-present case fails closed.
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()  # writes repo-root .suppression-baseline.json
+        gfx.commit("base with root baseline")
+        monkeypatch.chdir(gfx.root / "pkg")
+        assert main([".", "--check", "--base-ref", "0" * 40]) == 1
+
+
 def test_cli_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "a.py").write_text(WITH_SUPPRESSIONS)
