@@ -47,9 +47,7 @@ class Ratchet:
             return self._no_base(require_base=require_base)
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
-            return Outcome.passed(
-                "No base baseline to compare against -- bootstrap trivial pass"
-            )
+            return self._absent_base_baseline()
 
         diff = self._git.diff(base)
         touched_py = diff.python_files()
@@ -89,6 +87,22 @@ class Ratchet:
         return Outcome.failed(
             "FAIL: cannot resolve merge-base (origin/main unfetched or stale) "
             "with an in-tree baseline present; fetch origin/main or pass --base-ref"
+        )
+
+    def _absent_base_baseline(self) -> Outcome:
+        """Decide the verdict when the base commit has no baseline blob.
+
+        Absent at the base is genuine first-adoption *only* when ``origin/main``
+        also has no baseline. If the tip already carries one, the branch merely
+        forked before adoption and would launder a regression past the empty
+        base — fail closed and require a rebase onto current main (S2 / F2).
+        """
+        if self._git.show_baseline("origin/main") is not None:
+            return Outcome.failed(
+                "FAIL: base commit predates baseline adoption; rebase onto current main"
+            )
+        return Outcome.passed(
+            "No baseline at base or origin/main tip -- first-adoption bootstrap pass"
         )
 
     def show_log(self) -> Outcome:

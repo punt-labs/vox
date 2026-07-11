@@ -381,12 +381,30 @@ class TestBootstrap:
     """Base resolution and the O2 bootstrap / require-base rules."""
 
     def test_missing_base_baseline_is_bootstrap_pass(self, fx: GitFixture) -> None:
+        # Genuine first-adoption: neither base nor origin/main tip has a baseline.
         fx.write("sub/w.py", GOOD)  # no .oo-baseline.json committed
         base = fx.commit("base without baseline")
         fx.write("sub/w.py", WORSE)
         fx.commit("change")
         outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
         assert outcome.exit_code == 0
+
+    def test_stale_branch_past_adoption_fails(self, fx: GitFixture) -> None:
+        # Base forked before baseline adoption, but origin/main tip has one:
+        # a stale branch that would launder a regression past the empty base.
+        fx.write("sub/w.py", GOOD)
+        fork = fx.commit("fork before adoption")
+        fx.checkout_new("feature")
+        fx.write("sub/w.py", WORSE)
+        fx.commit("feature change")
+        fx.checkout("main")
+        fx.snapshot("sub")  # main adopts the baseline
+        main_head = fx.commit("adopt baseline on main")
+        fx.set_origin_main(main_head)
+        fx.checkout("feature")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=fork, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("predates baseline adoption" in line for line in outcome.lines)
 
     def test_unresolvable_base_with_require_fails(self, fx: GitFixture) -> None:
         fx.write("sub/w.py", GOOD)
