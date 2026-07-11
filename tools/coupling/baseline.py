@@ -56,10 +56,14 @@ class CouplingBaseline:
         if not path.exists():
             return {}
         try:
-            parsed: dict[str, dict[str, float]] = json.loads(path.read_text())
+            loaded = json.loads(path.read_text())
         except json.JSONDecodeError as exc:
             msg = f"corrupt coupling baseline file {path}: {exc}"
             raise CouplingBaselineError(msg) from exc
+        if not isinstance(loaded, dict):
+            msg = f"non-dict coupling baseline file {path}"
+            raise CouplingBaselineError(msg)
+        parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
     def save(self, data: dict[str, dict[str, float]]) -> None:

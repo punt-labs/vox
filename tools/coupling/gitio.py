@@ -154,10 +154,14 @@ class GitRepo:
         if out is None:
             return None
         try:
-            parsed: dict[str, dict[str, float]] = json.loads(out)
+            loaded = json.loads(out)
         except json.JSONDecodeError as exc:
             msg = f"corrupt coupling baseline blob at {ref}:{self.BASELINE_FILE}: {exc}"
             raise GitError(msg) from exc
+        if not isinstance(loaded, dict):
+            msg = f"non-dict coupling baseline blob at {ref}:{self.BASELINE_FILE}"
+            raise GitError(msg)
+        parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
     def _show_file(self, ref: str, path: str) -> str | None:

@@ -178,7 +178,10 @@ class SuppressionBaseline:
         except json.JSONDecodeError as exc:
             msg = f"corrupt suppression baseline file {self._baseline_path}: {exc}"
             raise SuppressionBaselineError(msg) from exc
-        return dict(raw)
+        if not isinstance(raw, dict):
+            msg = f"non-dict suppression baseline file {self._baseline_path}"
+            raise SuppressionBaselineError(msg)
+        return raw
 
     def _save(self, report: SuppressionReport) -> None:
         data = {

@@ -471,6 +471,20 @@ class TestFailClosed:
         with pytest.raises(CouplingBaselineError):
             CouplingBaseline(fx.root)
 
+    def test_non_dict_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
+        # A committed baseline that is valid JSON but not an object (a list)
+        # is a controlled GitError, not an AttributeError on .get().
+        fx.write("pkg/a.py", LOW)
+        fx.write(".oo-coupling-baseline.json", "[1, 2, 3]")
+        head = fx.commit("non-dict baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_non_dict_in_tree_baseline_raises_typed_error(self, fx: GitFixture) -> None:
+        fx.write(".oo-coupling-baseline.json", "[1, 2, 3]")
+        with pytest.raises(CouplingBaselineError):
+            CouplingBaseline(fx.root)
+
     def test_git_degrades_to_none_without_a_repo(self) -> None:
         gr = GitRepo(Path("/nonexistent-coupling-ratchet-xyz"))
         assert gr.root is None

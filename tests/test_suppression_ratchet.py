@@ -15,6 +15,7 @@ import pytest
 
 from tools.suppression.baseline import SuppressionBaseline, SuppressionBaselineError
 from tools.suppression.cli import main
+from tools.suppression.gitio import GitError, GitRepo
 from tools.suppression.patterns import FileSuppressions
 from tools.suppression.report import SuppressionReport
 from tools.suppression.scanner import Scanner
@@ -215,6 +216,22 @@ class TestSuppressionFailClosed:
         # The corrupt in-tree baseline raises at construction; the CLI catches the
         # typed error and returns a clean non-zero exit.
         assert main(["pkg", "--check"]) == 1
+
+    def test_non_dict_base_baseline_raises_giterror(self, gfx: GitFixture) -> None:
+        # A committed baseline that is valid JSON but not an object (a list) is a
+        # controlled GitError, not an AttributeError on .get().
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.write_baseline_text("[1, 2, 3]")
+        head = gfx.commit("non-dict baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(gfx.root).show_baseline(head)
+
+    def test_non_dict_in_tree_baseline_raises_typed_error(
+        self, gfx: GitFixture
+    ) -> None:
+        gfx.write_baseline_text("[1, 2, 3]")
+        with pytest.raises(SuppressionBaselineError):
+            SuppressionBaseline(gfx.root)
 
 
 def test_cli_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

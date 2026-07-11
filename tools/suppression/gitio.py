@@ -93,12 +93,16 @@ class GitRepo:
         out = self._show_file(ref, self.BASELINE_FILE)
         if out is None:
             return None
+        blob = f"{ref}:{self.BASELINE_FILE}"
         try:
-            parsed: dict[str, object] = json.loads(out)
+            loaded = json.loads(out)
         except json.JSONDecodeError as exc:
-            blob = f"{ref}:{self.BASELINE_FILE}"
             msg = f"corrupt suppression baseline blob at {blob}: {exc}"
             raise GitError(msg) from exc
+        if not isinstance(loaded, dict):
+            msg = f"non-dict suppression baseline blob at {blob}"
+            raise GitError(msg)
+        parsed: dict[str, object] = loaded
         return parsed
 
     def _show_file(self, ref: str, path: str) -> str | None:
