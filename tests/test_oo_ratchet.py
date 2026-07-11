@@ -574,6 +574,25 @@ class TestRenameCarry:
         assert second.exit_code == 1
         assert Baseline(fx.root).get("sub/new.py") is None
 
+    def test_reconcile_rename_to_unparseable_keeps_old_row(
+        self, fx: GitFixture
+    ) -> None:
+        # reconcile must not prune a rename source whose target is present on
+        # disk but unparseable -- the target counts as "present" even though it
+        # is excluded from plan.current (Bugbot #2).
+        broken_similar = GOOD.replace('return "pos"', 'return "pos')  # unterminated
+        fx.write("sub/old.py", GOOD)
+        fx.snapshot("sub")
+        fork = fx.commit("fork")
+        fx.set_origin_main(fork)
+        fx.move("sub/old.py", "sub/new.py")
+        fx.write("sub/new.py", broken_similar)  # rename target is unparseable
+        fx.commit("rename to unparseable")
+        outcome = fx.writer().reconcile(fx.scorer(), allow_ci_write=True, source=None)
+        assert outcome.exit_code == 1  # fails on the parse error
+        assert any("parse error" in line for line in outcome.lines)
+        assert Baseline(fx.root).get("sub/old.py") is not None  # carry preserved
+
 
 class TestCompleteness:
     """Whole-tree completeness enumerates from the scorer's own file set."""

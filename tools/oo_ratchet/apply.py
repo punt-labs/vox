@@ -121,13 +121,15 @@ class PlanApplier:
 
     @staticmethod
     def _prune_kept(new_baseline: dict[str, dict[str, float]], plan: UpdatePlan) -> int:
-        # Prune only genuine deletions. Keep an unparseable file's row and a
-        # rename source whose target is still present (the carry).
+        # Prune only genuine deletions. A file present on disk is either
+        # parse-clean (in ``current``) or a parse error; a rename source is kept
+        # whenever its target is present on disk at all -- parseable or not --
+        # so a rename to an unparseable target never drops the old row.
+        present = plan.current.keys() | plan.parse_errors
         rename_sources = frozenset(
-            old for new, old in plan.renames.items() if new in plan.current
+            old for new, old in plan.renames.items() if new in present
         )
-        protected = plan.parse_errors | rename_sources
-        kept = plan.current.keys() | protected
+        kept = present | rename_sources
         stale = [p for p in new_baseline if p not in kept]
         for p in stale:
             del new_baseline[p]
