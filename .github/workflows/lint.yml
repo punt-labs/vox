@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # fetch-depth: 0 is load-bearing for the ratchets: both the OO and coupling
-      # checks resolve a merge-base to scope the touched set; a shallow clone has
-      # neither the base commit nor HEAD~1.
+      # fetch-depth: 0 is load-bearing for the ratchets: the OO, coupling, and
+      # suppression checks all resolve a merge-base and read the base-commit
+      # baseline blob; a shallow clone has neither the base commit nor HEAD~1.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
