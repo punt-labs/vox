@@ -96,7 +96,12 @@ class BaselineWriter:
         if entry is None:
             return Outcome.failed(f"FAIL: not a scored file: {file}")
         base_entry = self._baseline.get(file) or {}
-        deltas = {file: {m: [base_entry.get(m, entry[m]), entry[m]] for m in entry}}
+        # Record ONLY the metrics this relaxation actually loosened (worse than
+        # the pre-relax baseline). A metric that held or improved is not waivable
+        # -- otherwise relaxing M1 would silently bless a future regression of an
+        # untouched M2 on the same file.
+        loosened = self._regressed(entry, base_entry)
+        deltas = {file: {m: [base_entry.get(m, entry[m]), entry[m]] for m in loosened}}
         new_baseline = dict(self._baseline.entries)
         new_baseline[file] = entry
         self._baseline.save(new_baseline)

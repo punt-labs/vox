@@ -272,6 +272,62 @@ class TestRelaxWaiver:
         assert outcome.exit_code == 1
         assert any("regression" in line for line in outcome.lines)
 
+    def test_relax_records_only_loosened_metrics(self, fx: GitFixture) -> None:
+        # --relax must record ONLY metrics that actually loosened, not every
+        # metric on the file. Otherwise an untouched metric becomes waivable.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        fx.commit("base")
+        current = Baseline.metrics_by_file(fx.scorer().results)["sub/w.py"]
+        # In-tree baseline == current except max_complexity is stricter, so only
+        # max_complexity loosens when we relax back to the current values.
+        fx.write_baseline({"sub/w.py": {**current, "max_complexity": 0.0}})
+        fx.writer().relax(
+            fx.scorer(),
+            "sub/w.py",
+            justify="cc only",
+            allow_ci_write=True,
+            source=None,
+        )
+        entry = json.loads((fx.root / ".oo-audit.jsonl").read_text().splitlines()[-1])
+        assert entry["verdict"] == "relaxed"
+        assert set(entry["deltas"]["sub/w.py"]) == {"max_complexity"}
+
+    def test_relaxing_one_metric_does_not_waive_another(self, fx: GitFixture) -> None:
+        # Relax M1 (max_complexity); a fresh regression of M2 (module_size) on the
+        # same file, though locked in-tree, must NOT be waived (gvr / Bugbot #1).
+        fx.write("sub/w.py", WORSE)
+        current = Baseline.metrics_by_file(fx.scorer().results)["sub/w.py"]
+        base_metrics = {
+            **current,
+            "max_complexity": current["max_complexity"] - 1,
+            "module_size": current["module_size"] - 1,
+        }
+        # base commit carries a different file body so w.py lands in the diff;
+        # its baseline blob is the hand-built stricter metrics.
+        fx.write("sub/w.py", GOOD)
+        fx.write_baseline({"sub/w.py": base_metrics})
+        base = fx.commit("base with both metrics stricter")
+        # HEAD: restore WORSE, lock in-tree baseline to current; relax ONLY M1.
+        fx.write("sub/w.py", WORSE)
+        fx.write_baseline({"sub/w.py": current})
+        relaxed = {
+            "verdict": "relaxed",
+            "deltas": {
+                "sub/w.py": {
+                    "max_complexity": [
+                        base_metrics["max_complexity"],
+                        current["max_complexity"],
+                    ]
+                }
+            },
+        }
+        fx.write(".oo-audit.jsonl", json.dumps(relaxed) + "\n")
+        fx.commit("lock and relax cc only")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("module_size" in line for line in outcome.lines)
+
 
 class TestRenameCarry:
     """A renamed file inherits its predecessor's base entry (S8)."""
