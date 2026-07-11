@@ -258,6 +258,23 @@ class TestSuppressionFailClosed:
         assert outcome.exit_code == 1
         assert any("increased" in line for line in outcome.lines)
 
+    def test_as_int_coerces_nan_and_inf_to_zero(self) -> None:
+        assert SuppressionBaseline._as_int(float("nan")) == 0
+        assert SuppressionBaseline._as_int(float("inf")) == 0
+        assert SuppressionBaseline._as_int(float("-inf")) == 0
+        assert SuppressionBaseline._as_int(5) == 5
+        assert SuppressionBaseline._as_int("x") == 0
+
+    def test_nan_total_is_coerced_not_crash(self, gfx: GitFixture) -> None:
+        # json.loads parses NaN; _as_int must coerce the base total to 0 rather
+        # than raise ValueError. Fail-closed: baseline 0 < current 1 -> increase.
+        gfx.write_source("x = 1  # noqa\n")  # current total 1
+        gfx.write_baseline_text('{"total": NaN}')
+        base = gfx.commit("NaN total")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("increased" in line for line in outcome.lines)
+
     def test_nested_non_numeric_count_is_coerced(self, gfx: GitFixture) -> None:
         # A by_file entry is a dict but its count is a string; it must coerce to
         # int (non-numeric -> 0) so _regression's sum(...values()) does not crash.

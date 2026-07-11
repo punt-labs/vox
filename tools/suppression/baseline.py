@@ -195,7 +195,15 @@ class SuppressionBaseline:
 
     @staticmethod
     def _as_int(raw: object) -> int:
-        return int(raw) if isinstance(raw, (int, float)) else 0
+        if not isinstance(raw, (int, float)):
+            return 0
+        # json.loads parses NaN/Infinity, and int(nan)/int(inf) raise
+        # ValueError/OverflowError. Coerce those to 0, consistent with the
+        # non-numeric -> 0 contract, so a corrupt baseline never throws.
+        try:
+            return int(raw)
+        except (ValueError, OverflowError):
+            return 0
 
     def _load(self) -> dict[str, object]:
         if not self._baseline_path.exists():
