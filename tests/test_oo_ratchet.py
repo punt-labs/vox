@@ -352,6 +352,22 @@ class TestRelaxWaiver:
         )
         assert outcome.exit_code == 1
 
+    def test_relax_untracked_file_writes_no_relaxation(self, fx: GitFixture) -> None:
+        # A file with no prior baseline entry has nothing to loosen: relax must
+        # refuse, forge no "relaxed" audit line, and add no waivable pair
+        # (Bugbot #3).
+        fx.write("sub/w.py", GOOD)  # no snapshot -> no baseline entry for w.py
+        fx.commit("base")
+        outcome = fx.writer().relax(
+            fx.scorer(), "sub/w.py", justify="x", allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        hint = "--update"
+        assert any(hint in line or "--reconcile" in line for line in outcome.lines)
+        assert Baseline(fx.root).get("sub/w.py") is None  # not added
+        audit_path = fx.root / ".oo-audit.jsonl"
+        assert not audit_path.exists() or "relaxed" not in audit_path.read_text()
+
     def test_historical_relaxation_does_not_waive_fresh_regression(
         self, fx: GitFixture
     ) -> None:

@@ -137,7 +137,15 @@ class BaselineWriter:
         entry = current.get(file)
         if entry is None:
             return Outcome.failed(f"FAIL: not a scored file: {file}")
-        base_entry = self._baseline.get(file) or {}
+        base_entry = self._baseline.get(file)
+        if base_entry is None:
+            # A file with no prior baseline has nothing to loosen; relaxing it
+            # would forge a "relaxed" entry for a brand-new file. Add it via
+            # --update / --reconcile instead.
+            return Outcome.failed(
+                f"FAIL: {file} has no baseline entry to relax; "
+                "use --update or --reconcile to add a new file"
+            )
         # Record ONLY the metrics this relaxation actually loosened (worse than
         # the pre-relax baseline). A metric that held or improved is not waivable
         # -- otherwise relaxing M1 would silently bless a future regression of an
