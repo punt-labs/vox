@@ -1,13 +1,13 @@
-"""Git queries the coupling ratchet needs: base resolution and diffs.
+"""Git queries the coupling ratchet needs: base resolution, diffs, and blobs.
 
-Leaner than the OO ratchet's ``gitio``: the coupling gate is regression-only and
-compares against the *in-tree* baseline, so it never reads a base-commit blob.
-Git is used only to scope the touched set to the whole PR (``base..worktree``)
-rather than the last commit alone.
+Git scopes the touched set to the whole PR (``base..worktree``) rather than the
+last commit alone, and supplies the *base-commit* baseline blob so a PR cannot
+launder a regression by hand-editing the in-tree ``.oo-coupling-baseline.json``.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +44,8 @@ class GitRepo:
     """Answer the ratchet's git questions, or degrade to ``None`` outside git."""
 
     _root: Path | None
+
+    BASELINE_FILE: str = ".oo-coupling-baseline.json"
 
     def __new__(cls, start: Path | None = None) -> Self:
         self = super().__new__(cls)
@@ -139,3 +141,63 @@ class GitRepo:
             elif len(parts) >= 2:
                 touched.add(parts[1])
         return Diff(frozenset(touched), renames)
+
+    def show_baseline(self, ref: str) -> dict[str, dict[str, float]] | None:
+        """Return the coupling baseline committed at ``ref``, or ``None`` if absent.
+
+        ``None`` means the blob genuinely does not exist at that ref — the
+        first-adoption case. A real git error (bad ref, timeout, infra) raises
+        ``GitError`` rather than masquerading as absence, so the gate never
+        fails open on a broken git call.
+        """
+        out = self._show_file(ref, self.BASELINE_FILE)
+        if out is None:
+            return None
+        try:
+            parsed: dict[str, dict[str, float]] = json.loads(out)
+        except json.JSONDecodeError as exc:
+            msg = f"corrupt coupling baseline blob at {ref}:{self.BASELINE_FILE}: {exc}"
+            raise GitError(msg) from exc
+        return parsed
+
+    def _show_file(self, ref: str, path: str) -> str | None:
+        """Return ``git show <ref>:<path>`` text, ``None`` if the path is absent.
+
+        Distinguishes a path missing at an otherwise-readable ref (return
+        ``None`` — trusted) from any other failure (raise ``GitError`` — fail
+        closed). Callers always pass an already-resolved ref, so a non-absence
+        failure is an anomaly, not a benign "no blob".
+        """
+        if self._root is None:
+            return None  # not in a repo: degrade, never run against the ambient CWD
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{path}"],
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT,
+                cwd=self._root,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            msg = f"git show {ref}:{path} failed to run: {exc}"
+            raise GitError(msg) from exc
+        if result.returncode == 0:
+            return result.stdout
+        if self._is_absent_path(result.returncode, result.stderr):
+            return None
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        msg = f"git show {ref}:{path} errored: {detail}"
+        raise GitError(msg)
+
+    @staticmethod
+    def _is_absent_path(returncode: int, stderr: str) -> bool:
+        """Return whether git's failure is a missing path at a valid ref.
+
+        git reports that with exit 128 and a "does not exist in" /
+        "exists on disk, but not in" message; any other failure (bad ref,
+        corrupt repo) is not treated as benign absence.
+        """
+        if returncode != 128:
+            return False
+        lowered = stderr.lower()
+        return "does not exist in" in lowered or "exists on disk, but not in" in lowered

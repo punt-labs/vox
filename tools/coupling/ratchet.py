@@ -2,9 +2,10 @@
 
 The touched set is scoped to the whole PR (``merge-base..worktree``), not the
 last commit, so a coupling regression introduced in an earlier commit and not
-re-touched in the final commit is still scored. The comparison is against the
-*in-tree* baseline (regression-only); git resolves the base solely to scope the
-touched set.
+re-touched in the final commit is still scored. The comparison baseline is the
+one committed at the base commit (regression-only), so a PR cannot launder a
+regression by editing the in-tree baseline; the in-tree file is used only on the
+local, no-base path.
 """
 
 from __future__ import annotations
@@ -44,13 +45,34 @@ class CouplingRatchet:
     def check(
         self, scorer: CouplingScorer, *, base_ref: str | None, require_base: bool
     ) -> Outcome:
-        """Compare PR-touched files against the in-tree coupling baseline."""
-        if not self._baseline.exists:
-            return self._no_baseline(require_base=require_base)
+        """Compare PR-touched files against the base-commit coupling baseline.
+
+        The comparison baseline is read from the base commit
+        (``git show <base>:.oo-coupling-baseline.json``), not the worktree file,
+        so a PR cannot launder a regression by hand-editing the in-tree baseline
+        in the same change. The in-tree file is used only for the local,
+        no-base-resolvable path (never under ``--require-base``).
+        """
         base = self._git.resolve_base(base_ref)
         if base is None:
-            return self._no_base(require_base=require_base)
+            return self._check_local(scorer, require_base=require_base)
+        base_baseline = self._git.show_baseline(base)
+        if base_baseline is None:
+            return self._absent_base_baseline(require_base=require_base)
+        if not base_baseline:
+            return self._empty_baseline(require_base=require_base)
+        return self._check_against(scorer, base, base_baseline)
 
+    def show_log(self) -> Outcome:
+        """Return the audit history as an outcome."""
+        return Outcome.passed(*self._audit.render_log())
+
+    def _check_against(
+        self,
+        scorer: CouplingScorer,
+        base: str,
+        base_baseline: dict[str, dict[str, float]],
+    ) -> Outcome:
         diff = self._git.diff(base)
         touched_py = diff.python_files()
         broken = sorted(touched_py & scorer.parse_errors)
@@ -58,48 +80,85 @@ class CouplingRatchet:
             lines = ["FAIL: touched file(s) failed to parse:"]
             lines.extend(f"  {path}" for path in broken)
             return Outcome(1, tuple(lines))
-
         current = CouplingBaseline.metrics_by_file(scorer.results)
         touched = sorted(touched_py & scorer.files)
         if not touched:
-            return Outcome.passed("No Python files touched -- trivial pass")
-
-        reviews = self._build_reviews(touched, current, diff.renames)
+            return Outcome.passed(
+                "No scored Python files touched (gate covers src/punt_vox/)"
+            )
+        reviews = self._build_reviews(touched, current, base_baseline, diff.renames)
         return self._verdict(reviews)
 
-    def show_log(self) -> Outcome:
-        """Return the audit history as an outcome."""
-        return Outcome.passed(*self._audit.render_log())
-
-    def _no_baseline(self, *, require_base: bool) -> Outcome:
-        """Decide the verdict when no in-tree coupling baseline exists yet."""
-        if require_base:
-            return Outcome.failed(
-                "FAIL: no coupling baseline and --require-base is set; "
-                "run make update-coupling"
-            )
-        return Outcome.passed("No baseline -- run make update-coupling to create one")
-
-    def _no_base(self, *, require_base: bool) -> Outcome:
+    def _check_local(self, scorer: CouplingScorer, *, require_base: bool) -> Outcome:
         """Decide the verdict when no comparison base can be resolved.
 
-        A coupling baseline is present (checked before this), so an unresolvable
-        base means a stale or unfetched ``origin/main``. Fail closed rather than
-        silently scoring nothing -- an empty touched set would pass every PR.
+        Under ``--require-base`` (CI) an unresolvable base fails closed -- a
+        stale or unfetched ``origin/main`` must never silently pass. Locally,
+        fall back to the in-tree baseline and score the whole tree; an empty or
+        missing in-tree baseline is a first-adoption bootstrap pass.
         """
         if require_base:
             return Outcome.failed(
                 "FAIL: base ref unresolvable and --require-base is set"
             )
-        return Outcome.failed(
-            "FAIL: cannot resolve merge-base (origin/main unfetched or stale) "
-            "with a coupling baseline present; fetch origin/main or pass --base-ref"
+        baseline = self._baseline.entries
+        if not baseline:
+            return Outcome.passed(
+                "No baseline -- run make update-coupling to create one"
+            )
+        current = CouplingBaseline.metrics_by_file(scorer.results)
+        reviews = self._build_reviews(sorted(scorer.files), current, baseline, {})
+        return self._verdict(reviews)
+
+    def _absent_base_baseline(self, *, require_base: bool) -> Outcome:
+        """Decide the verdict when the base commit carries no baseline blob.
+
+        Genuine first-adoption requires the ``origin/main`` tip to also lack a
+        baseline. If the tip carries one, the branch forked before adoption and
+        would launder a regression past the empty base -- fail closed. If the
+        tip is unresolvable under ``--require-base`` with an in-tree baseline
+        present, first-adoption cannot be confirmed, so fail closed too.
+        """
+        tip = self._git.resolve_ref("origin/main")
+        if tip is None:
+            if require_base and self._baseline.exists:
+                return Outcome.failed(
+                    "FAIL: base has no coupling baseline and origin/main is "
+                    "unresolvable with an in-tree baseline present; "
+                    "fetch origin/main"
+                )
+            return Outcome.passed(
+                "No base baseline and no origin/main -- first-adoption bootstrap pass"
+            )
+        if self._git.show_baseline(tip) is not None:
+            return Outcome.failed(
+                "FAIL: base commit predates coupling baseline adoption; "
+                "rebase onto current main"
+            )
+        return Outcome.passed(
+            "No baseline at base or origin/main tip -- first-adoption bootstrap pass"
         )
+
+    @staticmethod
+    def _empty_baseline(*, require_base: bool) -> Outcome:
+        """Decide the verdict when the base baseline is an empty ``{}``.
+
+        A truncated write or a bad merge can empty the baseline; every touched
+        file would then look new and pass. Under ``--require-base`` fail closed,
+        exactly like a missing baseline.
+        """
+        if require_base:
+            return Outcome.failed(
+                "FAIL: base coupling baseline is empty (truncated write or bad "
+                "merge) and --require-base is set"
+            )
+        return Outcome.passed("Empty base baseline -- first-adoption bootstrap pass")
 
     def _build_reviews(
         self,
         touched: list[str],
         current: dict[str, dict[str, float]],
+        baseline: dict[str, dict[str, float]],
         renames: dict[str, str],
     ) -> tuple[CouplingReview, ...]:
         reviews: list[CouplingReview] = []
@@ -107,9 +166,9 @@ class CouplingRatchet:
             cur = current.get(path)
             if cur is None:
                 continue
-            base_entry = self._baseline.get(path)
+            base_entry = baseline.get(path)
             if base_entry is None and path in renames:
-                base_entry = self._baseline.get(renames[path])
+                base_entry = baseline.get(renames[path])
             reviews.append(CouplingReview(path, cur, base_entry))
         return tuple(reviews)
 

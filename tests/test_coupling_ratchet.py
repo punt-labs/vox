@@ -206,7 +206,40 @@ class TestBaseCompare:
         fx.commit("touch non-source")
         outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
         assert outcome.exit_code == 0
-        assert any("trivial pass" in line for line in outcome.lines)
+        assert any("No scored Python files touched" in line for line in outcome.lines)
+
+
+class TestBaseCommitAuthoritative:
+    """The comparison baseline is read from the base commit, not the worktree."""
+
+    def test_in_tree_baseline_edit_cannot_launder_regression(
+        self, fx: GitFixture
+    ) -> None:
+        # A PR regresses a.py AND rewrites the in-tree baseline to match. The
+        # check reads the baseline from the base commit blob, so the regression
+        # is still caught despite the hand-edit.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")  # base-commit baseline: a.py public_names=1
+        fx.write("pkg/a.py", HIGH)  # regression
+        fx.write_baseline(CouplingBaseline.metrics_by_file(fx.scorer().results))
+        fx.commit("regress and launder the in-tree baseline")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("public_names" in line for line in outcome.lines)
+
+    def test_empty_base_baseline_fails_closed(self, fx: GitFixture) -> None:
+        # An empty {} baseline at the base (truncated write / bad merge) makes
+        # every touched file look new -> would pass. Under require_base, fail
+        # closed exactly like a missing baseline.
+        fx.write("pkg/a.py", LOW)
+        fx.write_baseline({})
+        base = fx.commit("base with empty baseline")
+        fx.write("pkg/a.py", HIGH)
+        fx.commit("regress")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("empty" in line for line in outcome.lines)
 
 
 class TestScopedUpdate:
@@ -362,13 +395,28 @@ class TestFailClosed:
         diff = GitRepo(fx.root).diff(head)  # HEAD vs work tree: no changes
         assert diff.touched == frozenset()
 
-    def test_unresolvable_base_with_baseline_fails_loud(self, fx: GitFixture) -> None:
+    def test_unresolvable_base_with_require_fails_closed(self, fx: GitFixture) -> None:
+        # CI path: an unresolvable base under --require-base must never pass on a
+        # stale or unfetched origin/main -- fail closed.
         fx.write("pkg/a.py", LOW)
         fx.snapshot()
         fx.commit("base")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("--require-base" in line for line in outcome.lines)
+
+    def test_unresolvable_base_local_fallback_catches_regression(
+        self, fx: GitFixture
+    ) -> None:
+        # Local path (no --require-base): fall back to the in-tree baseline and
+        # score the whole tree; a regression is still caught without a base.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        fx.commit("base")
+        fx.write("pkg/a.py", HIGH)  # regressed vs the in-tree baseline
         outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
         assert outcome.exit_code == 1
-        assert any("origin/main" in line for line in outcome.lines)
+        assert any("regression" in line for line in outcome.lines)
 
     def test_unresolvable_base_no_baseline_is_pass(self, fx: GitFixture) -> None:
         fx.write("pkg/a.py", LOW)  # no baseline committed
