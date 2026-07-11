@@ -64,17 +64,21 @@ class AuditLog:
     def relaxations_since(self, base_text: str | None) -> frozenset[tuple[str, str]]:
         """Return (file, metric) pairs relaxed by the *current* change only.
 
-        A relaxation counts only when its audit line is absent from the base
+        A relaxation counts only when its audit entry is absent from the base
         commit's audit log (``base_text``). This scopes the waiver to the
         change under review, so a historical relaxation cannot bless a fresh
         regression re-locked via ``--rebaseline`` (S7 / gvr).
+
+        Entries are matched *structurally* — by canonical JSON — so a reformat
+        of the base log (whitespace, key order) does not make a base
+        relaxation look new and over-waive it.
         """
-        base_lines = set(base_text.splitlines()) if base_text else set()
+        base_keys = self._canonical_set(base_text)
         pairs: set[tuple[str, str]] = set()
         for line in self._raw_lines():
-            if line in base_lines:
-                continue
             entry: dict[str, object] = json.loads(line)
+            if self._canonical(entry) in base_keys:
+                continue
             if entry.get("verdict") != "relaxed":
                 continue
             deltas = entry.get("deltas")
@@ -84,6 +88,21 @@ class AuditLog:
                 if isinstance(metrics, dict):
                     pairs.update((path, metric) for metric in metrics)
         return frozenset(pairs)
+
+    @classmethod
+    def _canonical_set(cls, base_text: str | None) -> frozenset[str]:
+        if not base_text:
+            return frozenset()
+        return frozenset(
+            cls._canonical(json.loads(line))
+            for line in base_text.splitlines()
+            if line.strip()
+        )
+
+    @staticmethod
+    def _canonical(entry: dict[str, object]) -> str:
+        """Return a formatting-independent identity for an audit entry."""
+        return json.dumps(entry, sort_keys=True)
 
     def _raw_lines(self) -> list[str]:
         if not self._path.exists():
