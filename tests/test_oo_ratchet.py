@@ -251,11 +251,27 @@ class TestScopedUpdate:
         fx.write("sub/w.py", GOOD)
         fx.write("sub/other.py", GOOD)
         fx.snapshot("sub")
-        fx.commit("base")
+        base = fx.commit("base")
+        fx.set_origin_main(base)  # reconcile resolves a base for rename provenance
         fx.write("sub/w.py", BROKEN)
         outcome = fx.writer().reconcile(fx.scorer(), allow_ci_write=True, source=None)
         assert outcome.exit_code == 1
         assert Baseline(fx.root).get("sub/w.py") is not None
+
+    def test_reconcile_unresolvable_base_with_baseline_fails_closed(
+        self, fx: GitFixture
+    ) -> None:
+        # reconcile without a resolvable base (no origin/main) and a baseline
+        # present must fail closed -- not run with empty rename provenance and
+        # launder a regressed rename as new (Bugbot #1).
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        fx.commit("base")  # no origin/main set -> merge-base unresolvable
+        before = dict(Baseline(fx.root).entries)
+        outcome = fx.writer().reconcile(fx.scorer(), allow_ci_write=True, source=None)
+        assert outcome.exit_code == 1
+        assert any("cannot resolve base" in line for line in outcome.lines)
+        assert Baseline(fx.root).entries == before  # no write
 
     def test_update_unresolvable_base_with_baseline_fails_closed(
         self, fx: GitFixture

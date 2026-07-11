@@ -96,7 +96,19 @@ class BaselineWriter:
             return blocked
         current = Baseline.metrics_by_file(scorer.results)
         base = self._git.resolve_base(None)
-        renames = self._git.diff(base).renames if base is not None else {}
+        if base is None:
+            # Without a base there is no rename provenance; running would prune a
+            # rename source and write a regressed rename as new. Fail closed when
+            # a baseline exists; only genuine first-adoption bootstraps the tree.
+            if self._baseline.exists:
+                return Outcome.failed(
+                    "FAIL: cannot resolve base for reconcile (origin/main "
+                    "unfetched or stale) with an in-tree baseline present; "
+                    "fetch origin/main"
+                )
+            renames: dict[str, str] = {}
+        else:
+            renames = self._git.diff(base).renames
         plan = UpdatePlan(
             current,
             frozenset(current),
