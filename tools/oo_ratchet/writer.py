@@ -22,12 +22,18 @@ from .thresholds import Thresholds
 
 @dataclass(frozen=True, slots=True)
 class UpdatePlan:
-    """Which files an update touches, plus rename and prune intent."""
+    """Which files an update touches, plus rename, prune, and broken-file intent.
+
+    ``parse_errors`` are paths on disk that failed to AST-parse. They must be
+    preserved (never pruned as if deleted) and surfaced as a refusal, so a
+    syntax error cannot silently erase a file's baseline history.
+    """
 
     current: dict[str, dict[str, float]]
     touched: frozenset[str]
     renames: dict[str, str] = field(default_factory=dict)
     prune: bool = False
+    parse_errors: frozenset[str] = frozenset()
 
 
 class BaselineWriter:
@@ -59,10 +65,18 @@ class BaselineWriter:
         current = Baseline.metrics_by_file(scorer.results)
         base = self._git.resolve_base(base_ref)
         if base is None:
-            plan = UpdatePlan(current, frozenset(current))
+            plan = UpdatePlan(
+                current, frozenset(current), parse_errors=scorer.parse_errors
+            )
         else:
             diff = self._git.diff(base)
-            plan = UpdatePlan(current, diff.python_files(), diff.renames)
+            touched = diff.python_files()
+            plan = UpdatePlan(
+                current,
+                touched,
+                diff.renames,
+                parse_errors=touched & scorer.parse_errors,
+            )
         return self._apply(plan, source)
 
     def reconcile(
@@ -73,7 +87,9 @@ class BaselineWriter:
         if blocked is not None:
             return blocked
         current = Baseline.metrics_by_file(scorer.results)
-        plan = UpdatePlan(current, frozenset(current), prune=True)
+        plan = UpdatePlan(
+            current, frozenset(current), prune=True, parse_errors=scorer.parse_errors
+        )
         return self._apply(plan, source)
 
     def relax(
@@ -159,23 +175,26 @@ class BaselineWriter:
         removed = 0
         for path in sorted(plan.touched):
             removed += self._drop_rename_source(new_baseline, plan, path)
+            if path in plan.parse_errors:
+                continue  # on disk but unparseable: keep its row, refuse below
             if path not in plan.current:
                 removed += self._drop(new_baseline, path)
                 continue
             self._write_or_refuse(new_baseline, plan, path, refused, deltas)
         if plan.prune:
-            removed += self._prune(new_baseline, plan.current)
+            removed += self._prune(new_baseline, plan.current, plan.parse_errors)
+        broken = sorted(plan.parse_errors)
         self._baseline.save(new_baseline)
         self._audit.append(
             files_scored=len(plan.current),
             files_improved=len(deltas),
-            files_regressed=len({p for p, _ in refused}),
-            verdict="pass" if not refused else "fail",
+            files_regressed=len({p for p, _ in refused}) + len(broken),
+            verdict="pass" if not refused and not broken else "fail",
             deltas=deltas,
             source=source,
             commit=self._git.short_head(),
         )
-        return self._report(len(deltas), removed, refused)
+        return self._report(len(deltas), removed, refused, broken)
 
     def _write_or_refuse(
         self,
@@ -224,9 +243,13 @@ class BaselineWriter:
 
     @staticmethod
     def _prune(
-        new_baseline: dict[str, dict[str, float]], current: dict[str, dict[str, float]]
+        new_baseline: dict[str, dict[str, float]],
+        current: dict[str, dict[str, float]],
+        protected: frozenset[str],
     ) -> int:
-        stale = [p for p in new_baseline if p not in current]
+        # Prune only genuine deletions; a file on disk but unparseable is not in
+        # ``current`` yet must keep its row.
+        stale = [p for p in new_baseline if p not in current and p not in protected]
         for p in stale:
             del new_baseline[p]
         return len(stale)
@@ -252,15 +275,23 @@ class BaselineWriter:
         }
 
     def _report(
-        self, improved: int, removed: int, refused: list[tuple[str, str]]
+        self,
+        improved: int,
+        removed: int,
+        refused: list[tuple[str, str]],
+        broken: list[str],
     ) -> Outcome:
         lines = [
             f"\nBaseline updated: {self._baseline.path}",
             f"  files improved: {improved}",
             f"  files removed:  {removed}",
         ]
+        if broken:
+            lines.append(f"  REFUSED ({len(broken)} unparseable, baseline kept):")
+            lines.extend(f"    {p}: parse error" for p in broken)
         if refused:
             lines.append(f"  REFUSED ({len({p for p, _ in refused})} files):")
             lines.extend(f"    {p}: {m} regressed" for p, m in refused)
+        if refused or broken:
             return Outcome(1, tuple(lines))
         return Outcome(0, tuple(lines))

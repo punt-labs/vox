@@ -220,6 +220,31 @@ class TestScopedUpdate:
         assert entry is not None
         assert entry["max_complexity"] == 1.0
 
+    def test_update_refuses_broken_touched_file_keeps_row(self, fx: GitFixture) -> None:
+        # A touched file that is on disk but unparseable is not a deletion:
+        # update must refuse and preserve its baseline row (Bugbot #2).
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", BROKEN)  # still on disk, now unparseable
+        outcome = fx.writer().update(
+            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        assert any("parse error" in line for line in outcome.lines)
+        assert Baseline(fx.root).get("sub/w.py") is not None
+
+    def test_reconcile_preserves_broken_file_baseline(self, fx: GitFixture) -> None:
+        # Whole-tree reconcile must not prune a broken-on-disk file's baseline.
+        fx.write("sub/w.py", GOOD)
+        fx.write("sub/other.py", GOOD)
+        fx.snapshot("sub")
+        fx.commit("base")
+        fx.write("sub/w.py", BROKEN)
+        outcome = fx.writer().reconcile(fx.scorer(), allow_ci_write=True, source=None)
+        assert outcome.exit_code == 1
+        assert Baseline(fx.root).get("sub/w.py") is not None
+
 
 class TestRelaxWaiver:
     """A relaxed, locked regression is waived by check."""
