@@ -719,6 +719,61 @@ class TestGitFailClosed:
         with pytest.raises(GitError):
             GitRepo(fx.root).show_baseline(head)
 
+    def test_non_utf8_base_baseline_blob_raises_giterror(self, fx: GitFixture) -> None:
+        # A committed non-UTF8 baseline blob makes git show's text decode fail;
+        # show_baseline must fail closed with GitError, not a traceback.
+        fx.write("sub/w.py", GOOD)
+        (fx.root / ".oo-baseline.json").write_bytes(b"\xff\xfe\x00")
+        head = fx.commit("non-utf8 baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_non_dict_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
+        # A committed baseline that is valid JSON but not an object (a list) is a
+        # controlled GitError, not an AttributeError on .get().
+        fx.write("sub/w.py", GOOD)
+        fx.write(".oo-baseline.json", "[1, 2, 3]")
+        head = fx.commit("non-dict baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_nested_non_dict_base_baseline_raises_giterror(
+        self, fx: GitFixture
+    ) -> None:
+        # {"sub/w.py": "garbage"} passes the top-level dict check but the value is
+        # not a metric dict; without the nested guard `metric not in "garbage"` is
+        # a substring test that skips every metric -> fail-OPEN. Reject it.
+        fx.write("sub/w.py", GOOD)
+        fx.write(".oo-baseline.json", '{"sub/w.py": "garbage"}')
+        head = fx.commit("nested non-dict baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_bool_metric_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
+        # A bool metric value (`true`) is an int subclass that would compare as
+        # 0/1 -- fail-open. Reject it at the source with GitError.
+        fx.write("sub/w.py", GOOD)
+        fx.write(".oo-baseline.json", '{"sub/w.py": {"module_size": true}}')
+        head = fx.commit("bool metric baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_nested_non_dict_base_baseline_fails_closed_via_cli(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # End-to-end: a nested-malformed base baseline must fail the gate, not let
+        # a real regression pass. The in-tree baseline at HEAD is valid, so only
+        # the base blob is malformed; the CLI catches the GitError as a controlled
+        # non-zero.
+        fx.write("sub/w.py", GOOD)
+        fx.write(".oo-baseline.json", '{"sub/w.py": "garbage"}')
+        base = fx.commit("nested non-dict base baseline")
+        fx.snapshot("sub")  # overwrite with a valid in-tree baseline
+        fx.write("sub/w.py", WORSE)  # a regression that must not slip through
+        fx.commit("valid in-tree baseline and regress")
+        monkeypatch.chdir(fx.root)
+        assert main(["sub", "--check", "--base-ref", base, "--require-base"]) == 1
+
     def test_absent_baseline_blob_at_valid_ref_is_none(self, fx: GitFixture) -> None:
         # A path genuinely missing at a readable commit is trusted absence.
         fx.write("sub/w.py", GOOD)  # no baseline committed

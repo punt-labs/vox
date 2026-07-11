@@ -56,10 +56,28 @@ class Baseline:
         if not path.exists():
             return {}
         try:
-            parsed: dict[str, dict[str, float]] = json.loads(path.read_text())
-        except json.JSONDecodeError as exc:
-            msg = f"corrupt baseline file {path}: {exc}"
+            loaded = json.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            msg = f"unreadable baseline file {path}: {exc}"
             raise BaselineError(msg) from exc
+        if not isinstance(loaded, dict):
+            msg = f"non-dict baseline file {path}"
+            raise BaselineError(msg)
+        # Each value must be a per-metric dict; a non-dict value would make
+        # ``metric not in entry`` a substring test that skips every metric.
+        if not all(isinstance(v, dict) for v in loaded.values()):
+            msg = f"non-dict entry in baseline file {path}"
+            raise BaselineError(msg)
+        # Each metric value must be a real number: a bool would compare as 0/1
+        # (fail-open) and a string would raise TypeError in the comparison.
+        if not all(
+            isinstance(m, (int, float)) and not isinstance(m, bool)
+            for entry in loaded.values()
+            for m in entry.values()
+        ):
+            msg = f"non-numeric metric in baseline file {path}"
+            raise BaselineError(msg)
+        parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
     def save(self, data: dict[str, dict[str, float]]) -> None:

@@ -142,16 +142,37 @@ class GitRepo:
 
         ``None`` means the blob genuinely does not exist at that ref — the
         first-adoption case. A real git error (bad ref, timeout, infra) raises
-        ``GitError`` rather than masquerading as absence.
+        ``GitError`` rather than masquerading as absence, so the gate never
+        fails open on a broken git call.
         """
         out = self._show_file(ref, self.BASELINE_FILE)
         if out is None:
             return None
         try:
-            parsed: dict[str, dict[str, float]] = json.loads(out)
+            loaded = json.loads(out)
         except json.JSONDecodeError as exc:
             msg = f"corrupt baseline blob at {ref}:{self.BASELINE_FILE}: {exc}"
             raise GitError(msg) from exc
+        if not isinstance(loaded, dict):
+            msg = f"non-dict baseline blob at {ref}:{self.BASELINE_FILE}"
+            raise GitError(msg)
+        # Each value must be a per-metric dict. A non-dict value (e.g. a string)
+        # passes the top-level check but makes ``metric not in entry`` a substring
+        # test that silently skips every metric -- a fail-OPEN. Reject it here.
+        if not all(isinstance(v, dict) for v in loaded.values()):
+            blob = f"{ref}:{self.BASELINE_FILE}"
+            raise GitError(f"non-dict entry in baseline blob at {blob}")
+        # Each metric value must be a real number. A bool (`true`) is an int
+        # subclass that would compare as 0/1 (fail-open); a string would raise
+        # TypeError in the comparison. Reject both here so the gate fails closed.
+        if not all(
+            isinstance(m, (int, float)) and not isinstance(m, bool)
+            for entry in loaded.values()
+            for m in entry.values()
+        ):
+            blob = f"{ref}:{self.BASELINE_FILE}"
+            raise GitError(f"non-numeric metric in baseline blob at {blob}")
+        parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
     def show_audit(self, ref: str) -> str | None:
@@ -181,7 +202,13 @@ class GitRepo:
                 timeout=_TIMEOUT,
                 cwd=self._root,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        except (
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+            UnicodeDecodeError,
+        ) as exc:
+            # UnicodeDecodeError: git show returned non-UTF8 bytes that text=True
+            # could not decode -- fail closed rather than crash the gate.
             msg = f"git show {ref}:{path} failed to run: {exc}"
             raise GitError(msg) from exc
         if result.returncode == 0:
