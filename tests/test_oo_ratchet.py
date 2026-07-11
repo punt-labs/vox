@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -65,9 +66,10 @@ BROKEN = "def oops(:\n    pass\n"
 class GitFixture:
     """A throwaway git repo for exercising the ratchet end to end."""
 
-    root: Path
+    _root: Path
 
-    def __init__(self, tmp: Path) -> None:
+    def __new__(cls, tmp: Path) -> Self:
+        self = super().__new__(cls)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
         for key, val in (
             ("user.email", "t@example.com"),
@@ -82,48 +84,54 @@ class GitFixture:
             capture_output=True,
             text=True,
         )
-        self.root = Path(out.stdout.strip())
+        self._root = Path(out.stdout.strip())
+        return self
+
+    @property
+    def root(self) -> Path:
+        """Return the repository root."""
+        return self._root
 
     def write(self, rel: str, content: str) -> None:
-        path = self.root / rel
+        path = self._root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
 
     def write_baseline(self, data: dict[str, dict[str, float]]) -> None:
-        (self.root / ".oo-baseline.json").write_text(json.dumps(data, indent=2) + "\n")
+        (self._root / ".oo-baseline.json").write_text(json.dumps(data, indent=2) + "\n")
 
     def snapshot(self, subdir: str) -> None:
-        scorer = Scorer(self.root / subdir, self.root)
+        scorer = Scorer(self._root / subdir, self._root)
         self.write_baseline(Baseline.metrics_by_file(scorer.results))
 
     def commit(self, msg: str) -> str:
-        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
-        subprocess.run(["git", "commit", "-q", "-m", msg], cwd=self.root, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=self._root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", msg], cwd=self._root, check=True)
         return self._head()
 
     def move(self, src: str, dst: str) -> None:
-        (self.root / dst).parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "mv", src, dst], cwd=self.root, check=True)
+        (self._root / dst).parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "mv", src, dst], cwd=self._root, check=True)
 
     def checkout_new(self, branch: str) -> None:
         subprocess.run(
-            ["git", "checkout", "-q", "-b", branch], cwd=self.root, check=True
+            ["git", "checkout", "-q", "-b", branch], cwd=self._root, check=True
         )
 
     def checkout(self, branch: str) -> None:
-        subprocess.run(["git", "checkout", "-q", branch], cwd=self.root, check=True)
+        subprocess.run(["git", "checkout", "-q", branch], cwd=self._root, check=True)
 
     def set_origin_main(self, sha: str) -> None:
         subprocess.run(
             ["git", "update-ref", "refs/remotes/origin/main", sha],
-            cwd=self.root,
+            cwd=self._root,
             check=True,
         )
 
     def _head(self) -> str:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=self.root,
+            cwd=self._root,
             check=True,
             capture_output=True,
             text=True,
@@ -131,13 +139,13 @@ class GitFixture:
         return out.stdout.strip()
 
     def ratchet(self) -> Ratchet:
-        return Ratchet(self.root, GitRepo(self.root))
+        return Ratchet(self._root, GitRepo(self._root))
 
     def writer(self) -> BaselineWriter:
-        return BaselineWriter(self.root, GitRepo(self.root))
+        return BaselineWriter(self._root, GitRepo(self._root))
 
     def scorer(self, subdir: str = "sub") -> Scorer:
-        return Scorer(self.root / subdir, self.root)
+        return Scorer(self._root / subdir, self._root)
 
 
 @pytest.fixture
