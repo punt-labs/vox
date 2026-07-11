@@ -75,8 +75,11 @@ class Options:
             "--audit-completeness", action="store_true", help="whole-tree completeness"
         )
         action.add_argument("--relax", metavar="FILE", help="relax one file's baseline")
-        parser.add_argument("--log", action="store_true", help="show audit history")
-        parser.add_argument("--json", action="store_true", help="emit JSON scores")
+        # --log and --json are distinct views, not modifiers: each selects the
+        # operation on its own, so they join the exclusive group rather than be
+        # silently ignored when combined with another action.
+        action.add_argument("--log", action="store_true", help="show audit history")
+        action.add_argument("--json", action="store_true", help="emit JSON scores")
         parser.add_argument("--justify", default="", help="justification for --relax")
         parser.add_argument("--base-ref", metavar="REF", help="comparison base commit")
         parser.add_argument(

@@ -78,6 +78,16 @@ class TestActionExclusivity:
         assert Options.parse(["src", "--reconcile"]).reconcile
         assert Options.parse(["src", "--audit-completeness"]).audit_completeness
 
+    def test_log_and_json_are_actions_not_silently_ignored(self) -> None:
+        # --log/--json are views: combining with another action is an error,
+        # not a silent no-op (Copilot #2).
+        with pytest.raises(SystemExit):
+            Options.parse(["src", "--check", "--log"])
+        with pytest.raises(SystemExit):
+            Options.parse(["src", "--check", "--json"])
+        assert Options.parse(["src", "--log"]).log
+        assert Options.parse(["src", "--json"]).json
+
 
 class TestMainEntry:
     """The entry point scores and returns an exit code."""
