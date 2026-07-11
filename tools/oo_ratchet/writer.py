@@ -151,6 +151,13 @@ class BaselineWriter:
         # -- otherwise relaxing M1 would silently bless a future regression of an
         # untouched M2 on the same file.
         loosened = PlanApplier.regressed(entry, base_entry)
+        if not loosened:
+            # Nothing is worse than the baseline: a relax here would write a
+            # no-op "relaxed" line. Refuse instead of recording an empty waiver.
+            return Outcome.failed(
+                f"FAIL: nothing to relax for {file} "
+                "(no metric is worse than its baseline)"
+            )
         deltas = {file: {m: [base_entry.get(m, entry[m]), entry[m]] for m in loosened}}
         new_baseline = dict(self._baseline.entries)
         new_baseline[file] = entry

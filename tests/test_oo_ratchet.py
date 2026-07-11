@@ -369,6 +369,22 @@ class TestRelaxWaiver:
         audit_path = fx.root / ".oo-audit.jsonl"
         assert not audit_path.exists() or "relaxed" not in audit_path.read_text()
 
+    def test_relax_no_loosening_refuses(self, fx: GitFixture) -> None:
+        # A file whose metrics all meet/beat its baseline has nothing to loosen:
+        # relax refuses, writes no relaxed audit line, leaves the baseline as is.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")  # baseline == current, nothing worse
+        fx.commit("base")
+        before = dict(Baseline(fx.root).entries)
+        outcome = fx.writer().relax(
+            fx.scorer(), "sub/w.py", justify="x", allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        assert any("nothing to relax" in line for line in outcome.lines)
+        assert Baseline(fx.root).entries == before  # unchanged
+        audit_path = fx.root / ".oo-audit.jsonl"
+        assert not audit_path.exists() or "relaxed" not in audit_path.read_text()
+
     def test_historical_relaxation_does_not_waive_fresh_regression(
         self, fx: GitFixture
     ) -> None:
