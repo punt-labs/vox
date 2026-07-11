@@ -57,8 +57,8 @@ class CouplingBaseline:
             return {}
         try:
             loaded = json.loads(path.read_text())
-        except json.JSONDecodeError as exc:
-            msg = f"corrupt coupling baseline file {path}: {exc}"
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            msg = f"unreadable coupling baseline file {path}: {exc}"
             raise CouplingBaselineError(msg) from exc
         if not isinstance(loaded, dict):
             msg = f"non-dict coupling baseline file {path}"

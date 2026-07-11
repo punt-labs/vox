@@ -92,7 +92,13 @@ class Cli:
             # non-zero, not a traceback.
             report = Scanner(self._opts.src, self._root).report
             outcome = self._dispatch(SuppressionBaseline(self._root), report)
-        except (GitError, SuppressionBaselineError, PyprojectError, OSError) as exc:
+        except (
+            GitError,
+            SuppressionBaselineError,
+            PyprojectError,
+            OSError,
+            UnicodeDecodeError,
+        ) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 

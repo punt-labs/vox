@@ -509,6 +509,22 @@ class TestFailClosed:
         with pytest.raises(CouplingBaselineError):
             CouplingBaseline(fx.root)
 
+    def test_non_utf8_in_tree_baseline_raises_typed_error(self, fx: GitFixture) -> None:
+        # A non-UTF8 baseline file raises UnicodeDecodeError on read_text; _load
+        # must turn it into the typed error.
+        (fx.root / ".oo-coupling-baseline.json").write_bytes(b"\xff\xfe\x00")
+        with pytest.raises(CouplingBaselineError):
+            CouplingBaseline(fx.root)
+
+    def test_non_utf8_base_baseline_blob_raises_giterror(self, fx: GitFixture) -> None:
+        # A committed non-UTF8 baseline blob makes git show's text decode fail;
+        # show_baseline must fail closed with GitError, not a traceback.
+        fx.write("pkg/a.py", LOW)
+        (fx.root / ".oo-coupling-baseline.json").write_bytes(b"\xff\xfe\x00")
+        head = fx.commit("non-utf8 baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
     def test_non_dict_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
         # A committed baseline that is valid JSON but not an object (a list)
         # is a controlled GitError, not an AttributeError on .get().

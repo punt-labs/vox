@@ -210,8 +210,8 @@ class SuppressionBaseline:
             return {}
         try:
             raw = json.loads(self._baseline_path.read_text())
-        except json.JSONDecodeError as exc:
-            msg = f"corrupt suppression baseline file {self._baseline_path}: {exc}"
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            msg = f"unreadable suppression baseline file {self._baseline_path}: {exc}"
             raise SuppressionBaselineError(msg) from exc
         if not isinstance(raw, dict):
             msg = f"non-dict suppression baseline file {self._baseline_path}"

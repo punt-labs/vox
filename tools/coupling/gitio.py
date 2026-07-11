@@ -188,7 +188,13 @@ class GitRepo:
                 timeout=_TIMEOUT,
                 cwd=self._root,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        except (
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+            UnicodeDecodeError,
+        ) as exc:
+            # UnicodeDecodeError: git show returned non-UTF8 bytes that text=True
+            # could not decode -- fail closed rather than crash the gate.
             msg = f"git show {ref}:{path} failed to run: {exc}"
             raise GitError(msg) from exc
         if result.returncode == 0:

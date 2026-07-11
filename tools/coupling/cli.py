@@ -95,11 +95,14 @@ class Cli:
         """Execute the requested operation and return its exit code."""
         if not self._opts.src.exists():
             return self._emit(Outcome.failed(f"Not found: {self._opts.src}"))
-        scorer = CouplingScorer(self._opts.src, self._root)
         try:
+            # Score inside the try: a read/decode failure (OSError,
+            # UnicodeDecodeError) or a corrupt in-tree baseline must surface as a
+            # clean non-zero, not a traceback.
+            scorer = CouplingScorer(self._opts.src, self._root)
             action = self._run_action(scorer)
             outcome = action if action is not None else self._run_view(scorer)
-        except (GitError, CouplingBaselineError) as exc:
+        except (GitError, CouplingBaselineError, OSError, UnicodeDecodeError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 

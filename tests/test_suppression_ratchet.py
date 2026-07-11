@@ -288,6 +288,23 @@ class TestSuppressionFailClosed:
         assert outcome.exit_code == 1
         assert any("increased" in line for line in outcome.lines)
 
+    def test_non_utf8_baseline_raises_typed_error(self, gfx: GitFixture) -> None:
+        # A non-UTF8 baseline file raises UnicodeDecodeError on read_text; _load
+        # must turn it into the typed error, not a traceback.
+        (gfx.root / ".suppression-baseline.json").write_bytes(b"\xff\xfe\x00")
+        with pytest.raises(SuppressionBaselineError):
+            SuppressionBaseline(gfx.root)
+
+    def test_non_utf8_source_is_controlled_nonzero_via_cli(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A non-UTF8 .py file raises UnicodeDecodeError on read_text; the CLI must
+        # surface a controlled non-zero, not a traceback and not a silent skip.
+        gfx.write_source("x = 1\n")
+        (gfx.root / "pkg" / "bad.py").write_bytes(b"\xff\xfe# noqa\n")
+        monkeypatch.chdir(gfx.root)
+        assert main(["pkg", "--json"]) == 1
+
     def test_scanner_propagates_unreadable_file(self, gfx: GitFixture) -> None:
         # An unreadable path that matches *.py (here a directory named like a
         # module) must raise, not be silently skipped -- skipping would
