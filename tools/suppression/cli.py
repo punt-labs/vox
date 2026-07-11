@@ -74,9 +74,10 @@ class Cli:
         if not self._opts.src.exists():
             return self._emit(Outcome.failed(f"not found: {self._opts.src}"))
         report = Scanner(self._opts.src).report
-        baseline = SuppressionBaseline()
         try:
-            outcome = self._dispatch(baseline, report)
+            # Construct inside the try: a corrupt in-tree baseline raises at
+            # construction (eager load) and must surface as a clean non-zero.
+            outcome = self._dispatch(SuppressionBaseline(), report)
         except (GitError, SuppressionBaselineError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)

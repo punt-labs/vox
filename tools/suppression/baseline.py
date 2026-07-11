@@ -27,12 +27,14 @@ class SuppressionBaseline:
     The comparison baseline is read from the base commit
     (``git show <base>:.suppression-baseline.json``), not the worktree file, so a
     PR cannot launder a rising count by hand-editing the in-tree baseline. The
-    in-tree file is used only on the local, no-base path (never ``--require-base``).
+    in-tree file is parsed at construction only to validate it (a committed
+    corrupt or non-dict baseline fails the gate), matching ``CouplingBaseline``.
     """
 
     _baseline_path: Path
     _audit_path: Path
     _git: GitRepo
+    _entries: dict[str, object]
 
     BASELINE_FILE: ClassVar[str] = ".suppression-baseline.json"
     AUDIT_FILE: ClassVar[str] = ".suppression-audit.jsonl"
@@ -43,6 +45,7 @@ class SuppressionBaseline:
         self._baseline_path = base / cls.BASELINE_FILE
         self._audit_path = base / cls.AUDIT_FILE
         self._git = GitRepo(base)
+        self._entries = self._load()  # eager: a corrupt in-tree file fails here
         return self
 
     @property
@@ -56,21 +59,33 @@ class SuppressionBaseline:
         """Compare current counts against the base-commit suppression baseline."""
         base = self._git.resolve_base(base_ref)
         if base is None:
-            return self._check_local(report, require_base=require_base)
+            return self._no_base(require_base=require_base)
         base_data = self._git.show_baseline(base)
         if base_data is None:
             return self._absent_base(require_base=require_base)
         return self._compare(report, base_data)
 
-    def _check_local(self, report: SuppressionReport, *, require_base: bool) -> Outcome:
-        """Fail closed under --require-base; else compare vs the in-tree baseline."""
+    def _no_base(self, *, require_base: bool) -> Outcome:
+        """Decide the verdict when no comparison base can be resolved.
+
+        Matches the OO and coupling ratchets' ``_no_base`` exactly: fail closed
+        under ``--require-base``; a genuine first-adoption (no in-tree baseline)
+        passes so the first baseline can be created; but an in-tree baseline
+        present with an unresolvable base means a stale or unfetched
+        ``origin/main`` -- fail loud rather than trust a hand-editable file.
+        """
         if require_base:
             return Outcome.failed(
                 "FAIL: base ref unresolvable and --require-base is set"
             )
         if not self.has_baseline:
-            return Outcome.passed("No baseline -- run --update to create one")
-        return self._compare(report, self._load())
+            return Outcome.passed(
+                "No base and no in-tree baseline -- first-adoption bootstrap pass"
+            )
+        return Outcome.failed(
+            "FAIL: cannot resolve merge-base (origin/main unfetched or stale) "
+            "with an in-tree baseline present; fetch origin/main or pass --base-ref"
+        )
 
     def _absent_base(self, *, require_base: bool) -> Outcome:
         """Decide the verdict when the base commit carries no baseline blob."""

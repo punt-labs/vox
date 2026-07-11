@@ -55,7 +55,7 @@ class CouplingRatchet:
         """
         base = self._git.resolve_base(base_ref)
         if base is None:
-            return self._check_local(scorer, require_base=require_base)
+            return self._no_base(require_base=require_base)
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
             return self._absent_base_baseline(require_base=require_base)
@@ -89,26 +89,27 @@ class CouplingRatchet:
         reviews = self._build_reviews(touched, current, base_baseline, diff.renames)
         return self._verdict(reviews)
 
-    def _check_local(self, scorer: CouplingScorer, *, require_base: bool) -> Outcome:
+    def _no_base(self, *, require_base: bool) -> Outcome:
         """Decide the verdict when no comparison base can be resolved.
 
-        Under ``--require-base`` (CI) an unresolvable base fails closed -- a
-        stale or unfetched ``origin/main`` must never silently pass. Locally,
-        fall back to the in-tree baseline and score the whole tree; an empty or
-        missing in-tree baseline is a first-adoption bootstrap pass.
+        Matches the OO ratchet's ``_no_base`` contract exactly: fail closed under
+        ``--require-base``; a genuine first-adoption (no in-tree baseline at all)
+        passes so the first baseline can be created; but an in-tree baseline
+        present with an unresolvable base means a stale or unfetched
+        ``origin/main`` -- fail loud rather than trust a hand-editable file.
         """
         if require_base:
             return Outcome.failed(
                 "FAIL: base ref unresolvable and --require-base is set"
             )
-        baseline = self._baseline.entries
-        if not baseline:
+        if not self._baseline.exists:
             return Outcome.passed(
-                "No baseline -- run make update-coupling to create one"
+                "No base and no in-tree baseline -- first-adoption bootstrap pass"
             )
-        current = CouplingBaseline.metrics_by_file(scorer.results)
-        reviews = self._build_reviews(sorted(scorer.files), current, baseline, {})
-        return self._verdict(reviews)
+        return Outcome.failed(
+            "FAIL: cannot resolve merge-base (origin/main unfetched or stale) "
+            "with an in-tree baseline present; fetch origin/main or pass --base-ref"
+        )
 
     def _absent_base_baseline(self, *, require_base: bool) -> Outcome:
         """Decide the verdict when the base commit carries no baseline blob.

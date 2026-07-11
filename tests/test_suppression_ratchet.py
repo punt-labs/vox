@@ -183,14 +183,27 @@ class TestSuppressionFailClosed:
         assert outcome.exit_code == 1
         assert any("--require-base" in line for line in outcome.lines)
 
-    def test_corrupt_baseline_raises_typed_error(self, gfx: GitFixture) -> None:
-        # The local (no-base) path reads the in-tree baseline; a corrupt file
-        # raises the typed error rather than a JSONDecodeError traceback.
+    def test_unresolvable_base_with_baseline_fails_closed(
+        self, gfx: GitFixture
+    ) -> None:
+        # No base resolvable + in-tree baseline present + not require_base: match
+        # the OO and coupling ratchets -- hard-fail rather than trust the
+        # hand-editable in-tree file. Consistent across all three ratchets.
         gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()
+        gfx.commit("base")
+        outcome = gfx.baseline().check(
+            gfx.report(), base_ref="0" * 40, require_base=False
+        )
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
+    def test_corrupt_baseline_raises_typed_error(self, gfx: GitFixture) -> None:
+        # A corrupt in-tree baseline is parsed eagerly at construction and raises
+        # the typed error rather than a JSONDecodeError traceback.
         gfx.write_baseline_text("{ not valid json")
-        gfx.commit("corrupt baseline")
         with pytest.raises(SuppressionBaselineError):
-            gfx.baseline().check(gfx.report(), base_ref="0" * 40, require_base=False)
+            SuppressionBaseline(gfx.root)
 
     def test_corrupt_baseline_is_controlled_nonzero_via_cli(
         self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
@@ -199,9 +212,9 @@ class TestSuppressionFailClosed:
         gfx.write_baseline_text("{ not valid json")
         gfx.commit("corrupt baseline")
         monkeypatch.chdir(gfx.root)
-        # An unresolvable base forces the local in-tree path; the CLI catches the
+        # The corrupt in-tree baseline raises at construction; the CLI catches the
         # typed error and returns a clean non-zero exit.
-        assert main(["pkg", "--check", "--base-ref", "0" * 40]) == 1
+        assert main(["pkg", "--check"]) == 1
 
 
 def test_cli_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

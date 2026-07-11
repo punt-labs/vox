@@ -437,18 +437,17 @@ class TestFailClosed:
         assert outcome.exit_code == 1
         assert any("--require-base" in line for line in outcome.lines)
 
-    def test_unresolvable_base_local_fallback_catches_regression(
-        self, fx: GitFixture
-    ) -> None:
-        # Local path (no --require-base): fall back to the in-tree baseline and
-        # score the whole tree; a regression is still caught without a base.
+    def test_unresolvable_base_with_baseline_fails_closed(self, fx: GitFixture) -> None:
+        # No base resolvable + in-tree baseline present + not require_base: match
+        # the OO ratchet's _no_base -- hard-fail rather than trust the
+        # hand-editable in-tree file. Consistent across all three ratchets.
         fx.write("pkg/a.py", LOW)
         fx.snapshot()
         fx.commit("base")
-        fx.write("pkg/a.py", HIGH)  # regressed vs the in-tree baseline
+        fx.write("pkg/a.py", HIGH)  # a regression the soft path would have caught
         outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
         assert outcome.exit_code == 1
-        assert any("regression" in line for line in outcome.lines)
+        assert any("origin/main" in line for line in outcome.lines)
 
     def test_unresolvable_base_no_baseline_is_pass(self, fx: GitFixture) -> None:
         fx.write("pkg/a.py", LOW)  # no baseline committed
