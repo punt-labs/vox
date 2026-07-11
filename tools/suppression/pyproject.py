@@ -54,15 +54,25 @@ class PerFileIgnoresCounter:
         except tomllib.TOMLDecodeError as exc:
             msg = f"invalid TOML in {pyproject_path}: {exc}"
             raise PyprojectError(msg) from exc
-        ignores = (
-            data.get("tool", {})
-            .get("ruff", {})
-            .get("lint", {})
-            .get("per-file-ignores", {})
-        )
+        self._count_ignores(data, pyproject_path)
+
+    def _count_ignores(self, data: dict[str, object], path: Path) -> None:
+        # Navigate defensively: a non-table ancestor (e.g. `tool = "x"`) means
+        # there is no per-file-ignores section to count -> 0. But a section that
+        # EXISTS with the wrong shape (not a table, or a non-list code list) is
+        # corrupt data that would undercount -> fail closed.
+        tool = data.get("tool")
+        ruff = tool.get("ruff") if isinstance(tool, dict) else None
+        lint = ruff.get("lint") if isinstance(ruff, dict) else None
+        if not isinstance(lint, dict) or "per-file-ignores" not in lint:
+            return  # section genuinely absent -> legitimately 0
+        ignores = lint["per-file-ignores"]
         if not isinstance(ignores, dict):
-            return
+            msg = f"[tool.ruff.lint.per-file-ignores] in {path} is not a table"
+            raise PyprojectError(msg)
         for pattern, codes in ignores.items():
-            if isinstance(codes, list):
-                self._breakdown[pattern] = len(codes)
-                self._total += len(codes)
+            if not isinstance(codes, list):
+                msg = f"per-file-ignores[{pattern!r}] in {path} is not a list"
+                raise PyprojectError(msg)
+            self._breakdown[str(pattern)] = len(codes)
+            self._total += len(codes)

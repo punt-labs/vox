@@ -392,6 +392,40 @@ class TestPyproject:
         monkeypatch.chdir(gfx.root)
         assert main(["pkg", "--json"]) == 0
 
+    def test_no_ignores_section_is_zero(self, gfx: GitFixture) -> None:
+        # A valid pyproject with no per-file-ignores section legitimately -> 0.
+        (gfx.root / "pyproject.toml").write_text("[tool.ruff]\nline-length = 88\n")
+        assert PerFileIgnoresCounter(gfx.root / "pyproject.toml").total == 0
+
+    def test_valid_ignores_are_counted(self, gfx: GitFixture) -> None:
+        (gfx.root / "pyproject.toml").write_text(
+            "[tool.ruff.lint.per-file-ignores]\n"
+            '"a.py" = ["E501", "F401"]\n'
+            '"b.py" = ["N801"]\n'
+        )
+        assert PerFileIgnoresCounter(gfx.root / "pyproject.toml").total == 3
+
+    def test_ignores_not_a_table_raises(self, gfx: GitFixture) -> None:
+        # per-file-ignores EXISTS but is a string, not a table -> fail closed.
+        (gfx.root / "pyproject.toml").write_text(
+            '[tool.ruff.lint]\nper-file-ignores = "oops"\n'
+        )
+        with pytest.raises(PyprojectError):
+            PerFileIgnoresCounter(gfx.root / "pyproject.toml")
+
+    def test_ignores_codes_not_a_list_raises(self, gfx: GitFixture) -> None:
+        # A per-file entry whose codes value isn't a list is corrupt -> fail closed.
+        (gfx.root / "pyproject.toml").write_text(
+            '[tool.ruff.lint.per-file-ignores]\n"a.py" = "E501"\n'
+        )
+        with pytest.raises(PyprojectError):
+            PerFileIgnoresCounter(gfx.root / "pyproject.toml")
+
+    def test_non_table_ancestor_is_zero(self, gfx: GitFixture) -> None:
+        # A malformed non-table ancestor means no section to count -> 0, no crash.
+        (gfx.root / "pyproject.toml").write_text('tool = "not a table"\n')
+        assert PerFileIgnoresCounter(gfx.root / "pyproject.toml").total == 0
+
 
 class TestRepoRootResolution:
     """The CLI anchors the baseline and pyproject to the repo root, not cwd."""
