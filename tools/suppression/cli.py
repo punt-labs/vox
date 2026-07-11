@@ -10,6 +10,7 @@ from typing import Self
 from .baseline import SuppressionBaseline, SuppressionBaselineError
 from .gitio import GitError, GitRepo
 from .outcome import Outcome
+from .pyproject import PyprojectError
 from .report import SuppressionReport
 from .scanner import Scanner
 
@@ -91,7 +92,7 @@ class Cli:
             # non-zero, not a traceback.
             report = Scanner(self._opts.src, self._root).report
             outcome = self._dispatch(SuppressionBaseline(self._root), report)
-        except (GitError, SuppressionBaselineError, OSError) as exc:
+        except (GitError, SuppressionBaselineError, PyprojectError, OSError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 

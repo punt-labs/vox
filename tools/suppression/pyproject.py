@@ -7,6 +7,17 @@ from pathlib import Path
 from typing import Self
 
 
+class PyprojectError(Exception):
+    """An existing ``pyproject.toml`` could not be read or parsed.
+
+    Raised only when the file EXISTS but is unreadable or invalid TOML, so the
+    per-file-ignores count is never silently zeroed -- that would undercount the
+    suppression total and let a real increase pass. A missing file, or one
+    without a per-file-ignores section, legitimately contributes 0 and does not
+    raise. The CLI catches this as a controlled non-zero.
+    """
+
+
 class PerFileIgnoresCounter:
     """Count the rule codes waived under ruff's per-file-ignores table."""
 
@@ -32,11 +43,17 @@ class PerFileIgnoresCounter:
 
     def _parse(self, pyproject_path: Path) -> None:
         if not pyproject_path.exists():
-            return
+            return  # no pyproject.toml legitimately contributes 0
         try:
-            data = tomllib.loads(pyproject_path.read_text())
-        except (tomllib.TOMLDecodeError, OSError):
-            return
+            text = pyproject_path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"cannot read {pyproject_path}: {exc}"
+            raise PyprojectError(msg) from exc
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            msg = f"invalid TOML in {pyproject_path}: {exc}"
+            raise PyprojectError(msg) from exc
         ignores = (
             data.get("tool", {})
             .get("ruff", {})

@@ -17,6 +17,7 @@ from tools.suppression.baseline import SuppressionBaseline, SuppressionBaselineE
 from tools.suppression.cli import main
 from tools.suppression.gitio import GitError, GitRepo
 from tools.suppression.patterns import FileSuppressions
+from tools.suppression.pyproject import PerFileIgnoresCounter, PyprojectError
 from tools.suppression.report import SuppressionReport
 from tools.suppression.scanner import Scanner
 
@@ -309,6 +310,37 @@ class TestCiWriteGuard:
         gfx.write_source("x = 1  # noqa\n")
         outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
         assert outcome.exit_code == 0
+
+
+class TestPyproject:
+    """per_file_ignores counting fails closed on a broken pyproject.toml."""
+
+    def test_absent_pyproject_is_zero(self, gfx: GitFixture) -> None:
+        # No pyproject.toml legitimately contributes 0 -- not a failure.
+        counter = PerFileIgnoresCounter(gfx.root / "pyproject.toml")
+        assert counter.total == 0
+
+    def test_invalid_toml_raises(self, gfx: GitFixture) -> None:
+        (gfx.root / "pyproject.toml").write_text("this is [ not valid toml")
+        with pytest.raises(PyprojectError):
+            PerFileIgnoresCounter(gfx.root / "pyproject.toml")
+
+    def test_invalid_pyproject_is_controlled_nonzero_via_cli(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An existing-but-invalid pyproject.toml would undercount per_file_ignores;
+        # the CLI turns it into a controlled non-zero, not a silent zero.
+        gfx.write_source("x = 1\n")
+        (gfx.root / "pyproject.toml").write_text("this is [ not valid toml")
+        monkeypatch.chdir(gfx.root)
+        assert main(["pkg", "--json"]) == 1
+
+    def test_absent_pyproject_passes_via_cli(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gfx.write_source("x = 1\n")
+        monkeypatch.chdir(gfx.root)
+        assert main(["pkg", "--json"]) == 0
 
 
 class TestRepoRootResolution:
