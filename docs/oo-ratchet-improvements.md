@@ -70,8 +70,8 @@ baseline load and the touched-set:
 BASE=$(git merge-base origin/main HEAD)     # PR: the divergence point
 # push:[main] after a squash: HEAD~1 IS the merge-base — pass it directly.
 base_baseline = parse( git show "$BASE:.oo-baseline.json" )
-touched       = py files in ( git diff "$BASE"..HEAD --name-only )
-current       = score the tree at HEAD        # committed HEAD, not a dirty worktree
+touched       = py files in ( git diff -M "$BASE" )   # base vs work tree
+current       = score the work tree                    # == HEAD in a clean checkout
 ```
 
 For each touched file, compare `current[file]` against **`base_baseline[file]`**
@@ -84,9 +84,14 @@ reads it for the comparison, so `current == in-tree-baseline` is no longer a tra
   for a file it never touched when `main` advances (the tip's baseline and the
   tip's tree both diverge from the PR's divergence point). The merge-base is the
   point the PR forked from — the correct "before."
-- **Why HEAD, not the working tree (gvr R7):** the touched-set and base baseline
-  are commit-derived; scoring a dirty worktree mixes uncommitted edits into the
-  comparison. Score `HEAD`.
+- **Score the work tree; CI's clean checkout makes it == HEAD (gvr R7,
+  accepted):** the base baseline is commit-derived (`git show`), but the touched
+  set is `git diff <base>` (base vs work tree) and the current metrics score the
+  work tree — not `base..HEAD`/HEAD. In CI the checkout is clean, so work tree ==
+  HEAD and this is identical to scoring HEAD; locally it keeps `make check` and
+  `make update-oo` reflecting a developer's tracked pre-commit edits, which
+  `base..HEAD` would hide. Untracked-but-unstaged files fall outside `git diff`
+  until added — expected, and in CI everything under review is committed.
 - **Squash correctness (B1):** on `push:[main]`, `HEAD~1` is the squash's
   merge-base, so `keys_env 6 vs parent's 20 → IMPROVED` — the squash no longer
   erases the delta.
