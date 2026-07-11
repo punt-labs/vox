@@ -199,6 +199,36 @@ class TestBaseCompare:
         assert fx.root  # b.py's main-only regression did not fail the PR
 
 
+class TestEmptyBaseBaseline:
+    """An empty ``{}`` base baseline is fail-closed under --require-base."""
+
+    def test_empty_base_baseline_fails_closed(self, fx: GitFixture) -> None:
+        # An empty {} baseline at the base (truncated write / bad merge) makes
+        # every touched file look new -> would pass the must-improve comparison.
+        # Under require_base, fail closed exactly like a missing baseline.
+        fx.write("sub/w.py", GOOD)
+        fx.write_baseline({})
+        base = fx.commit("base with empty baseline")
+        fx.write("sub/w.py", WORSE)
+        fx.commit("regress")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("empty" in line for line in outcome.lines)
+
+    def test_empty_base_baseline_local_still_parses(self, fx: GitFixture) -> None:
+        # Empty {} base baseline without --require-base flows through the
+        # comparison, which still runs the touched-file parse check: an
+        # unparseable touched file fails loud, matching the coupling ratchet.
+        fx.write("sub/w.py", GOOD)
+        fx.write_baseline({})
+        base = fx.commit("base with empty baseline")
+        fx.write("sub/w.py", BROKEN)  # unparseable, touched
+        fx.commit("break")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("failed to parse" in line for line in outcome.lines)
+
+
 class TestScopedUpdate:
     """Scoped update writes improvements but never loosens."""
 

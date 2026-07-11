@@ -48,6 +48,11 @@ class Ratchet:
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
             return self._absent_base_baseline()
+        if not base_baseline and require_base:
+            return self._empty_baseline()
+        # An empty {} baseline without --require-base flows through below: every
+        # touched file is new (no base entry), but the touched-file parse check
+        # and the in-tree lock/completeness checks still run.
 
         diff = self._git.diff(base)
         touched_py = diff.python_files()
@@ -116,6 +121,21 @@ class Ratchet:
             )
         return Outcome.passed(
             "No baseline at base or origin/main tip -- first-adoption bootstrap pass"
+        )
+
+    @staticmethod
+    def _empty_baseline() -> Outcome:
+        """Fail closed on an empty ``{}`` base baseline under ``--require-base``.
+
+        A truncated write or a bad merge can empty the baseline; every touched
+        file would then look new. Under ``--require-base`` fail closed, exactly
+        like a missing baseline. Without ``--require-base`` the empty baseline
+        flows through the comparison instead (see ``check``), so the
+        touched-file parse and in-tree lock checks still run.
+        """
+        return Outcome.failed(
+            "FAIL: base baseline is empty (truncated write or bad "
+            "merge) and --require-base is set"
         )
 
     def show_log(self) -> Outcome:
