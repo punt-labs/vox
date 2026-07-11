@@ -504,6 +504,21 @@ class TestBootstrap:
         assert outcome.exit_code == 1
         assert any("predates baseline adoption" in line for line in outcome.lines)
 
+    def test_absent_base_baseline_unresolvable_tip_with_baseline_fails(
+        self, fx: GitFixture
+    ) -> None:
+        # Base has no baseline blob and origin/main is unresolvable, but an
+        # in-tree baseline exists: cannot confirm first-adoption -> fail closed
+        # (Bugbot #3). An unfetched origin/main must not read as "no tip baseline".
+        fx.write("sub/w.py", GOOD)
+        base = fx.commit("base without baseline")
+        fx.write("sub/w.py", WORSE)
+        fx.snapshot("sub")  # in-tree baseline now present
+        fx.commit("add in-tree baseline")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
     def test_unresolvable_base_with_require_fails(self, fx: GitFixture) -> None:
         fx.write("sub/w.py", GOOD)
         fx.snapshot("sub")

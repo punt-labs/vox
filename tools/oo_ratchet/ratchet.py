@@ -92,12 +92,25 @@ class Ratchet:
     def _absent_base_baseline(self) -> Outcome:
         """Decide the verdict when the base commit has no baseline blob.
 
-        Absent at the base is genuine first-adoption *only* when ``origin/main``
-        also has no baseline. If the tip already carries one, the branch merely
-        forked before adoption and would launder a regression past the empty
-        base — fail closed and require a rebase onto current main (S2 / F2).
+        Genuine first-adoption requires the ``origin/main`` tip to be resolvable
+        AND to also lack a baseline. Two fail-closed cases (S2 / F2 / gvr):
+
+        - the tip resolves and *carries* a baseline: the branch forked before
+          adoption and would launder a regression past the empty base;
+        - the tip is unresolvable (unfetched/stale) *and* an in-tree baseline
+          exists: we cannot confirm first-adoption, so don't assume it.
         """
-        if self._git.show_baseline("origin/main") is not None:
+        tip = self._git.resolve_ref("origin/main")
+        if tip is None:
+            if self._baseline.exists:
+                return Outcome.failed(
+                    "FAIL: base has no baseline and origin/main is unresolvable "
+                    "with an in-tree baseline present; fetch origin/main"
+                )
+            return Outcome.passed(
+                "No base baseline and no origin/main -- first-adoption bootstrap pass"
+            )
+        if self._git.show_baseline(tip) is not None:
             return Outcome.failed(
                 "FAIL: base commit predates baseline adoption; rebase onto current main"
             )
