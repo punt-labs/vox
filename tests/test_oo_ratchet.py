@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from tools.oo_ratchet.baseline import Baseline
-from tools.oo_ratchet.gitio import GitRepo
+from tools.oo_ratchet.gitio import GitError, GitRepo
 from tools.oo_ratchet.ratchet import Ratchet
 from tools.oo_ratchet.scorer import Scorer
 from tools.oo_ratchet.writer import BaselineWriter
@@ -323,6 +323,22 @@ class TestCiWriteGuard:
             fx.scorer(), base_ref=base, allow_ci_write=True, source=None
         )
         assert outcome.exit_code == 0
+
+
+class TestGitFailClosed:
+    """A failed git command fails closed — never a silent empty diff."""
+
+    def test_diff_failure_raises(self, fx: GitFixture) -> None:
+        fx.write("sub/w.py", GOOD)
+        fx.commit("base")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).diff("refs/does/not/exist")
+
+    def test_empty_diff_is_not_a_failure(self, fx: GitFixture) -> None:
+        fx.write("sub/w.py", GOOD)
+        head = fx.commit("base")
+        diff = GitRepo(fx.root).diff(head)  # HEAD vs work tree: no changes
+        assert diff.touched == frozenset()
 
 
 class TestBootstrap:

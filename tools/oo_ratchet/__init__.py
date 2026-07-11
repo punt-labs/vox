@@ -6,7 +6,7 @@ from .audit import AuditLog
 from .baseline import Baseline
 from .cli import Cli, Options, main
 from .compare import FileReview, Review, Row
-from .gitio import Diff, GitRepo
+from .gitio import Diff, GitError, GitRepo
 from .metrics import ModuleMetrics
 from .outcome import Outcome
 from .ratchet import Ratchet
@@ -21,6 +21,7 @@ __all__ = [
     "Cli",
     "Diff",
     "FileReview",
+    "GitError",
     "GitRepo",
     "ModuleMetrics",
     "Options",

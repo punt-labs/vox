@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from .gitio import GitRepo
+from .gitio import GitError, GitRepo
 from .outcome import Outcome
 from .ratchet import Ratchet
 from .scorer import Scorer
@@ -105,8 +105,11 @@ class Cli:
         if not self._opts.src.exists():
             return self._emit(Outcome.failed(f"Not found: {self._opts.src}"))
         scorer = Scorer(self._opts.src, self._root)
-        action = self._run_action(scorer)
-        outcome = action if action is not None else self._run_view(scorer)
+        try:
+            action = self._run_action(scorer)
+            outcome = action if action is not None else self._run_view(scorer)
+        except GitError as exc:
+            outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 
     @staticmethod

@@ -11,6 +11,14 @@ from typing import Self
 _TIMEOUT = 10
 
 
+class GitError(Exception):
+    """A git command the ratchet depends on failed.
+
+    Raised instead of degrading to a benign default, so an enforcement gate
+    fails closed: a failed ``git diff`` can never masquerade as "no changes".
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Diff:
     """Files changed across a commit range, with rename provenance.
@@ -108,7 +116,8 @@ class GitRepo:
         """
         out = self._git(["diff", "--name-status", "-M", base])
         if out is None:
-            return Diff(frozenset())
+            msg = f"git diff against {base} failed"
+            raise GitError(msg)
         touched: set[str] = set()
         renames: dict[str, str] = {}
         for line in out.splitlines():
