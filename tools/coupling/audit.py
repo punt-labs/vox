@@ -49,8 +49,13 @@ class CouplingAudit:
         deltas: dict[str, dict[str, list[float]]],
         commit: str | None,
         source: str | None = None,
+        reason: str | None = None,
     ) -> None:
-        """Append one verdict entry, recording its source (PR/bead ref)."""
+        """Append one verdict entry, recording its source (PR/bead ref).
+
+        ``reason`` carries the human justification for a ``relaxed`` verdict;
+        it is an audit marker, not an enforcement gate.
+        """
         entry = {
             "ts": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "commit": commit,
@@ -59,10 +64,69 @@ class CouplingAudit:
             "files_improved": files_improved,
             "files_regressed": files_regressed,
             "verdict": verdict,
+            "reason": reason,
             "deltas": deltas,
         }
         with self._path.open("a") as f:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+
+    def relaxations_since(self, base_text: str | None) -> frozenset[tuple[str, str]]:
+        """Return (file, metric) pairs relaxed by the *current* change only.
+
+        A relaxation counts only when its audit entry is absent from the base
+        commit's audit log (``base_text``). This scopes the waiver to the
+        change under review, so a historical relaxation cannot bless a fresh
+        regression re-locked via ``--rebaseline``.
+
+        Entries are matched *structurally* -- by canonical JSON -- so a reformat
+        of the base log (whitespace, key order) does not make a base relaxation
+        look new and over-waive it.
+        """
+        base_keys = self._canonical_set(base_text)
+        pairs: set[tuple[str, str]] = set()
+        for line in self._raw_lines():
+            entry = self._parse(line)
+            if self._canonical(entry) in base_keys:
+                continue
+            if entry.get("verdict") != "relaxed":
+                continue
+            deltas = entry.get("deltas")
+            if not isinstance(deltas, dict):
+                continue
+            for path, metrics in deltas.items():
+                if isinstance(metrics, dict):
+                    pairs.update((path, metric) for metric in metrics)
+        return frozenset(pairs)
+
+    @classmethod
+    def _canonical_set(cls, base_text: str | None) -> frozenset[str]:
+        if not base_text:
+            return frozenset()
+        return frozenset(
+            cls._canonical(cls._parse(line))
+            for line in base_text.splitlines()
+            if line.strip()
+        )
+
+    @staticmethod
+    def _canonical(entry: dict[str, object]) -> str:
+        """Return a formatting-independent identity for an audit entry."""
+        return json.dumps(entry, sort_keys=True)
+
+    @staticmethod
+    def _parse(line: str) -> dict[str, object]:
+        """Parse one audit line, or raise ``CouplingAuditError`` naming it."""
+        try:
+            parsed: dict[str, object] = json.loads(line)
+        except json.JSONDecodeError as exc:
+            msg = f"malformed coupling audit entry {line[:80]!r}: {exc}"
+            raise CouplingAuditError(msg) from exc
+        return parsed
+
+    def _raw_lines(self) -> list[str]:
+        if not self._path.exists():
+            return []
+        return [ln for ln in self._path.read_text().splitlines() if ln.strip()]
 
     def render_log(self) -> list[str]:
         """Return the audit history as report lines."""

@@ -36,6 +36,8 @@ _BODY = (
 LOW = _BODY + '__all__ = ["x"]\n\nx = 1\n'
 # public_names == 2 -> a regression against a LOW baseline.
 HIGH = _BODY + '__all__ = ["x", "y"]\n\nx = 1\ny = 2\n'
+# public_names == 3 -> a fresh regression against a HIGH baseline.
+HIGHER = _BODY + '__all__ = ["x", "y", "z"]\n\nx = 1\ny = 2\nz = 3\n'
 BROKEN = "def oops(:\n    pass\n"
 
 
@@ -334,6 +336,126 @@ class TestScopedUpdate:
         )
         assert outcome.exit_code == 0
         assert CouplingBaseline(fx.root).get("pkg/a.py") is not None
+
+
+class TestRelaxWaiver:
+    """A relaxed, locked coupling regression is waived by check."""
+
+    def test_relax_then_check_waives(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", HIGH)  # regresses public_names vs base
+        relax = fx.writer().relax(
+            fx.scorer(),
+            "pkg/a.py",
+            justify="accepted coupling debt",
+            allow_ci_write=True,
+            source="vox-x #1",
+        )
+        assert relax.exit_code == 0
+        fx.commit("relax")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 0
+
+    def test_relax_requires_justification(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        fx.commit("base")
+        outcome = fx.writer().relax(
+            fx.scorer(), "pkg/a.py", justify="  ", allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+
+    def test_relax_untracked_file_writes_no_relaxation(self, fx: GitFixture) -> None:
+        # A file with no prior baseline entry has nothing to loosen: relax must
+        # refuse, forge no "relaxed" audit line, and add no waivable pair.
+        fx.write("pkg/a.py", LOW)  # no snapshot -> no baseline entry for a.py
+        fx.commit("base")
+        outcome = fx.writer().relax(
+            fx.scorer(), "pkg/a.py", justify="x", allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        assert any(
+            "--update" in line or "--rebaseline" in line for line in outcome.lines
+        )
+        assert CouplingBaseline(fx.root).get("pkg/a.py") is None  # not added
+        audit_path = fx.root / ".oo-coupling-audit.jsonl"
+        assert not audit_path.exists() or "relaxed" not in audit_path.read_text()
+
+    def test_relax_no_loosening_refuses(self, fx: GitFixture) -> None:
+        # A file whose metrics all meet/beat its baseline has nothing to loosen:
+        # relax refuses, writes no relaxed audit line, leaves the baseline as is.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()  # baseline == current, nothing worse
+        fx.commit("base")
+        before = dict(CouplingBaseline(fx.root).entries)
+        outcome = fx.writer().relax(
+            fx.scorer(), "pkg/a.py", justify="x", allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        assert any("nothing to relax" in line for line in outcome.lines)
+        assert CouplingBaseline(fx.root).entries == before  # unchanged
+        audit_path = fx.root / ".oo-coupling-audit.jsonl"
+        assert not audit_path.exists() or "relaxed" not in audit_path.read_text()
+
+    def test_historical_relaxation_does_not_waive_fresh_regression(
+        self, fx: GitFixture
+    ) -> None:
+        # A relaxation committed at base must not bless a fresh regression that a
+        # later --rebaseline merely re-locks to a worse value.
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()  # baseline public_names=1
+        fx.write("pkg/a.py", HIGH)  # regresses vs baseline -> relax loosens it
+        fx.writer().relax(
+            fx.scorer(),
+            "pkg/a.py",
+            justify="historical",
+            allow_ci_write=True,
+            source=None,
+        )
+        base = fx.commit("adopt with historical relaxation")
+        fx.write("pkg/a.py", HIGHER)  # fresh regression: public_names 3 vs base 2
+        fx.writer().rebaseline(fx.scorer(), allow_ci_write=True, source=None)
+        fx.commit("regress then rebaseline")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("regression" in line for line in outcome.lines)
+
+    def test_relaxing_one_metric_does_not_waive_another(self, fx: GitFixture) -> None:
+        # Relax M1 (public_names); a fresh regression of M2 (efferent_coupling) on
+        # the same file, though locked in-tree, must NOT be waived.
+        fx.write("pkg/a.py", HIGH)
+        current = CouplingBaseline.metrics_by_file(fx.scorer().results)["pkg/a.py"]
+        base_metrics = {
+            **current,
+            "public_names": current["public_names"] - 1,
+            "efferent_coupling": current["efferent_coupling"] - 1,
+        }
+        # base commit carries a different file body so a.py lands in the diff;
+        # its baseline blob is the hand-built stricter metrics.
+        fx.write("pkg/a.py", LOW)
+        fx.write_baseline({"pkg/a.py": base_metrics})
+        base = fx.commit("base with both metrics stricter")
+        # HEAD: restore HIGH, lock in-tree baseline to current; relax ONLY M1.
+        fx.write("pkg/a.py", HIGH)
+        fx.write_baseline({"pkg/a.py": current})
+        relaxed = {
+            "verdict": "relaxed",
+            "deltas": {
+                "pkg/a.py": {
+                    "public_names": [
+                        base_metrics["public_names"],
+                        current["public_names"],
+                    ]
+                }
+            },
+        }
+        fx.write(".oo-coupling-audit.jsonl", json.dumps(relaxed) + "\n")
+        fx.commit("lock and relax public_names only")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("efferent_coupling" in line for line in outcome.lines)
 
 
 class TestRenameCarry:

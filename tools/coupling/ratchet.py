@@ -89,7 +89,10 @@ class CouplingRatchet:
             return Outcome.passed(
                 "No scored Python files touched (gate covers src/punt_vox/)"
             )
-        reviews = self._build_reviews(touched, current, base_baseline, diff.renames)
+        waivable = self._audit.relaxations_since(self._git.show_audit(base))
+        reviews = self._build_reviews(
+            touched, current, base_baseline, diff.renames, waivable
+        )
         return self._verdict(reviews)
 
     def _no_base(self, *, require_base: bool) -> Outcome:
@@ -163,6 +166,7 @@ class CouplingRatchet:
         current: dict[str, dict[str, float]],
         baseline: dict[str, dict[str, float]],
         renames: dict[str, str],
+        waivable: frozenset[tuple[str, str]],
     ) -> tuple[CouplingReview, ...]:
         reviews: list[CouplingReview] = []
         for path in touched:
@@ -172,7 +176,8 @@ class CouplingRatchet:
             base_entry = baseline.get(path)
             if base_entry is None and path in renames:
                 base_entry = baseline.get(renames[path])
-            reviews.append(CouplingReview(path, cur, base_entry))
+            intree = self._baseline.get(path)
+            reviews.append(CouplingReview(path, cur, base_entry, intree, waivable))
         return tuple(reviews)
 
     def _verdict(self, reviews: tuple[CouplingReview, ...]) -> Outcome:
