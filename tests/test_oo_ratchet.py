@@ -293,6 +293,23 @@ class TestRenameCarry:
         assert "regression" in joined
         assert "not in baseline" not in joined
 
+    def test_update_refuses_renamed_regression(self, fx: GitFixture) -> None:
+        # update must carry the old baseline entry across a rename so a
+        # regressed metric cannot be laundered as a brand-new file (S8).
+        fx.write("sub/old.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.move("sub/old.py", "sub/new.py")
+        fx.write("sub/new.py", WORSE)  # regressed vs old.py's baseline
+        outcome = fx.writer().update(
+            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+        )
+        assert outcome.exit_code == 1
+        assert any("regressed" in line for line in outcome.lines)
+        # the worse value was NOT written under the new path
+        entry = Baseline(fx.root).get("sub/new.py")
+        assert entry is None or entry["max_complexity"] == 1.0
+
 
 class TestCompleteness:
     """Whole-tree completeness enumerates from the scorer's own file set."""

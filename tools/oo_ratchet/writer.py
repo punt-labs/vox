@@ -157,9 +157,7 @@ class BaselineWriter:
             if path not in plan.current:
                 removed += self._drop(new_baseline, path)
                 continue
-            self._write_or_refuse(
-                new_baseline, plan.current[path], path, refused, deltas
-            )
+            self._write_or_refuse(new_baseline, plan, path, refused, deltas)
         if plan.prune:
             removed += self._prune(new_baseline, plan.current)
         self._baseline.save(new_baseline)
@@ -177,12 +175,13 @@ class BaselineWriter:
     def _write_or_refuse(
         self,
         new_baseline: dict[str, dict[str, float]],
-        entry: dict[str, float],
+        plan: UpdatePlan,
         path: str,
         refused: list[tuple[str, str]],
         deltas: dict[str, dict[str, list[float]]],
     ) -> None:
-        base_entry = self._baseline.get(path)
+        entry = plan.current[path]
+        base_entry = self._base_for(plan, path)
         regressed = self._regressed(entry, base_entry)
         if regressed:
             refused.extend((path, m) for m in regressed)
@@ -191,6 +190,17 @@ class BaselineWriter:
         file_deltas = self._deltas(entry, base_entry)
         if file_deltas:
             deltas[path] = file_deltas
+
+    def _base_for(self, plan: UpdatePlan, path: str) -> dict[str, float] | None:
+        """Return the regression base, carrying a rename's old entry (S8).
+
+        A renamed file is compared against its predecessor's baseline so a
+        rename cannot launder a regressed metric past as a brand-new file.
+        """
+        base_entry = self._baseline.get(path)
+        if base_entry is None and path in plan.renames:
+            return self._baseline.get(plan.renames[path])
+        return base_entry
 
     def _drop_rename_source(
         self, new_baseline: dict[str, dict[str, float]], plan: UpdatePlan, path: str
