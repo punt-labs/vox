@@ -58,7 +58,7 @@ class CouplingRatchet:
             return self._no_base(require_base=require_base)
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
-            return self._absent_base_baseline(require_base=require_base)
+            return self._absent_base_baseline()
         if not base_baseline:
             return self._empty_baseline(require_base=require_base)
         return self._check_against(scorer, base, base_baseline)
@@ -111,30 +111,29 @@ class CouplingRatchet:
             "with an in-tree baseline present; fetch origin/main or pass --base-ref"
         )
 
-    def _absent_base_baseline(self, *, require_base: bool) -> Outcome:
+    def _absent_base_baseline(self) -> Outcome:
         """Decide the verdict when the base commit carries no baseline blob.
 
-        Genuine first-adoption requires the ``origin/main`` tip to also lack a
-        baseline. If the tip carries one, the branch forked before adoption and
-        would launder a regression past the empty base -- fail closed. If the
-        tip is unresolvable under ``--require-base`` with an in-tree baseline
-        present, first-adoption cannot be confirmed, so fail closed too.
+        Matches the OO ratchet's ``_absent_base_baseline`` exactly (no
+        ``require_base`` param): genuine first-adoption requires the
+        ``origin/main`` tip to also lack a baseline. If the tip is unresolvable
+        with an in-tree baseline present, first-adoption cannot be confirmed --
+        fail closed unconditionally. If the tip carries a baseline, the branch
+        forked before adoption and would launder a regression -- fail closed.
         """
         tip = self._git.resolve_ref("origin/main")
         if tip is None:
-            if require_base and self._baseline.exists:
+            if self._baseline.exists:
                 return Outcome.failed(
-                    "FAIL: base has no coupling baseline and origin/main is "
-                    "unresolvable with an in-tree baseline present; "
-                    "fetch origin/main"
+                    "FAIL: base has no baseline and origin/main is unresolvable "
+                    "with an in-tree baseline present; fetch origin/main"
                 )
             return Outcome.passed(
                 "No base baseline and no origin/main -- first-adoption bootstrap pass"
             )
         if self._git.show_baseline(tip) is not None:
             return Outcome.failed(
-                "FAIL: base commit predates coupling baseline adoption; "
-                "rebase onto current main"
+                "FAIL: base commit predates baseline adoption; rebase onto current main"
             )
         return Outcome.passed(
             "No baseline at base or origin/main tip -- first-adoption bootstrap pass"

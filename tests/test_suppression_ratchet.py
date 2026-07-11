@@ -157,6 +157,18 @@ class TestBaselineRatchet:
         outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=False)
         assert outcome.exit_code == 0
 
+    def test_absent_base_unresolvable_tip_fails_closed(self, gfx: GitFixture) -> None:
+        # Base resolves but carries no baseline blob; origin/main is unresolvable
+        # and an in-tree baseline is present -> fail closed UNCONDITIONALLY (no
+        # require_base), matching the OO and coupling ratchets.
+        gfx.write_source("x = 1  # noqa\n")
+        base = gfx.commit("base without baseline")  # no baseline blob at base
+        gfx.update_baseline()  # in-tree baseline now present
+        gfx.commit("add in-tree baseline")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
 
 class TestSuppressionFailClosed:
     """Base-commit authority, require-base, and controlled errors."""

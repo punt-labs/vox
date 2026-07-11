@@ -62,7 +62,7 @@ class SuppressionBaseline:
             return self._no_base(require_base=require_base)
         base_data = self._git.show_baseline(base)
         if base_data is None:
-            return self._absent_base(require_base=require_base)
+            return self._absent_base()
         return self._compare(report, base_data)
 
     def _no_base(self, *, require_base: bool) -> Outcome:
@@ -87,26 +87,30 @@ class SuppressionBaseline:
             "with an in-tree baseline present; fetch origin/main or pass --base-ref"
         )
 
-    def _absent_base(self, *, require_base: bool) -> Outcome:
-        """Decide the verdict when the base commit carries no baseline blob."""
+    def _absent_base(self) -> Outcome:
+        """Decide the verdict when the base commit carries no baseline blob.
+
+        Matches the OO and coupling ratchets' ``_absent_base_baseline`` exactly
+        (no ``require_base`` param): fail closed unconditionally when the
+        ``origin/main`` tip is unresolvable with an in-tree baseline present, or
+        when the tip carries a baseline (the branch forked before adoption).
+        """
         tip = self._git.resolve_ref("origin/main")
         if tip is None:
-            if require_base and self.has_baseline:
+            if self.has_baseline:
                 return Outcome.failed(
-                    "FAIL: base has no suppression baseline and origin/main is "
-                    "unresolvable with an in-tree baseline present; "
-                    "fetch origin/main"
+                    "FAIL: base has no baseline and origin/main is unresolvable "
+                    "with an in-tree baseline present; fetch origin/main"
                 )
             return Outcome.passed(
-                "No base suppression baseline and no origin/main -- bootstrap pass"
+                "No base baseline and no origin/main -- first-adoption bootstrap pass"
             )
         if self._git.show_baseline(tip) is not None:
             return Outcome.failed(
-                "FAIL: base commit predates suppression baseline adoption; "
-                "rebase onto current main"
+                "FAIL: base commit predates baseline adoption; rebase onto current main"
             )
         return Outcome.passed(
-            "No suppression baseline at base or origin/main tip -- bootstrap pass"
+            "No baseline at base or origin/main tip -- first-adoption bootstrap pass"
         )
 
     def _compare(self, report: SuppressionReport, data: dict[str, object]) -> Outcome:

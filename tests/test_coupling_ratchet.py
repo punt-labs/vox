@@ -455,6 +455,20 @@ class TestFailClosed:
         outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
         assert outcome.exit_code == 0
 
+    def test_absent_base_baseline_unresolvable_tip_fails_closed(
+        self, fx: GitFixture
+    ) -> None:
+        # Base resolves but carries no baseline blob; origin/main is unresolvable
+        # and an in-tree baseline is present -> first-adoption cannot be confirmed,
+        # so fail closed UNCONDITIONALLY (no require_base), matching oo_ratchet.
+        fx.write("pkg/a.py", LOW)
+        base = fx.commit("base without baseline")  # no baseline blob at base
+        fx.snapshot()  # in-tree baseline now present
+        fx.commit("add in-tree baseline")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
     def test_corrupt_in_tree_baseline_is_controlled_nonzero(
         self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
