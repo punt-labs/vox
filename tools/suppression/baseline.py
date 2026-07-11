@@ -195,7 +195,10 @@ class SuppressionBaseline:
 
     @staticmethod
     def _as_int(raw: object) -> int:
-        if not isinstance(raw, (int, float)):
+        # bool is a subclass of int; a bool count (`true`) is invalid data and
+        # must be 0, not coerced to 1 -- coercing to 1 would INFLATE the baseline
+        # (fail-open). Reject it before the numeric handling.
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return 0
         # json.loads parses NaN/Infinity, and int(nan)/int(inf) raise
         # ValueError/OverflowError. Coerce those to 0, consistent with the

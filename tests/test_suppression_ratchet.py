@@ -265,6 +265,22 @@ class TestSuppressionFailClosed:
         assert SuppressionBaseline._as_int(5) == 5
         assert SuppressionBaseline._as_int("x") == 0
 
+    def test_as_int_rejects_bool(self) -> None:
+        # bool is an int subclass; a bool count is invalid data -> 0, never
+        # coerced to 1 (which would INFLATE the baseline, a fail-open).
+        assert SuppressionBaseline._as_int(True) == 0
+        assert SuppressionBaseline._as_int(False) == 0
+
+    def test_bool_total_does_not_inflate_baseline(self, gfx: GitFixture) -> None:
+        # A corrupt `total: true` must coerce to 0, not 1. Fail-closed: baseline
+        # 0 < current 1 -> increase, rather than baseline 1 == current 1 -> pass.
+        gfx.write_source("x = 1  # noqa\n")  # current total 1
+        gfx.write_baseline_text('{"total": true}')
+        base = gfx.commit("bool total")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("increased" in line for line in outcome.lines)
+
     def test_nan_total_is_coerced_not_crash(self, gfx: GitFixture) -> None:
         # json.loads parses NaN; _as_int must coerce the base total to 0 rather
         # than raise ValueError. Fail-closed: baseline 0 < current 1 -> increase.
