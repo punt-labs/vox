@@ -3,37 +3,22 @@
 Every mutation refuses per-metric regressions except ``relax`` (the single
 sanctioned, audited loosening) and ``rebaseline`` (an explicit structural
 reset). All refuse to run under ``GITHUB_ACTIONS`` unless ``--allow-ci-write``.
+The write mechanics live in :class:`PlanApplier`; this layer resolves scope,
+enforces the fail-closed contract, and dispatches.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
+from .apply import PlanApplier, UpdatePlan
 from .audit import AuditLog
 from .baseline import Baseline
 from .gitio import GitRepo
 from .outcome import Outcome
 from .scorer import Scorer
-from .thresholds import Thresholds
-
-
-@dataclass(frozen=True, slots=True)
-class UpdatePlan:
-    """Which files an update touches, plus rename, prune, and broken-file intent.
-
-    ``parse_errors`` are paths on disk that failed to AST-parse. They must be
-    preserved (never pruned as if deleted) and surfaced as a refusal, so a
-    syntax error cannot silently erase a file's baseline history.
-    """
-
-    current: dict[str, dict[str, float]]
-    touched: frozenset[str]
-    renames: dict[str, str] = field(default_factory=dict)
-    prune: bool = False
-    parse_errors: frozenset[str] = frozenset()
 
 
 class BaselineWriter:
@@ -42,12 +27,14 @@ class BaselineWriter:
     _baseline: Baseline
     _audit: AuditLog
     _git: GitRepo
+    _applier: PlanApplier
 
     def __new__(cls, root: Path, git: GitRepo) -> Self:
         self = super().__new__(cls)
         self._baseline = Baseline(root)
         self._audit = AuditLog(root)
         self._git = git
+        self._applier = PlanApplier(self._baseline, self._audit, git)
         return self
 
     def update(
@@ -87,25 +74,7 @@ class BaselineWriter:
                 diff.renames,
                 parse_errors=touched & scorer.parse_errors,
             )
-        return self._apply(plan, source)
-
-    def _no_base_scope(self, *, require_base: bool) -> Outcome | None:
-        """Fail closed when scoped update cannot resolve a base.
-
-        Returns a failure ``Outcome`` to abort, or ``None`` to permit the
-        first-adoption bootstrap (no in-tree baseline yet to protect).
-        """
-        if require_base:
-            return Outcome.failed(
-                "FAIL: base ref unresolvable and --require-base is set"
-            )
-        if self._baseline.exists:
-            return Outcome.failed(
-                "FAIL: cannot resolve base (origin/main unfetched or stale) with "
-                "an in-tree baseline present; fetch origin/main, pass --base-ref, "
-                "or use --reconcile for an intentional whole-tree sweep"
-            )
-        return None
+        return self._applier.apply(plan, source)
 
     def reconcile(
         self, scorer: Scorer, *, allow_ci_write: bool, source: str | None
@@ -129,7 +98,7 @@ class BaselineWriter:
             prune=True,
             parse_errors=scorer.parse_errors,
         )
-        return self._apply(plan, source)
+        return self._applier.apply(plan, source)
 
     def relax(
         self,
@@ -155,7 +124,7 @@ class BaselineWriter:
         # the pre-relax baseline). A metric that held or improved is not waivable
         # -- otherwise relaxing M1 would silently bless a future regression of an
         # untouched M2 on the same file.
-        loosened = self._regressed(entry, base_entry)
+        loosened = PlanApplier.regressed(entry, base_entry)
         deltas = {file: {m: [base_entry.get(m, entry[m]), entry[m]] for m in loosened}}
         new_baseline = dict(self._baseline.entries)
         new_baseline[file] = entry
@@ -198,6 +167,24 @@ class BaselineWriter:
             f"  files scored: {len(current)}",
         )
 
+    def _no_base_scope(self, *, require_base: bool) -> Outcome | None:
+        """Fail closed when scoped update cannot resolve a base.
+
+        Returns a failure ``Outcome`` to abort, or ``None`` to permit the
+        first-adoption bootstrap (no in-tree baseline yet to protect).
+        """
+        if require_base:
+            return Outcome.failed(
+                "FAIL: base ref unresolvable and --require-base is set"
+            )
+        if self._baseline.exists:
+            return Outcome.failed(
+                "FAIL: cannot resolve base (origin/main unfetched or stale) with "
+                "an in-tree baseline present; fetch origin/main, pass --base-ref, "
+                "or use --reconcile for an intentional whole-tree sweep"
+            )
+        return None
+
     @staticmethod
     def _guard(*, allow_ci_write: bool) -> Outcome | None:
         if os.environ.get("GITHUB_ACTIONS") == "true" and not allow_ci_write:
@@ -206,138 +193,3 @@ class BaselineWriter:
                 "without --allow-ci-write"
             )
         return None
-
-    def _apply(self, plan: UpdatePlan, source: str | None) -> Outcome:
-        new_baseline = dict(self._baseline.entries)
-        refused: list[tuple[str, str]] = []
-        deltas: dict[str, dict[str, list[float]]] = {}
-        removed = 0
-        for path in sorted(plan.touched):
-            if path in plan.parse_errors:
-                continue  # on disk but unparseable: keep its row, refuse below
-            if path not in plan.current:
-                removed += self._drop(new_baseline, path)
-                continue
-            removed += self._write_or_refuse(new_baseline, plan, path, refused, deltas)
-        if plan.prune:
-            rename_sources = frozenset(
-                old for new, old in plan.renames.items() if new in plan.current
-            )
-            protected = plan.parse_errors | rename_sources
-            removed += self._prune(new_baseline, plan.current, protected)
-        broken = sorted(plan.parse_errors)
-        self._baseline.save(new_baseline)
-        self._audit.append(
-            files_scored=len(plan.current),
-            files_improved=len(deltas),
-            files_regressed=len({p for p, _ in refused}) + len(broken),
-            verdict="pass" if not refused and not broken else "fail",
-            deltas=deltas,
-            source=source,
-            commit=self._git.short_head(),
-        )
-        return self._report(len(deltas), removed, refused, broken)
-
-    def _write_or_refuse(
-        self,
-        new_baseline: dict[str, dict[str, float]],
-        plan: UpdatePlan,
-        path: str,
-        refused: list[tuple[str, str]],
-        deltas: dict[str, dict[str, list[float]]],
-    ) -> int:
-        entry = plan.current[path]
-        base_entry = self._base_for(plan, path)
-        regressed = self._regressed(entry, base_entry)
-        if regressed:
-            # Keep the old rename-source entry so the carried base survives to
-            # the next run -- dropping it here would let a second --update treat
-            # the rename as a brand-new file and launder the regression.
-            refused.extend((path, m) for m in regressed)
-            return 0
-        new_baseline[path] = entry
-        file_deltas = self._deltas(entry, base_entry)
-        if file_deltas:
-            deltas[path] = file_deltas
-        return self._drop_rename_source(new_baseline, plan, path)
-
-    def _base_for(self, plan: UpdatePlan, path: str) -> dict[str, float] | None:
-        """Return the regression base, carrying a rename's old entry (S8).
-
-        A renamed file is compared against its predecessor's baseline so a
-        rename cannot launder a regressed metric past as a brand-new file.
-        """
-        base_entry = self._baseline.get(path)
-        if base_entry is None and path in plan.renames:
-            return self._baseline.get(plan.renames[path])
-        return base_entry
-
-    def _drop_rename_source(
-        self, new_baseline: dict[str, dict[str, float]], plan: UpdatePlan, path: str
-    ) -> int:
-        old = plan.renames.get(path)
-        if old is not None:
-            return self._drop(new_baseline, old)
-        return 0
-
-    @staticmethod
-    def _drop(new_baseline: dict[str, dict[str, float]], path: str) -> int:
-        if path in new_baseline:
-            del new_baseline[path]
-            return 1
-        return 0
-
-    @staticmethod
-    def _prune(
-        new_baseline: dict[str, dict[str, float]],
-        current: dict[str, dict[str, float]],
-        protected: frozenset[str],
-    ) -> int:
-        # Prune only genuine deletions; a file on disk but unparseable is not in
-        # ``current`` yet must keep its row.
-        stale = [p for p in new_baseline if p not in current and p not in protected]
-        for p in stale:
-            del new_baseline[p]
-        return len(stale)
-
-    @staticmethod
-    def _regressed(entry: dict[str, float], base: dict[str, float] | None) -> list[str]:
-        if base is None:
-            return []
-        return [
-            m
-            for m in entry
-            if m in base and not Thresholds.better_or_equal(m, entry[m], base[m])
-        ]
-
-    @staticmethod
-    def _deltas(
-        entry: dict[str, float], base: dict[str, float] | None
-    ) -> dict[str, list[float]]:
-        if base is None:
-            return {m: [0.0, entry[m]] for m in entry}
-        return {
-            m: [base[m], entry[m]] for m in entry if m in base and entry[m] != base[m]
-        }
-
-    def _report(
-        self,
-        improved: int,
-        removed: int,
-        refused: list[tuple[str, str]],
-        broken: list[str],
-    ) -> Outcome:
-        lines = [
-            f"\nBaseline updated: {self._baseline.path}",
-            f"  files improved: {improved}",
-            f"  files removed:  {removed}",
-        ]
-        if broken:
-            lines.append(f"  REFUSED ({len(broken)} unparseable, baseline kept):")
-            lines.extend(f"    {p}: parse error" for p in broken)
-        if refused:
-            lines.append(f"  REFUSED ({len({p for p, _ in refused})} files):")
-            lines.extend(f"    {p}: {m} regressed" for p, m in refused)
-        if refused or broken:
-            return Outcome(1, tuple(lines))
-        return Outcome(0, tuple(lines))

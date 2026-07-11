@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .apply import PlanApplier, UpdatePlan
 from .audit import AuditLog
 from .baseline import Baseline
 from .cli import Cli, Options, main
@@ -12,7 +13,7 @@ from .outcome import Outcome
 from .ratchet import Ratchet
 from .scorer import Scorer
 from .thresholds import Thresholds
-from .writer import BaselineWriter, UpdatePlan
+from .writer import BaselineWriter
 
 __all__ = [
     "AuditLog",
@@ -26,6 +27,7 @@ __all__ = [
     "ModuleMetrics",
     "Options",
     "Outcome",
+    "PlanApplier",
     "Ratchet",
     "Review",
     "Row",
