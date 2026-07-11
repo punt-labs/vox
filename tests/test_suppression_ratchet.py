@@ -96,7 +96,7 @@ class GitFixture:
         return Scanner(self._root / "pkg", self._root).report
 
     def update_baseline(self) -> None:
-        SuppressionBaseline(self._root).update(self.report())
+        SuppressionBaseline(self._root).update(self.report(), allow_ci_write=True)
 
     def write_baseline_text(self, text: str) -> None:
         (self._root / ".suppression-baseline.json").write_text(text)
@@ -244,6 +244,27 @@ class TestSuppressionFailClosed:
         gfx.write_baseline_text("[1, 2, 3]")
         with pytest.raises(SuppressionBaselineError):
             SuppressionBaseline(gfx.root)
+
+
+class TestCiWriteGuard:
+    """update() refuses to run under GITHUB_ACTIONS without --allow-ci-write."""
+
+    def test_update_blocked_in_ci(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        gfx.write_source("x = 1  # noqa\n")
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=False)
+        assert outcome.exit_code == 1
+        assert any("GITHUB_ACTIONS" in line for line in outcome.lines)
+
+    def test_update_allowed_with_flag_in_ci(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        gfx.write_source("x = 1  # noqa\n")
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
+        assert outcome.exit_code == 0
 
 
 def test_cli_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

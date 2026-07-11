@@ -25,6 +25,7 @@ class Options:
     threshold: bool
     base_ref: str | None
     require_base: bool
+    allow_ci_write: bool
 
     @classmethod
     def parse(cls, argv: list[str] | None = None) -> Self:
@@ -38,6 +39,7 @@ class Options:
             threshold=bool(ns.threshold),
             base_ref=ns.base_ref,
             require_base=bool(ns.require_base),
+            allow_ci_write=bool(ns.allow_ci_write),
         )
 
     @staticmethod
@@ -55,6 +57,9 @@ class Options:
         parser.add_argument("--base-ref", metavar="REF", help="comparison base commit")
         parser.add_argument(
             "--require-base", action="store_true", help="fail if base unresolvable"
+        )
+        parser.add_argument(
+            "--allow-ci-write", action="store_true", help="permit writes under CI"
         )
         return parser
 
@@ -91,7 +96,7 @@ class Cli:
                 report, base_ref=opts.base_ref, require_base=opts.require_base
             )
         if opts.update:
-            return baseline.update(report)
+            return baseline.update(report, allow_ci_write=opts.allow_ci_write)
         if opts.json:
             return Outcome.passed(report.to_json())
         lines = list(report.render())

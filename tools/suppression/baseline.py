@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import ClassVar, Self
 
@@ -131,8 +132,11 @@ class SuppressionBaseline:
             )
         return Outcome.passed(*head, "\nPASS: suppression count unchanged")
 
-    def update(self, report: SuppressionReport) -> Outcome:
+    def update(self, report: SuppressionReport, *, allow_ci_write: bool) -> Outcome:
         """Write current counts to the baseline and append an audit entry."""
+        blocked = self._guard(allow_ci_write=allow_ci_write)
+        if blocked is not None:
+            return blocked
         self._save(report)
         self._append_audit(report)
         lines = [
@@ -144,6 +148,15 @@ class SuppressionBaseline:
             for category, count in sorted(report.by_category.items())
         )
         return Outcome.passed(*lines)
+
+    @staticmethod
+    def _guard(*, allow_ci_write: bool) -> Outcome | None:
+        if os.environ.get("GITHUB_ACTIONS") == "true" and not allow_ci_write:
+            return Outcome.failed(
+                "FAIL: refusing to write suppression baseline under GITHUB_ACTIONS "
+                "without --allow-ci-write"
+            )
+        return None
 
     def _regression(
         self,
