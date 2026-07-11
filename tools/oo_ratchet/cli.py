@@ -149,6 +149,7 @@ class Cli:
             return writer.update(
                 scorer,
                 base_ref=opts.base_ref,
+                require_base=opts.require_base,
                 allow_ci_write=opts.allow_ci_write,
                 source=opts.source,
             )

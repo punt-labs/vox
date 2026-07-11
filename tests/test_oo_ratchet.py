@@ -199,7 +199,11 @@ class TestScopedUpdate:
         base = fx.commit("base")
         fx.write("sub/w.py", WORSE)  # regressed vs in-tree baseline
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert outcome.exit_code == 1
         # baseline still holds the good (unloosened) value
@@ -213,7 +217,11 @@ class TestScopedUpdate:
         base = fx.commit("base")
         fx.write("sub/w.py", GOOD)
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert outcome.exit_code == 0
         entry = Baseline(fx.root).get("sub/w.py")
@@ -228,7 +236,11 @@ class TestScopedUpdate:
         base = fx.commit("base")
         fx.write("sub/w.py", BROKEN)  # still on disk, now unparseable
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert outcome.exit_code == 1
         assert any("parse error" in line for line in outcome.lines)
@@ -243,6 +255,55 @@ class TestScopedUpdate:
         fx.write("sub/w.py", BROKEN)
         outcome = fx.writer().reconcile(fx.scorer(), allow_ci_write=True, source=None)
         assert outcome.exit_code == 1
+        assert Baseline(fx.root).get("sub/w.py") is not None
+
+    def test_update_unresolvable_base_with_baseline_fails_closed(
+        self, fx: GitFixture
+    ) -> None:
+        # Parity with check: scoped update must not silently whole-tree-sweep on
+        # an unresolvable base -- fail closed, baseline untouched (Bugbot #1).
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        fx.commit("base")
+        fx.write("sub/other.py", WORSE)  # a new file a whole-tree sweep would add
+        before = dict(Baseline(fx.root).entries)
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref="0" * 40,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        assert any("cannot resolve base" in line for line in outcome.lines)
+        assert Baseline(fx.root).entries == before  # no whole-tree sweep
+
+    def test_update_require_base_unresolvable_fails(self, fx: GitFixture) -> None:
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        fx.commit("base")
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref="0" * 40,
+            require_base=True,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        assert any("--require-base" in line for line in outcome.lines)
+
+    def test_update_bootstrap_no_baseline_whole_tree(self, fx: GitFixture) -> None:
+        # First-adoption (no in-tree baseline) still bootstraps the whole tree.
+        fx.write("sub/w.py", GOOD)
+        fx.commit("pre-adoption, no baseline")
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref="0" * 40,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 0
         assert Baseline(fx.root).get("sub/w.py") is not None
 
 
@@ -383,7 +444,11 @@ class TestRenameCarry:
         fx.move("sub/old.py", "sub/new.py")
         fx.write("sub/new.py", WORSE)  # regressed vs old.py's baseline
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert outcome.exit_code == 1
         assert any("regressed" in line for line in outcome.lines)
@@ -403,7 +468,11 @@ class TestRenameCarry:
         fx.move("sub/old.py", "sub/new.py")
         fx.write("sub/new.py", WORSE)  # regressed vs old.py's carried baseline
         first = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert first.exit_code == 1
         # the old rename-source entry survives the refusal
@@ -411,7 +480,11 @@ class TestRenameCarry:
         assert Baseline(fx.root).get("sub/new.py") is None
         # a second pass still refuses -- no laundering on run two
         second = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert second.exit_code == 1
         assert Baseline(fx.root).get("sub/new.py") is None
@@ -452,7 +525,11 @@ class TestCiWriteGuard:
         fx.snapshot("sub")
         base = fx.commit("base")
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=False, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=False,
+            source=None,
         )
         assert outcome.exit_code == 1
         assert any("GITHUB_ACTIONS" in line for line in outcome.lines)
@@ -465,7 +542,11 @@ class TestCiWriteGuard:
         fx.snapshot("sub")
         base = fx.commit("base")
         outcome = fx.writer().update(
-            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
         )
         assert outcome.exit_code == 0
 

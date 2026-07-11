@@ -55,16 +55,26 @@ class BaselineWriter:
         scorer: Scorer,
         *,
         base_ref: str | None,
+        require_base: bool,
         allow_ci_write: bool,
         source: str | None,
     ) -> Outcome:
-        """Update baseline entries for files in ``base..HEAD`` (never loosens)."""
+        """Update baseline entries for files in ``base..HEAD`` (never loosens).
+
+        Mirrors ``check``'s fail-closed contract: on an unresolvable base,
+        scoped update refuses rather than silently sweeping the whole tree.
+        A genuine first-adoption (no in-tree baseline) does bootstrap the whole
+        tree; ``--reconcile`` is the explicit opt-in for a whole-tree sweep.
+        """
         blocked = self._guard(allow_ci_write=allow_ci_write)
         if blocked is not None:
             return blocked
         current = Baseline.metrics_by_file(scorer.results)
         base = self._git.resolve_base(base_ref)
         if base is None:
+            bootstrap = self._no_base_scope(require_base=require_base)
+            if bootstrap is not None:
+                return bootstrap
             plan = UpdatePlan(
                 current, frozenset(current), parse_errors=scorer.parse_errors
             )
@@ -78,6 +88,24 @@ class BaselineWriter:
                 parse_errors=touched & scorer.parse_errors,
             )
         return self._apply(plan, source)
+
+    def _no_base_scope(self, *, require_base: bool) -> Outcome | None:
+        """Fail closed when scoped update cannot resolve a base.
+
+        Returns a failure ``Outcome`` to abort, or ``None`` to permit the
+        first-adoption bootstrap (no in-tree baseline yet to protect).
+        """
+        if require_base:
+            return Outcome.failed(
+                "FAIL: base ref unresolvable and --require-base is set"
+            )
+        if self._baseline.exists:
+            return Outcome.failed(
+                "FAIL: cannot resolve base (origin/main unfetched or stale) with "
+                "an in-tree baseline present; fetch origin/main, pass --base-ref, "
+                "or use --reconcile for an intentional whole-tree sweep"
+            )
+        return None
 
     def reconcile(
         self, scorer: Scorer, *, allow_ci_write: bool, source: str | None
