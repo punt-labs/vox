@@ -1,0 +1,69 @@
+"""The in-tree baseline file: load, query, save, and project scorer results."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Self
+
+from .thresholds import Thresholds
+
+
+class Baseline:
+    """Read and write ``.oo-baseline.json`` — the committed metric snapshot."""
+
+    _path: Path
+    _entries: dict[str, dict[str, float]]
+
+    FILENAME: str = ".oo-baseline.json"
+
+    def __new__(cls, root: Path) -> Self:
+        self = super().__new__(cls)
+        self._path = root / cls.FILENAME
+        self._entries = cls._load(self._path)
+        return self
+
+    @property
+    def path(self) -> Path:
+        """Return the on-disk baseline path."""
+        return self._path
+
+    @property
+    def exists(self) -> bool:
+        """Return whether the baseline file is present on disk."""
+        return self._path.exists()
+
+    @property
+    def entries(self) -> dict[str, dict[str, float]]:
+        """Return the full baseline mapping of path to metric values."""
+        return self._entries
+
+    def get(self, path: str) -> dict[str, float] | None:
+        """Return the baseline metrics for a path, or ``None`` if untracked."""
+        return self._entries.get(path)
+
+    @staticmethod
+    def _load(path: Path) -> dict[str, dict[str, float]]:
+        if not path.exists():
+            return {}
+        parsed: dict[str, dict[str, float]] = json.loads(path.read_text())
+        return parsed
+
+    def save(self, data: dict[str, dict[str, float]]) -> None:
+        """Write ``data`` sorted by path and refresh the in-memory view."""
+        ordered = dict(sorted(data.items()))
+        self._path.write_text(json.dumps(ordered, indent=2) + "\n")
+        self._entries = ordered
+
+    @staticmethod
+    def metrics_by_file(
+        results: list[dict[str, float | int | str]],
+    ) -> dict[str, dict[str, float]]:
+        """Project scorer results into the baseline shape, skipping errors."""
+        out: dict[str, dict[str, float]] = {}
+        for r in results:
+            if "error" in r:
+                continue
+            metrics = {k: float(r[k]) for k in Thresholds.names() if k in r}
+            out[str(r["file"])] = metrics
+        return out

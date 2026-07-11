@@ -1,0 +1,35 @@
+"""OO quality scorer and baseline ratchet — merge-base comparison in CI."""
+
+from __future__ import annotations
+
+from .audit import AuditLog
+from .baseline import Baseline
+from .cli import Cli, Options, main
+from .compare import FileReview, Review, Row
+from .gitio import Diff, GitRepo
+from .metrics import ModuleMetrics
+from .outcome import Outcome
+from .ratchet import Ratchet
+from .scorer import Scorer
+from .thresholds import Thresholds
+from .writer import BaselineWriter, UpdatePlan
+
+__all__ = [
+    "AuditLog",
+    "Baseline",
+    "BaselineWriter",
+    "Cli",
+    "Diff",
+    "FileReview",
+    "GitRepo",
+    "ModuleMetrics",
+    "Options",
+    "Outcome",
+    "Ratchet",
+    "Review",
+    "Row",
+    "Scorer",
+    "Thresholds",
+    "UpdatePlan",
+    "main",
+]

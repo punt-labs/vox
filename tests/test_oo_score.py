@@ -1,4 +1,4 @@
-"""Tests for tools.oo_score -- the AST-based OO metric scorer.
+"""Tests for the AST-based OO metric scorer.
 
 Guards the PEP-570 fix: a positional-only receiver (`def m(self, x, /)`) must
 count the same as the classic `def m(self, x)`, i.e. `self`/`cls` is subtracted
@@ -7,7 +7,7 @@ whether it lands in ``posonlyargs`` or ``args``.
 
 from __future__ import annotations
 
-from tools.oo_score import ModuleMetrics
+from tools.oo_ratchet.metrics import ModuleMetrics
 
 
 class TestAvgParamsReceiverSubtraction:

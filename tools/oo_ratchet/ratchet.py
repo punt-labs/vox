@@ -1,0 +1,164 @@
+"""Ratchet checking: compare HEAD metrics against the merge-base baseline."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Self
+
+from .audit import AuditLog
+from .baseline import Baseline
+from .compare import FileReview, Review
+from .gitio import GitRepo
+from .outcome import Outcome
+from .scorer import Scorer
+from .thresholds import Thresholds
+
+_HEADER = (
+    f"\n{'File':<40} {'Metric':<26} {'Baseline':>10} "
+    f"{'Current':>10} {'Delta':>8} {'Status':>10}"
+)
+
+
+class Ratchet:
+    """Enforce the ratchet: HEAD metrics must not regress against the base.
+
+    The comparison baseline is loaded from the base commit
+    (``git show <base>:.oo-baseline.json``), never the in-tree file, so a PR
+    may improve code and lock in its own baseline in the same commit (S2).
+    """
+
+    _baseline: Baseline
+    _audit: AuditLog
+    _git: GitRepo
+
+    def __new__(cls, root: Path, git: GitRepo) -> Self:
+        self = super().__new__(cls)
+        self._baseline = Baseline(root)
+        self._audit = AuditLog(root)
+        self._git = git
+        return self
+
+    def check(
+        self, scorer: Scorer, *, base_ref: str | None, require_base: bool
+    ) -> Outcome:
+        """Compare touched files at HEAD against the base baseline."""
+        base = self._git.resolve_base(base_ref)
+        if base is None:
+            if require_base:
+                return Outcome.failed(
+                    "FAIL: base ref unresolvable and --require-base is set"
+                )
+            return Outcome.passed("No base to compare against -- bootstrap pass")
+        base_baseline = self._git.show_baseline(base)
+        if base_baseline is None:
+            return Outcome.passed(
+                "No base baseline to compare against -- bootstrap trivial pass"
+            )
+
+        diff = self._git.diff(base)
+        current = Baseline.metrics_by_file(scorer.results)
+        touched = sorted(diff.python_files() & scorer.files)
+        if not touched:
+            return Outcome.passed("No Python files touched -- trivial pass")
+
+        reviews = self._build_reviews(touched, current, base_baseline, diff.renames)
+        lock_fail, missing = self._integrity(touched, current)
+        return self._verdict(Review(reviews), lock_fail, missing)
+
+    def show_log(self) -> Outcome:
+        """Return the audit history as an outcome."""
+        return Outcome.passed(*self._audit.render_log())
+
+    def audit_completeness(self, scorer: Scorer) -> Outcome:
+        """Fail if any scored file is absent from the in-tree baseline (S6).
+
+        Enumerated from the scorer's own parse-clean file set, so a dotted or
+        unparseable file is never demanded in a baseline it can never have.
+        """
+        missing = sorted(scorer.files - set(self._baseline.entries))
+        if missing:
+            lines = ["FAIL: files missing from baseline:"]
+            lines.extend(f"  {path}" for path in missing)
+            return Outcome(1, tuple(lines))
+        return Outcome.passed(
+            f"PASS: baseline complete for {len(scorer.files)} scored files"
+        )
+
+    def _build_reviews(
+        self,
+        touched: list[str],
+        current: dict[str, dict[str, float]],
+        base_baseline: dict[str, dict[str, float]],
+        renames: dict[str, str],
+    ) -> tuple[FileReview, ...]:
+        reviews: list[FileReview] = []
+        for path in touched:
+            base_entry = base_baseline.get(path)
+            if base_entry is None and path in renames:
+                base_entry = base_baseline.get(renames[path])
+            reviews.append(
+                FileReview(
+                    path,
+                    current[path],
+                    base_entry,
+                    self._baseline.get(path),
+                    self._audit,
+                )
+            )
+        return tuple(reviews)
+
+    def _integrity(
+        self, touched: list[str], current: dict[str, dict[str, float]]
+    ) -> tuple[list[str], list[str]]:
+        lock_fail: list[str] = []
+        missing: list[str] = []
+        for path in touched:
+            intree = self._baseline.get(path)
+            if intree is None:
+                missing.append(path)
+            elif not self._locked(intree, current[path]):
+                lock_fail.append(path)
+        return lock_fail, missing
+
+    @staticmethod
+    def _locked(intree: dict[str, float], current: dict[str, float]) -> bool:
+        return all(
+            intree.get(m) == current.get(m) for m in Thresholds.names() if m in current
+        )
+
+    def _verdict(
+        self, review: Review, lock_fail: list[str], missing: list[str]
+    ) -> Outcome:
+        lines = self._render_rows(review)
+        failed = False
+        if missing:
+            lines.append(
+                "FAIL: touched file(s) not in baseline -- run make update-oo: "
+                + ", ".join(missing)
+            )
+            failed = True
+        if lock_fail:
+            lines.append(
+                "FAIL: baseline out of date -- run make update-oo: "
+                + ", ".join(lock_fail)
+            )
+            failed = True
+        if review.has_regression:
+            lines.append("FAIL: regression detected")
+            lines.extend(f"  {path}: {metric}" for path, metric in review.regressions)
+            failed = True
+        if not review.improvement_satisfied:
+            lines.append("FAIL: no metric improved on any touched file")
+            failed = True
+        if failed:
+            return Outcome(1, tuple(lines))
+        lines.append("PASS: at least one metric improved, no regressions")
+        return Outcome(0, tuple(lines))
+
+    @staticmethod
+    def _render_rows(review: Review) -> list[str]:
+        lines = [_HEADER, "-" * 108]
+        lines.extend(row.render() for row in review.rows)
+        if not review.rows:
+            lines.append("  (all metrics unchanged)")
+        return lines

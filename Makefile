@@ -19,13 +19,17 @@ type: ## Type check with mypy and pyright
 docs: ## Lint markdown files (matches CI docs job)
 	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
 
+# Base-comparison flags injected by CI (e.g. --base-ref <merge-base> --require-base).
+# Empty locally, where the tool defaults base to `git merge-base origin/main HEAD`.
+OO_BASE ?=
+
 check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
-	uv run python tools/oo_score.py src/punt_vox/ --check
+	uv run python tools/oo_score.py src/punt_vox/ --check $(OO_BASE)
 
 update-oo: ## Update OO baseline after improvements (stage .oo-baseline.json and .oo-audit.jsonl)
-	uv run python tools/oo_score.py src/punt_vox/ --update
+	uv run python tools/oo_score.py src/punt_vox/ --update $(OO_BASE)
 
 check-coupling: ## Coupling analysis — informational
 	uv run python tools/oo_coupling.py src/punt_vox/ --check
