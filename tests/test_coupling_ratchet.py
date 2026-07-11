@@ -1,0 +1,399 @@
+"""Integration tests for the merge-base coupling ratchet against tmp git repos.
+
+The load-bearing behavior is merge-base scoping: a coupling regression made in an
+earlier commit of a multi-commit PR and not re-touched in the final commit must
+still be scored. The old ``HEAD~1..HEAD`` scoping missed exactly that case. The
+rest covers the regression-only verdict, scoped never-loosen update, fail-closed
+git/baseline handling, the CI-write guard, and the trivial-pass path.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Self
+
+import pytest
+
+from tools.coupling.baseline import CouplingBaseline, CouplingBaselineError
+from tools.coupling.cli import main
+from tools.coupling.gitio import GitError, GitRepo
+from tools.coupling.ratchet import CouplingRatchet
+from tools.coupling.scorer import CouplingScorer
+from tools.coupling.writer import CouplingWriter
+
+# A shared bulky header so git reliably detects a rename across the small metric
+# change between LOW and HIGH (the body dominates the similarity score).
+_BODY = (
+    "from __future__ import annotations\n\n"
+    "# shared body line one, present in both variants for rename detection\n"
+    "# shared body line two, present in both variants for rename detection\n"
+    "# shared body line three, present in both variants for rename detection\n\n"
+)
+# public_names == 1 (via __all__); every other metric is 0.
+LOW = _BODY + '__all__ = ["x"]\n\nx = 1\n'
+# public_names == 2 -> a regression against a LOW baseline.
+HIGH = _BODY + '__all__ = ["x", "y"]\n\nx = 1\ny = 2\n'
+BROKEN = "def oops(:\n    pass\n"
+
+
+class GitFixture:
+    """A throwaway git repo for exercising the coupling ratchet end to end."""
+
+    _root: Path
+
+    def __new__(cls, tmp: Path) -> Self:
+        self = super().__new__(cls)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
+        for key, val in (
+            ("user.email", "t@example.com"),
+            ("user.name", "Tester"),
+            ("commit.gpgsign", "false"),
+        ):
+            subprocess.run(["git", "config", key, val], cwd=tmp, check=True)
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=tmp,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self._root = Path(out.stdout.strip())
+        return self
+
+    @property
+    def root(self) -> Path:
+        """Return the repository root."""
+        return self._root
+
+    def write(self, rel: str, content: str) -> None:
+        path = self._root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def write_baseline(self, data: dict[str, dict[str, float]]) -> None:
+        (self._root / ".oo-coupling-baseline.json").write_text(
+            json.dumps(data, indent=2) + "\n"
+        )
+
+    def snapshot(self, subdir: str = "pkg") -> None:
+        scorer = CouplingScorer(self._root / subdir, self._root)
+        self.write_baseline(CouplingBaseline.metrics_by_file(scorer.results))
+
+    def commit(self, msg: str) -> str:
+        subprocess.run(["git", "add", "-A"], cwd=self._root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", msg], cwd=self._root, check=True)
+        return self._head()
+
+    def move(self, src: str, dst: str) -> None:
+        (self._root / dst).parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "mv", src, dst], cwd=self._root, check=True)
+
+    def checkout_new(self, branch: str) -> None:
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", branch], cwd=self._root, check=True
+        )
+
+    def checkout(self, branch: str) -> None:
+        subprocess.run(["git", "checkout", "-q", branch], cwd=self._root, check=True)
+
+    def set_origin_main(self, sha: str) -> None:
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/main", sha],
+            cwd=self._root,
+            check=True,
+        )
+
+    def _head(self) -> str:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self._root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return out.stdout.strip()
+
+    def ratchet(self) -> CouplingRatchet:
+        return CouplingRatchet(self._root, GitRepo(self._root))
+
+    def writer(self) -> CouplingWriter:
+        return CouplingWriter(self._root, GitRepo(self._root))
+
+    def scorer(self, subdir: str = "pkg") -> CouplingScorer:
+        return CouplingScorer(self._root / subdir, self._root)
+
+
+@pytest.fixture
+def fx(tmp_path: Path) -> GitFixture:
+    return GitFixture(tmp_path)
+
+
+class TestMergeBaseScoping:
+    """The core fix: score regressions anywhere in the PR, not just the tip."""
+
+    def test_regression_in_earlier_commit_is_caught(self, fx: GitFixture) -> None:
+        # a.py regresses in commit 1; commit 2 touches only b.py. The merge-base
+        # diff (fork..worktree) still includes a.py, so its regression fails.
+        fx.write("pkg/a.py", LOW)
+        fx.write("pkg/b.py", LOW)
+        fx.snapshot()
+        fork = fx.commit("fork")
+        fx.checkout_new("feature")
+        fx.write("pkg/a.py", HIGH)  # regression, in the EARLIER commit
+        fx.commit("regress a")
+        fx.write("pkg/b.py", LOW + "# touched, no metric change\n")
+        fx.commit("touch b only")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=fork, require_base=True)
+        assert outcome.exit_code == 1
+        assert any(
+            "pkg/a.py" in line and "public_names" in line for line in outcome.lines
+        )
+
+    def test_per_commit_scope_would_have_missed_it(self, fx: GitFixture) -> None:
+        # The same tree, scoped HEAD~1..HEAD (the old behavior), only sees b.py --
+        # a.py's regression slips through. This documents the hole the fix closes.
+        fx.write("pkg/a.py", LOW)
+        fx.write("pkg/b.py", LOW)
+        fx.snapshot()
+        fx.commit("fork")
+        fx.checkout_new("feature")
+        fx.write("pkg/a.py", HIGH)
+        fx.commit("regress a")
+        fx.write("pkg/b.py", LOW + "# touched\n")
+        fx.commit("touch b only")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref="HEAD~1", require_base=True)
+        assert outcome.exit_code == 0  # old per-commit scope misses a.py
+
+
+class TestBaseCompare:
+    """Regression-only verdict against the in-tree baseline."""
+
+    def test_steady_passes(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", LOW + "# comment\n")  # no metric change
+        fx.commit("touch")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 0
+
+    def test_regression_fails(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", HIGH)
+        fx.commit("regress")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("regression" in line for line in outcome.lines)
+
+    def test_new_file_is_info_not_regression(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/new.py", HIGH)  # new, not in baseline
+        fx.commit("add new")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 0
+
+    def test_no_src_touched_is_trivial_pass(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("notes.txt", "unrelated change\n")  # not a scored .py
+        fx.commit("touch non-source")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 0
+        assert any("trivial pass" in line for line in outcome.lines)
+
+
+class TestScopedUpdate:
+    """Scoped update writes improvements but never loosens."""
+
+    def test_update_refuses_regression(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", HIGH)  # worse than the in-tree baseline
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        entry = CouplingBaseline(fx.root).get("pkg/a.py")
+        assert entry is not None
+        assert entry["public_names"] == 1.0  # unloosened
+
+    def test_update_writes_improvement(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", HIGH)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", LOW)  # improved (fewer public names)
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 0
+        entry = CouplingBaseline(fx.root).get("pkg/a.py")
+        assert entry is not None
+        assert entry["public_names"] == 1.0
+
+    def test_update_unresolvable_base_with_baseline_fails_closed(
+        self, fx: GitFixture
+    ) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        fx.commit("base")
+        before = dict(CouplingBaseline(fx.root).entries)
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref="0" * 40,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        assert any("cannot resolve base" in line for line in outcome.lines)
+        assert CouplingBaseline(fx.root).entries == before  # no whole-tree sweep
+
+    def test_update_bootstrap_no_baseline_whole_tree(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.commit("pre-adoption, no baseline")
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref="0" * 40,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 0
+        assert CouplingBaseline(fx.root).get("pkg/a.py") is not None
+
+
+class TestRenameCarry:
+    """A renamed file inherits its predecessor's baseline entry."""
+
+    def test_rename_regression_is_caught(self, fx: GitFixture) -> None:
+        # The in-tree baseline still keys the metrics under old.py; new.py falls
+        # back to old.py's entry via the diff's rename map, so a worsened rename
+        # cannot launder its history as a brand-new file.
+        fx.write("pkg/old.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.move("pkg/old.py", "pkg/new.py")
+        fx.write("pkg/new.py", HIGH)  # worsened during the rename
+        fx.commit("rename and worsen")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("public_names" in line for line in outcome.lines)
+
+
+class TestCiWriteGuard:
+    """Mutations refuse to run under GITHUB_ACTIONS without --allow-ci-write."""
+
+    def test_update_blocked_in_ci(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=False,
+            source=None,
+        )
+        assert outcome.exit_code == 1
+        assert any("GITHUB_ACTIONS" in line for line in outcome.lines)
+
+    def test_update_allowed_with_flag_in_ci(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        outcome = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert outcome.exit_code == 0
+
+
+class TestTouchedParseError:
+    """A touched file that fails to parse fails loud, not silently."""
+
+    def test_broken_touched_file_fails(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.write("pkg/a.py", BROKEN)  # now unparseable, still touched
+        fx.commit("break")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("failed to parse" in line for line in outcome.lines)
+
+
+class TestFailClosed:
+    """A failed git command or corrupt baseline fails closed, not silent."""
+
+    def test_diff_failure_raises(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.commit("base")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).diff("refs/does/not/exist")
+
+    def test_empty_diff_is_not_a_failure(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        head = fx.commit("base")
+        diff = GitRepo(fx.root).diff(head)  # HEAD vs work tree: no changes
+        assert diff.touched == frozenset()
+
+    def test_unresolvable_base_with_baseline_fails_loud(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)
+        fx.snapshot()
+        fx.commit("base")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("origin/main" in line for line in outcome.lines)
+
+    def test_unresolvable_base_no_baseline_is_pass(self, fx: GitFixture) -> None:
+        fx.write("pkg/a.py", LOW)  # no baseline committed
+        fx.commit("pre-adoption")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref="0" * 40, require_base=False)
+        assert outcome.exit_code == 0
+
+    def test_corrupt_in_tree_baseline_is_controlled_nonzero(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A corrupt .oo-coupling-baseline.json surfaces as a clean non-zero exit
+        # through the CLI, not a JSONDecodeError traceback.
+        fx.write("pkg/a.py", LOW)
+        fx.write(".oo-coupling-baseline.json", "{ not valid json")
+        fx.commit("corrupt baseline")
+        monkeypatch.chdir(fx.root)
+        assert main(["pkg", "--check"]) == 1
+
+    def test_corrupt_baseline_raises_typed_error(self, fx: GitFixture) -> None:
+        fx.write(".oo-coupling-baseline.json", "{ not valid json")
+        with pytest.raises(CouplingBaselineError):
+            CouplingBaseline(fx.root)
+
+    def test_git_degrades_to_none_without_a_repo(self) -> None:
+        gr = GitRepo(Path("/nonexistent-coupling-ratchet-xyz"))
+        assert gr.root is None
+        assert gr.available is False
+        assert gr.resolve_base(None) is None
