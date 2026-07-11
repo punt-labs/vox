@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from tools.oo_ratchet.cli import Options, main
-
-if TYPE_CHECKING:
-    import pytest
 
 GOOD = '''from __future__ import annotations
 
@@ -62,6 +60,23 @@ class TestOptionsParse:
         assert opts.reconcile
         assert opts.allow_ci_write
         assert opts.source == "vox-1"
+
+
+class TestActionExclusivity:
+    """Action flags are mutually exclusive -- two is an error, not a pick."""
+
+    def test_two_actions_is_argparse_error(self) -> None:
+        with pytest.raises(SystemExit):
+            Options.parse(["src", "--check", "--update"])
+
+    def test_relax_and_reconcile_conflict(self) -> None:
+        with pytest.raises(SystemExit):
+            Options.parse(["src", "--relax", "src/m.py", "--reconcile"])
+
+    def test_single_action_still_parses(self) -> None:
+        assert Options.parse(["src", "--check"]).check
+        assert Options.parse(["src", "--reconcile"]).reconcile
+        assert Options.parse(["src", "--audit-completeness"]).audit_completeness
 
 
 class TestMainEntry:

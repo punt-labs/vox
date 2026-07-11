@@ -63,17 +63,20 @@ class Options:
             prog="oo_score", description="OO quality scorer and baseline ratchet"
         )
         parser.add_argument("src", help="file or directory to score")
-        parser.add_argument("--check", action="store_true", help="ratchet check")
-        parser.add_argument("--update", action="store_true", help="scoped update")
-        parser.add_argument("--reconcile", action="store_true", help="whole-tree")
-        parser.add_argument("--rebaseline", action="store_true", help="reset baseline")
-        parser.add_argument("--log", action="store_true", help="show audit history")
-        parser.add_argument("--json", action="store_true", help="emit JSON scores")
-        parser.add_argument("--threshold", action="store_true", help="per-file table")
-        parser.add_argument(
+        # Exactly one action selects the operation; passing two is an argparse
+        # error, not a silent first-wins pick.
+        action = parser.add_mutually_exclusive_group()
+        action.add_argument("--check", action="store_true", help="ratchet check")
+        action.add_argument("--update", action="store_true", help="scoped update")
+        action.add_argument("--reconcile", action="store_true", help="whole-tree")
+        action.add_argument("--rebaseline", action="store_true", help="reset baseline")
+        action.add_argument("--threshold", action="store_true", help="per-file table")
+        action.add_argument(
             "--audit-completeness", action="store_true", help="whole-tree completeness"
         )
-        parser.add_argument("--relax", metavar="FILE", help="relax one file's baseline")
+        action.add_argument("--relax", metavar="FILE", help="relax one file's baseline")
+        parser.add_argument("--log", action="store_true", help="show audit history")
+        parser.add_argument("--json", action="store_true", help="emit JSON scores")
         parser.add_argument("--justify", default="", help="justification for --relax")
         parser.add_argument("--base-ref", metavar="REF", help="comparison base commit")
         parser.add_argument(
