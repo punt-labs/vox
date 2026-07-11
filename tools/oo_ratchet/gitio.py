@@ -136,12 +136,13 @@ class GitRepo:
         return Diff(frozenset(touched), renames)
 
     def show_baseline(self, ref: str) -> dict[str, dict[str, float]] | None:
-        """Return the baseline JSON committed at ``ref``, or ``None``.
+        """Return the baseline JSON committed at ``ref``, or ``None`` if absent.
 
-        ``None`` means the baseline blob does not exist at that ref — the
-        first-adoption case, where there is nothing to compare against.
+        ``None`` means the blob genuinely does not exist at that ref — the
+        first-adoption case. A real git error (bad ref, timeout, infra) raises
+        ``GitError`` rather than masquerading as absence.
         """
-        out = self._git(["show", f"{ref}:{self.BASELINE_FILE}"])
+        out = self._show_file(ref, self.BASELINE_FILE)
         if out is None:
             return None
         try:
@@ -152,9 +153,50 @@ class GitRepo:
         return parsed
 
     def show_audit(self, ref: str) -> str | None:
-        """Return the raw audit-log text committed at ``ref``, or ``None``.
+        """Return the audit-log text committed at ``ref``, or ``None`` if absent.
 
-        ``None`` means the audit blob does not exist at that ref; the caller
-        treats it as an empty history so every current relaxation counts as new.
+        ``None`` means the blob genuinely does not exist at that ref (no base
+        history); a real git error raises ``GitError`` rather than silently
+        reading as "no base relaxations" and over-waiving.
         """
-        return self._git(["show", f"{ref}:{self.AUDIT_FILE}"])
+        return self._show_file(ref, self.AUDIT_FILE)
+
+    def _show_file(self, ref: str, path: str) -> str | None:
+        """Return ``git show <ref>:<path>`` text, ``None`` if the path is absent.
+
+        Distinguishes a path missing at an otherwise-readable ref (return
+        ``None`` — trusted) from any other failure (raise ``GitError`` —
+        fail closed). The callers always pass an already-resolved ref, so a
+        non-absence failure is an anomaly, not a benign "no blob".
+        """
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{path}"],
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT,
+                cwd=self._root,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            msg = f"git show {ref}:{path} failed to run: {exc}"
+            raise GitError(msg) from exc
+        if result.returncode == 0:
+            return result.stdout
+        if self._is_absent_path(result.returncode, result.stderr):
+            return None
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        msg = f"git show {ref}:{path} errored: {detail}"
+        raise GitError(msg)
+
+    @staticmethod
+    def _is_absent_path(returncode: int, stderr: str) -> bool:
+        """Return whether git's failure is a missing path at a valid ref.
+
+        git reports that with exit 128 and a "does not exist in" /
+        "exists on disk, but not in" message; any other failure (bad ref,
+        corrupt repo) is not treated as benign absence.
+        """
+        if returncode != 128:
+            return False
+        lowered = stderr.lower()
+        return "does not exist in" in lowered or "exists on disk, but not in" in lowered

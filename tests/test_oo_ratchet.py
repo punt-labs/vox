@@ -643,6 +643,23 @@ class TestGitFailClosed:
         with pytest.raises(GitError):
             GitRepo(fx.root).show_baseline(head)
 
+    def test_absent_baseline_blob_at_valid_ref_is_none(self, fx: GitFixture) -> None:
+        # A path genuinely missing at a readable commit is trusted absence.
+        fx.write("sub/w.py", GOOD)  # no baseline committed
+        head = fx.commit("base without baseline")
+        assert GitRepo(fx.root).show_baseline(head) is None
+        assert GitRepo(fx.root).show_audit(head) is None
+
+    def test_git_error_on_show_is_not_silent_absence(self, fx: GitFixture) -> None:
+        # A non-absence git failure (invalid object name) fails closed, not None:
+        # git show errors without the "does not exist in" path signature.
+        fx.write("sub/w.py", GOOD)
+        fx.commit("base")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline("nonexistent-ref-xyz")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_audit("nonexistent-ref-xyz")
+
 
 class TestBootstrap:
     """Base resolution and the O2 bootstrap / require-base rules."""
