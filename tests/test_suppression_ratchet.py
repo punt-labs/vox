@@ -7,6 +7,7 @@ steady/decrease passes), and the CLI dispatch through tmp files.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Self
@@ -169,6 +170,46 @@ class TestBaselineRatchet:
         outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=False)
         assert outcome.exit_code == 1
         assert any("origin/main" in line for line in outcome.lines)
+
+
+class TestUpdateNeverLoosen:
+    """update() writes decreases but refuses any net increase in the total."""
+
+    def test_update_refuses_increase(self, gfx: GitFixture) -> None:
+        # A rising total is refused and nothing is written, mirroring the OO and
+        # coupling writers that refuse a per-metric regression.
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()  # bootstrap total 1
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")  # now 2
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
+        assert outcome.exit_code == 1
+        assert any("never loosens" in line for line in outcome.lines)
+        data = json.loads((gfx.root / ".suppression-baseline.json").read_text())
+        assert data["total"] == 1  # unchanged: the increase wrote nothing
+
+    def test_update_writes_decrease(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")
+        gfx.update_baseline()  # bootstrap total 2
+        gfx.write_source("x = 1  # noqa\n")  # now 1
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
+        assert outcome.exit_code == 0
+        data = json.loads((gfx.root / ".suppression-baseline.json").read_text())
+        assert data["total"] == 1
+
+    def test_update_rewrites_equal_total(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()  # bootstrap total 1
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
+        assert outcome.exit_code == 0
+
+    def test_first_adoption_bootstraps_any_total(self, gfx: GitFixture) -> None:
+        # No in-tree baseline: the first update writes whatever the current total
+        # is, matching the coupling/OO writers that bootstrap absent a baseline.
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")  # total 2, no baseline
+        outcome = gfx.baseline().update(gfx.report(), allow_ci_write=True)
+        assert outcome.exit_code == 0
+        data = json.loads((gfx.root / ".suppression-baseline.json").read_text())
+        assert data["total"] == 2
 
 
 class TestSuppressionFailClosed:

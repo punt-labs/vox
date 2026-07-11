@@ -133,10 +133,20 @@ class SuppressionBaseline:
         return Outcome.passed(*head, "\nPASS: suppression count unchanged")
 
     def update(self, report: SuppressionReport, *, allow_ci_write: bool) -> Outcome:
-        """Write current counts to the baseline and append an audit entry."""
+        """Write current counts to the baseline, never loosening.
+
+        Refuses any net increase over the in-tree baseline total: an update that
+        would raise the count writes nothing and fails, exactly like the OO and
+        coupling writers refuse a per-metric regression. A decrease or unchanged
+        total writes normally; genuine first-adoption (no in-tree baseline)
+        bootstraps.
+        """
         blocked = self._guard(allow_ci_write=allow_ci_write)
         if blocked is not None:
             return blocked
+        refused = self._refuse_increase(report)
+        if refused is not None:
+            return refused
         self._save(report)
         self._append_audit(report)
         lines = [
@@ -155,6 +165,26 @@ class SuppressionBaseline:
             return Outcome.failed(
                 "FAIL: refusing to write suppression baseline under GITHUB_ACTIONS "
                 "without --allow-ci-write"
+            )
+        return None
+
+    def _refuse_increase(self, report: SuppressionReport) -> Outcome | None:
+        """Return a failure ``Outcome`` if the update would raise the total.
+
+        Genuine first-adoption (no in-tree baseline) bootstraps, mirroring the
+        coupling/OO writers, which write new entries with no base to regress
+        against. An existing baseline is never loosened: a rise writes nothing.
+        """
+        if not self.has_baseline:
+            return None
+        baseline_total = self._as_int(self._entries.get("total", 0))
+        if report.total > baseline_total:
+            rise = report.total - baseline_total
+            return Outcome.failed(
+                f"\nBaseline total: {baseline_total}",
+                f"Current total:  {report.total}",
+                f"\nFAIL: refusing to raise the suppression baseline by {rise} "
+                f"({baseline_total} -> {report.total}); update never loosens",
             )
         return None
 
