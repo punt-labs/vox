@@ -80,6 +80,8 @@ class GitRepo:
         return result.stdout
 
     def _git(self, args: list[str]) -> str | None:
+        if self._root is None:
+            return None  # not in a repo: degrade, never run against the ambient CWD
         return self._run(["git", *args], cwd=self._root)
 
     def short_head(self) -> str | None:
@@ -169,6 +171,8 @@ class GitRepo:
         fail closed). The callers always pass an already-resolved ref, so a
         non-absence failure is an anomaly, not a benign "no blob".
         """
+        if self._root is None:
+            return None  # not in a repo: degrade, never run against the ambient CWD
         try:
             result = subprocess.run(
                 ["git", "show", f"{ref}:{path}"],

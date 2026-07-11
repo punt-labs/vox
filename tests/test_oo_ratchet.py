@@ -660,6 +660,15 @@ class TestGitFailClosed:
         with pytest.raises(GitError):
             GitRepo(fx.root).show_audit("nonexistent-ref-xyz")
 
+    def test_git_degrades_to_none_without_a_repo(self) -> None:
+        # A nonexistent start dir -> _root is None -> git commands must degrade
+        # to None, never run against the process's ambient CWD (a real repo).
+        gr = GitRepo(Path("/nonexistent-oo-ratchet-xyz"))
+        assert gr.root is None
+        assert gr.available is False
+        assert gr._git(["rev-parse", "HEAD"]) is None
+        assert gr.show_baseline("HEAD") is None
+
 
 class TestBootstrap:
     """Base resolution and the O2 bootstrap / require-base rules."""
