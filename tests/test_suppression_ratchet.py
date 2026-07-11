@@ -7,16 +7,17 @@ steady/decrease passes), and the CLI dispatch through tmp files.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
-from tools.suppression.baseline import SuppressionBaseline
+import pytest
+
+from tools.suppression.baseline import SuppressionBaseline, SuppressionBaselineError
+from tools.suppression.cli import main
 from tools.suppression.patterns import FileSuppressions
 from tools.suppression.report import SuppressionReport
 from tools.suppression.scanner import Scanner
-
-if TYPE_CHECKING:
-    import pytest
 
 WITH_SUPPRESSIONS = (
     "from __future__ import annotations\n\n"
@@ -56,63 +57,154 @@ class TestScanner:
         assert report.total >= 2
 
 
-class Fixture:
-    """A tmp project root for exercising the suppression baseline."""
+class GitFixture:
+    """An isolated git repo for exercising the base-commit suppression ratchet."""
 
     _root: Path
 
-    def __new__(cls, root: Path) -> Self:
+    def __new__(cls, tmp: Path) -> Self:
         self = super().__new__(cls)
-        self._root = root
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
+        for key, val in (
+            ("user.email", "t@example.com"),
+            ("user.name", "Tester"),
+            ("commit.gpgsign", "false"),
+        ):
+            subprocess.run(["git", "config", key, val], cwd=tmp, check=True)
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=tmp,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self._root = Path(out.stdout.strip())
         return self
 
     @property
     def root(self) -> Path:
-        """Return the project root."""
+        """Return the repository root."""
         return self._root
 
-    def report(self, source: str) -> SuppressionReport:
-        (self._root / "pkg").mkdir(exist_ok=True)
-        (self._root / "pkg" / "a.py").write_text(source)
+    def write_source(self, source: str) -> None:
+        pkg = self._root / "pkg"
+        pkg.mkdir(exist_ok=True)
+        (pkg / "a.py").write_text(source)
+
+    def report(self) -> SuppressionReport:
         return Scanner(self._root / "pkg", self._root).report
+
+    def update_baseline(self) -> None:
+        SuppressionBaseline(self._root).update(self.report())
+
+    def write_baseline_text(self, text: str) -> None:
+        (self._root / ".suppression-baseline.json").write_text(text)
+
+    def commit(self, msg: str) -> str:
+        subprocess.run(["git", "add", "-A"], cwd=self._root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", msg], cwd=self._root, check=True)
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self._root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return out.stdout.strip()
+
+    def baseline(self) -> SuppressionBaseline:
+        return SuppressionBaseline(self._root)
+
+
+@pytest.fixture
+def gfx(tmp_path: Path) -> GitFixture:
+    return GitFixture(tmp_path)
 
 
 class TestBaselineRatchet:
-    """Increases fail; steady and decreases pass."""
+    """Increases fail; steady and decreases pass against the base-commit total."""
 
-    def test_no_baseline_passes(self, tmp_path: Path) -> None:
-        report = Fixture(tmp_path).report(WITH_SUPPRESSIONS)
-        outcome = SuppressionBaseline(tmp_path).check(report)
-        assert outcome.exit_code == 0
-
-    def test_increase_fails(self, tmp_path: Path) -> None:
-        fx = Fixture(tmp_path)
-        SuppressionBaseline(tmp_path).update(fx.report("x = 1  # noqa\n"))
-        worse = fx.report("x = 1  # noqa\ny = 2  # noqa\n")
-        outcome = SuppressionBaseline(tmp_path).check(worse)
+    def test_increase_fails(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()  # base-commit baseline total 1
+        base = gfx.commit("base")
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")  # now 2
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
         assert outcome.exit_code == 1
         assert any("increased" in line for line in outcome.lines)
 
-    def test_decrease_passes(self, tmp_path: Path) -> None:
-        fx = Fixture(tmp_path)
-        worse = fx.report("x = 1  # noqa\ny = 2  # noqa\n")
-        SuppressionBaseline(tmp_path).update(worse)
-        better = fx.report("x = 1  # noqa\n")
-        outcome = SuppressionBaseline(tmp_path).check(better)
+    def test_decrease_passes(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")
+        gfx.update_baseline()  # base total 2
+        base = gfx.commit("base")
+        gfx.write_source("x = 1  # noqa\n")  # now 1
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
         assert outcome.exit_code == 0
         assert any("decreased" in line for line in outcome.lines)
 
-    def test_steady_passes(self, tmp_path: Path) -> None:
-        fx = Fixture(tmp_path)
-        SuppressionBaseline(tmp_path).update(fx.report("x = 1  # noqa\n"))
-        outcome = SuppressionBaseline(tmp_path).check(fx.report("x = 1  # noqa\n"))
+    def test_steady_passes(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()
+        base = gfx.commit("base")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
         assert outcome.exit_code == 0
         assert any("unchanged" in line for line in outcome.lines)
 
+    def test_no_base_baseline_is_bootstrap_pass(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\n")  # no baseline committed
+        base = gfx.commit("pre-adoption")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 0
+
+
+class TestSuppressionFailClosed:
+    """Base-commit authority, require-base, and controlled errors."""
+
+    def test_in_tree_edit_cannot_launder_rising_count(self, gfx: GitFixture) -> None:
+        # A PR adds a suppression AND rewrites the in-tree baseline to match. The
+        # check reads the base-commit baseline, so the rise is still caught.
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()  # base total 1
+        base = gfx.commit("base")
+        gfx.write_source("x = 1  # noqa\ny = 2  # noqa\n")  # now 2
+        gfx.update_baseline()  # launder the in-tree baseline to total 2
+        gfx.commit("add suppression and launder the in-tree baseline")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("increased" in line for line in outcome.lines)
+
+    def test_require_base_unresolvable_fails_closed(self, gfx: GitFixture) -> None:
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.update_baseline()
+        gfx.commit("base")
+        outcome = gfx.baseline().check(
+            gfx.report(), base_ref="0" * 40, require_base=True
+        )
+        assert outcome.exit_code == 1
+        assert any("--require-base" in line for line in outcome.lines)
+
+    def test_corrupt_baseline_raises_typed_error(self, gfx: GitFixture) -> None:
+        # The local (no-base) path reads the in-tree baseline; a corrupt file
+        # raises the typed error rather than a JSONDecodeError traceback.
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.write_baseline_text("{ not valid json")
+        gfx.commit("corrupt baseline")
+        with pytest.raises(SuppressionBaselineError):
+            gfx.baseline().check(gfx.report(), base_ref="0" * 40, require_base=False)
+
+    def test_corrupt_baseline_is_controlled_nonzero_via_cli(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gfx.write_source("x = 1  # noqa\n")
+        gfx.write_baseline_text("{ not valid json")
+        gfx.commit("corrupt baseline")
+        monkeypatch.chdir(gfx.root)
+        # An unresolvable base forces the local in-tree path; the CLI catches the
+        # typed error and returns a clean non-zero exit.
+        assert main(["pkg", "--check", "--base-ref", "0" * 40]) == 1
+
 
 def test_cli_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tools.suppression.cli import main
-
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "a.py").write_text(WITH_SUPPRESSIONS)
     monkeypatch.chdir(tmp_path)

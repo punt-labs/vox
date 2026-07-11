@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from .baseline import SuppressionBaseline
+from .baseline import SuppressionBaseline, SuppressionBaselineError
+from .gitio import GitError
 from .outcome import Outcome
+from .report import SuppressionReport
 from .scanner import Scanner
 
 
@@ -21,6 +23,8 @@ class Options:
     update: bool
     json: bool
     threshold: bool
+    base_ref: str | None
+    require_base: bool
 
     @classmethod
     def parse(cls, argv: list[str] | None = None) -> Self:
@@ -32,6 +36,8 @@ class Options:
             update=bool(ns.update),
             json=bool(ns.json),
             threshold=bool(ns.threshold),
+            base_ref=ns.base_ref,
+            require_base=bool(ns.require_base),
         )
 
     @staticmethod
@@ -46,6 +52,10 @@ class Options:
         action.add_argument("--update", action="store_true", help="update baseline")
         action.add_argument("--threshold", action="store_true", help="per-file table")
         action.add_argument("--json", action="store_true", help="emit JSON counts")
+        parser.add_argument("--base-ref", metavar="REF", help="comparison base commit")
+        parser.add_argument(
+            "--require-base", action="store_true", help="fail if base unresolvable"
+        )
         return parser
 
 
@@ -65,16 +75,28 @@ class Cli:
             return self._emit(Outcome.failed(f"not found: {self._opts.src}"))
         report = Scanner(self._opts.src).report
         baseline = SuppressionBaseline()
-        if self._opts.check:
-            return self._emit(baseline.check(report))
-        if self._opts.update:
-            return self._emit(baseline.update(report))
-        if self._opts.json:
-            return self._emit(Outcome.passed(report.to_json()))
+        try:
+            outcome = self._dispatch(baseline, report)
+        except (GitError, SuppressionBaselineError) as exc:
+            outcome = Outcome.failed(f"FAIL: {exc}")
+        return self._emit(outcome)
+
+    def _dispatch(
+        self, baseline: SuppressionBaseline, report: SuppressionReport
+    ) -> Outcome:
+        opts = self._opts
+        if opts.check:
+            return baseline.check(
+                report, base_ref=opts.base_ref, require_base=opts.require_base
+            )
+        if opts.update:
+            return baseline.update(report)
+        if opts.json:
+            return Outcome.passed(report.to_json())
         lines = list(report.render())
-        if self._opts.threshold:
+        if opts.threshold:
             lines.extend(report.render_threshold())
-        return self._emit(Outcome.passed(*lines))
+        return Outcome.passed(*lines)
 
     @staticmethod
     def _emit(outcome: Outcome) -> int:

@@ -23,6 +23,7 @@ docs: ## Lint markdown files (matches CI docs job)
 # Empty locally, where the tools default base to `git merge-base origin/main HEAD`.
 OO_BASE ?=
 COUPLING_BASE ?=
+SUPPRESSION_BASE ?=
 
 check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
@@ -38,8 +39,8 @@ check-coupling: ## Coupling ratchet — merge-base scoped, must not regress
 update-coupling: ## Update coupling baseline (stage .oo-coupling-baseline.json and .oo-coupling-audit.jsonl)
 	uv run python tools/oo_coupling.py src/punt_vox/ --update $(COUPLING_BASE)
 
-check-suppressions: ## Suppression ratchet — count must not increase
-	uv run python tools/suppression_ratchet.py src/punt_vox/ --check
+check-suppressions: ## Suppression ratchet — base-commit scoped, count must not increase
+	uv run python tools/suppression_ratchet.py src/punt_vox/ --check $(SUPPRESSION_BASE)
 
 update-suppressions: ## Update suppression baseline
 	uv run python tools/suppression_ratchet.py src/punt_vox/ --update
