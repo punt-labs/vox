@@ -155,6 +155,27 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 - **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
 - **Background music** --- `/music on` generates a pool of up to 12 distinct instrumental tracks via the ElevenLabs Music API, plays the first at once, and rotates the full pool at zero credits. Saved pools replay by name and land in `~/Music/vox/<name>/` with ID3 tags. Requires an ElevenLabs paid plan. See [Background Music](#background-music)
 
+## Python API
+
+vox is also a Python library — the same `voxd` daemon the plugin and CLI use, driven from your own code (`vox install` is the only setup):
+
+```python
+from punt_vox import VoxClientSync, SynthesisSpec
+
+vox = VoxClientSync()
+
+# Speak text through the daemon (plays on the local audio device):
+vox.synthesize("Build finished", SynthesisSpec(voice="sarah"))
+
+# ...or get the MP3 bytes to save or stream yourself:
+audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
+
+# List the voices the active provider offers:
+print(vox.voices())
+```
+
+`VoxClient` is the async equivalent. All four names are exported from the top level: `from punt_vox import VoxClient, VoxClientSync, SynthesisSpec, SynthesizeResult`.
+
 ## Remote Audio
 
 Run Claude Code on a headless server or cloud VM and hear audio on your local machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point at your local voxd, or use an SSH tunnel for network-boundary crossings.
