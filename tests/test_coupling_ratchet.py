@@ -241,6 +241,30 @@ class TestBaseCommitAuthoritative:
         assert outcome.exit_code == 1
         assert any("empty" in line for line in outcome.lines)
 
+    def test_empty_base_baseline_local_passes_clean(self, fx: GitFixture) -> None:
+        # Empty {} base baseline without --require-base flows through
+        # _check_against: a clean touched file is new/INFO -> no regression ->
+        # pass, matching the OO ratchet (not a bare short-circuit pass).
+        fx.write("pkg/a.py", LOW)
+        fx.write_baseline({})
+        base = fx.commit("base with empty baseline")
+        fx.write("pkg/a.py", HIGH)  # changed, but new-vs-empty-base is INFO
+        fx.commit("change")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 0
+
+    def test_empty_base_baseline_local_still_parses(self, fx: GitFixture) -> None:
+        # Empty {} base baseline without --require-base still runs the touched-file
+        # parse check: an unparseable touched file fails, matching the OO ratchet.
+        fx.write("pkg/a.py", LOW)
+        fx.write_baseline({})
+        base = fx.commit("base with empty baseline")
+        fx.write("pkg/a.py", BROKEN)  # unparseable, touched
+        fx.commit("break")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=False)
+        assert outcome.exit_code == 1
+        assert any("failed to parse" in line for line in outcome.lines)
+
 
 class TestScopedUpdate:
     """Scoped update writes improvements but never loosens."""

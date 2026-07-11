@@ -59,8 +59,11 @@ class CouplingRatchet:
         base_baseline = self._git.show_baseline(base)
         if base_baseline is None:
             return self._absent_base_baseline()
-        if not base_baseline:
-            return self._empty_baseline(require_base=require_base)
+        if not base_baseline and require_base:
+            return self._empty_baseline()
+        # An empty {} baseline without --require-base flows to _check_against:
+        # every touched file is new/INFO (no regression), but the touched-file
+        # parse check still runs, matching the OO ratchet.
         return self._check_against(scorer, base, base_baseline)
 
     def show_log(self) -> Outcome:
@@ -140,19 +143,19 @@ class CouplingRatchet:
         )
 
     @staticmethod
-    def _empty_baseline(*, require_base: bool) -> Outcome:
-        """Decide the verdict when the base baseline is an empty ``{}``.
+    def _empty_baseline() -> Outcome:
+        """Fail closed on an empty ``{}`` base baseline under ``--require-base``.
 
         A truncated write or a bad merge can empty the baseline; every touched
-        file would then look new and pass. Under ``--require-base`` fail closed,
-        exactly like a missing baseline.
+        file would then look new. Under ``--require-base`` fail closed, exactly
+        like a missing baseline. Without ``--require-base`` the empty baseline
+        flows through ``_check_against`` instead (see ``check``), so the
+        touched-file parse check still runs -- matching the OO ratchet.
         """
-        if require_base:
-            return Outcome.failed(
-                "FAIL: base coupling baseline is empty (truncated write or bad "
-                "merge) and --require-base is set"
-            )
-        return Outcome.passed("Empty base baseline -- first-adoption bootstrap pass")
+        return Outcome.failed(
+            "FAIL: base coupling baseline is empty (truncated write or bad "
+            "merge) and --require-base is set"
+        )
 
     def _build_reviews(
         self,
