@@ -391,6 +391,31 @@ class TestRenameCarry:
         entry = Baseline(fx.root).get("sub/new.py")
         assert entry is None or entry["max_complexity"] == 1.0
 
+    def test_refused_rename_keeps_old_entry_and_still_refuses(
+        self, fx: GitFixture
+    ) -> None:
+        # A refused rename must NOT drop the old baseline key -- otherwise a
+        # second --update run has no carried base and launders the regression
+        # (Copilot #1).
+        fx.write("sub/old.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.move("sub/old.py", "sub/new.py")
+        fx.write("sub/new.py", WORSE)  # regressed vs old.py's carried baseline
+        first = fx.writer().update(
+            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+        )
+        assert first.exit_code == 1
+        # the old rename-source entry survives the refusal
+        assert Baseline(fx.root).get("sub/old.py") is not None
+        assert Baseline(fx.root).get("sub/new.py") is None
+        # a second pass still refuses -- no laundering on run two
+        second = fx.writer().update(
+            fx.scorer(), base_ref=base, allow_ci_write=True, source=None
+        )
+        assert second.exit_code == 1
+        assert Baseline(fx.root).get("sub/new.py") is None
+
 
 class TestCompleteness:
     """Whole-tree completeness enumerates from the scorer's own file set."""

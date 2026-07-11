@@ -174,13 +174,12 @@ class BaselineWriter:
         deltas: dict[str, dict[str, list[float]]] = {}
         removed = 0
         for path in sorted(plan.touched):
-            removed += self._drop_rename_source(new_baseline, plan, path)
             if path in plan.parse_errors:
                 continue  # on disk but unparseable: keep its row, refuse below
             if path not in plan.current:
                 removed += self._drop(new_baseline, path)
                 continue
-            self._write_or_refuse(new_baseline, plan, path, refused, deltas)
+            removed += self._write_or_refuse(new_baseline, plan, path, refused, deltas)
         if plan.prune:
             removed += self._prune(new_baseline, plan.current, plan.parse_errors)
         broken = sorted(plan.parse_errors)
@@ -203,17 +202,21 @@ class BaselineWriter:
         path: str,
         refused: list[tuple[str, str]],
         deltas: dict[str, dict[str, list[float]]],
-    ) -> None:
+    ) -> int:
         entry = plan.current[path]
         base_entry = self._base_for(plan, path)
         regressed = self._regressed(entry, base_entry)
         if regressed:
+            # Keep the old rename-source entry so the carried base survives to
+            # the next run -- dropping it here would let a second --update treat
+            # the rename as a brand-new file and launder the regression.
             refused.extend((path, m) for m in regressed)
-            return
+            return 0
         new_baseline[path] = entry
         file_deltas = self._deltas(entry, base_entry)
         if file_deltas:
             deltas[path] = file_deltas
+        return self._drop_rename_source(new_baseline, plan, path)
 
     def _base_for(self, plan: UpdatePlan, path: str) -> dict[str, float] | None:
         """Return the regression base, carrying a rename's old entry (S8).
