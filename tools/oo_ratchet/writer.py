@@ -110,13 +110,24 @@ class BaselineWriter:
     def reconcile(
         self, scorer: Scorer, *, allow_ci_write: bool, source: str | None
     ) -> Outcome:
-        """Sweep the whole tree, adding improvements and pruning deletions."""
+        """Sweep the whole tree, adding improvements and pruning deletions.
+
+        Rename-aware: the merge-base diff supplies the rename map so a renamed
+        module is compared against its predecessor's baseline (refusing a
+        regressed rename) and the old key is not pruned as a false deletion.
+        """
         blocked = self._guard(allow_ci_write=allow_ci_write)
         if blocked is not None:
             return blocked
         current = Baseline.metrics_by_file(scorer.results)
+        base = self._git.resolve_base(None)
+        renames = self._git.diff(base).renames if base is not None else {}
         plan = UpdatePlan(
-            current, frozenset(current), prune=True, parse_errors=scorer.parse_errors
+            current,
+            frozenset(current),
+            renames,
+            prune=True,
+            parse_errors=scorer.parse_errors,
         )
         return self._apply(plan, source)
 
@@ -209,7 +220,11 @@ class BaselineWriter:
                 continue
             removed += self._write_or_refuse(new_baseline, plan, path, refused, deltas)
         if plan.prune:
-            removed += self._prune(new_baseline, plan.current, plan.parse_errors)
+            rename_sources = frozenset(
+                old for new, old in plan.renames.items() if new in plan.current
+            )
+            protected = plan.parse_errors | rename_sources
+            removed += self._prune(new_baseline, plan.current, protected)
         broken = sorted(plan.parse_errors)
         self._baseline.save(new_baseline)
         self._audit.append(

@@ -511,6 +511,36 @@ class TestRenameCarry:
         assert Baseline(fx.root).get("sub/old.py") is not None
         assert Baseline(fx.root).get("sub/new.py") is None
 
+    def test_reconcile_refuses_regressed_rename_and_keeps_carry(
+        self, fx: GitFixture
+    ) -> None:
+        # reconcile's prune must be rename-aware: a renamed+regressed module is
+        # refused (new not added, old carry not pruned), and a later --update
+        # still refuses -- no laundering across reconcile (Bugbot #1).
+        fx.write("sub/old.py", GOOD)
+        fx.snapshot("sub")
+        fork = fx.commit("fork")
+        fx.set_origin_main(fork)  # reconcile resolves base via merge-base
+        fx.move("sub/old.py", "sub/new.py")
+        fx.write("sub/new.py", WORSE)  # regressed rename
+        fx.commit("rename and regress")
+        reconciled = fx.writer().reconcile(
+            fx.scorer(), allow_ci_write=True, source=None
+        )
+        assert reconciled.exit_code == 1
+        assert Baseline(fx.root).get("sub/old.py") is not None  # carry preserved
+        assert Baseline(fx.root).get("sub/new.py") is None  # regression not added
+        # a subsequent scoped update still refuses -- carry survived reconcile
+        second = fx.writer().update(
+            fx.scorer(),
+            base_ref=fork,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert second.exit_code == 1
+        assert Baseline(fx.root).get("sub/new.py") is None
+
 
 class TestCompleteness:
     """Whole-tree completeness enumerates from the scorer's own file set."""
