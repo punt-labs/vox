@@ -99,8 +99,14 @@ class GitRepo:
         return self.merge_base("origin/main", "HEAD")
 
     def diff(self, base: str) -> Diff:
-        """Return the files changed in ``base..HEAD`` with rename mapping."""
-        out = self._git(["diff", "--name-status", "-M", f"{base}..HEAD"])
+        """Return files changed from ``base`` to the work tree, with renames.
+
+        Diffing against the work tree (not ``base..HEAD``) keeps the touched
+        set consistent with the scored tree: identical to ``base..HEAD`` in a
+        clean checkout (CI), and inclusive of a developer's tracked
+        pre-commit edits locally.
+        """
+        out = self._git(["diff", "--name-status", "-M", base])
         if out is None:
             return Diff(frozenset())
         touched: set[str] = set()
