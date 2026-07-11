@@ -245,6 +245,18 @@ class TestSuppressionFailClosed:
         with pytest.raises(SuppressionBaselineError):
             SuppressionBaseline(gfx.root)
 
+    def test_nested_non_dict_by_file_is_fail_closed(self, gfx: GitFixture) -> None:
+        # A base baseline whose by_file has a non-dict value must not crash on a
+        # rise. The malformed entry is dropped (counts as 0 baseline), so the
+        # current suppression registers as an increase -- fail-closed, not a
+        # traceback.
+        gfx.write_source("x = 1  # noqa\n")  # current total 1
+        gfx.write_baseline_text('{"total": 0, "by_file": {"pkg/a.py": "garbage"}}')
+        base = gfx.commit("nested non-dict by_file, total 0")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("increased" in line for line in outcome.lines)
+
 
 class TestCiWriteGuard:
     """update() refuses to run under GITHUB_ACTIONS without --allow-ci-write."""

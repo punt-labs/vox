@@ -499,6 +499,41 @@ class TestFailClosed:
         with pytest.raises(CouplingBaselineError):
             CouplingBaseline(fx.root)
 
+    def test_nested_non_dict_base_baseline_raises_giterror(
+        self, fx: GitFixture
+    ) -> None:
+        # {"pkg/a.py": "garbage"} passes the top-level dict check but the value
+        # is not a metric dict; without the nested guard `metric not in "garbage"`
+        # is a substring test that skips every metric -> fail-OPEN. Reject it.
+        fx.write("pkg/a.py", LOW)
+        fx.write(".oo-coupling-baseline.json", '{"pkg/a.py": "garbage"}')
+        head = fx.commit("nested non-dict baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_nested_non_dict_in_tree_baseline_raises_typed_error(
+        self, fx: GitFixture
+    ) -> None:
+        fx.write(".oo-coupling-baseline.json", '{"pkg/a.py": "garbage"}')
+        with pytest.raises(CouplingBaselineError):
+            CouplingBaseline(fx.root)
+
+    def test_nested_non_dict_base_baseline_fails_closed_via_cli(
+        self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # End-to-end: a nested-malformed base baseline must fail the gate, not
+        # let a real regression pass. The in-tree baseline at HEAD is valid, so
+        # only the base blob is malformed; the CLI catches the GitError as a
+        # controlled non-zero.
+        fx.write("pkg/a.py", LOW)
+        fx.write(".oo-coupling-baseline.json", '{"pkg/a.py": "garbage"}')
+        base = fx.commit("nested non-dict base baseline")
+        fx.snapshot()  # overwrite with a valid in-tree baseline
+        fx.write("pkg/a.py", HIGH)  # a regression that must not slip through
+        fx.commit("valid in-tree baseline and regress")
+        monkeypatch.chdir(fx.root)
+        assert main(["pkg", "--check", "--base-ref", base, "--require-base"]) == 1
+
     def test_git_degrades_to_none_without_a_repo(self) -> None:
         gr = GitRepo(Path("/nonexistent-coupling-ratchet-xyz"))
         assert gr.root is None

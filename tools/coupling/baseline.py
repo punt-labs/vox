@@ -63,6 +63,11 @@ class CouplingBaseline:
         if not isinstance(loaded, dict):
             msg = f"non-dict coupling baseline file {path}"
             raise CouplingBaselineError(msg)
+        # Each value must be a per-metric dict; a non-dict value would make
+        # ``metric not in entry`` a substring test that skips every metric.
+        if not all(isinstance(v, dict) for v in loaded.values()):
+            msg = f"non-dict entry in coupling baseline file {path}"
+            raise CouplingBaselineError(msg)
         parsed: dict[str, dict[str, float]] = loaded
         return parsed
 

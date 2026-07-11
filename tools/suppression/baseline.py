@@ -181,7 +181,13 @@ class SuppressionBaseline:
     @staticmethod
     def _baseline_by_file(data: dict[str, object]) -> dict[str, dict[str, int]]:
         raw = data.get("by_file", {})
-        return dict(raw) if isinstance(raw, dict) else {}
+        if not isinstance(raw, dict):
+            return {}
+        # Keep only well-formed per-file dicts. A non-dict value (e.g. a string)
+        # would make ``.values()`` raise in _regression; dropping it is
+        # fail-closed -- the entry counts as 0 baseline, so any current count on
+        # that file registers as an increase.
+        return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
     @staticmethod
     def _as_int(raw: object) -> int:

@@ -161,6 +161,12 @@ class GitRepo:
         if not isinstance(loaded, dict):
             msg = f"non-dict coupling baseline blob at {ref}:{self.BASELINE_FILE}"
             raise GitError(msg)
+        # Each value must be a per-metric dict. A non-dict value (e.g. a string)
+        # passes the top-level check but makes ``metric not in entry`` a substring
+        # test that silently skips every metric -- a fail-OPEN. Reject it here.
+        if not all(isinstance(v, dict) for v in loaded.values()):
+            blob = f"{ref}:{self.BASELINE_FILE}"
+            raise GitError(f"non-dict entry in coupling baseline blob at {blob}")
         parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
