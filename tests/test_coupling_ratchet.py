@@ -328,6 +328,38 @@ class TestRenameCarry:
         assert outcome.exit_code == 1
         assert any("public_names" in line for line in outcome.lines)
 
+    def test_update_refuses_worsened_rename_and_keeps_source(
+        self, fx: GitFixture
+    ) -> None:
+        # update() carries old.py's baseline entry across the rename: a worsened
+        # new.py is refused (not written) and the old rename-source entry is
+        # preserved, so a second run still refuses -- no laundering across update.
+        fx.write("pkg/old.py", LOW)
+        fx.snapshot()
+        base = fx.commit("base")
+        fx.move("pkg/old.py", "pkg/new.py")
+        fx.write("pkg/new.py", HIGH)  # regressed vs old.py's carried baseline
+        first = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert first.exit_code == 1
+        assert any("regressed" in line for line in first.lines)
+        assert CouplingBaseline(fx.root).get("pkg/new.py") is None  # not written
+        assert CouplingBaseline(fx.root).get("pkg/old.py") is not None  # carry kept
+        second = fx.writer().update(
+            fx.scorer(),
+            base_ref=base,
+            require_base=False,
+            allow_ci_write=True,
+            source=None,
+        )
+        assert second.exit_code == 1  # still refuses on a second pass
+        assert CouplingBaseline(fx.root).get("pkg/new.py") is None
+
 
 class TestCiWriteGuard:
     """Mutations refuse to run under GITHUB_ACTIONS without --allow-ci-write."""
