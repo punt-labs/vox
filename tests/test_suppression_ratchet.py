@@ -257,6 +257,25 @@ class TestSuppressionFailClosed:
         assert outcome.exit_code == 1
         assert any("increased" in line for line in outcome.lines)
 
+    def test_scanner_propagates_unreadable_file(self, gfx: GitFixture) -> None:
+        # An unreadable path that matches *.py (here a directory named like a
+        # module) must raise, not be silently skipped -- skipping would
+        # undercount a file's suppressions and let a real rise pass (fail-open).
+        gfx.write_source("x = 1\n")
+        (gfx.root / "pkg" / "isdir.py").mkdir()
+        with pytest.raises(OSError):
+            Scanner(gfx.root / "pkg", gfx.root)
+
+    def test_unreadable_file_is_controlled_nonzero_via_cli(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gfx.write_source("x = 1\n")
+        (gfx.root / "pkg" / "isdir.py").mkdir()
+        monkeypatch.chdir(gfx.root)
+        # The OSError surfaces as a clean non-zero through the CLI, not a
+        # traceback -- and not a silent skip.
+        assert main(["pkg", "--json"]) == 1
+
 
 class TestCiWriteGuard:
     """update() refuses to run under GITHUB_ACTIONS without --allow-ci-write."""

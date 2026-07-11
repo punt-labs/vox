@@ -78,12 +78,13 @@ class Cli:
         """Execute the requested operation and return its exit code."""
         if not self._opts.src.exists():
             return self._emit(Outcome.failed(f"not found: {self._opts.src}"))
-        report = Scanner(self._opts.src).report
         try:
-            # Construct inside the try: a corrupt in-tree baseline raises at
-            # construction (eager load) and must surface as a clean non-zero.
+            # Scan and construct inside the try: an unreadable .py file (OSError)
+            # or a corrupt in-tree baseline (eager load) must surface as a clean
+            # non-zero, not a traceback.
+            report = Scanner(self._opts.src).report
             outcome = self._dispatch(SuppressionBaseline(), report)
-        except (GitError, SuppressionBaselineError) as exc:
+        except (GitError, SuppressionBaselineError, OSError) as exc:
             outcome = Outcome.failed(f"FAIL: {exc}")
         return self._emit(outcome)
 

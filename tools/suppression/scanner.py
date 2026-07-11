@@ -38,9 +38,9 @@ class Scanner:
         for py_file in sorted(target.rglob("*.py")):
             if py_file.name.startswith("."):
                 continue
-            try:
-                source = py_file.read_text()
-            except OSError:
-                continue
-            results.append(FileSuppressions(str(py_file), source))
+            # Let an unreadable file raise OSError. As a CI gate, swallowing it
+            # would undercount a file that has NEW suppressions -- the total
+            # wouldn't rise and a real regression would pass. Fail closed instead;
+            # the CLI turns the OSError into a controlled non-zero.
+            results.append(FileSuppressions(str(py_file), py_file.read_text()))
         return results
