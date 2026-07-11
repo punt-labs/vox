@@ -325,6 +325,20 @@ class TestCiWriteGuard:
         assert outcome.exit_code == 0
 
 
+class TestTouchedParseError:
+    """A touched file that fails to parse fails loud, not silently."""
+
+    def test_broken_touched_file_fails(self, fx: GitFixture) -> None:
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", BROKEN)  # now unparseable, still touched
+        fx.commit("break")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("failed to parse" in line for line in outcome.lines)
+
+
 class TestGitFailClosed:
     """A failed git command fails closed — never a silent empty diff."""
 

@@ -55,6 +55,11 @@ class Scorer:
         return frozenset(str(r["file"]) for r in self._results if "error" not in r)
 
     @property
+    def parse_errors(self) -> frozenset[str]:
+        """Return the paths that failed to AST-parse (excluded from scoring)."""
+        return frozenset(str(r["file"]) for r in self._results if "error" in r)
+
+    @property
     def summary(self) -> dict[str, float]:
         """Return the aggregated metric summary across all scored files."""
         return self._aggregate()

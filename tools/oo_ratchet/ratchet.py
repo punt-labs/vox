@@ -56,8 +56,15 @@ class Ratchet:
             )
 
         diff = self._git.diff(base)
+        touched_py = diff.python_files()
+        broken = sorted(touched_py & scorer.parse_errors)
+        if broken:
+            lines = ["FAIL: touched file(s) failed to parse:"]
+            lines.extend(f"  {path}" for path in broken)
+            return Outcome(1, tuple(lines))
+
         current = Baseline.metrics_by_file(scorer.results)
-        touched = sorted(diff.python_files() & scorer.files)
+        touched = sorted(touched_py & scorer.files)
         if not touched:
             return Outcome.passed("No Python files touched -- trivial pass")
 

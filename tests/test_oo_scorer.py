@@ -48,6 +48,15 @@ class TestEnumeration:
         errors = [r for r in scorer.results if "error" in r]
         assert len(errors) == 1
 
+    def test_parse_errors_property_lists_unparseable(self, tmp_path: Path) -> None:
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "good.py").write_text(GOOD)
+        (sub / "broken.py").write_text(BROKEN)
+        scorer = Scorer(sub, tmp_path)
+        assert scorer.parse_errors == {"sub/broken.py"}
+        assert scorer.files == {"sub/good.py"}
+
 
 class TestNormalization:
     """Keys are repo-relative POSIX paths regardless of target spelling."""
