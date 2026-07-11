@@ -178,16 +178,20 @@ class SuppressionBaseline:
                 lines.append(f"  {fpath}: +{cur - base} ({base} -> {cur})")
         return lines
 
-    @staticmethod
-    def _baseline_by_file(data: dict[str, object]) -> dict[str, dict[str, int]]:
+    @classmethod
+    def _baseline_by_file(cls, data: dict[str, object]) -> dict[str, dict[str, int]]:
         raw = data.get("by_file", {})
         if not isinstance(raw, dict):
             return {}
-        # Keep only well-formed per-file dicts. A non-dict value (e.g. a string)
-        # would make ``.values()`` raise in _regression; dropping it is
-        # fail-closed -- the entry counts as 0 baseline, so any current count on
-        # that file registers as an increase.
-        return {k: v for k, v in raw.items() if isinstance(v, dict)}
+        # Coerce each per-file entry to a dict of int counts. A non-dict entry is
+        # dropped and a non-numeric count becomes 0 -- both fail-closed: the
+        # baseline counts smaller, so a current count registers as an increase
+        # rather than crashing ``sum(...values())`` in _regression.
+        result: dict[str, dict[str, int]] = {}
+        for path, counts in raw.items():
+            if isinstance(counts, dict):
+                result[path] = {k: cls._as_int(v) for k, v in counts.items()}
+        return result
 
     @staticmethod
     def _as_int(raw: object) -> int:

@@ -257,6 +257,19 @@ class TestSuppressionFailClosed:
         assert outcome.exit_code == 1
         assert any("increased" in line for line in outcome.lines)
 
+    def test_nested_non_numeric_count_is_coerced(self, gfx: GitFixture) -> None:
+        # A by_file entry is a dict but its count is a string; it must coerce to
+        # int (non-numeric -> 0) so _regression's sum(...values()) does not crash.
+        # Fail-closed: the baseline counts as 0, so the current count is a rise.
+        gfx.write_source("x = 1  # noqa\n")  # current total 1
+        gfx.write_baseline_text(
+            '{"total": 0, "by_file": {"pkg/a.py": {"noqa": "garbage"}}}'
+        )
+        base = gfx.commit("non-numeric nested count, total 0")
+        outcome = gfx.baseline().check(gfx.report(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("increased" in line for line in outcome.lines)
+
     def test_scanner_propagates_unreadable_file(self, gfx: GitFixture) -> None:
         # An unreadable path that matches *.py (here a directory named like a
         # module) must raise, not be silently skipped -- skipping would
