@@ -56,6 +56,14 @@ docs/*.aux
 docs/*.log
 docs/*.fuzz
 docs/*.toc
+tools/docs/fuzz.sty
+tools/docs/*.mf
+tools/docs/*.pk
+tools/docs/*.tfm
+tools/docs/*.aux
+tools/docs/*.log
+tools/docs/*.fuzz
+tools/docs/*.toc
 
 # Local uv overrides (depot find-links, etc.)
 uv.toml
