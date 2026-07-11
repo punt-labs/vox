@@ -182,12 +182,23 @@ removed and the new path as its continuation.
 
 ### S9 — Audit log records merged reality, not PR branches (fixes concurrency + E2)
 
-**(Ruled: append on `push:[main]` only.)** Stop appending `.oo-audit.jsonl` in PR
-branches — two concurrent PRs both appending at EOF guarantee a git conflict on a
-tracked file. Instead, a `push:[main]` step (with `--allow-ci-write`) appends the
-audit entry for what actually landed, referencing the **PR/bead** (`"source":
-"vox-djua #308"`) rather than a pre-squash hash that doesn't survive (E2). The
-per-PR record is the visible `.oo-baseline.json` diff + the PR itself.
+**(Ruled: append on `push:[main]` only — with one exception.)** Two concurrent
+PRs both appending `.oo-audit.jsonl` at EOF guarantee a git conflict on a tracked
+file, so the frequent `update`/`reconcile` audit deltas defer to a `push:[main]`
+step (with `--allow-ci-write`) that appends the entry for what actually landed,
+referencing the **PR/bead** (`"source": "vox-djua #308"`) rather than a
+pre-squash hash that doesn't survive (E2).
+
+**Exception — `--relax` entries append in the PR branch.** The check waiver (S7)
+reads `relaxations_since(<base>)` at comparison time and must see the `relaxed`
+line in the branch under review, so a relaxation is necessarily recorded
+in-branch; a lone relax line is rare and semantically required there.
+
+Scope note: PR 1 (tooling) ships the append machinery and the `source` field, and
+the tool appends for every mutation. The `push:[main]` **deferral** of the
+`update`/`reconcile` deltas is the PR 2 CI-orchestration change (CI runs those
+mutating ops only on `push:[main]`); the tool behavior is unchanged. The per-PR
+record is otherwise the visible `.oo-baseline.json` diff + the PR itself.
 
 ### S10 — Concurrency: require up-to-date branches (fixes adb F1)
 
