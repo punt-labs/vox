@@ -5,9 +5,11 @@
 % Formal model of the shared fail-closed, base-commit-authoritative core
 % (unified in PR #312) and the three per-tool comparison deltas.
 %
-% This specification DOCUMENTS THE CODE AS IT IS. Where the model and the
-% original informal brief disagree, the model follows the code; the
-% divergences are recorded in section "Findings".
+% This specification DOCUMENTS THE CODE AS IT IS. Three earlier divergences
+% between check-oo and the other two tools -- base-baseline hardening, the
+% empty-baseline intercept, and the never-loosen update -- were closed, so
+% the three tools now share a uniform contract; section "Findings" records
+% this.
 %
 
 \documentclass[a4paper,10pt,fleqn]{article}
@@ -53,12 +55,12 @@ the fail-closed transition set, the CI-write guard, and the never-loosen
 update contract --- and then adds one operation schema per tool for the
 part that genuinely differs.
 
-The specification type-checks under \texttt{fuzz -t}. Conjectures
-(written \texttt{\textbackslash vdash?}) record the load-bearing
-properties; \texttt{fuzz} checks that they are well-typed. Two of them
-(sections \ref{sec:findings}) record where the code diverges from the
-informal brief; they are stated as \emph{existence} conjectures because
-they document behaviour the brief did not predict.
+The specification type-checks under \texttt{fuzz -t}. Property schemas
+restate the load-bearing guarantees --- fail-closed, never-loosen,
+base-commit-authoritative --- as type-checked predicates over the
+transition schemas. All three hold uniformly across the three tools;
+section~\ref{sec:findings} records how the last three per-tool exceptions
+were closed.
 
 \section{Basic Types}
 
@@ -298,9 +300,14 @@ tipResolves = ztrue \land tipHasBlob = zfalse \implies \\
 
 \subsection{Base baseline blob corrupt}
 
-A base baseline that resolves and exists but fails to parse (or, for
-coupling and suppression, is non-dict / non-numeric / non-UTF8) raises
-\texttt{GitError}, which the CLI turns into a controlled non-zero.
+A base baseline that resolves and exists but fails to parse --- or is
+non-dict, carries a non-dict entry, holds a non-numeric or boolean metric,
+or is non-UTF8 --- raises \texttt{GitError}, which the CLI turns into a
+controlled non-zero. All three tools reject these uniformly: check-oo's
+\texttt{show\_baseline} (\texttt{oo\_ratchet/gitio.py}) and its in-tree
+\texttt{Baseline.\_load} now type-harden the blob exactly as coupling and
+suppression do, so a parseable-but-ill-typed baseline can never reach the
+comparison and raise an uncaught \texttt{TypeError}.
 
 \begin{schema}{BaseError}
 GitEnv \\
@@ -366,6 +373,31 @@ change that touches any file already tracked in the base baseline, that at
 least one metric \emph{strictly} improve on such a file, and that no metric
 regress --- unless a regression is waived by an audited relaxation.
 
+\subsection{The empty-baseline intercept}
+
+The OO ratchet shares the coupling guard against an empty \texttt{\{\}}
+base baseline (\texttt{ratchet.py}'s \texttt{\_empty\_baseline}). Under
+\texttt{-{}-require-base} an empty base baseline --- a truncated write or a
+bad merge --- fails closed before the comparison, exactly like
+\texttt{CplEmptyRequire}; otherwise every touched file would look new and no
+regression could be seen. Without \texttt{-{}-require-base} the empty
+baseline flows through the comparison, where the touched-file parse check
+and the in-tree lock and completeness checks still run.
+
+\begin{schema}{OoEmptyRequire}
+Proceed \\
+baseCommit : COMMIT \\
+baselineAt : COMMIT \pfun BLINE \\
+baseB : BLINE \\
+out! : OUTCOME
+\where
+baseCommit \in \dom baselineAt \\
+baseB = baselineAt~baseCommit \\
+baseB = \emptyset \\
+requireBase = ztrue \\
+out! = fail
+\end{schema}
+
 \subsection{Inputs}
 
 \texttt{OoCheck} carries the resolved base commit and the base-commit
@@ -400,6 +432,7 @@ out! : OUTCOME
 \where
 baseCommit \in \dom baselineAt \\
 baseB = baselineAt~baseCommit \\
+\lnot (baseB = \emptyset \land requireBase = ztrue) \\
 touched \subseteq \dom current \\
 touched \cap brokenTouched = \emptyset \\
 wvd = \{ f : touched; m : METRIC | f \in \dom inTree \land m \in \dom (inTree~f) \land inTree~f~m = current~f~m \land (f, m) \in waivable \} \\
@@ -442,10 +475,11 @@ strictly worse than its base-commit baseline; holding steady passes.
 
 \subsection{The empty-baseline intercept}
 
-Coupling adds one guard the OO ratchet lacks. An empty \texttt{\{\}} base
-baseline (a truncated write or a bad merge) under \texttt{-{}-require-base}
-fails closed before the comparison: otherwise every touched file would look
-new and no regression could be seen.
+Coupling shares the empty-baseline intercept with check-oo
+(\texttt{OoEmptyRequire}). An empty \texttt{\{\}} base baseline (a truncated
+write or a bad merge) under \texttt{-{}-require-base} fails closed before the
+comparison: otherwise every touched file would look new and no regression
+could be seen.
 
 \begin{schema}{CplEmptyRequire}
 Proceed \\
@@ -521,9 +555,10 @@ out! \neq bootstrapPass \land out! \neq failClosedError
 
 \texttt{-{}-update} tightens a baseline but never loosens it. The base ref
 scopes the touched set only; the regression test is against the
-\emph{in-tree} baseline. check-oo and check-coupling share the algorithm
-(\texttt{apply.py}, \texttt{writer.py}); check-suppressions does not (see
-Findings).
+\emph{in-tree} baseline. check-oo and check-coupling share the per-metric
+algorithm (\texttt{apply.py}, \texttt{writer.py}); check-suppressions
+enforces the same guarantee on its single scalar total
+(\texttt{SupUpdate}).
 
 The rename-aware base lookup: a file inherits its predecessor's entry when
 it is a rename target absent from the baseline under its new name, so a
@@ -596,13 +631,16 @@ NeverLoosenUpdate
 \quad~ worse(inTree'~f, inTree~f) = \emptyset
 \end{schema}
 
-\section{The Suppression Update: A Divergence}
-\label{sec:findings}
+\subsection{The suppression update}
 
-check-suppressions' \texttt{update} does \emph{not} implement never-loosen.
-After the CI guard it writes the current total unconditionally --- it takes
-no base ref, does no scoping, and refuses no increase. The written total
-may exceed the prior total.
+check-suppressions' \texttt{update} enforces the same never-loosen
+guarantee on its single scalar total (\texttt{baseline.py}'s
+\texttt{\_refuse\_increase}). Past the CI guard, an update whose current
+total exceeds the in-tree baseline total is refused: nothing is written and
+the operation fails, exactly as the OO and coupling writers refuse a
+per-metric regression. A decrease or an unchanged total writes normally.
+The state is the in-tree total; the written total is never larger than the
+prior total.
 
 \begin{schema}{SupUpdate}
 supTotal : \nat \\
@@ -615,49 +653,48 @@ out! : OUTCOME
 \where
 guarded = ztrue \iff (githubActions = ztrue \land allowCiWrite = zfalse) \\
 guarded = ztrue \implies (out! = fail \land supTotal' = supTotal) \\
-guarded = zfalse \implies (out! = pass \land supTotal' = curTotal)
+guarded = zfalse \land curTotal > supTotal \implies \\
+\quad~ (out! = fail \land supTotal' = supTotal) \\
+guarded = zfalse \land curTotal \leq supTotal \implies \\
+\quad~ (out! = pass \land supTotal' = curTotal)
+\end{schema}
+
+The never-loosen property for the scalar total: the written total is no
+larger than the prior total. This property schema restates it as a
+type-checked predicate over the operation.
+
+\begin{schema}{SupNeverLoosens}
+SupUpdate
+\where
+supTotal' \leq supTotal
 \end{schema}
 
 \section{Findings}
+\label{sec:findings}
 
-Modelling the code faithfully surfaced three places where behaviour differs
-from the informal brief. The model follows the code.
+Modelling the code once surfaced three places where check-oo diverged from
+check-coupling and check-suppressions. All three were closed by the change
+that unified the base-baseline hardening, the empty-baseline intercept, and
+the suppression update, so the three tools now share a uniform contract:
 
-\subsection{The OO ratchet does not harden its base baseline}
-
-The brief lumped all three tools together: ``corrupt / non-dict / non-UTF8
-/ NaN / bool baseline $\rightarrow$ a controlled fail; none may yield
-pass.'' That holds for check-coupling and check-suppressions, whose blob
-readers reject a non-dict, non-numeric, boolean, or non-UTF8 baseline as a
-\texttt{GitError} (a controlled non-zero). It does \emph{not} hold for
-check-oo: \texttt{oo\_ratchet/gitio.py}'s \texttt{show\_baseline} catches
-only \texttt{json.JSONDecodeError}. A parseable-but-ill-typed base baseline
-(a string value where a metric map is expected) is not rejected; the
-comparison then indexes a string and raises an \emph{uncaught}
-\texttt{TypeError} --- not the controlled \texttt{fail} the brief assumes.
-In the model, \texttt{BaseError} covers only the unparseable case for
-check-oo; the ill-typed-but-parseable case has no controlled outcome.
-
-\subsection{The OO ratchet has no empty-baseline intercept}
-
-check-coupling fails closed on an empty \texttt{\{\}} base baseline under
-\texttt{-{}-require-base} (\texttt{CplEmptyRequire}). check-oo has no such
-guard: an empty base baseline flows straight into the comparison, where
-every touched file is treated as new. A pure-add change whose new files all
-clear their absolute thresholds then \emph{passes} --- not as a genuine
-first-adoption \texttt{bootstrapPass}, but as an ordinary \texttt{pass}.
-\texttt{OoCheck} admits exactly this: with $baseB = \emptyset$,
-$basePresent = \emptyset$, and \texttt{newPasses} = ztrue, the verdict is
-\texttt{pass}. check-suppressions, by contrast, fails on an empty base
-because the coerced base total is $0$ and any current suppression exceeds
-it.
-
-\subsection{Suppression update is not never-loosen}
-
-As above (\texttt{SupUpdate}): check-oo and check-coupling refuse any
-per-metric regression on update; check-suppressions rewrites the total
-unconditionally once past the CI guard. \texttt{SupUpdate} permits
-$supTotal' > supTotal$ with $out! = pass$.
+\begin{itemize}
+\item \textbf{Fail-closed base-baseline hardening.} All three blob readers
+  reject a corrupt, non-dict, non-dict-entry, non-numeric, boolean, or
+  non-UTF8 base baseline as a controlled non-zero (\texttt{BaseError}).
+  check-oo's \texttt{show\_baseline} and \texttt{Baseline.\_load} now
+  type-harden the blob exactly as coupling and suppression do; no
+  ill-typed-but-parseable baseline reaches the comparison.
+\item \textbf{Empty-baseline intercept.} All three fail closed on an empty
+  \texttt{\{\}} base baseline under \texttt{-{}-require-base}
+  (\texttt{OoEmptyRequire}, \texttt{CplEmptyRequire}, and --- for
+  suppression --- the coerced base total of $0$ that any current count
+  exceeds). check-oo no longer lets an empty base baseline flow into the
+  comparison and pass a pure-add change as an ordinary \texttt{pass}.
+\item \textbf{Never-loosen update.} All three refuse to loosen on
+  \texttt{-{}-update}: check-oo and check-coupling refuse any per-metric
+  regression; check-suppressions refuses any increase in the scalar total
+  (\texttt{SupUpdate}, \texttt{SupNeverLoosens}).
+\end{itemize}
 
 \section{System Invariants}
 
@@ -669,8 +706,8 @@ this model:
   genuine absence of baseline: \texttt{NoBaseFailClosed},
   \texttt{AbsentBaseFailClosed}, and the \texttt{exitCode} definition.
 \item \textbf{Never-loosen} --- an update's written baseline is no worse on
-  any metric: \texttt{NeverLoosens} (for check-oo and check-coupling; see
-  Findings for check-suppressions).
+  any metric: \texttt{NeverLoosens} (check-oo and check-coupling) and
+  \texttt{SupNeverLoosens} (check-suppressions' scalar total).
 \item \textbf{Base-commit-authoritative} --- the comparison reads
   $\mathit{baselineAt}~\mathit{baseCommit}$, never the in-tree baseline:
   the equality $baseB = baselineAt~baseCommit$ in \texttt{OoCheck},
