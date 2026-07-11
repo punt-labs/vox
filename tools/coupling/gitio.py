@@ -167,6 +167,16 @@ class GitRepo:
         if not all(isinstance(v, dict) for v in loaded.values()):
             blob = f"{ref}:{self.BASELINE_FILE}"
             raise GitError(f"non-dict entry in coupling baseline blob at {blob}")
+        # Each metric value must be a real number. A bool (`true`) is an int
+        # subclass that would compare as 0/1 (fail-open); a string would raise
+        # TypeError in the comparison. Reject both here so the gate fails closed.
+        if not all(
+            isinstance(m, (int, float)) and not isinstance(m, bool)
+            for entry in loaded.values()
+            for m in entry.values()
+        ):
+            blob = f"{ref}:{self.BASELINE_FILE}"
+            raise GitError(f"non-numeric metric in coupling baseline blob at {blob}")
         parsed: dict[str, dict[str, float]] = loaded
         return parsed
 

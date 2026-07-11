@@ -575,6 +575,30 @@ class TestFailClosed:
         monkeypatch.chdir(fx.root)
         assert main(["pkg", "--check", "--base-ref", base, "--require-base"]) == 1
 
+    def test_bool_metric_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
+        # A bool metric value (`true`) is an int subclass that would compare as
+        # 0/1 -- fail-open. Reject it at the source with GitError.
+        fx.write("pkg/a.py", LOW)
+        fx.write(
+            ".oo-coupling-baseline.json",
+            '{"pkg/a.py": {"efferent_coupling": true}}',
+        )
+        head = fx.commit("bool metric baseline blob")
+        with pytest.raises(GitError):
+            GitRepo(fx.root).show_baseline(head)
+
+    def test_string_metric_in_tree_baseline_raises_typed_error(
+        self, fx: GitFixture
+    ) -> None:
+        # A string metric value would raise TypeError in the numeric comparison;
+        # reject it at load with the typed error instead.
+        fx.write(
+            ".oo-coupling-baseline.json",
+            '{"pkg/a.py": {"efferent_coupling": "5"}}',
+        )
+        with pytest.raises(CouplingBaselineError):
+            CouplingBaseline(fx.root)
+
     def test_non_utf8_touched_file_fails(self, fx: GitFixture) -> None:
         # A touched .py file that cannot be decoded is scored as an error (like a
         # syntax error), so the ratchet fails on it -- fail-closed, not a crash.

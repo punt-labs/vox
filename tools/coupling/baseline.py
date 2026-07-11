@@ -68,6 +68,15 @@ class CouplingBaseline:
         if not all(isinstance(v, dict) for v in loaded.values()):
             msg = f"non-dict entry in coupling baseline file {path}"
             raise CouplingBaselineError(msg)
+        # Each metric value must be a real number: a bool would compare as 0/1
+        # (fail-open) and a string would raise TypeError in the comparison.
+        if not all(
+            isinstance(m, (int, float)) and not isinstance(m, bool)
+            for entry in loaded.values()
+            for m in entry.values()
+        ):
+            msg = f"non-numeric metric in coupling baseline file {path}"
+            raise CouplingBaselineError(msg)
         parsed: dict[str, dict[str, float]] = loaded
         return parsed
 
