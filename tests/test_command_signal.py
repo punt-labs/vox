@@ -63,6 +63,29 @@ class TestStructuredTokens:
         assert _signal(1, "ERROR banner text") == "cmd-fail"
 
 
+class TestMaskedFailure:
+    """A structured failure verdict wins over a masking exit 0."""
+
+    def test_piped_pytest_failure_still_fails(self) -> None:
+        # `pytest | tee run.log` — exit is tee's (0), tail says it failed.
+        assert _signal(0, "===== 2 failed, 3 passed in 1.2s =====") == "tests-fail"
+
+    def test_zero_failed_summary_is_a_pass(self) -> None:
+        # The critical edge: "0 failed" is not a failure. Success must win.
+        assert _signal(0, "===== 0 failed, 5 passed in 1.2s =====") == "tests-pass"
+
+    def test_make_test_or_true_failure_still_fails(self) -> None:
+        # `make test || true` swallows the exit code; the verdict remains.
+        assert _signal(0, "FAILED tests/test_x.py::test_y\nmake: done") == "tests-fail"
+
+    def test_masked_lint_failure_still_fails(self) -> None:
+        assert _signal(0, "Found 3 errors\n(exit swallowed by pipe)") == "lint-fail"
+
+    def test_incidental_zero_failed_does_not_block_success(self) -> None:
+        # A clean run reporting "0 failed" alongside "0 errors" is a pass.
+        assert _signal(0, "0 failed, 0 errors, 12 passed") == "tests-pass"
+
+
 class TestAnchoredGitMarkers:
     """git-push-ok and git-commit anchor to git's real output shapes."""
 

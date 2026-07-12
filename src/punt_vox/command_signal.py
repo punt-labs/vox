@@ -10,12 +10,14 @@ from typing import ClassVar, Self, final
 class CommandSignal:
     """A finished bash command, classifiable into a vibe signal.
 
-    Exit code is authoritative: a zero exit never yields a failure signal
-    and a nonzero exit never yields a success signal. Recognition anchors
-    to structured summary tokens (pytest's ``N passed``, ruff's ``Found N
-    error``) scanned from the output tail, so an incidental ``error`` or
-    ``failed`` in a file path, commit message, or PR title cannot
-    manufacture a false failure.
+    A structured failure verdict wins over the exit code, because a piped
+    command (``pytest | tee``, ``make test || true``) can exit 0 while its
+    tail still says ``2 failed``. Every classification scans the anchored
+    failure markers first; only their absence lets a success signal stand.
+    The markers key on structured summary tokens (pytest's ``N passed`` /
+    ``N failed``, ruff's ``Found N error``) scanned from the output tail —
+    an incidental ``error`` or ``failed`` in a path, commit message, or PR
+    title cannot manufacture a false failure, and ``0 failed`` is a pass.
     """
 
     __slots__ = ("_exit_code", "_tail")
@@ -48,7 +50,7 @@ class CommandSignal:
 
     _FAILURE_MARKERS: ClassVar[tuple[tuple[str, re.Pattern[str]], ...]] = (
         ("lint-fail", re.compile(r"Found \d+ error")),
-        ("tests-fail", re.compile(r"\b\d+ failed\b|^FAILED ", re.MULTILINE)),
+        ("tests-fail", re.compile(r"\b[1-9]\d* failed\b|^FAILED ", re.MULTILINE)),
         ("merge-conflict", re.compile(r"CONFLICT")),
     )
 
@@ -73,20 +75,21 @@ class CommandSignal:
     def signal(self) -> str | None:
         """Return the vibe signal for this command, or None if unclassified.
 
-        A zero exit scans only success markers — success is success, so no
-        incidental ``error`` or ``failed`` can turn it into a failure. A
-        nonzero exit scans only failure markers and falls back to the honest
-        ``cmd-fail`` when none match. A missing exit code (the transcript
-        watcher, which has text but no status) scans structured tokens
-        alone, failure before success, with no ``cmd-fail`` fallback.
+        A structured failure verdict in the tail wins over any exit code —
+        this catches ``pytest | tee`` and ``make test || true``, which exit
+        0 while the output still says ``2 failed``. Absent a failure, a
+        success marker stands. When nothing is recognized, a nonzero exit
+        yields the honest ``cmd-fail``; a zero or missing exit yields None.
         """
-        if self._exit_code is None:
-            return self._first_match(self._FAILURE_MARKERS) or self._first_match(
-                self._SUCCESS_MARKERS
-            )
-        if self._exit_code == 0:
-            return self._first_match(self._SUCCESS_MARKERS)
-        return self._first_match(self._FAILURE_MARKERS) or "cmd-fail"
+        failure = self._first_match(self._FAILURE_MARKERS)
+        if failure is not None:
+            return failure
+        success = self._first_match(self._SUCCESS_MARKERS)
+        if success is not None:
+            return success
+        if self._exit_code not in (None, 0):
+            return "cmd-fail"
+        return None
 
     def _first_match(
         self, markers: tuple[tuple[str, re.Pattern[str]], ...]
