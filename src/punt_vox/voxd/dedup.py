@@ -96,20 +96,20 @@ class OnceDedup:
     """Opt-in in-memory dedup for speech with per-call TTL.
 
     Callers pass ``once=<ttl_seconds>`` on a synthesize or direct_play
-    WebSocket message (or the ``vox unmute --once <seconds>`` CLI flag)
+    WebSocket message (or the ``vox say --once <seconds>`` CLI flag)
     to suppress duplicate plays of identical text within their chosen
     window. Identical text spoken with different voices or providers
     collapses --- the dedup key is ``md5(text)`` only.
 
     The motivating use case is ``biff wall``: N Claude Code sessions
-    in the same repo independently shell out to ``vox unmute`` on the
+    in the same repo independently shell out to ``vox say`` on the
     same broadcast text, and the user should hear the announcement
-    exactly once. See bead vox-0e9.
+    exactly once. External tools shelling out use ``vox say``.
 
     Unlike the legacy always-on ``AudioDedup``, this class is only
     invoked when the caller explicitly opts in. Requests without an
     ``once`` parameter play every time, even if identical to a recent
-    one. This preserves the property that ``vox unmute "hello"`` twice
+    one. This preserves the property that ``vox say "hello"`` twice
     in quick succession on the CLI produces two audible plays.
 
     Per-caller TTL semantics: each caller's ``ttl_seconds`` applies to

@@ -7,6 +7,7 @@ import logging
 import platform
 import shutil
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -244,7 +245,7 @@ ApiKeyStdinFlag = Annotated[
             "Safer than --api-key on the command line because the "
             "value never appears in argv. Intended for piped input "
             "from a password manager, e.g. 'pass show vox/project | "
-            "vox unmute ... --api-key-stdin'. Refuses to read from a "
+            "vox say ... --api-key-stdin'. Refuses to read from a "
             "tty."
         ),
     ),
@@ -277,8 +278,27 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     _configure_logging(verbose=verbose)
 
 
+def _apply_output_flags(*, json_output: bool, verbose: bool, quiet: bool) -> None:
+    """Route post-subcommand output flags into the shared formatter.
+
+    The same ``--json``/``--verbose``/``--quiet`` flags live on the callback
+    (pre-subcommand) and on the state-emitting commands (post-subcommand). The
+    two positions OR together: a command-level default of ``False`` never clears
+    a value the callback already set, so ``vox --json status`` and
+    ``vox status --json`` both select JSON.
+    """
+    if verbose and quiet:
+        raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
+    if json_output:
+        _formatter.set_json(value=True)
+    if quiet:
+        _formatter.set_quiet(value=True)
+    if verbose:
+        _configure_logging(verbose=True)
+
+
 # ---------------------------------------------------------------------------
-# unmute — play audio
+# say — play audio
 # ---------------------------------------------------------------------------
 
 
@@ -312,7 +332,7 @@ def _speak_segments(
 
 
 @app.command()
-def unmute(  # pyright: ignore[reportUnusedFunction]
+def say(  # pyright: ignore[reportUnusedFunction]
     ctx: typer.Context,
     text: TextArg = None,
     from_file: FromOpt = None,
@@ -329,8 +349,17 @@ def unmute(  # pyright: ignore[reportUnusedFunction]
     api_key: ApiKeyOpt = None,
     api_key_file: ApiKeyFileOpt = None,
     api_key_stdin: ApiKeyStdinFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
 ) -> None:
-    """Synthesize and play audio via voxd."""
+    """Synthesize and play audio via voxd.
+
+    Reads the text from the TEXT argument, from ``--from`` (a JSON segments
+    file), or from stdin when TEXT is ``-`` or the input is piped.
+    """
+    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
     # Negative values are a user error. Zero is accepted and treated
     # as unset (no dedup) — matches the server-side semantics so the
     # two surfaces are consistent. Scripts can safely pass
@@ -406,10 +435,19 @@ def record(  # pyright: ignore[reportUnusedFunction]
     similarity: SimilarityOpt = None,
     style: StyleOpt = None,
     speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
 ) -> None:
-    """Synthesize and save audio to file via voxd."""
+    """Synthesize and save audio to file via voxd.
+
+    Reads the text from the TEXT argument, from ``--from`` (a JSON segments
+    file), or from stdin when TEXT is ``-`` or the input is piped.
+    """
     from punt_vox.types import generate_filename
 
+    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
     boost = speaker_boost if speaker_boost else None
     spec = _validated_spec(
         SynthesisSpec(
@@ -455,7 +493,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
-# Text segment resolution (shared by unmute and record)
+# Text segment resolution (shared by say and record)
 # ---------------------------------------------------------------------------
 
 
@@ -465,18 +503,44 @@ def _resolve_text_segments(
 ) -> list[str]:
     """Resolve text input into a list of segments.
 
-    Accepts either a direct text argument or a JSON file with an array of
-    strings or {text} objects. Per-segment voice override is available
-    via the MCP ``unmute`` tool, not the CLI.
+    Text may come from the argument, from a ``--from`` JSON file (an array of
+    strings or ``{text}`` objects), or from stdin -- when TEXT is ``-`` or when
+    no argument is given and stdin is not a terminal (a pipe). Per-segment voice
+    override is available via the MCP ``unmute`` tool, not the CLI.
     """
     if from_file is not None:
         return _segments_from_file(from_file)
 
+    if _should_read_stdin(text):
+        return [_read_stdin_text()]
+
     if text is None:
-        typer.echo("Error: provide TEXT argument or --from file.", err=True)
+        typer.echo(
+            "Error: provide TEXT argument, --from file, or piped stdin.", err=True
+        )
         raise typer.Exit(code=1)
 
     return [text]
+
+
+def _should_read_stdin(text: str | None) -> bool:
+    """Return whether text should be read from stdin.
+
+    True when the caller passes ``-`` explicitly, or gives no argument while
+    stdin is a pipe (not a terminal) -- the Unix convention for composing in a
+    pipeline. An interactive shell with no argument is left to the caller's
+    usage error rather than blocking on a terminal read.
+    """
+    return text == "-" or (text is None and not sys.stdin.isatty())
+
+
+def _read_stdin_text() -> str:
+    """Read and return stripped text from stdin, or exit on empty input."""
+    data = sys.stdin.read().strip()
+    if not data:
+        typer.echo("Error: no text on stdin.", err=True)
+        raise typer.Exit(code=1)
+    return data
 
 
 def _segments_from_file(from_file: Path) -> list[str]:
@@ -605,13 +669,57 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
+# voices — list available voices
+# ---------------------------------------------------------------------------
+
+
+@app.command("voices")
+def voices_cmd(  # pyright: ignore[reportUnusedFunction]
+    provider: ProviderOpt = None,
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
+    """List the voices the active (or given) provider offers.
+
+    Human output lists the voice names one per line, with the current session
+    voice marked ``(current)``. ``--json`` emits both the full list and the
+    current voice as one object for machine consumers.
+    """
+    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    current = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().voice or None
+    try:
+        names = VoxClientSync().voices(provider)
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    payload: dict[str, object] = {"voices": names, "current": current}
+    if provider is not None:
+        payload["provider"] = provider
+    _formatter.emit(payload, _voices_text(names, current))
+
+
+def _voices_text(names: list[str], current: str | None) -> str:
+    """Render the voice list for humans, marking the current session voice."""
+    return "\n".join(f"{n} (current)" if n == current else n for n in names)
+
+
+# ---------------------------------------------------------------------------
 # version
 # ---------------------------------------------------------------------------
 
 
 @app.command("version")
-def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def version_cmd(  # pyright: ignore[reportUnusedFunction]
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Print version."""
+    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
     _formatter.emit({"version": __version__}, f"vox {__version__}")
 
 
@@ -621,8 +729,14 @@ def version_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command("status")
-def status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def status_cmd(  # pyright: ignore[reportUnusedFunction]
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Show current state (daemon, voice, vibe, notify)."""
+    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Try to get provider from voxd health
