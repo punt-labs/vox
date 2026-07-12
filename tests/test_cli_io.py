@@ -44,6 +44,13 @@ class TestOutputFlags:
         with pytest.raises(typer.BadParameter, match="mutually exclusive"):
             flags.apply(json_output=False, verbose=True, quiet=True)
 
+    def test_split_verbose_then_quiet_raises(self) -> None:
+        """Accumulated flags across two apply calls (callback then command) trip."""
+        flags = OutputFlags(OutputFormatter())
+        flags.apply(json_output=False, verbose=True, quiet=False)
+        with pytest.raises(typer.BadParameter, match="mutually exclusive"):
+            flags.apply(json_output=False, verbose=False, quiet=True)
+
 
 class TestTextInputResolve:
     """TextInput.resolve chooses argument, --from file, or stdin."""

@@ -39,12 +39,7 @@ class OutputFlags:
         return self
 
     def reset(self) -> None:
-        """Clear accumulated state for a fresh invocation.
-
-        The CLI process is reused across invocations under the test runner, so
-        the callback resets before folding in its flags; a stale ``_verbose_seen``
-        from a prior run would otherwise leak into the next.
-        """
+        """Clear accumulated state so a reused process does not leak prior flags."""
         self._verbose_seen = False
         self._quiet_seen = False
         self._formatter.set_json(value=False)
@@ -56,7 +51,9 @@ class OutputFlags:
             self._verbose_seen = True
         if quiet:
             self._quiet_seen = True
-        if verbose and quiet:
+        # Check the accumulated flags, not this call's: a split like
+        # ``vox --verbose status --quiet`` sets each flag in a different position.
+        if self._verbose_seen and self._quiet_seen:
             raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
         if json_output:
             self._formatter.set_json(value=True)

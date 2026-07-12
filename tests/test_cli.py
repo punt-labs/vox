@@ -2150,6 +2150,24 @@ class TestGlobalFlags:
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output
 
+    def test_verbose_quiet_mutual_exclusion_mixed_verbose_pre(self) -> None:
+        """--verbose pre-subcommand + --quiet post must still be caught.
+
+        The flags land in different positions (callback vs command), so a
+        per-position check saw only one each and let the split bypass the guard.
+        """
+        runner = CliRunner()
+        result = runner.invoke(app, ["--verbose", "version", "--quiet"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_verbose_quiet_mutual_exclusion_mixed_quiet_pre(self) -> None:
+        """--quiet pre-subcommand + --verbose post must still be caught."""
+        runner = CliRunner()
+        result = runner.invoke(app, ["--quiet", "version", "--verbose"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
 
 # ---------------------------------------------------------------------------
 # daemon restart tests
