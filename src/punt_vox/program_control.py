@@ -55,10 +55,19 @@ class SelectionRequest:
 @final
 @dataclass(frozen=True, slots=True)
 class CommandOutcome:
-    """Whether the daemon applied a command, and a line about it (design F7).
+    """Whether the daemon applied a command, and a line describing the result.
 
-    A command whose Z precondition no longer held (a lost race -- ``next`` just
-    after ``off``) is *rejected*, not an error; the caller observes which.
+    In the current daemon protocol a command is acknowledged at *enqueue*: the
+    handler replies with a bare ack that carries no ``applied`` flag and no
+    message, so a live command always parses to ``applied=True`` with an empty
+    ``message``. The rejected path (``applied=False``) is not yet reachable --
+    a lost-race guard is caught and logged inside the daemon's async apply and
+    never crosses the wire.
+
+    The flag, the message, and the forward-looking parse are kept so that
+    surfacing rejection later is a daemon-side change, not a client-contract
+    change: the shape a caller reads does not move when the daemon starts
+    sending ``applied=False``.
     """
 
     applied: bool
@@ -71,11 +80,16 @@ class CommandOutcome:
 
     @classmethod
     def rejected(cls, message: str) -> Self:
-        """Return a rejected (lost-race) outcome carrying ``message``."""
+        """Return a rejected outcome carrying ``message``.
+
+        Forward-looking: the live daemon does not yet emit a rejection (see the
+        class docstring), so this constructs the shape a future lost-race reply
+        will take rather than one produced by the current protocol.
+        """
         return cls(applied=False, message=message)
 
     def display(self, applied_default: str) -> str:
-        """Return the daemon's reason, or ``applied_default`` when silent (F4/F7)."""
+        """Return the daemon's reason, or ``applied_default`` when it is silent."""
         return self.message or applied_default
 
 

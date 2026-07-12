@@ -549,13 +549,15 @@ class VoxClient:
 
     @staticmethod
     def _outcome(resp: dict[str, Any]) -> CommandOutcome:
-        """Read the applied/rejected result (design F7) from a command reply.
+        """Read the applied/rejected result from a command reply.
 
-        A reply omitting ``applied`` is treated as applied -- the daemon only
-        writes ``applied: false`` to flag a lost race (PY-EH-8: absence is the
-        documented "it went through" contract). A rejection is guaranteed a
-        non-empty ``message`` so a surface never renders a blank line for a
-        refused command; an applied command may carry none.
+        The live daemon acks at enqueue with a bare reply carrying no
+        ``applied`` flag, so this returns ``applied=True`` today; the parse is
+        written to also read a future ``applied=false`` rejection with no
+        client change (see :class:`~punt_vox.CommandOutcome`). Absence of
+        ``applied`` is the "it went through" contract; a rejection, if one is
+        ever sent, is guaranteed a non-empty ``message`` so a surface never
+        renders a blank line for a refused command.
         """
         obj = JsonObject.coerce(resp, "command")
         applied = obj.opt_bool("applied") is not False
