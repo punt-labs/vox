@@ -25,13 +25,13 @@ from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
-from punt_vox.music_prompts import PromptSet
-from punt_vox.program_control import SelectionRequest, StartRequest
 from punt_vox.program_gateway import ProgramGateway
+from punt_vox.types_programs.control import SelectionRequest, StartRequest
+from punt_vox.types_programs.mode import Mode
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 from punt_vox.voices import VOICE_BLURBS
-from punt_vox.voxd.programs.mode import Mode
 
 logger = logging.getLogger(__name__)
 

@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.catalog import Album
-from punt_vox.voxd.programs.identifiers import ProgramName
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import Part
-from punt_vox.voxd.programs.wire import JsonObject
 
 __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 

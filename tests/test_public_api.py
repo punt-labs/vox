@@ -64,7 +64,7 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
     from punt_vox.client import SynthesizeResult, VoxClient
     from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
     from punt_vox.client_sync import VoxClientSync
-    from punt_vox.music_prompts import PromptSet
+    from punt_vox.types_programs.prompts import PromptSet
     from punt_vox.types_synthesis import SynthesisSpec
 
     assert punt_vox.VoxClient is VoxClient

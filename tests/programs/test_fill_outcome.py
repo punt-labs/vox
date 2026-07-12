@@ -12,14 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Self, final
 
-from punt_vox.voxd.programs import (
-    Mode,
-    Part,
-    PlaybackPolicy,
-    Program,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import Mode, Reason
+from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 from punt_vox.voxd.programs.fill_outcome import RecoveringFillOutcome
 
 PartFactory = Callable[[int], Part]

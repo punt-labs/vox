@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.music_prompts import POOL_SIZE, PromptSet
+from punt_vox.types_programs.prompts import POOL_SIZE, PromptSet
 
 
 def _variations(n: int = POOL_SIZE) -> list[str]:

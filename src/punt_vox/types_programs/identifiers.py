@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from typing import Self
 
-from punt_vox.voxd.programs.format import Format
+from punt_vox.types_programs.format import Format
 
 __all__ = ["PartRef", "ProgramName", "Reason"]
 

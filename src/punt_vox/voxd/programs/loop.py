@@ -23,8 +23,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_programs.playback_fault import PlaybackFaultKind
 from punt_vox.voxd.programs.interrupt_race import InterruptRace
-from punt_vox.voxd.programs.playback_health import PlaybackFaultKind
 from punt_vox.voxd.programs.playback_signal import Rotate
 
 if TYPE_CHECKING:

@@ -17,8 +17,8 @@ from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self, final
 
+from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.hex_token import HexToken
-from punt_vox.voxd.programs.wire import JsonObject
 
 __all__ = ["AlbumTags", "PromptFingerprint", "TagQuery"]
 

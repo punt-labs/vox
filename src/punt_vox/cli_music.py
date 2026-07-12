@@ -19,9 +19,9 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.program_control import SelectionRequest
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.voxd.programs.status import ProgramStatus
+from punt_vox.types_programs.control import SelectionRequest
+from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
 

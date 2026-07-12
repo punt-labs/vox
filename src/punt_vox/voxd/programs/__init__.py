@@ -9,9 +9,15 @@ the Z model. See ``docs/audio-programs-phase1-design.md`` for the code map.
 
 from __future__ import annotations
 
-from punt_vox.voxd.programs.format import MAX_RETRY, Format
-from punt_vox.voxd.programs.identifiers import PartRef, ProgramName, Reason
-from punt_vox.voxd.programs.mode import Mode, PlaybackStatus
+from punt_vox.types_programs.format import MAX_RETRY, Format
+from punt_vox.types_programs.identifiers import PartRef, ProgramName, Reason
+from punt_vox.types_programs.mode import Mode, PlaybackStatus
+from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.types_programs.status_views import (
+    FailedPartView,
+    GenerationStatus,
+    NowPlaying,
+)
 from punt_vox.voxd.programs.part import FrozenParts, Part, PartStatus
 from punt_vox.voxd.programs.playback_policy import (
     COMPLETE,
@@ -22,12 +28,6 @@ from punt_vox.voxd.programs.playback_policy import (
 )
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.state import Activation, ProgramState
-from punt_vox.voxd.programs.status import ProgramStatus
-from punt_vox.voxd.programs.status_views import (
-    FailedPartView,
-    GenerationStatus,
-    NowPlaying,
-)
 
 __all__ = [
     "COMPLETE",

@@ -14,14 +14,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
+from punt_vox.types_programs.format import MAX_RETRY
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.fill_outcome import RecoveringFillOutcome
-from punt_vox.voxd.programs.format import MAX_RETRY
 from punt_vox.voxd.programs.guard import GuardViolationError
-from punt_vox.voxd.programs.mode import Mode
 from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.programs.identifiers import Reason
+    from punt_vox.types_programs.identifiers import Reason
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.playback_source import PlaybackSource
 

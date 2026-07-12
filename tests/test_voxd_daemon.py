@@ -13,11 +13,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, final
 
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.config import DaemonConfig
 from punt_vox.voxd.daemon import VoxDaemon
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.programs.mode import Mode
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.synthesis import SynthesisPipeline

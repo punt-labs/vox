@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs.wire import JsonObject
+from punt_vox.types_programs.wire import JsonObject
 
 
 class TestParse:

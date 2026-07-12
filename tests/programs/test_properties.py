@@ -12,16 +12,8 @@ from collections.abc import Callable
 
 import pytest
 
-from punt_vox.voxd.programs import (
-    Format,
-    Mode,
-    Part,
-    PlaybackPolicy,
-    PlaybackStatus,
-    Program,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import Format, Mode, PlaybackStatus, Reason
+from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 
 PartFactory = Callable[[int], Part]
 PoolFactory = Callable[..., frozenset[Part]]

@@ -17,11 +17,14 @@ from typing import Any, Self
 
 from punt_vox.client import SynthesizeResult, VoxClient
 from punt_vox.client_env import DaemonEnv
-from punt_vox.music_prompts import PromptSet
-from punt_vox.program_control import CommandOutcome, ProgramSummary
-from punt_vox.types_health import HealthStatus
+from punt_vox.types_programs import (
+    CommandOutcome,
+    HealthStatus,
+    ProgramStatus,
+    ProgramSummary,
+    PromptSet,
+)
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["VoxClientSync"]
 

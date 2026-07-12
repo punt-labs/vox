@@ -14,13 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.voxd.programs.filler import FillPlan
-from punt_vox.voxd.programs.identifiers import ProgramName
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from punt_vox.music_prompts import PromptSet
+    from punt_vox.types_programs.prompts import PromptSet
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.album_tags import AlbumTags
     from punt_vox.voxd.programs.part import Part

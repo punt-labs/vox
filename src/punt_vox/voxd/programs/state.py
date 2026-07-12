@@ -12,10 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Self, final
 
-from punt_vox.voxd.programs.format import Format
-from punt_vox.voxd.programs.identifiers import Reason
+from punt_vox.types_programs.format import Format
+from punt_vox.types_programs.identifiers import Reason
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.invariants import StateInvariants
-from punt_vox.voxd.programs.mode import Mode
 from punt_vox.voxd.programs.part import FrozenParts, Part
 
 __all__ = ["Activation", "ProgramState"]

@@ -6,8 +6,8 @@ from collections.abc import Mapping
 
 import pytest
 
+from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
-from punt_vox.voxd.programs.wire import JsonObject
 
 
 def _obj(data: Mapping[str, object]) -> JsonObject:

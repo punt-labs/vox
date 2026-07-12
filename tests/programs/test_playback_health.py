@@ -8,13 +8,13 @@ wire so a client reads a standing playback problem, never only a daemon log.
 
 from __future__ import annotations
 
+from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.playback_health import (
     PlaybackFault,
     PlaybackFaultKind,
     PlaybackHealth,
 )
-from punt_vox.voxd.programs.wire import JsonObject
 
 
 def test_starts_healthy() -> None:

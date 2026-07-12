@@ -4,15 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from punt_vox.voxd.programs import (
-    MAX_RETRY,
-    Mode,
-    Part,
-    PlaybackPolicy,
-    Program,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import MAX_RETRY, Mode, Reason
+from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 from punt_vox.voxd.programs.fill_signal import (
     PermanentFailure,
     Produced,

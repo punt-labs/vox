@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self, final
 
-from punt_vox.voxd.programs.wire import JsonObject
+from punt_vox.types_programs.wire import JsonObject
 
 __all__ = ["FailedPartView", "GenerationStatus", "NowPlaying"]
 

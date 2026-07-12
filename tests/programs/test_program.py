@@ -7,18 +7,15 @@ from typing import final
 
 import pytest
 
+from punt_vox.types_programs import Format, Mode, PlaybackStatus, Reason
 from punt_vox.voxd.programs import (
     COMPLETE,
     AdvanceResult,
-    Format,
     FrozenParts,
-    Mode,
     Part,
     PlaybackPolicy,
-    PlaybackStatus,
     Program,
     ProgramState,
-    Reason,
 )
 
 PartFactory = Callable[[int], Part]

@@ -18,10 +18,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs import MAX_RETRY, Format
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs import (
-    MAX_RETRY,
-    Format,
     Part,
     PartStatus,
     PlaybackPolicy,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import final
 
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 
 __all__ = ["OnHandler"]

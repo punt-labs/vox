@@ -12,21 +12,15 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from punt_vox.client_gateway import ClientProgramGateway
-from punt_vox.program_control import (
+from punt_vox.types_programs import Format, Mode
+from punt_vox.types_programs.control import (
     CommandOutcome,
     ProgramSummary,
     SelectionRequest,
     StartRequest,
 )
-from punt_vox.voxd.programs import (
-    Format,
-    Mode,
-    Part,
-    Program,
-    ProgramState,
-    ProgramStatus,
-)
-from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
 
 
@@ -92,7 +86,7 @@ def test_program_summary_display_line() -> None:
 def test_status_delegates_and_returns_the_client_status() -> None:
     """status() returns the typed ProgramStatus the client already parsed."""
     program = _build_rotating()
-    parsed = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    parsed = program.to_status(ProgramName("ambient_techno"))
     client = MagicMock()
     client.program_status.return_value = parsed
 

@@ -14,15 +14,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, final
 
-from punt_vox.voxd.programs import (
-    Advance,
-    AdvanceResult,
-    Mode,
-    Part,
-    Program,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import Mode, Reason
+from punt_vox.voxd.programs import Advance, AdvanceResult, Part, Program, ProgramState
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.fill_guard import FreshFillOutcome
 from punt_vox.voxd.programs.fill_signal import (

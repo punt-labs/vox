@@ -14,8 +14,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.guard import GuardViolationError
-from punt_vox.voxd.programs.mode import Mode
 from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:

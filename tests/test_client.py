@@ -17,8 +17,8 @@ from punt_vox.client import (
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
+from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voxd.programs.status import ProgramStatus
 
 # ---------------------------------------------------------------------------
 # Path resolution

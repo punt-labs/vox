@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs import FrozenParts, Part, PartStatus, Reason
+from punt_vox.types_programs import Reason
+from punt_vox.voxd.programs import FrozenParts, Part, PartStatus
 
 
 class TestPart:

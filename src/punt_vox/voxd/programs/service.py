@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, Self, final
 
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs.prompts import PromptSet
+from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.voxd.programs.active_context import (
     ActiveContext,
     ActiveProgram,
@@ -36,8 +38,6 @@ from punt_vox.voxd.programs.select_signal import SwitchSelection
 from punt_vox.voxd.programs.selection import Selection
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
-from punt_vox.voxd.programs.status import ProgramStatus
-from punt_vox.voxd.programs.status_views import NowPlaying
 from punt_vox.voxd.programs.subprocess_player import SubprocessPlayer
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
@@ -138,7 +138,7 @@ class ProgramService:
             return ProgramStatus.idle()
         source = self._channel.source
         if isinstance(source, Program):
-            return ProgramStatus.of(source, active.name, self._health.fault)
+            return source.to_status(active.name, self._health.fault)
         if isinstance(source, SelectionPlayback):
             return ProgramStatus.radio(
                 active.name, self._radio_now_playing(source), self._health.fault

@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from punt_vox.voxd.programs import Format, Part, PartStatus
+from punt_vox.types_programs import Format
+from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.programs import Part, PartStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.manifest import (
@@ -15,7 +17,6 @@ from punt_vox.voxd.programs.manifest import (
     ManifestDraft,
     PartEntry,
 )
-from punt_vox.voxd.programs.wire import JsonObject
 
 _CREATED = datetime(2026, 7, 8, 2, 14, 7, tzinfo=UTC)
 _FINGERPRINT = PromptFingerprint("9f2a7c31")

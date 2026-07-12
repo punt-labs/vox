@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from punt_vox.types_programs.identifiers import Reason
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext, ActiveSelection
 from punt_vox.voxd.programs.control_channel import ControlChannel
@@ -22,7 +23,6 @@ from punt_vox.voxd.programs.fill_signal import (
     TransientFailure,
 )
 from punt_vox.voxd.programs.guard import GuardViolationError
-from punt_vox.voxd.programs.identifiers import Reason
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
 from punt_vox.voxd.programs.select_signal import SwitchSelection
 from punt_vox.voxd.programs.selection import Selection

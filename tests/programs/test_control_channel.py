@@ -12,16 +12,9 @@ from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
-from punt_vox.music_prompts import PromptSet
-from punt_vox.voxd.programs import (
-    MAX_RETRY,
-    Mode,
-    Part,
-    PlaybackPolicy,
-    Program,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import MAX_RETRY, Mode, Reason
+from punt_vox.types_programs.prompts import PromptSet
+from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
