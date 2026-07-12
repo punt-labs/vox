@@ -7,7 +7,6 @@ import logging
 import platform
 import shutil
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -17,6 +16,7 @@ import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
+from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import build_music_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
@@ -68,12 +68,8 @@ _PROVIDER_DISPLAY = {
 # ---------------------------------------------------------------------------
 
 _formatter = OutputFormatter()
-
-
-def _configure_logging(*, verbose: bool) -> None:
-    from punt_vox.logging_config import configure_logging
-
-    configure_logging(stderr_level="DEBUG" if verbose else "WARNING")
+_flags = OutputFlags(_formatter)
+_text_input = TextInput(_formatter)
 
 
 def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
@@ -95,27 +91,11 @@ def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
 # ---------------------------------------------------------------------------
 # API key resolution
 #
-# The per-call API key feature exists for single-user billing isolation:
-# one user holding multiple provider keys and wanting to attribute cost
-# to a specific project on a specific call. The secret is forwarded to
-# voxd over the local WebSocket and injected into the provider env for
-# one synthesize request.
-#
-# Passing ``--api-key <value>`` literally on the command line exposes
-# the value through ``ps`` (and, on Linux, ``/proc/<pid>/cmdline``),
-# shell history, and terminal recordings. That's a real credential
-# disclosure path even though voxd does not log or persist the key.
-# Three safer input paths are supported; ``--api-key`` is retained
-# for back-compat and demo use with a stderr warning when the value
-# came from argv (not from the ``VOX_API_KEY`` env var).
-#
-# The four sources are mutually exclusive: specifying more than one
-# raises ``typer.BadParameter``. Priority (only one may be set):
-#   1. ``--api-key-file <path>``
-#   2. ``--api-key-stdin``
-#   3. ``VOX_API_KEY`` env var (or ``--api-key <value>`` — typer treats
-#      both as populating the same ``api_key`` parameter; we distinguish
-#      them via ``ctx.get_parameter_source`` to decide whether to warn)
+# Passing ``--api-key <value>`` literally on the command line exposes the
+# value through ``ps`` (and ``/proc/<pid>/cmdline`` on Linux), shell history,
+# and terminal recordings -- a real credential disclosure path even though
+# voxd never logs or persists the key. The safer file/stdin/env sources and
+# the mutual-exclusion priority live in ``ApiKeyResolver`` and the option help.
 # ---------------------------------------------------------------------------
 
 
@@ -271,30 +251,8 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
     quiet: Quiet = False,  # noqa: FBT002 -- typer CLI requires bool default
 ) -> None:
     """Text-to-speech CLI."""
-    if verbose and quiet:
-        raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
-    _formatter.set_json(value=json_output)
-    _formatter.set_quiet(value=quiet)
-    _configure_logging(verbose=verbose)
-
-
-def _apply_output_flags(*, json_output: bool, verbose: bool, quiet: bool) -> None:
-    """Route post-subcommand output flags into the shared formatter.
-
-    The same ``--json``/``--verbose``/``--quiet`` flags live on the callback
-    (pre-subcommand) and on the state-emitting commands (post-subcommand). The
-    two positions OR together: a command-level default of ``False`` never clears
-    a value the callback already set, so ``vox --json status`` and
-    ``vox status --json`` both select JSON.
-    """
-    if verbose and quiet:
-        raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
-    if json_output:
-        _formatter.set_json(value=True)
-    if quiet:
-        _formatter.set_quiet(value=True)
-    if verbose:
-        _configure_logging(verbose=True)
+    _flags.reset()
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +317,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
     """
-    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     # Negative values are a user error. Zero is accepted and treated
     # as unset (no dedup) — matches the server-side semantics so the
     # two surfaces are consistent. Scripts can safely pass
@@ -411,7 +369,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
         )
     )
 
-    segments = _resolve_text_segments(text, from_file)
+    segments = _text_input.resolve(text, from_file)
     _speak_segments(segments, spec, once)
 
 
@@ -447,7 +405,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
     """
     from punt_vox.types import generate_filename
 
-    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     boost = speaker_boost if speaker_boost else None
     spec = _validated_spec(
         SynthesisSpec(
@@ -463,7 +421,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
         )
     )
 
-    segments = _resolve_text_segments(text, from_file)
+    segments = _text_input.resolve(text, from_file)
     out_dir = output_dir if output_dir is not None else default_output_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     client = VoxClientSync()
@@ -490,84 +448,6 @@ def record(  # pyright: ignore[reportUnusedFunction]
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(mp3_bytes)
         _formatter.emit({"path": str(out_path)}, str(out_path))
-
-
-# ---------------------------------------------------------------------------
-# Text segment resolution (shared by say and record)
-# ---------------------------------------------------------------------------
-
-
-def _resolve_text_segments(
-    text: str | None,
-    from_file: Path | None,
-) -> list[str]:
-    """Resolve text input into a list of segments.
-
-    Text may come from the argument, from a ``--from`` JSON file (an array of
-    strings or ``{text}`` objects), or from stdin -- when TEXT is ``-`` or when
-    no argument is given and stdin is not a terminal (a pipe). Per-segment voice
-    override is available via the MCP ``unmute`` tool, not the CLI.
-    """
-    if from_file is not None:
-        return _segments_from_file(from_file)
-
-    if _should_read_stdin(text):
-        return [_read_stdin_text()]
-
-    if text is None:
-        typer.echo(
-            "Error: provide TEXT argument, --from file, or piped stdin.", err=True
-        )
-        raise typer.Exit(code=1)
-
-    return [text]
-
-
-def _should_read_stdin(text: str | None) -> bool:
-    """Return whether text should be read from stdin.
-
-    True when the caller passes ``-`` explicitly, or gives no argument while
-    stdin is a pipe (not a terminal) -- the Unix convention for composing in a
-    pipeline. An interactive shell with no argument is left to the caller's
-    usage error rather than blocking on a terminal read.
-    """
-    return text == "-" or (text is None and not sys.stdin.isatty())
-
-
-def _read_stdin_text() -> str:
-    """Read and return stripped text from stdin, or exit on empty input."""
-    data = sys.stdin.read().strip()
-    if not data:
-        typer.echo("Error: no text on stdin.", err=True)
-        raise typer.Exit(code=1)
-    return data
-
-
-def _segments_from_file(from_file: Path) -> list[str]:
-    """Parse a JSON segments file into a list of text strings."""
-    try:
-        raw = json.loads(from_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise typer.BadParameter("--from file must contain valid JSON.") from exc
-
-    if not isinstance(raw, list):
-        raise typer.BadParameter("--from file must contain a JSON array.")
-
-    segments: list[str] = []
-    for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        seg_text: str
-        if isinstance(item, str):
-            seg_text = item
-        elif isinstance(item, dict):
-            seg_text = str(item.get("text") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        else:
-            raise typer.BadParameter(
-                f"Element {i} must be a string or {{voice, text}} object."
-            )
-
-        if seg_text:
-            segments.append(seg_text)
-    return segments
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +567,7 @@ def voices_cmd(  # pyright: ignore[reportUnusedFunction]
     voice marked ``(current)``. ``--json`` emits both the full list and the
     current voice as one object for machine consumers.
     """
-    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     current = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().voice or None
     try:
         names = VoxClientSync().voices(provider)
@@ -719,7 +599,7 @@ def version_cmd(  # pyright: ignore[reportUnusedFunction]
     quiet: Quiet = False,
 ) -> None:
     """Print version."""
-    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     _formatter.emit({"version": __version__}, f"vox {__version__}")
 
 
@@ -736,7 +616,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     quiet: Quiet = False,
 ) -> None:
     """Show current state (daemon, voice, vibe, notify)."""
-    _apply_output_flags(json_output=json_output, verbose=verbose, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Try to get provider from voxd health
