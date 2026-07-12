@@ -49,10 +49,17 @@ class TestStopPayload:
 
 class TestBashPayload:
     def test_tool_response_as_dict(self) -> None:
-        data: dict[str, object] = {"tool_response": {"exit_code": 0, "stdout": "hello"}}
+        # Claude Code emits the exit code under the camelCase key ``exitCode``.
+        data: dict[str, object] = {"tool_response": {"exitCode": 0, "stdout": "hello"}}
         result = BashPayload.parse(data)
         assert result.exit_code == 0
         assert result.stdout == "hello"
+
+    def test_snake_case_exit_code_is_ignored(self) -> None:
+        # The real payload key is ``exitCode``; a snake_case ``exit_code`` is
+        # not Claude Code's schema and must not be read.
+        result = BashPayload.parse({"tool_response": {"exit_code": 0}})
+        assert result.exit_code is None
 
     def test_tool_response_non_dict_treated_as_empty(self) -> None:
         result = BashPayload.parse({"tool_response": "oops"})
@@ -65,15 +72,15 @@ class TestBashPayload:
         assert result.stdout == ""
 
     def test_exit_code_as_int(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exit_code": 1}})
+        result = BashPayload.parse({"tool_response": {"exitCode": 1}})
         assert result.exit_code == 1
 
     def test_exit_code_as_string_int(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exit_code": "42"}})
+        result = BashPayload.parse({"tool_response": {"exitCode": "42"}})
         assert result.exit_code == 42
 
     def test_exit_code_non_numeric_string_becomes_none(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exit_code": "boom"}})
+        result = BashPayload.parse({"tool_response": {"exitCode": "boom"}})
         assert result.exit_code is None
 
     def test_exit_code_absent_becomes_none(self) -> None:
@@ -81,7 +88,7 @@ class TestBashPayload:
         assert result.exit_code is None
 
     def test_stdout_absent_defaults_to_empty_string(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exit_code": 0}})
+        result = BashPayload.parse({"tool_response": {"exitCode": 0}})
         assert result.stdout == ""
 
 

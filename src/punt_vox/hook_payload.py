@@ -41,7 +41,7 @@ class BashPayload:
             if isinstance(raw_response, dict)
             else {}
         )
-        exit_code_raw = tool_response.get("exit_code")
+        exit_code_raw = tool_response.get("exitCode")
         stdout = str(tool_response.get("stdout", ""))
         exit_code: int | None
         if isinstance(exit_code_raw, int):

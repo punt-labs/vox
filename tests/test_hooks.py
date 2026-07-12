@@ -328,6 +328,24 @@ class TestHandleNotification:
 
 
 class TestHandlePostBash:
+    def test_real_claude_payload_records_ok(self, tmp_path: Path) -> None:
+        # End-to-end through the real parse path: a Claude Code PostToolUse
+        # Bash payload puts the exit code under camelCase ``exitCode``.
+        (tmp_path / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload.parse(
+            {"tool_response": {"exitCode": 0, "stdout": "ok"}, "cwd": str(tmp_path)}
+        )
+        handle_post_bash(payload, tmp_path)
+        assert 'vibe_signals: "ok"' in (tmp_path / "vox.local.md").read_text()
+
+    def test_real_claude_payload_records_fail(self, tmp_path: Path) -> None:
+        (tmp_path / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        payload = BashPayload.parse(
+            {"tool_response": {"exitCode": 1, "stdout": "boom"}, "cwd": str(tmp_path)}
+        )
+        handle_post_bash(payload, tmp_path)
+        assert 'vibe_signals: "fail"' in (tmp_path / "vox.local.md").read_text()
+
     def test_records_ok_on_zero_exit(self, tmp_path: Path) -> None:
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
