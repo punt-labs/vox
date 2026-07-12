@@ -59,7 +59,7 @@ consecutive `fail` at the end of the window (0 if the last outcome is `ok`), and
 | `run` ≥ 5 | **weary** | `[weary]` |
 | last is `ok`, but a fail within the last `K` | **relieved** | `[relieved]` |
 
-```
+```text
 happy ──fail──▶ focused ──more──▶ frustrated ──sustained──▶ weary
    ▲                                                          │
    └────── happy ◀──clean──── relieved ◀────── ok ────────────┘

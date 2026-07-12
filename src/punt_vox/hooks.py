@@ -8,7 +8,7 @@ do in-process synthesis, caching, or direct playback.
 
 Events:
 - **stop**: task-completion notification (decision-block pattern)
-- **post-bash**: signal accumulator for auto-vibe
+- **post-bash**: exit-code outcome accumulator for auto-vibe
 - **notification**: permission/idle prompt audio alerts
 - **pre-compact**: playful 'be right back' before context compaction
 - **user-prompt-submit**: acknowledgment in continuous mode
@@ -32,7 +32,6 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.command_signal import CommandSignal
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
@@ -51,8 +50,8 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
-from punt_vox.signal import Signal, SignalLog
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.vibe_window import Outcome, OutcomeWindow
 
 logger = logging.getLogger(__name__)
 
@@ -246,50 +245,48 @@ def handle_stop(
         "Stop hook: blocking for voice summary (signals=%s)",
         config.vibe_signals,
     )
-    if config.vibe_mode == "off":
-        pass  # User disabled vibe — don't write tags
-    elif config.vibe_mode == "manual" and config.vibe_tags:
-        pass  # Manual mode with existing tags — already set
-    else:
-        log = SignalLog.deserialize(config.vibe_signals or "")
-        tags = log.resolve_tags()
-        ConfigStore(config_dir).write_fields({"vibe_tags": tags, "vibe_signals": ""})
+    _persist_auto_vibe_tags(config, config_dir)
     return {"decision": "block", "reason": phrase}
 
 
-# PostToolUse Bash — signal accumulator
+def _persist_auto_vibe_tags(config: VoxConfig, config_dir: Path) -> None:
+    """Resolve accumulated outcomes to vibe tags and persist them.
 
-
-def classify_signal(exit_code: int | None, stdout: str) -> str | None:
-    """Classify a bash command's output into a signal token.
-
-    Delegates to :class:`CommandSignal`: exit code is authoritative and
-    recognition anchors to structured summary tokens. Returns a signal
-    name like ``"tests-pass"`` or None when the command cannot be
-    confidently classified.
+    A no-op when the user turned vibe off, or set manual tags already —
+    those are authoritative and must survive the stop-hook write-back.
     """
-    return CommandSignal(exit_code, stdout).signal()
+    if config.vibe_mode == "off":
+        return
+    if config.vibe_mode == "manual" and config.vibe_tags:
+        return
+    window = OutcomeWindow.deserialize(config.vibe_signals or "")
+    ConfigStore(config_dir).write_fields(
+        {"vibe_tags": window.resolve_tags(), "vibe_signals": ""}
+    )
+
+
+# PostToolUse Bash — exit-code outcome accumulator
 
 
 def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
-    """Accumulate vibe signals from Bash tool execution.
+    """Record one command outcome (ok/fail) from its exit code.
 
-    Appends a signal token to ``vibe_signals`` in ``vox.local.md``.
-
-    .. todo:: Signal accumulation should move to the MCP server so hooks
-       don't write to config. Kept here as the one exception to preserve
-       auto-vibe detection until a proper communication channel exists.
+    A command with no exit code contributes nothing. Otherwise the outcome is
+    appended to the bounded window persisted in ``vibe_signals`` — exit 0 reads
+    as ``ok``, any non-zero exit as ``fail``. No output parsing.
     """
-    signal = classify_signal(payload.exit_code, payload.stdout)
-    if signal is None:
+    if payload.exit_code is None:
         return
 
+    outcome = Outcome.from_exit_code(payload.exit_code)
     try:
-        log = SignalLog.deserialize(ConfigStore(config_dir).read().vibe_signals or "")
-        log.append(Signal.now(signal))
-        ConfigStore(config_dir).write_field("vibe_signals", log.serialize())
+        window = OutcomeWindow.deserialize(
+            ConfigStore(config_dir).read().vibe_signals or ""
+        )
+        window.record(outcome)
+        ConfigStore(config_dir).write_field("vibe_signals", window.serialize())
     except (OSError, ValueError) as exc:
-        logger.warning("post-bash: cannot save vibe signal in %s: %s", config_dir, exc)
+        logger.warning("post-bash: cannot save vibe outcome in %s: %s", config_dir, exc)
 
 
 # Notification — permission/idle prompt audio alerts

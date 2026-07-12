@@ -20,7 +20,6 @@ from punt_vox.hooks import (
     _repo_name_from_cwd,  # pyright: ignore[reportPrivateUsage]
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     _with_repo_name,  # pyright: ignore[reportPrivateUsage]
-    classify_signal,
     handle_notification,
     handle_post_bash,
     handle_pre_compact,
@@ -40,7 +39,7 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
-from punt_vox.signal import Signal, SignalLog
+from punt_vox.vibe_mood import DEFAULT_THRESHOLDS
 
 if TYPE_CHECKING:
     import pytest
@@ -55,7 +54,7 @@ def _make_config(
     notify: str = "y",
     speak: str = "y",
     vibe: str | None = None,
-    vibe_signals: str | None = "tests-pass@12:00",
+    vibe_signals: str | None = "ok",
     voice: str | None = None,
     repo_name: str | None = None,
 ) -> VoxConfig:
@@ -71,150 +70,6 @@ def _make_config(
         vibe_signals=vibe_signals,
         repo_name=repo_name,
     )
-
-
-# ---------------------------------------------------------------------------
-# classify_signal tests
-# ---------------------------------------------------------------------------
-
-
-class TestClassifySignal:
-    def test_tests_pass(self) -> None:
-        assert classify_signal(0, "5 passed in 1.2s") == "tests-pass"
-
-    def test_tests_pass_checkmark(self) -> None:
-        assert classify_signal(0, "✓ 3 passed") == "tests-pass"
-
-    def test_tests_fail(self) -> None:
-        assert classify_signal(1, "FAILED tests/test_foo.py") == "tests-fail"
-
-    def test_lint_fail(self) -> None:
-        assert classify_signal(1, "Found 3 errors") == "lint-fail"
-
-    def test_lint_pass(self) -> None:
-        assert classify_signal(0, "0 errors, 0 warnings") == "lint-pass"
-
-    def test_merge_conflict(self) -> None:
-        assert classify_signal(1, "CONFLICT (content): file.py") == "merge-conflict"
-
-    def test_git_push_ok(self) -> None:
-        assert classify_signal(0, "Everything up-to-date") == "git-push-ok"
-
-    def test_git_push_ok_branch(self) -> None:
-        assert classify_signal(0, "abc1234..def5678 -> main") == "git-push-ok"
-
-    def test_git_commit(self) -> None:
-        assert classify_signal(0, "[main abc1234] fix: thing") == "git-commit"
-
-    def test_pr_created(self) -> None:
-        assert classify_signal(0, "https://github.com/org/repo/pull/42") == "pr-created"
-
-    def test_cmd_fail_generic(self) -> None:
-        assert classify_signal(1, "some unknown output") == "cmd-fail"
-
-    def test_no_match_success(self) -> None:
-        assert classify_signal(0, "some unknown output") is None
-
-    def test_empty_output(self) -> None:
-        assert classify_signal(0, "") is None
-
-    def test_none_exit_code_no_match(self) -> None:
-        assert classify_signal(None, "some output") is None
-
-    def test_git_commit_not_first_line(self) -> None:
-        # re.MULTILINE: ^ matches line starts, not just string start
-        output = "some preamble\n[main abc1234] fix: thing\n"
-        assert classify_signal(0, output) == "git-commit"
-
-    def test_negative_exit_code_string(self) -> None:
-        # Negative exit codes passed as strings should still classify
-        assert classify_signal(-1, "some unknown output") == "cmd-fail"
-
-
-class TestClassifySignalRegressions:
-    """The audited false positives that made every session 'frustrated'.
-
-    Each case exits 0 (a success) yet the old classifier logged it as a
-    test failure because it matched a bare case-insensitive substring
-    (``error``/``failed``/``AssertionError``) in incidental text.
-    """
-
-    _FAILURE_SIGNALS = frozenset(
-        {"tests-fail", "lint-fail", "cmd-fail", "merge-conflict"}
-    )
-
-    def test_error_filename_in_output_is_not_a_failure(self) -> None:
-        # A command that names client_errors.py must not read as a failure.
-        out = "processing src/punt_vox/client_errors.py\ndone"
-        assert classify_signal(0, out) not in self._FAILURE_SIGNALS
-
-    def test_commit_of_error_handling_file_is_git_commit(self) -> None:
-        out = (
-            "[main a1b2c3d] fix: improve error handling in client_errors.py\n"
-            " 1 file changed, 10 insertions(+), 2 deletions(-)"
-        )
-        assert classify_signal(0, out) == "git-commit"
-
-    def test_pr_with_error_in_title_is_pr_created(self) -> None:
-        out = (
-            "Creating pull request for fix/error-handling into main\n"
-            "https://github.com/punt-labs/vox/pull/300"
-        )
-        signal = classify_signal(0, out)
-        assert signal == "pr-created"
-        assert signal != "tests-fail"
-
-    def test_passing_summary_at_end_of_long_output(self) -> None:
-        # The verdict lives at the END of a make/pytest run. The old code
-        # scanned only stdout[:500] and never saw it.
-        preamble = "collecting ...\n" + ("." * 3000) + "\n"
-        out = preamble + "==== 2534 passed in 45.20s ===="
-        assert len(preamble) > 500  # the summary is well past the old window
-        assert classify_signal(0, out) == "tests-pass"
-
-    def test_real_test_failure_still_classifies(self) -> None:
-        out = (
-            "FAILED tests/test_x.py::test_foo - AssertionError: 1 != 2\n"
-            "==== 1 failed, 3 passed in 2.10s ===="
-        )
-        assert classify_signal(1, out) == "tests-fail"
-
-
-class TestSuccessfulSessionResolvesNonFrustrated:
-    """End-to-end: a productive session must not sound frustrated."""
-
-    @staticmethod
-    def _resolve(commands: list[tuple[int, str]]) -> str:
-        log = SignalLog()
-        for exit_code, out in commands:
-            signal = classify_signal(exit_code, out)
-            assert signal is not None
-            log.append(Signal.now(signal))
-        return log.resolve_tags()
-
-    def test_ship_it_session_is_satisfied(self) -> None:
-        tags = self._resolve(
-            [
-                (0, "All checks passed!"),
-                (0, "==== 2534 passed in 45s ===="),
-                (0, "[main a1b2c3d] feat: add thing"),
-                (0, "==== 2534 passed in 44s ===="),
-                (0, "   abc1234..def5678  main -> main"),
-            ]
-        )
-        assert "[frustrated]" not in tags
-
-    def test_passing_checks_naming_error_files_is_not_frustrated(self) -> None:
-        # Reproduces the bug: every make check names client_errors.py but
-        # PASSES. The old classifier logged a pile of tests-fail from the
-        # incidental "error" substring; the mood resolved to frustrated.
-        log = SignalLog()
-        for _ in range(6):
-            out = "checking src/punt_vox/client_errors.py ...\n2534 passed in 45s"
-            signal = classify_signal(0, out)
-            assert signal == "tests-pass"
-            log.append(Signal.now(signal))
-        assert "[frustrated]" not in log.resolve_tags()
 
 
 # ---------------------------------------------------------------------------
@@ -270,13 +125,14 @@ class TestHandleStop:
         self, mock_cs: MagicMock
     ) -> None:
         # The vibe-tag write lands in the config_dir resolved from the
-        # session cwd, not a re-resolved Path.cwd().
-        config = _make_config(vibe_signals="tests-pass@01:00,git-push-ok@02:00")
+        # session cwd, not a re-resolved Path.cwd(). Three trailing fails
+        # resolve to frustrated.
+        config = _make_config(vibe_signals="ok,fail,fail,fail")
         handle_stop(_stop(), config, _CONFIG_DIR)
         mock_cs.assert_called_once_with(_CONFIG_DIR)
         assert mock_cs.return_value.write_fields.call_count == 1
         assert mock_cs.return_value.write_fields.call_args == call(
-            {"vibe_tags": "[satisfied]", "vibe_signals": ""}
+            {"vibe_tags": "[frustrated] [sighs]", "vibe_signals": ""}
         )
 
     @patch("punt_vox.hooks.ConfigStore")
@@ -455,12 +311,12 @@ class TestHandleNotification:
 
 
 class TestHandlePostBash:
-    def test_appends_signal(self, tmp_path: Path) -> None:
+    def test_records_ok_on_zero_exit(self, tmp_path: Path) -> None:
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
 
-        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        payload = BashPayload(exit_code=0, stdout="anything at all")
         handle_post_bash(payload, config_dir)
 
         # vibe_signals is ephemeral — written to vox.local.md
@@ -468,33 +324,45 @@ class TestHandlePostBash:
         assert local_md.exists()
         text = local_md.read_text()
         assert "vibe_signals" in text
-        assert "tests-pass" in text
+        assert "ok" in text
 
-    def test_no_signal_no_write(self, tmp_path: Path) -> None:
+    def test_records_fail_on_nonzero_exit(self, tmp_path: Path) -> None:
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
 
-        payload = BashPayload(exit_code=0, stdout="hello world")
+        # Exit code alone decides — the output text is never parsed.
+        payload = BashPayload(exit_code=1, stdout="2534 passed")
         handle_post_bash(payload, config_dir)
 
-        # No signal matched — vox.local.md should not be created
+        local_md = config_dir / "vox.local.md"
+        text = local_md.read_text()
+        assert 'vibe_signals: "fail"' in text
+
+    def test_none_exit_code_no_write(self, tmp_path: Path) -> None:
+        config_dir = tmp_path
+        vox_md = config_dir / "vox.md"
+        vox_md.write_text('---\nnotify: "y"\n---\n')
+
+        # A command with no exit code contributes nothing.
+        payload = BashPayload(exit_code=None, stdout="5 passed in 1.2s")
+        handle_post_bash(payload, config_dir)
+
         local_md = config_dir / "vox.local.md"
         assert not local_md.exists()
 
-    def test_accumulates_signals(self, tmp_path: Path) -> None:
+    def test_accumulates_outcomes(self, tmp_path: Path) -> None:
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
         local_md = config_dir / "vox.local.md"
-        local_md.write_text('---\nvibe_signals: "lint-pass@11:00"\n---\n')
+        local_md.write_text('---\nvibe_signals: "ok,fail"\n---\n')
 
-        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        payload = BashPayload(exit_code=0, stdout="done")
         handle_post_bash(payload, config_dir)
 
         text = local_md.read_text()
-        assert "lint-pass@11:00" in text
-        assert "tests-pass" in text
+        assert 'vibe_signals: "ok,fail,ok"' in text
 
     def test_invalid_tool_response(self, tmp_path: Path) -> None:
         config_dir = tmp_path
@@ -507,30 +375,29 @@ class TestHandlePostBash:
         local_md = config_dir / "vox.local.md"
         assert not local_md.exists()
 
-    def test_prunes_signals_at_max(self, tmp_path: Path) -> None:
-        max_entries = SignalLog.MAX_ENTRIES
+    def test_prunes_outcomes_at_max(self, tmp_path: Path) -> None:
+        max_window = DEFAULT_THRESHOLDS.max_window
         config_dir = tmp_path
         vox_md = config_dir / "vox.md"
         vox_md.write_text('---\nnotify: "y"\n---\n')
         local_md = config_dir / "vox.local.md"
-        # Seed with exactly MAX signals already present
-        existing = ",".join(f"old-{i}@00:00" for i in range(max_entries))
+        # Seed with a full window of fails already present.
+        existing = ",".join("fail" for _ in range(max_window))
         local_md.write_text(f'---\nvibe_signals: "{existing}"\n---\n')
 
-        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        payload = BashPayload(exit_code=0, stdout="done")
         handle_post_bash(payload, config_dir)
 
         text = local_md.read_text()
-        # Extract the vibe_signals value
         for line in text.splitlines():
             if "vibe_signals" in line:
                 signals = line.split(":", 1)[1].strip().strip('"')
                 parts = signals.split(",")
-                assert len(parts) == max_entries
-                # Oldest signal should have been pruned
-                assert "old-0@00:00" not in signals
-                # New signal should be present
-                assert "tests-pass@" in signals
+                assert len(parts) == max_window
+                # The newest outcome is the ok we just appended.
+                assert parts[-1] == "ok"
+                # One fail was evicted to make room.
+                assert parts.count("fail") == max_window - 1
                 break
         else:
             raise AssertionError("vibe_signals not found in config")
@@ -541,7 +408,7 @@ class TestHandlePostBash:
         # A corrupt/unwritable vox.local.md must not crash the PostToolUse hook.
         config_dir = tmp_path
         (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
-        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
+        payload = BashPayload(exit_code=0, stdout="done")
         with (
             patch.object(
                 ConfigStore, "write_field", side_effect=OSError("read-only fs")

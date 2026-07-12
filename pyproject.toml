@@ -120,7 +120,6 @@ ignore = [
 "src/punt_vox/voxd/speech_handlers.py" = ["C901"]
 "src/punt_vox/client.py" = ["PLC0415", "C901"]
 "src/punt_vox/hooks.py" = ["T20", "PLC0415", "S603", "S607", "S311"]
-"src/punt_vox/watcher.py" = ["PLC0415", "C901"]
 "src/punt_vox/types_synthesis.py" = ["C901"]
 "src/punt_vox/paths.py" = ["PLC0415"]
 "src/punt_vox/service/__init__.py" = ["PLC0415"]
