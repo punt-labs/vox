@@ -12,7 +12,7 @@ from collections.abc import Iterator, Mapping
 from enum import StrEnum
 from typing import Self
 
-from punt_vox.voxd.programs.identifiers import Reason
+from punt_vox.types_programs.identifiers import Reason
 
 __all__ = ["FrozenParts", "Part", "PartStatus"]
 

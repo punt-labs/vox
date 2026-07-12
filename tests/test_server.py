@@ -15,7 +15,6 @@ from _program_fakes import FakeProgramGateway
 from punt_vox.client import SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
-from punt_vox.program_control import ProgramSummary
 from punt_vox.resolve import (
     apply_vibe,
     split_leading_expressive_tags,
@@ -36,15 +35,10 @@ from punt_vox.server import (
     who,
 )
 from punt_vox.types import VoiceNotFoundError
+from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
+from punt_vox.types_programs.control import ProgramSummary
 from punt_vox.voices import voice_not_found_message
-from punt_vox.voxd.programs import (
-    Part,
-    Program,
-    ProgramName,
-    ProgramState,
-    ProgramStatus,
-    Reason,
-)
+from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
 
 
@@ -1104,7 +1098,7 @@ class TestStatusTool:
         program.first_track_ok(Part("id001", 1))
         _install_fake(
             monkeypatch,
-            FakeProgramGateway(status=ProgramStatus.of(program, ProgramName("amb"))),
+            FakeProgramGateway(status=program.to_status(ProgramName("amb"))),
         )
         assert json.loads(status())["music_mode"] == "on"
 
@@ -1131,7 +1125,7 @@ class TestStatusTool:
         program = Program(ProgramState.initial(), _StatusPolicy())
         program.turn_on()
         program.first_track_ok(Part("id001", 1))
-        fake.set_status(ProgramStatus.of(program, ProgramName("amb")))
+        fake.set_status(program.to_status(ProgramName("amb")))
         assert json.loads(status())["music_mode"] == "on"
 
 
@@ -1419,7 +1413,7 @@ class TestStatusProgramSurface:
         program.turn_on()
         program.first_track_ok(Part("id001", 1))
         program.fill_bad_part(Part("id002", 2), Reason("bad_prompt: unsafe"))
-        status_value = ProgramStatus.of(program, ProgramName("ambient_techno"))
+        status_value = program.to_status(ProgramName("ambient_techno"))
         _install_fake(monkeypatch, FakeProgramGateway(status=status_value))
 
         block = json.loads(status())["program"]
@@ -1442,7 +1436,7 @@ class TestStatusProgramSurface:
         program = Program(ProgramState.initial(), _StatusPolicy())
         program.turn_on()
         program.first_track_ok(Part("id001", 1))
-        fake.set_status(ProgramStatus.of(program, ProgramName("ambient_techno")))
+        fake.set_status(program.to_status(ProgramName("ambient_techno")))
 
         second = json.loads(status())["program"]
         assert second["name"] == "ambient_techno"

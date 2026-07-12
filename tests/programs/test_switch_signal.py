@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from punt_vox.music_prompts import PromptSet
-from punt_vox.voxd.programs import Format, Mode, Program, ProgramState
+from punt_vox.types_programs import Format, Mode
+from punt_vox.types_programs.prompts import PromptSet
+from punt_vox.voxd.programs import Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext, ActiveProgram
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags

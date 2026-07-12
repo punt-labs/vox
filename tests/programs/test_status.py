@@ -13,18 +13,10 @@ from collections.abc import Callable
 
 import pytest
 
-from punt_vox.voxd.programs import (
-    Format,
-    Mode,
-    Part,
-    Program,
-    ProgramName,
-    ProgramState,
-    ProgramStatus,
-    Reason,
-)
-from punt_vox.voxd.programs.playback_health import PlaybackFault, PlaybackFaultKind
-from punt_vox.voxd.programs.wire import JsonObject
+from punt_vox.types_programs import Format, Mode, ProgramName, ProgramStatus, Reason
+from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
+from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.programs import Part, Program, ProgramState
 
 from .conftest import AvoidRepeatPolicy, build_rotating, make_manifest
 
@@ -49,7 +41,7 @@ def test_idle_has_no_name() -> None:
 
 def test_off_with_saved_pool_names_the_program() -> None:
     """An off Program with a disk pool reports name set, off, nothing playing (O1)."""
-    status = ProgramStatus.of(_restored(1, 2, 3), ProgramName("x"))
+    status = _restored(1, 2, 3).to_status(ProgramName("x"))
 
     assert status.name == ProgramName("x")
     assert not status.is_idle
@@ -61,7 +53,7 @@ def test_playing_reports_part_n_of_m() -> None:
     """A rotating Program reports the playing Part's 1-based position and pool size."""
     program = build_rotating(AvoidRepeatPolicy())
 
-    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    status = program.to_status(ProgramName("ambient_techno"))
 
     assert status.mode is Mode.PLAYING_ROTATING
     assert status.now_playing is not None
@@ -80,7 +72,7 @@ def test_now_playing_reports_position_not_intrinsic_index_across_a_gap() -> None
     program = Program(ProgramState.restored(Format.PLAYLIST, pool), AvoidRepeatPolicy())
     program.start_from_disk(Part("id004", 4))
 
-    status = ProgramStatus.of(program, ProgramName("gapped"))
+    status = program.to_status(ProgramName("gapped"))
 
     assert status.now_playing is not None
     assert status.now_playing.index == 3  # the position-3 it holds, not intrinsic 4
@@ -95,7 +87,7 @@ def test_both_failure_surfaces_present_and_distinct() -> None:
     program.first_track_ok(Part("id001", 1))
     program.fill_bad_part(Part("id002", 2), Reason("bad_prompt: unsafe"))
 
-    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    status = program.to_status(ProgramName("ambient_techno"))
 
     # Per-Part surface carries the failure; program-level error stays clear.
     assert len(status.failed_parts) == 1
@@ -111,7 +103,7 @@ def test_program_level_failure_sets_last_error() -> None:
     program.turn_on()
     program.first_track_bad_prompt(Part("id001", 1), Reason("bad_prompt: nope"))
 
-    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    status = program.to_status(ProgramName("ambient_techno"))
 
     assert status.mode is Mode.FAILED
     assert status.generation.last_error is not None
@@ -123,8 +115,8 @@ def test_program_level_failure_sets_last_error() -> None:
     "build",
     [
         ProgramStatus.idle,
-        lambda: ProgramStatus.of(_restored(1, 2), ProgramName("saved")),
-        lambda: ProgramStatus.of(build_rotating(AvoidRepeatPolicy()), ProgramName("r")),
+        lambda: _restored(1, 2).to_status(ProgramName("saved")),
+        lambda: build_rotating(AvoidRepeatPolicy()).to_status(ProgramName("r")),
     ],
 )
 def test_wire_round_trips(build: Callable[[], ProgramStatus]) -> None:
@@ -145,7 +137,7 @@ def test_playback_error_surfaces_and_round_trips() -> None:
         kind=PlaybackFaultKind.SPAWN,
     )
 
-    original = ProgramStatus.of(program, ProgramName("ambient_techno"), fault)
+    original = program.to_status(ProgramName("ambient_techno"), fault)
 
     assert original.playback_error == fault
     restored = ProgramStatus.from_wire(JsonObject.coerce(original.to_dict(), "status"))
@@ -189,7 +181,7 @@ def test_healthy_player_has_no_playback_error() -> None:
     """Absent a spawn fault, status carries playback_error None (healthy contract)."""
     program = build_rotating(AvoidRepeatPolicy())
 
-    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    status = program.to_status(ProgramName("ambient_techno"))
 
     assert status.playback_error is None
     assert status.to_dict()["playback_error"] is None
@@ -201,7 +193,7 @@ def test_wire_round_trips_failed_parts() -> None:
     program.turn_on()
     program.first_track_ok(Part("id001", 1))
     program.fill_bad_part(Part("id002", 2), Reason("ToS violation"))
-    original = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    original = program.to_status(ProgramName("ambient_techno"))
 
     restored = ProgramStatus.from_wire(JsonObject.coerce(original.to_dict(), "status"))
 

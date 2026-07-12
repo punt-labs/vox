@@ -22,8 +22,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, final
 
+from punt_vox.types_programs.format import MAX_RETRY
 from punt_vox.voxd.programs.fill_recorder import FillRecorder
-from punt_vox.voxd.programs.format import MAX_RETRY
 from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -34,7 +34,7 @@ from punt_vox.voxd.programs.producer import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from punt_vox.music_prompts import PromptSet
+    from punt_vox.types_programs.prompts import PromptSet
     from punt_vox.voxd.programs.album_tags import AlbumTags
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.producer import Producer

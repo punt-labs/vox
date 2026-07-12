@@ -1,11 +1,8 @@
 """The request and result value objects the surfaces exchange with the daemon.
 
-The vocabulary of the :class:`~punt_vox.program_gateway.ProgramGateway` seam: the
-authoring request (:class:`StartRequest`), the replay request
-(:class:`SelectionRequest`), the applied/rejected result
-(:class:`CommandOutcome`), and a catalogue entry (:class:`ProgramSummary`). Plain
-value objects with no I/O, so the CLI, the MCP tools, and their test fakes share
-the types without importing the daemon.
+The ProgramGateway vocabulary -- the ``StartRequest``/``SelectionRequest`` inputs,
+the applied/rejected :class:`CommandOutcome`, and the :class:`ProgramSummary`
+catalogue entry -- plain value objects with no I/O, shared by CLI, MCP, and fakes.
 """
 
 from __future__ import annotations
@@ -13,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self, final
 
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs.prompts import PromptSet
 
 __all__ = ["CommandOutcome", "ProgramSummary", "SelectionRequest", "StartRequest"]
 
@@ -23,10 +20,9 @@ __all__ = ["CommandOutcome", "ProgramSummary", "SelectionRequest", "StartRequest
 class StartRequest:
     """The authoring input for turning a Program on (the ``music on`` command).
 
-    All fields optional: ``style`` persists across calls, ``vibe`` is the session
-    mood recorded as the album's vibe tag, ``name`` binds a curated
-    album, ``prompts`` carries the agent base + per-slot variations (``None`` => a
-    minimal literal fallback -- absence is the contract, PY-TS-14).
+    All fields optional: ``style`` persists, ``vibe`` is the session mood tag,
+    ``name`` binds a curated album, ``prompts`` carries the agent base + per-slot
+    variations (``None`` => a minimal literal fallback -- absence is the contract).
     """
 
     style: str | None = None
@@ -55,10 +51,14 @@ class SelectionRequest:
 @final
 @dataclass(frozen=True, slots=True)
 class CommandOutcome:
-    """Whether the daemon applied a command, and a line about it (design F7).
+    """Whether the daemon applied a command, and a line describing the result.
 
-    A command whose Z precondition no longer held (a lost race -- ``next`` just
-    after ``off``) is *rejected*, not an error; the caller observes which.
+    The live protocol acks at *enqueue* with a bare reply (no ``applied`` flag),
+    so a command always parses to ``applied=True`` with an empty ``message``; the
+    rejected ``applied=False`` path is caught-and-logged in the daemon's async
+    apply and not yet sent. The flag and forward-looking parse are kept so
+    surfacing rejection later stays a daemon-side change, not a client-contract
+    change.
     """
 
     applied: bool
@@ -71,11 +71,11 @@ class CommandOutcome:
 
     @classmethod
     def rejected(cls, message: str) -> Self:
-        """Return a rejected (lost-race) outcome carrying ``message``."""
+        """Return a rejected outcome (forward-looking; unused by the live daemon)."""
         return cls(applied=False, message=message)
 
     def display(self, applied_default: str) -> str:
-        """Return the daemon's reason, or ``applied_default`` when silent (F4/F7)."""
+        """Return the daemon's reason, or ``applied_default`` when it is silent."""
         return self.message or applied_default
 
 

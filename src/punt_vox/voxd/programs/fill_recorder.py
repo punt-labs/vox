@@ -15,13 +15,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_programs.identifiers import Reason
 from punt_vox.voxd.programs.fill_guard import FreshFillOutcome
 from punt_vox.voxd.programs.fill_signal import (
     PermanentFailure,
     Produced,
     TransientFailure,
 )
-from punt_vox.voxd.programs.identifiers import Reason
 from punt_vox.voxd.programs.manifest import PartEntry
 from punt_vox.voxd.programs.part import Part, PartStatus
 

@@ -4,14 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from punt_vox.voxd.programs import (
-    Format,
-    Mode,
-    Part,
-    PlaybackPolicy,
-    Program,
-    ProgramState,
-)
+from punt_vox.types_programs import Format, Mode
+from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange

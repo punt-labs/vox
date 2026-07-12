@@ -162,21 +162,39 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 vox is also a Python library — the same `voxd` daemon the plugin and CLI use, driven from your own code (`vox install` is the only setup):
 
 ```python
-from punt_vox import VoxClientSync, SynthesisSpec
+from punt_vox import VoxClientSync, SynthesisSpec, VoxError
 
-vox = VoxClientSync()
+vox = VoxClientSync()  # connects per call — no setup, no teardown
 
-# Speak text through the daemon (plays on the local audio device):
-vox.synthesize("Build finished", SynthesisSpec(voice="sarah"))
+try:
+    # Speak text through the daemon (plays on the local audio device):
+    vox.synthesize("Build finished", SynthesisSpec(voice="sarah"))
 
-# ...or get the MP3 bytes to save or stream yourself:
-audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
+    # ...or get the MP3 bytes to save or stream yourself:
+    audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
 
-# List the voices the active provider offers:
-print(vox.voices())
+    # List the voices the active provider offers:
+    print(vox.voices())
+except VoxError as exc:  # VoxdConnectionError (daemon down) or VoxdProtocolError
+    print(f"vox failed: {exc}")
 ```
 
-`VoxClient` is the async equivalent. All four names are exported from the top level: `from punt_vox import VoxClient, VoxClientSync, SynthesisSpec, SynthesizeResult`.
+`VoxClient` is the async equivalent — it connects once and is an async context manager:
+
+```python
+import asyncio
+from punt_vox import VoxClient, SynthesisSpec
+
+async def main() -> None:
+    async with VoxClient() as vox:      # connect on enter, close on exit
+        await vox.synthesize("Tests green", SynthesisSpec(voice="sarah"))
+        health = await vox.health()     # typed HealthStatus, not a bare dict
+        print(health.provider, health.daemon_version)
+
+asyncio.run(main())
+```
+
+Every failure raises a `VoxError` subclass, and `health()` / `program_*` return typed results (`HealthStatus`, `ProgramStatus`, …) rather than bare dicts. The public names — `VoxClient`, `VoxClientSync`, `SynthesisSpec`, `SynthesizeResult`, `VoxError`, `VoxdConnectionError`, `VoxdProtocolError`, `HealthStatus`, `ProgramStatus`, `CommandOutcome`, `ProgramSummary`, `PromptSet` — are all exported from the top level (the package ships `py.typed`). Importing `punt_vox` pulls no provider SDK or daemon internals, so it stays light in a library context.
 
 ## Remote Audio
 

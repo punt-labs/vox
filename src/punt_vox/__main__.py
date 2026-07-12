@@ -621,7 +621,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     daemon_status = "not running"
     try:
         health = VoxClientSync().health()
-        daemon_provider = str(health.get("provider", ""))
+        daemon_provider = health.provider
         daemon_status = "running"
     except (VoxdConnectionError, VoxdProtocolError):
         pass

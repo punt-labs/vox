@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs import MAX_RETRY, Format
+from punt_vox.types_programs import MAX_RETRY, Format
 
 
 @pytest.mark.parametrize(

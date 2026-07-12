@@ -19,11 +19,12 @@ from websockets.exceptions import WebSocketException
 
 from punt_vox.cli_music import MusicCli, build_music_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.program_control import ProgramSummary
-from punt_vox.voxd.programs import Part, Program, ProgramState, Reason
-from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.types_programs import Reason
+from punt_vox.types_programs.control import ProgramSummary
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
-from punt_vox.voxd.programs.status import ProgramStatus
 
 
 class _AvoidRepeat:
@@ -168,7 +169,7 @@ def test_status_renders_now_playing_and_failures() -> None:
     program.turn_on()
     program.first_track_ok(Part("id001", 1))
     program.fill_bad_part(Part("id002", 2), Reason("ToS"))
-    status = ProgramStatus.of(program, ProgramName("ambient_techno"))
+    status = program.to_status(ProgramName("ambient_techno"))
     cli, formatter = _cli(FakeProgramGateway(status=status))
 
     cli.status()

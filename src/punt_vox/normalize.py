@@ -597,16 +597,11 @@ def _normalize_token(token: str) -> str:
 
     # snake_case: split on underscores, process each part
     if _HAS_UNDERSCORE.search(core):
-        parts = core.split("_")
-        expanded = " ".join(_expand_part(p) for p in parts if p)
-        return expanded + suffix
+        return _expand_parts(core.split("_"), suffix)
 
     # camelCase / PascalCase: split on case boundaries
     if _HAS_CAMEL.search(core):
-        split = _CAMEL_BOUNDARY.sub(" ", core)
-        parts = split.split()
-        expanded = " ".join(_expand_part(p) for p in parts)
-        return expanded + suffix
+        return _expand_parts(_CAMEL_BOUNDARY.sub(" ", core).split(), suffix)
 
     # Standalone abbreviation
     expanded = _expand_abbreviation(core)
@@ -621,6 +616,16 @@ def _normalize_token(token: str) -> str:
 
     # Return reconstructed token (punctuation may have been stripped)
     return core + suffix
+
+
+def _expand_parts(parts: list[str], suffix: str) -> str:
+    """Expand each identifier part, rejoin with spaces, and append *suffix*.
+
+    The shared tail of the snake_case and camelCase branches: both split an
+    identifier into parts and differ only in how they split, so the
+    expand-and-rejoin step lives here once.
+    """
+    return " ".join(_expand_part(p) for p in parts if p) + suffix
 
 
 def _expand_part(part: str) -> str:

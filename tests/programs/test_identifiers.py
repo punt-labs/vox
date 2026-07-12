@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs import Format, PartRef, ProgramName, Reason
+from punt_vox.types_programs import Format, PartRef, ProgramName, Reason
 
 
 class TestReason:

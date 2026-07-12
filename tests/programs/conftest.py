@@ -20,16 +20,15 @@ from typing import Self, final
 
 import pytest
 
+from punt_vox.types_programs import Format, Reason
 from punt_vox.voxd.programs import (
     COMPLETE,
     Advance,
     AdvanceResult,
-    Format,
     Part,
     PlaybackPolicy,
     Program,
     ProgramState,
-    Reason,
 )
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint

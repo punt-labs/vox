@@ -1,32 +1,26 @@
 """Tests for the gateway layer: control DTOs and the client-backed adapter.
 
 The DTOs (:mod:`punt_vox.program_control`) are pure value objects; the adapter
-(:class:`ClientProgramGateway`) is the wire translation, tested against a mocked
-``VoxClientSync`` so no daemon is needed. Both failure surfaces of the F7 result
-(applied vs rejected) are exercised.
+(:class:`ClientProgramGateway`) is a thin verb-adapter that delegates each call
+to the matching ``program_*`` method on a ``VoxClientSync`` and returns the
+typed value the client already parsed. Tested against a mocked client so no
+daemon is needed. Wire parsing itself lives on the client (``test_client.py``).
 """
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 from punt_vox.client_gateway import ClientProgramGateway
-from punt_vox.program_control import (
+from punt_vox.types_programs import Format, Mode
+from punt_vox.types_programs.control import (
     CommandOutcome,
     ProgramSummary,
     SelectionRequest,
     StartRequest,
 )
-from punt_vox.voxd.programs import (
-    Format,
-    Mode,
-    Part,
-    Program,
-    ProgramState,
-    ProgramStatus,
-)
-from punt_vox.voxd.programs.identifiers import ProgramName
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
 
 
@@ -89,29 +83,24 @@ def test_program_summary_display_line() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _status_dict(program: Program, name: str) -> dict[str, Any]:
-    return ProgramStatus.of(program, ProgramName(name)).to_dict()
-
-
-def test_status_parses_the_daemon_reply() -> None:
-    """status() returns the ProgramStatus the daemon reported, parsed from wire."""
+def test_status_delegates_and_returns_the_client_status() -> None:
+    """status() returns the typed ProgramStatus the client already parsed."""
     program = _build_rotating()
+    parsed = program.to_status(ProgramName("ambient_techno"))
     client = MagicMock()
-    client.program_status.return_value = {
-        "status": _status_dict(program, "ambient_techno")
-    }
+    client.program_status.return_value = parsed
 
     status = ClientProgramGateway(client).status()
 
+    client.program_status.assert_called_once_with()
+    assert status is parsed
     assert status.mode is Mode.PLAYING_ROTATING
-    assert status.name == ProgramName("ambient_techno")
-    assert status.now_playing is not None
 
 
-def test_start_forwards_request_and_reads_applied() -> None:
-    """start() forwards the authored request and reads the F7 applied result."""
+def test_start_forwards_request_and_returns_the_outcome() -> None:
+    """start() forwards the authored request and returns the client's outcome."""
     client = MagicMock()
-    client.program_on.return_value = {"applied": True, "message": "on"}
+    client.program_on.return_value = CommandOutcome.ok("on")
 
     outcome = ClientProgramGateway(client).start(StartRequest(style="techno"))
 
@@ -121,41 +110,27 @@ def test_start_forwards_request_and_reads_applied() -> None:
     assert outcome == CommandOutcome(applied=True, message="on")
 
 
-def test_rejected_command_surfaces_as_not_applied() -> None:
-    """A daemon reply of applied=false becomes a rejected CommandOutcome."""
+def test_advance_returns_the_client_outcome() -> None:
+    """advance() delegates to program_next and returns its CommandOutcome."""
     client = MagicMock()
-    client.program_next.return_value = {"applied": False, "message": "lost race"}
+    client.program_next.return_value = CommandOutcome.rejected("lost race")
 
     outcome = ClientProgramGateway(client).advance()
 
+    client.program_next.assert_called_once_with()
     assert outcome.applied is False
     assert outcome.message == "lost race"
 
 
-def test_missing_applied_defaults_to_applied() -> None:
-    """A reply omitting 'applied' is treated as applied (absence == went through)."""
+def test_stop_delegates_to_program_off() -> None:
+    """stop() delegates to program_off and returns its outcome."""
     client = MagicMock()
-    client.program_off.return_value = {}
+    client.program_off.return_value = CommandOutcome.ok("")
 
     outcome = ClientProgramGateway(client).stop()
 
+    client.program_off.assert_called_once_with()
     assert outcome.applied is True
-
-
-def test_rejection_without_message_gets_a_non_empty_reason() -> None:
-    """A rejected reply with no message never surfaces a blank line (F4/F7).
-
-    The surfaces render ``outcome.message or <canned>``, so a rejection must
-    carry its own reason -- otherwise a refused command would show a success
-    line. The gateway guarantees it.
-    """
-    client = MagicMock()
-    client.program_next.return_value = {"applied": False}
-
-    outcome = ClientProgramGateway(client).advance()
-
-    assert outcome.applied is False
-    assert outcome.message  # non-empty: the surfaces must have something to show
 
 
 def test_command_outcome_display_prefers_reason_over_default() -> None:
@@ -168,7 +143,7 @@ def test_command_outcome_display_prefers_reason_over_default() -> None:
 def test_select_by_tags_forwards_the_query() -> None:
     """select() forwards the tag query (style/vibe/name) to the wire."""
     client = MagicMock()
-    client.program_select.return_value = {"applied": True, "message": "ok"}
+    client.program_select.return_value = CommandOutcome.ok("ok")
 
     ClientProgramGateway(client).select(SelectionRequest(style="trance", vibe="calm"))
 
@@ -180,7 +155,7 @@ def test_select_by_tags_forwards_the_query() -> None:
 def test_select_by_id_forwards_the_album_id() -> None:
     """select() forwards an exact album id as a direct lookup."""
     client = MagicMock()
-    client.program_select.return_value = {"applied": True, "message": "ok"}
+    client.program_select.return_value = CommandOutcome.ok("ok")
 
     ClientProgramGateway(client).select(SelectionRequest(id="a3f1c9"))
 
@@ -189,34 +164,9 @@ def test_select_by_id_forwards_the_album_id() -> None:
     )
 
 
-def test_catalog_parses_summaries() -> None:
-    """catalog() parses the album list into typed summaries (id + tags)."""
-    client = MagicMock()
-    client.program_list.return_value = {
-        "programs": [
-            {
-                "id": "a3f1c9",
-                "style": "trance",
-                "vibe": "calm",
-                "name": "mix",
-                "format": "music",
-                "ready": 5,
-                "total": 12,
-            },
-            {
-                "id": "7b2e04",
-                "style": "lofi",
-                "vibe": "focus",
-                "name": None,
-                "format": "music",
-                "ready": 1,
-            },
-        ]
-    }
-
-    catalog = ClientProgramGateway(client).catalog()
-
-    assert catalog == (
+def test_catalog_returns_the_client_summaries() -> None:
+    """catalog() delegates to program_list and returns its typed summaries."""
+    summaries = (
         ProgramSummary(
             id="a3f1c9",
             style="trance",
@@ -230,16 +180,10 @@ def test_catalog_parses_summaries() -> None:
             id="7b2e04", style="lofi", vibe="focus", format="music", ready=1
         ),
     )
-
-
-def test_idle_status_round_trips_through_the_adapter() -> None:
-    """An idle daemon reply parses back into the idle status (no active Program)."""
-    program = Program(ProgramState.initial(), _AvoidRepeat())
-    program.turn_on()
-    program.first_track_ok(Part("id001", 1))
     client = MagicMock()
-    client.program_status.return_value = {"status": ProgramStatus.idle().to_dict()}
+    client.program_list.return_value = summaries
 
-    status = ClientProgramGateway(client).status()
+    catalog = ClientProgramGateway(client).catalog()
 
-    assert status.is_idle
+    client.program_list.assert_called_once_with()
+    assert catalog == summaries

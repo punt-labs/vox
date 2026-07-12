@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, NoReturn, Self, final
 
-from punt_vox.voxd.programs.format import MAX_RETRY
-from punt_vox.voxd.programs.mode import Mode
+from punt_vox.types_programs.format import MAX_RETRY
+from punt_vox.types_programs.mode import Mode
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.state import ProgramState

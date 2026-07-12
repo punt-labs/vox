@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs.active_context import (
     ActiveContext,
     ActiveProgram,

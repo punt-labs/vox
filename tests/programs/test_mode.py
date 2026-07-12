@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs import Mode, PlaybackStatus
+from punt_vox.types_programs import Mode, PlaybackStatus
 
 
 @pytest.mark.parametrize(

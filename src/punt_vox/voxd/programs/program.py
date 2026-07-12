@@ -16,15 +16,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NoReturn, Self, final
 
+from punt_vox.types_programs.mode import Mode, PlaybackStatus
+from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.types_programs.status_views import (
+    FailedPartView,
+    GenerationStatus,
+    NowPlaying,
+)
 from punt_vox.voxd.programs.guard import GuardViolationError
-from punt_vox.voxd.programs.mode import Mode, PlaybackStatus
 from punt_vox.voxd.programs.part import FrozenParts, Part
 from punt_vox.voxd.programs.playback_policy import Advance, PlaybackPolicy
 from punt_vox.voxd.programs.retry_machine import RetryMachine
 from punt_vox.voxd.programs.state import ProgramState
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.programs.identifiers import Reason
+    from punt_vox.types_programs.identifiers import ProgramName, Reason
+    from punt_vox.types_programs.playback_fault import PlaybackFault
 
 __all__ = ["Program"]
 
@@ -288,6 +295,46 @@ class Program:
     def failed_parts(self) -> FrozenParts:
         """Return the permanently-failed Parts and their reasons."""
         return self._state.failed_parts
+
+    def to_status(
+        self,
+        name: ProgramName | None,
+        playback_error: PlaybackFault | None = None,
+    ) -> ProgramStatus:
+        """Assemble this Program's runtime status for a client.
+
+        Populates all three failure surfaces (program-level error, per-Part
+        failures, playback fault) into the neutral ``ProgramStatus`` value any
+        client parses. ``name`` is the active manifest handle the pure domain
+        does not carry; ``playback_error`` is the daemon's live player fault.
+        """
+        state = self._state
+        error = None if state.last_error is None else str(state.last_error)
+        return ProgramStatus(
+            format=state.format,
+            mode=state.mode,
+            generation=GenerationStatus(
+                filling=state.filling, attempts=state.attempts, last_error=error
+            ),
+            name=name,
+            now_playing=self._now_playing(),
+            failed_parts=tuple(
+                FailedPartView(index=part.index, reason=str(reason))
+                for part, reason in state.failed_parts.ordered()
+            ),
+            playback_error=playback_error,
+        )
+
+    def _now_playing(self) -> NowPlaying | None:
+        """Return the "Part N of M" view (1-based pool position), or None.
+
+        ``N`` is the playing Part's position in the ordered ready pool so a
+        gapped pool reports "part 3 of 3", never the intrinsic "4 of 3".
+        """
+        playing = self.playing
+        if playing is None:
+            return None
+        return NowPlaying(index=self.pool.index(playing) + 1, of=len(self.pool))
 
     @staticmethod
     def _reject(message: str) -> NoReturn:

@@ -13,16 +13,27 @@ import contextlib
 import json
 import logging
 import uuid
+from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import websockets
 import websockets.asyncio.client
 
+if TYPE_CHECKING:
+    from types import TracebackType
+
 from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
+from punt_vox.types_programs import (
+    CommandOutcome,
+    HealthStatus,
+    JsonObject,
+    ProgramStatus,
+    ProgramSummary,
+    PromptSet,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
@@ -218,6 +229,17 @@ class _VoxdTransport:
             raise VoxdProtocolError(
                 f"Timeout waiting for response to '{msg_type}'"
             ) from exc
+        return self._decode(raw)
+
+    @staticmethod
+    def _decode(raw: object) -> dict[str, Any]:
+        """Parse a wire frame, raising ``VoxdProtocolError`` on an error frame.
+
+        The one place both drain and single-response paths turn ``voxd``'s
+        ``{"type": "error", "message": ...}`` into a raised protocol error, so
+        the error contract lives in a single spot rather than duplicated at
+        every receive site.
+        """
         resp: dict[str, Any] = json.loads(str(raw))
         if resp.get("type") == "error":
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
@@ -281,7 +303,31 @@ class _VoxdTransport:
 
 
 class VoxClient:
-    """Async RPC client for voxd, composing a :class:`_VoxdTransport`."""
+    """Asynchronous client for the voxd audio daemon.
+
+    Speaks voxd's RPC surface over one WebSocket connection: play speech
+    (:meth:`synthesize`), play a bundled chime (:meth:`chime`), synthesize
+    to MP3 bytes (:meth:`record`), list voices (:meth:`voices`), read daemon
+    health (:meth:`health`), and drive the audio *program* controls
+    (:meth:`program_on`, :meth:`program_status`, and the rest).
+
+    Lifecycle: call :meth:`connect` once before the first request and
+    :meth:`close` when finished, or use the client as an async context
+    manager, which connects on entry and closes on exit::
+
+        async with VoxClient() as vox:
+            await vox.synthesize("build finished")
+
+    A single client is meant to be reused across many calls; it re-reads the
+    daemon's port and reconnects on its own if voxd restarts between
+    requests. Every failure raises a :class:`~punt_vox.VoxError`
+    (:class:`~punt_vox.VoxdConnectionError` when the daemon is unreachable,
+    :class:`~punt_vox.VoxdProtocolError` on an unexpected reply).
+
+    With no *host*/*port*/*token*, the client resolves them from the
+    ``VOXD_HOST``/``VOXD_PORT``/``VOXD_TOKEN`` environment variables and the
+    daemon's run-directory files -- the usual local-daemon case.
+    """
 
     __slots__ = ("_transport",)
 
@@ -306,6 +352,20 @@ class VoxClient:
     async def close(self) -> None:
         """Close the WebSocket connection."""
         await self._transport.close()
+
+    async def __aenter__(self) -> Self:
+        """Connect on entry so the client is ready to send."""
+        await self.connect()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Close the connection on exit, whether or not the body raised."""
+        await self.close()
 
     # -- public API ----------------------------------------------------------
 
@@ -405,11 +465,12 @@ class VoxClient:
         voice_list: list[str] = resp["voices"]
         return voice_list
 
-    async def health(self) -> dict[str, object]:
-        """Check daemon health."""
-        return await self._transport.send_and_recv(
+    async def health(self) -> HealthStatus:
+        """Return the daemon's health snapshot (liveness, port, version)."""
+        resp = await self._transport.send_and_recv(
             {"type": "health"}, timeout=_TIMEOUT_SHORT
         )
+        return HealthStatus.from_wire(resp)
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
@@ -427,9 +488,12 @@ class VoxClient:
         }
         return await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
-    async def program_status(self) -> dict[str, Any]:
-        """Return the daemon's authoritative Program status."""
-        return await self._command("program_status")
+    async def program_status(self) -> ProgramStatus:
+        """Return the daemon's authoritative Program status, parsed from the wire."""
+        resp = await self._command("program_status")
+        with self._wire_guard():
+            obj = JsonObject.coerce(resp, "program_status")
+            return ProgramStatus.from_wire(obj.require_object("status"))
 
     async def program_on(
         self,
@@ -438,7 +502,7 @@ class VoxClient:
         vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Turn a Program on, forwarding the session vibe and authored prompts."""
         fields: dict[str, object] = {}
         if style is not None:
@@ -450,15 +514,15 @@ class VoxClient:
         if prompts is not None:
             fields["base_prompt"] = prompts.base
             fields["variations"] = list(prompts.variations)
-        return await self._command("program_on", **fields)
+        return self._outcome(await self._command("program_on", **fields))
 
-    async def program_off(self) -> dict[str, Any]:
+    async def program_off(self) -> CommandOutcome:
         """Turn the active Program off."""
-        return await self._command("program_off")
+        return self._outcome(await self._command("program_off"))
 
-    async def program_next(self) -> dict[str, Any]:
+    async def program_next(self) -> CommandOutcome:
         """Advance to another Part (the one ungated skip/next/loop transition)."""
-        return await self._command("program_next")
+        return self._outcome(await self._command("program_next"))
 
     async def program_select(
         self,
@@ -467,7 +531,7 @@ class VoxClient:
         vibe: str | None = None,
         name: str | None = None,
         album_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Replay a Selection resolved by album id (direct) or by tags."""
         fields: dict[str, object] = {}
         if album_id is not None:
@@ -478,8 +542,61 @@ class VoxClient:
             fields["vibe"] = vibe
         if name is not None:
             fields["name"] = name
-        return await self._command("program_select", **fields)
+        return self._outcome(await self._command("program_select", **fields))
 
-    async def program_list(self) -> dict[str, Any]:
-        """List every album, grouped."""
-        return await self._command("program_list")
+    async def program_list(self) -> tuple[ProgramSummary, ...]:
+        """Return every album as a catalogue summary, parsed from the wire."""
+        resp = await self._command("program_list")
+        with self._wire_guard():
+            obj = JsonObject.coerce(resp, "program_list")
+            return tuple(
+                self._summary(JsonObject.coerce(item, "program_list.programs"))
+                for item in obj.require_list("programs")
+            )
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _wire_guard() -> Generator[None]:
+        """Surface a wire-parse failure as a ``VoxdProtocolError``.
+
+        ``JsonObject`` raises ``ValueError`` on a malformed or missing field,
+        carrying its own field-path context. At the public client boundary that
+        must become the client's own ``VoxdProtocolError``, so a caller catches
+        every failure as a :class:`~punt_vox.VoxError` rather than a bare
+        ``ValueError`` leaking the daemon's wire shape.
+        """
+        try:
+            yield
+        except ValueError as exc:
+            raise VoxdProtocolError(f"malformed reply from voxd: {exc}") from exc
+
+    @staticmethod
+    def _outcome(resp: dict[str, Any]) -> CommandOutcome:
+        """Read the applied/rejected result from a command reply.
+
+        The live daemon acks at enqueue with a bare reply carrying no
+        ``applied`` flag, so this returns ``applied=True`` today; the parse is
+        written to also read a future ``applied=false`` rejection with no
+        client change (see :class:`~punt_vox.CommandOutcome`). Absence of
+        ``applied`` is the "it went through" contract; a rejection, if one is
+        ever sent, is guaranteed a non-empty ``message`` so a surface never
+        renders a blank line for a refused command.
+        """
+        with VoxClient._wire_guard():
+            obj = JsonObject.coerce(resp, "command")
+            applied = obj.opt_bool("applied") is not False
+            message = obj.opt_str("message") or ("" if applied else "command rejected")
+            return CommandOutcome(applied=applied, message=message)
+
+    @staticmethod
+    def _summary(obj: JsonObject) -> ProgramSummary:
+        """Parse one catalogue entry (id, tags, counts) from the wire."""
+        return ProgramSummary(
+            id=obj.require_str("id"),
+            style=obj.require_str("style"),
+            vibe=obj.require_str("vibe"),
+            format=obj.require_str("format"),
+            ready=obj.require_int("ready"),
+            total=obj.opt_int("total") or 0,
+            name=obj.opt_str("name"),
+        )

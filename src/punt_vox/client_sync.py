@@ -17,7 +17,13 @@ from typing import Any, Self
 
 from punt_vox.client import SynthesizeResult, VoxClient
 from punt_vox.client_env import DaemonEnv
-from punt_vox.music_prompts import PromptSet
+from punt_vox.types_programs import (
+    CommandOutcome,
+    HealthStatus,
+    ProgramStatus,
+    ProgramSummary,
+    PromptSet,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 
 __all__ = ["VoxClientSync"]
@@ -55,10 +61,25 @@ class _SyncRunner:
 
 
 class VoxClientSync:
-    """Synchronous wrapper around :class:`VoxClient` for hooks and CLI.
+    """Synchronous client for the voxd audio daemon.
 
-    Creates a fresh connection per call. Simple and correct -- hooks and
-    CLI commands are short-lived, so connection pooling adds no value.
+    Exposes the same RPC surface as :class:`VoxClient` -- synthesize, chime,
+    record, voices, health, and the program_* controls -- as plain blocking
+    methods, for callers not running an event loop (hooks, CLI commands,
+    one-off scripts).
+
+    Lifecycle: there is nothing to open or close. Each call opens a fresh
+    connection, drives it to completion, and closes it, so a caller just
+    constructs the client and invokes methods::
+
+        vox = VoxClientSync()
+        vox.synthesize("build finished")
+
+    The per-call connection is deliberate: sync callers are short-lived, so
+    pooling would add complexity for no gain. Every failure raises a
+    :class:`~punt_vox.VoxError`. With no arguments, host, port, and token
+    resolve from the ``VOXD_*`` environment variables and the daemon's
+    run-directory files.
     """
 
     __slots__ = ("_host", "_port", "_runner", "_token")
@@ -120,13 +141,13 @@ class VoxClientSync:
         """List available voices."""
         return self._runner.run(self._call("voices", provider))  # type: ignore[no-any-return]
 
-    def health(self) -> dict[str, object]:
-        """Check daemon health."""
+    def health(self) -> HealthStatus:
+        """Return the daemon's health snapshot (liveness, port, version)."""
         return self._runner.run(self._call("health"))  # type: ignore[no-any-return]
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
-    def program_status(self) -> dict[str, Any]:
+    def program_status(self) -> ProgramStatus:
         """Return the daemon's authoritative Program status."""
         return self._runner.run(self._call("program_status"))  # type: ignore[no-any-return]
 
@@ -137,17 +158,17 @@ class VoxClientSync:
         vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Turn a Program on from the session vibe and authored prompts."""
         return self._runner.run(  # type: ignore[no-any-return]
             self._call("program_on", style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
-    def program_off(self) -> dict[str, Any]:
+    def program_off(self) -> CommandOutcome:
         """Turn the active Program off."""
         return self._runner.run(self._call("program_off"))  # type: ignore[no-any-return]
 
-    def program_next(self) -> dict[str, Any]:
+    def program_next(self) -> CommandOutcome:
         """Advance to another Part."""
         return self._runner.run(self._call("program_next"))  # type: ignore[no-any-return]
 
@@ -158,7 +179,7 @@ class VoxClientSync:
         vibe: str | None = None,
         name: str | None = None,
         album_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Replay a Selection resolved by album id (direct) or by tags."""
         return self._runner.run(  # type: ignore[no-any-return]
             self._call(
@@ -166,6 +187,6 @@ class VoxClientSync:
             )
         )
 
-    def program_list(self) -> dict[str, Any]:
-        """List every album, grouped."""
+    def program_list(self) -> tuple[ProgramSummary, ...]:
+        """Return every album as a catalogue summary."""
         return self._runner.run(self._call("program_list"))  # type: ignore[no-any-return]

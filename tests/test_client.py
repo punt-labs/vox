@@ -17,6 +17,7 @@ from punt_vox.client import (
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
+from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_synthesis import SynthesisSpec
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,39 @@ class TestVoxClientConnect:
             client = VoxClient()
             with pytest.raises(VoxdConnectionError, match="port file not found"):
                 await client.connect()
+
+
+class TestVoxClientContextManager:
+    """The async context manager connects on entry and closes on exit."""
+
+    @pytest.mark.asyncio
+    async def test_enter_connects_and_returns_self(self) -> None:
+        mock_ws = _make_mock_ws()
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            async with client as entered:
+                assert entered is client
+                assert client._transport._ws is mock_ws  # pyright: ignore[reportPrivateUsage]
+            mock_ws.close.assert_awaited_once()
+            assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_exit_closes_even_when_body_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            with pytest.raises(ValueError, match="boom"):
+                async with client:
+                    raise ValueError("boom")
+            mock_ws.close.assert_awaited_once()
 
 
 class TestVoxClientBuildUri:
@@ -505,6 +539,10 @@ class TestVoxClientHealth:
                     "status": "ok",
                     "uptime_seconds": 42.5,
                     "queued": 0,
+                    "port": 8421,
+                    "pid": 4242,
+                    "provider": "elevenlabs",
+                    "daemon_version": "5.0.0",
                 }
             )
         )
@@ -512,8 +550,115 @@ class TestVoxClientHealth:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.health()
-        assert result["status"] == "ok"
-        assert result["uptime_seconds"] == 42.5
+        assert result.status == "ok"
+        assert result.uptime_seconds == 42.5
+        assert result.port == 8421
+        assert result.pid == 4242
+        assert result.provider == "elevenlabs"
+        assert result.daemon_version == "5.0.0"
+
+
+class TestVoxClientProgram:
+    """The program_* methods parse the daemon's wire replies into typed values."""
+
+    def _client_returning(self, resp: dict[str, object]) -> VoxClient:
+        client = VoxClient(port=8421, token="tok")
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value=json.dumps(resp))
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        return client
+
+    @pytest.mark.asyncio
+    async def test_program_status_parses_into_program_status(self) -> None:
+        client = self._client_returning(
+            {
+                "type": "program_status",
+                "id": "x",
+                "status": ProgramStatus.idle().to_dict(),
+            }
+        )
+
+        status = await client.program_status()
+
+        assert isinstance(status, ProgramStatus)
+        assert status.is_idle
+
+    @pytest.mark.asyncio
+    async def test_program_off_returns_applied_outcome(self) -> None:
+        """A bare ack (no 'applied') reads as an applied CommandOutcome."""
+        client = self._client_returning({"type": "program_off", "id": "x"})
+
+        outcome = await client.program_off()
+
+        assert outcome.applied is True
+
+    @pytest.mark.asyncio
+    async def test_program_next_reads_a_rejection(self) -> None:
+        """An 'applied: false' reply becomes a rejected outcome with its reason."""
+        client = self._client_returning(
+            {
+                "type": "program_next",
+                "id": "x",
+                "applied": False,
+                "message": "lost race",
+            }
+        )
+
+        outcome = await client.program_next()
+
+        assert outcome.applied is False
+        assert outcome.message == "lost race"
+
+    @pytest.mark.asyncio
+    async def test_program_list_parses_summaries(self) -> None:
+        client = self._client_returning(
+            {
+                "type": "program_list",
+                "id": "x",
+                "programs": [
+                    {
+                        "id": "a3f1c9",
+                        "style": "trance",
+                        "vibe": "calm",
+                        "name": "mix",
+                        "format": "music",
+                        "ready": 5,
+                        "total": 12,
+                    }
+                ],
+            }
+        )
+
+        catalog = await client.program_list()
+
+        assert len(catalog) == 1
+        assert catalog[0].id == "a3f1c9"
+        assert catalog[0].ready == 5
+        assert catalog[0].total == 12
+        assert catalog[0].name == "mix"
+
+    @pytest.mark.asyncio
+    async def test_malformed_status_raises_protocol_error(self) -> None:
+        """A malformed status payload surfaces as VoxdProtocolError, not ValueError.
+
+        VoxClient promises every failure is a VoxError; a wire-parse ValueError
+        from the daemon's reply must be wrapped, or an MCP tool catching only
+        the Voxd* errors would leak a raw traceback.
+        """
+        client = self._client_returning(
+            {"type": "program_status", "id": "x", "status": {"mode": "off"}}
+        )
+        with pytest.raises(VoxdProtocolError, match="malformed reply"):
+            await client.program_status()
+
+    @pytest.mark.asyncio
+    async def test_malformed_catalog_raises_protocol_error(self) -> None:
+        """A catalogue row missing a required field surfaces as VoxdProtocolError."""
+        client = self._client_returning(
+            {"type": "program_list", "id": "x", "programs": [{"id": "a3f1c9"}]}
+        )
+        with pytest.raises(VoxdProtocolError, match="malformed reply"):
+            await client.program_list()
 
 
 class TestVoxClientReconnect:
@@ -544,7 +689,7 @@ class TestVoxClientReconnect:
             client._transport._ws = mock_ws_old  # pyright: ignore[reportPrivateUsage]
 
             result = await client.health()
-            assert result["status"] == "ok"
+            assert result.status == "ok"
             assert client._transport._ws is mock_ws_new  # pyright: ignore[reportPrivateUsage]
 
 
@@ -574,7 +719,7 @@ class TestVoxClientSync:
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.health()
-            assert result["status"] == "ok"
+            assert result.status == "ok"
 
     def test_synthesize(self) -> None:
         mock_ws = _make_mock_ws()

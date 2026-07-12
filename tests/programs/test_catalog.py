@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from punt_vox.voxd.programs import Format, PartStatus
+from punt_vox.types_programs import Format
+from punt_vox.voxd.programs import PartStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.catalog import Album, Catalog

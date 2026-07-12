@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from punt_vox.program_control import (
+from punt_vox.types_programs.control import (
     CommandOutcome,
     ProgramSummary,
     SelectionRequest,
     StartRequest,
 )
-from punt_vox.voxd.programs.status import ProgramStatus
+from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["ProgramGateway"]
 

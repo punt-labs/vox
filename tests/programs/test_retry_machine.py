@@ -13,9 +13,9 @@ from collections.abc import Callable
 
 import pytest
 
-from punt_vox.voxd.programs.format import MAX_RETRY, Format
-from punt_vox.voxd.programs.identifiers import Reason
-from punt_vox.voxd.programs.mode import Mode
+from punt_vox.types_programs.format import MAX_RETRY, Format
+from punt_vox.types_programs.identifiers import Reason
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.part import FrozenParts, Part
 from punt_vox.voxd.programs.retry_machine import RetryMachine
 from punt_vox.voxd.programs.state import ProgramState

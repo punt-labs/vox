@@ -18,21 +18,18 @@ asking "what is playing?" gets exactly this, authoritatively, on every call.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Self, final
+from typing import Self, final
 
-from punt_vox.voxd.programs.format import Format
-from punt_vox.voxd.programs.identifiers import ProgramName
-from punt_vox.voxd.programs.mode import Mode
-from punt_vox.voxd.programs.playback_health import PlaybackFault
-from punt_vox.voxd.programs.status_views import (
+from punt_vox.types_programs.format import Format
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.mode import Mode
+from punt_vox.types_programs.playback_fault import PlaybackFault
+from punt_vox.types_programs.status_views import (
     FailedPartView,
     GenerationStatus,
     NowPlaying,
 )
-from punt_vox.voxd.programs.wire import JsonObject
-
-if TYPE_CHECKING:
-    from punt_vox.voxd.programs.program import Program
+from punt_vox.types_programs.wire import JsonObject
 
 __all__ = ["ProgramStatus"]
 
@@ -67,38 +64,6 @@ class ProgramStatus:
         return cls(format=Format.PLAYLIST, mode=Mode.OFF, generation=_NO_GENERATION)
 
     @classmethod
-    def of(
-        cls,
-        program: Program,
-        name: ProgramName | None,
-        playback_error: PlaybackFault | None = None,
-    ) -> Self:
-        """Assemble the status of an active ``program`` (the status handler).
-
-        Reads the Program's observations plus the active manifest's ``name`` --
-        the only piece the pure domain does not carry -- and the daemon's live
-        ``playback_error`` (a player-spawn fault, orthogonal to Program state).
-        All three failure surfaces are populated: the program-level error from the
-        state, the per-Part failures from ``failed_parts``, and the playback fault.
-        """
-        state = program.state
-        error = None if state.last_error is None else str(state.last_error)
-        return cls(
-            format=state.format,
-            mode=state.mode,
-            generation=GenerationStatus(
-                filling=state.filling, attempts=state.attempts, last_error=error
-            ),
-            name=name,
-            now_playing=cls._now_playing(program),
-            failed_parts=tuple(
-                FailedPartView(index=part.index, reason=str(reason))
-                for part, reason in state.failed_parts.ordered()
-            ),
-            playback_error=playback_error,
-        )
-
-    @classmethod
     def radio(
         cls,
         name: ProgramName | None,
@@ -122,21 +87,6 @@ class ProgramStatus:
             now_playing=now_playing,
             playback_error=playback_error,
         )
-
-    @staticmethod
-    def _now_playing(program: Program) -> NowPlaying | None:
-        """Return the "Part N of M" view, or ``None`` when nothing plays.
-
-        ``N`` is the playing Part's 1-based *position* in the ordered ready pool and
-        ``M`` is the pool's size, so ``N <= M`` always holds. A gap from a permanent
-        fill failure (ready indices 1, 2, 4) reports "part 3 of 3", never the
-        intrinsic-index "4 of 3" that would read as nonsense.
-        """
-        pool = program.pool
-        playing = program.playing
-        if playing is None:
-            return None
-        return NowPlaying(index=pool.index(playing) + 1, of=len(pool))
 
     @property
     def is_idle(self) -> bool:

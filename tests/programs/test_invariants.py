@@ -11,14 +11,8 @@ from typing import Any
 
 import pytest
 
-from punt_vox.voxd.programs import (
-    Format,
-    FrozenParts,
-    Mode,
-    Part,
-    ProgramState,
-    Reason,
-)
+from punt_vox.types_programs import Format, Mode, Reason
+from punt_vox.voxd.programs import FrozenParts, Part, ProgramState
 
 
 def _p(index: int) -> Part:
