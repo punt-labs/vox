@@ -894,15 +894,17 @@ class TestWho:
         result = json.loads(who())
         assert result["current"] is None
 
-    def test_language_filter_passed_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exposes_no_filter_argument(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import inspect
+
+        # The tool advertises no filter -- an agent reading the schema must not
+        # be offered a language argument the body would silently ignore.
+        assert list(inspect.signature(who).parameters) == []
+
         mock_client = MagicMock()
         mock_client.voices.return_value = []
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        who(language="de")
-        mock_client.voices.assert_called_once_with(provider=None)
+        assert "all" in json.loads(who())
 
     def test_provider_without_blurbs_returns_empty_featured(
         self, monkeypatch: pytest.MonkeyPatch

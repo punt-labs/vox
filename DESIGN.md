@@ -1899,3 +1899,49 @@ Key decisions:
 Recorded in `docs/design-review-phase1.md`: the *format-general* claim is partly aspirational (`Program.rotate` raises on `COMPLETE`, no terminal `Mode`, `Subject` is concretely `PlaylistSubject`, so Phases 2–3 build those seams rather than merely supply them); `subject.vibe` records the style, not the session vibe (`vox-q7vh`); the per-command `applied/rejected` wire field is unreachable in Phase 1 (handlers ack at enqueue).
 
 Closes vox-oayr.
+
+---
+
+## DES-042: The Mic Metaphor — Why the Speak Tool Is `unmute`, Not `say`
+
+**Date:** 2026-07-11
+**Status:** SETTLED
+**Topic:** The playful mic-metaphor UX, and why the MCP speak tool's name deliberately diverges from the CLI's `vox say`
+
+### Decision
+
+The MCP tool the **agent** calls to speak is named **`unmute`**, and it stays that way. This is a deliberate, playful UX choice, not an inconsistency to be normalized against the CLI.
+
+The tool name renders in the Claude Code tool-result panel (the `♪` line, DES-008) in the moment just before the agent talks. `unmute` reads as *the agent turning mute off on its own mic* — breaking its silence to say something. That framing is the point. It gives the surface the agent drives most a small, coherent piece of character.
+
+The metaphor is a family, not a one-off:
+
+- **`unmute`** — the agent flips its mic on to speak.
+- **`/mute`** — mic off; chimes only (the agent goes quiet, DES-004).
+- **`who`** — who's at the mic? (the voice roster).
+- **`♪`** panel glyph (DES-008) and the voice-vocabulary tool names — `speak`/`chorus`/`duet`/`ensemble` (DES-007).
+
+### Why It Deliberately Diverges From `vox say`
+
+The CLI and the MCP surface have **different actors**, and their verbs correctly reflect that:
+
+| Surface | Actor | Verb | Reads as |
+|---------|-------|------|----------|
+| CLI | a **human** at a shell | `vox say "hello"` | "say this for me" |
+| MCP | the **agent**, on its own initiative | `unmute` tool | "the agent unmutes its mic" |
+
+A user never types `/vox:say "hello"` — the agent speaking arbitrary text on command is not a user action. Users type slash commands (`/vox`, `/vox:mute`, `/vox:unmute`, `/vox:vibe`, `/vox:music`, `/vox:recap`); `/vox:unmute` enables voice mode / sets the session voice, which lives inside the same mic metaphor. `say` belongs to the human/CLI surface; `unmute` belongs to the agent/MCP surface. Unifying them (renaming the tool to `say` for "cross-surface consistency") would flatten an intentional distinction between two different actors and delete the charm — a regression, not a cleanup.
+
+This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundary. That exclusion is about the *audio* not role-playing a character (the voice sounds tired after failures for *signal*, not performance). The mic metaphor is light naming texture in the tool surface — playful, not a persona.
+
+### Rule
+
+**Do not re-flag the `unmute`-vs-`say` divergence as an inconsistency to fix.** It is a settled positioning choice: two surfaces, two actors, two correct verbs. The mic metaphor (`unmute`/`mute`/`who`/`♪`) is deliberate and load-bearing UX charm. New evidence of user confusion — not an agent's tidiness instinct — is the only thing that reopens this.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Rename the MCP `unmute` tool → `say` to match the CLI | Flattens the human-vs-agent actor distinction; the agent "unmuting its mic" is intentional character the panel shows before every utterance; deletes the metaphor |
+| Rename the `speak` toggle / consolidate `notify`+`speak` | No surface to match against; the user-facing `/mute`+`/unmute` slashes are shipped, documented product (prfaq FAQ, Feature F4); this is invented scope |
+| Leave the intent undocumented | Already caused a false "bug" report (vox-yn8u round, 2026-07-11) where the divergence was misread as an inconsistency — this ADR is the fix |

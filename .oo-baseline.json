@@ -665,10 +665,10 @@
   "src/punt_vox/server.py": {
     "method_ratio": 0.553,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.57,
+    "avg_params": 1.55,
     "max_complexity": 16.0,
     "avg_complexity": 3.15,
-    "module_size": 789.0,
+    "module_size": 787.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.056,
     "init_violations": 0.0,
