@@ -86,20 +86,46 @@ surfaced (to be resolved in this design review before implementation).
   `ls` — both exit 0 — so there is no `[excited]`-on-a-win peak. Accepted for
   simplicity. If wanted back later, a thin *optional* "was this a push/pr" hint
   could add it — explicitly **not** in v1.
-- **Chimes.** Chimes currently vary by signal *type* (a per-signal chime map).
-  Collapsing to `ok/fail` means chimes key on `ok/fail` + the mood pitch-shift —
-  fewer distinct tones. **Recommended:** accept the collapse; the mood pitch
-  still carries expressiveness. (Open decision — see below.)
+- **Chimes — the loss is theoretical, not real.** The design review found there
+  is **no live per-signal chime differentiation and no live mood pitch-shift**:
+  the live resolver (`ChimeResolver.resolve(signal)`) is mood-blind and only the
+  notification chimes fire in practice. The per-signal/mood machinery is
+  reachable only from the unwired watcher. So collapsing to notification-chimes
+  retires dead code, it does not remove a capability users have. The meaningful
+  vibe signal is the ElevenLabs `vibe_tags` applied to synthesized speech (stop
+  hook → `resolve_tags` → `vibe_tags`), which this redesign **preserves**.
+  Mood-tinted chimes, if ever wanted, are net-new work (wire the five-mood
+  vocabulary into the live `ChimeResolver`) — explicitly out of scope for v1.
 
 ## What gets deleted
 
-- `command_signal.py`'s success/failure marker tables and the pytest/ruff/git
-  regexes.
-- The typed signal vocabulary and its `signal_names()` surface.
-- The per-signal chime map, replaced by an `ok/fail` (+ mood-pitch) mapping.
+Forward integration only — removed in the same change, not shimmed (PL-PP-1).
+The design-review evaluator (rop) traced the consumers; the full delete-set is:
 
-Forward integration only — the old classifier is removed in the same change, not
-shimmed (PL-PP-1).
+- `command_signal.py` — the whole classifier (marker tables, pytest/ruff/git
+  regexes, the typed signal vocabulary, `signal_names()`). `hooks.py` imports it
+  at module top, so it cannot be deleted without rewriting the accumulator.
+- **`watcher.py` + `test_watcher.py`** — the `notify=c` "milestone announcement"
+  feature (`SessionWatcher`, speaks "Tests passed"/"Code pushed" or plays a
+  per-milestone chime). It classifies **transcript text that has no exit code**
+  (`classify_output` calls the classifier with `exit_code=None`), so it is
+  fundamentally incompatible with an exit-code signal. It is **unwired** —
+  referenced only from its own test, never from `voxd`/`server`/`hooks`/`__main__`
+  — so retiring it is clean. (Confirm with the operator this dormant feature is
+  being retired, not resurrected.)
+- **`chime.py` + `mood.py`** (`resolve_chime_path`, `classify_mood`,
+  `MOOD_FAMILIES`) — the mood-pitch-shift mechanism. It is reachable **only**
+  from the unwired watcher, and it is already broken for the new vocabulary
+  (`MOOD_FAMILIES` maps only `happy`/`frustrated`; `focused`/`weary`/`relieved`
+  fall through to neutral). Dead code — delete it with the watcher.
+- From `voxd/chimes.py::_CHIME_MAP` (**live** — do NOT delete wholesale): remove
+  **only** the four typed milestone entries (`tests-pass`, `lint-pass`,
+  `git-push-ok`, `merge-conflict`) and their orphaned assets
+  (`chime_tests_pass.mp3`, `chime_lint_*.mp3`). The notification chimes
+  (`done`/`prompt`/`acknowledge`/`compact`/`subagent`/`farewell`) are orthogonal
+  to the vibe and **stay untouched**.
+- `signal.py`'s `SignalLog` is replaced wholesale by the exit-code window; the
+  `vibe_signals` config field is reused, now carrying `ok`/`fail` tokens.
 
 ## Escape hatch
 
@@ -144,12 +170,17 @@ The Z model confirmed the design and tightened two things into hard constraints:
 constants and assert `focusFrom = 1` and `wearyFrom < maxWindow` — the two
 properties whose violation silently breaks totality or masks `weary`.
 
-## Open decisions for this review
+## Open decisions for the operator
 
-1. **Thresholds** — the model confirms `(frustFrom=3, wearyFrom=5, recentK=3,
-   maxWindow=20)` sound and `focusFrom=1` forced. Confirm the defaults or retune
-   the three free ones.
-2. **Chimes** — collapse to `ok/fail` + mood pitch (recommended), or keep a
-   light per-type flavor.
-3. **Milestone excitement** — accept its loss in v1 (recommended), or scope a
-   thin push/pr hint.
+1. **`focused` on a single stray non-zero.** Because `focusFrom=1` is forced, the
+   *first* benign non-zero (a lone `grep` miss with no `ok` right after) reads as
+   `focused` — there is no constant that makes `run=1` read `happy`. Fine if
+   `focused` is a mild, heads-down voice; a problem only if `focused` is heard as
+   negative. **Recommend:** acceptable — `focused` is engaged, not unhappy.
+2. **Retire the unwired `notify=c` milestone-announcement watcher.** It's
+   incompatible with exit-code-only and currently unused. **Recommend:** delete
+   (forward integration). Confirm it isn't slated for resurrection.
+3. **Thresholds** `(frustFrom=3, wearyFrom=5, recentK=3, maxWindow=20)`,
+   `focusFrom=1` forced. **Recommend:** confirm the defaults.
+4. **Milestone excitement** (`[excited]` on a win) — exit-code can't tell a merge
+   from an `ls`. **Recommend:** accept its loss in v1.
