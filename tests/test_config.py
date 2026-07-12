@@ -39,10 +39,10 @@ class TestWriteFieldRouting:
 
     def test_write_field_routes_ephemeral_to_vox_local_md(self, tmp_path: Path) -> None:
         """Test 2: write 'vibe_signals' lands in vox.local.md only."""
-        ConfigStore(tmp_path).write_field("vibe_signals", "tests-pass@14:00")
+        ConfigStore(tmp_path).write_field("vibe_signals", "ok,fail")
         assert (tmp_path / "vox.local.md").exists()
         assert not (tmp_path / "vox.md").exists()
-        assert ConfigStore(tmp_path).read_field("vibe_signals") == "tests-pass@14:00"
+        assert ConfigStore(tmp_path).read_field("vibe_signals") == "ok,fail"
 
     def test_write_field_creates_dir(self, tmp_path: Path) -> None:
         """Test 11: write to nonexistent dir creates it."""
@@ -291,7 +291,7 @@ class TestReadConfigLegacy:
             {
                 "vibe_mode": "manual",
                 "vibe_tags": "[happy] [calm]",
-                "vibe_signals": "tests-pass@14:00",
+                "vibe_signals": "ok,fail",
                 "vibe": "happy",
             },
         )
@@ -302,7 +302,7 @@ class TestReadConfigLegacy:
         assert result.voice == "charlie"
         assert result.vibe == "happy"
         assert result.vibe_tags == "[happy] [calm]"
-        assert result.vibe_signals == "tests-pass@14:00"
+        assert result.vibe_signals == "ok,fail"
 
     def test_invalid_notify_defaults_to_n(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "invalid"})

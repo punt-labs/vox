@@ -152,7 +152,7 @@ class TestHandleStop:
             model=None,
             vibe=None,
             vibe_tags="[excited] [warm]",
-            vibe_signals="tests-pass@12:00",
+            vibe_signals="ok",
         )
         with patch("punt_vox.hooks.ConfigStore") as mock_cs:
             result = handle_stop(_stop(), config, _CONFIG_DIR)
@@ -170,7 +170,7 @@ class TestHandleStop:
             model=None,
             vibe=None,
             vibe_tags=None,
-            vibe_signals="tests-pass@12:00",
+            vibe_signals="ok",
         )
         with patch("punt_vox.hooks.ConfigStore") as mock_cs:
             result = handle_stop(_stop(), config, _CONFIG_DIR)
@@ -687,7 +687,7 @@ class TestHandleSessionEnd:
         self, _mock_run: MagicMock, mock_cs: MagicMock
     ) -> None:
         """SessionEnd clears vibe_signals to prevent stale leakage."""
-        config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
+        config = _make_config(notify="y", speak="y", vibe_signals="ok")
         config_dir = Path("/fake/.punt-labs/vox")
         handle_session_end(config, config_dir)
         mock_cs.assert_called_once_with(config_dir)
@@ -708,7 +708,7 @@ class TestHandleSessionEnd:
         self, _mock_speak: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         # An unwritable vox.local.md must not crash the Stop/SessionEnd hook.
-        config = _make_config(notify="y", speak="y", vibe_signals="tests-pass@12:00")
+        config = _make_config(notify="y", speak="y", vibe_signals="ok")
         with (
             patch.object(
                 ConfigStore, "write_field", side_effect=OSError("read-only fs")
@@ -1108,7 +1108,7 @@ class TestCommandsResolveFromCwd:
     ) -> None:
         repo = _make_repo(tmp_path / "vox", notify="y")
         local = repo / ".punt-labs" / "vox" / "vox.local.md"
-        local.write_text('---\nvibe_signals: "tests-pass@12:00"\n---\n')
+        local.write_text('---\nvibe_signals: "ok"\n---\n')
         payload = {"cwd": str(repo), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),
@@ -1164,9 +1164,7 @@ class TestCommandsResolveFromCwd:
         # The vibe-tag write lands in the repo resolved from payload.cwd.
         repo = _make_repo(tmp_path / "vox", notify="y")
         config_dir = repo / ".punt-labs" / "vox"
-        (config_dir / "vox.local.md").write_text(
-            '---\nvibe_signals: "tests-pass@12:00"\n---\n'
-        )
+        (config_dir / "vox.local.md").write_text('---\nvibe_signals: "ok"\n---\n')
         payload = {"cwd": str(repo), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),
@@ -1196,7 +1194,7 @@ class TestCommandsResolveFromCwd:
         (child / ".git").mkdir()
         # Seed signals in the workspace config so stop hook fires
         local = workspace / ".punt-labs" / "vox" / "vox.local.md"
-        local.write_text('---\nvibe_signals: "tests-pass@12:00"\n---\n')
+        local.write_text('---\nvibe_signals: "ok"\n---\n')
         payload = {"cwd": str(child), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),

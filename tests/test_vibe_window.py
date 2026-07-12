@@ -45,8 +45,8 @@ class TestOutcome:
         assert Outcome.from_token(Outcome.FAIL.token) is Outcome.FAIL
 
     def test_unknown_token_raises(self) -> None:
-        with pytest.raises(ValueError, match="tests-pass"):
-            Outcome.from_token("tests-pass")
+        with pytest.raises(ValueError, match="bogus"):
+            Outcome.from_token("bogus")
 
 
 class TestSerialization:
@@ -59,12 +59,12 @@ class TestSerialization:
         assert _window("ok", "fail", "ok").serialize() == "ok,fail,ok"
 
     def test_deserialize_skips_malformed_tokens(self) -> None:
-        # Old typed-signal tokens are not ok/fail — they are dropped, not kept.
-        window = _window("ok", "tests-pass@12:00", "fail")
+        # Any token that is not ok/fail is dropped, not kept.
+        window = _window("ok", "bogus", "fail")
         assert window.serialize() == "ok,fail"
 
     def test_deserialize_all_malformed_is_empty(self) -> None:
-        assert len(_window("tests-pass@1", "lint-fail@2")) == 0
+        assert len(_window("bogus", "junk")) == 0
 
 
 class TestDefaultHappy:

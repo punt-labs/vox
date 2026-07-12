@@ -579,7 +579,7 @@ class TestUnmute:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session._vibe_signals = "tests-pass@14:00"
+        srv._session._vibe_signals = "ok,fail"
 
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="req789")
@@ -1063,7 +1063,7 @@ class TestStatusTool:
         srv._session.provider = "elevenlabs"
         srv._session._vibe_mode = "auto"
         srv._session._vibe_tags = "[excited]"
-        srv._session._vibe_signals = "tests-pass@12:00"
+        srv._session._vibe_signals = "ok,fail"
 
         result = json.loads(status())
         assert result["provider"] == "elevenlabs"
@@ -1072,7 +1072,7 @@ class TestStatusTool:
         assert result["speak"] == "y"
         assert result["vibe_mode"] == "auto"
         assert result["vibe_tags"] == "[excited]"
-        assert result["vibe_signals"] == "tests-pass@12:00"
+        assert result["vibe_signals"] == "ok,fail"
 
     def test_defaults_when_no_state_set(self) -> None:
         """A bare ``status`` reads the hermetic idle default, never the live daemon.
@@ -1487,18 +1487,14 @@ class TestRefreshFromConfig:
         srv._session._vibe_signals = "old-signal"
 
         (_refresh_config / "vox.local.md").write_text(
-            "---\n"
-            'vibe: "happy"\n'
-            'vibe_tags: "[warm]"\n'
-            'vibe_signals: "tests-pass@10:00"\n'
-            "---\n"
+            '---\nvibe: "happy"\nvibe_tags: "[warm]"\nvibe_signals: "ok,fail"\n---\n'
         )
 
         srv._session.refresh_from_config()
 
         assert srv._session._vibe == "happy"
         assert srv._session._vibe_tags == "[warm]"
-        assert srv._session._vibe_signals == "tests-pass@10:00"
+        assert srv._session._vibe_signals == "ok,fail"
 
     def test_ephemeral_cleared_when_config_empty(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
