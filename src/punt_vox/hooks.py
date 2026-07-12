@@ -24,7 +24,6 @@ import json
 import logging
 import os
 import random
-import re
 import select
 import sys
 from pathlib import Path
@@ -33,6 +32,7 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.command_signal import CommandSignal
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
@@ -259,39 +259,16 @@ def handle_stop(
 
 # PostToolUse Bash — signal accumulator
 
-_SIGNAL_PATTERNS: list[tuple[str, list[str]]] = [
-    # Lint patterns before tests — "errors" appears in both contexts,
-    # so the more specific "Found N error" and "0 errors" must match first.
-    ("lint-fail", [r"Found [0-9]+ error"]),
-    ("lint-pass", [r"All checks passed", r"0 errors"]),
-    ("tests-pass", [r"[0-9]+ passed", r"tests? ok", "✓.*passed"]),
-    ("tests-fail", [r"FAILED", r"AssertionError", r"ERRORS?\b"]),
-    ("merge-conflict", [r"CONFLICT"]),
-    ("git-push-ok", [r"Everything up-to-date", r"->.*main"]),
-    ("git-commit", [r"^\[.+\] .+", r"^create mode"]),
-    ("pr-created", [r"pull/[0-9]+", r"created pull request"]),
-]
-
 
 def classify_signal(exit_code: int | None, stdout: str) -> str | None:
     """Classify a bash command's output into a signal token.
 
-    Returns a signal name like ``"tests-pass"`` or None if no pattern
-    matches.
+    Delegates to :class:`CommandSignal`: exit code is authoritative and
+    recognition anchors to structured summary tokens. Returns a signal
+    name like ``"tests-pass"`` or None when the command cannot be
+    confidently classified.
     """
-    # Truncate to prevent regex DoS on large outputs
-    text = stdout[:500]
-
-    for signal, patterns in _SIGNAL_PATTERNS:
-        for pattern in patterns:
-            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
-                return signal
-
-    # Generic failure if nothing matched but exit code is non-zero
-    if exit_code is not None and exit_code != 0:
-        return "cmd-fail"
-
-    return None
+    return CommandSignal(exit_code, stdout).signal()
 
 
 def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:

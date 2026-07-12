@@ -194,6 +194,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/command_signal.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.75,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.5,
+    "module_size": 85.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/config.py": {
     "method_ratio": 0.462,
     "encapsulation_ratio": 1.0,
@@ -316,8 +329,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.06,
     "max_complexity": 10.0,
-    "avg_complexity": 3.0,
-    "module_size": 459.0,
+    "avg_complexity": 2.84,
+    "module_size": 440.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
     "init_violations": 0.0,
