@@ -260,9 +260,12 @@ def _persist_auto_vibe_tags(config: VoxConfig, config_dir: Path) -> None:
     if config.vibe_mode == "manual" and config.vibe_tags:
         return
     window = OutcomeWindow.deserialize(config.vibe_signals or "")
-    ConfigStore(config_dir).write_fields(
-        {"vibe_tags": window.resolve_tags(), "vibe_signals": ""}
-    )
+    try:
+        ConfigStore(config_dir).write_fields(
+            {"vibe_tags": window.resolve_tags(), "vibe_signals": ""}
+        )
+    except OSError as exc:
+        logger.warning("stop: cannot persist vibe tags in %s: %s", config_dir, exc)
 
 
 # PostToolUse Bash — exit-code outcome accumulator
@@ -366,76 +369,62 @@ def _speak_phrase(
     _speak_via_voxd(text, config)
 
 
-# PreCompact — playful 'be right back' before context compaction
+# Continuous-mode announcements (pre-compact, prompt ack, subagent lifecycle)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ContinuousAnnouncement:
+    """A continuous-mode spoken announcement: a phrase pool, chime, and label.
+
+    The continuous-mode hooks differ only in these three values, so each is a
+    constant instance and the shared guard lives in one place.
+    """
+
+    phrases: tuple[str, ...]
+    chime_signal: str
+    event: str
+
+    def announce(self, config: VoxConfig) -> None:
+        """Speak the announcement in continuous mode; a no-op otherwise."""
+        if config.notify != "c":
+            logger.info(
+                "%s hook: skip (notify=%s, not continuous)", self.event, config.notify
+            )
+            return
+        logger.info("%s hook: announcing", self.event)
+        _speak_phrase(self.phrases, config, chime_signal=self.chime_signal)
+
+
+_PRE_COMPACT = _ContinuousAnnouncement(PRE_COMPACT_PHRASES, "compact", "PreCompact")
+_PROMPT_ACK = _ContinuousAnnouncement(
+    ACKNOWLEDGE_PHRASES, "acknowledge", "UserPromptSubmit"
+)
+_SUBAGENT_START = _ContinuousAnnouncement(
+    SUBAGENT_START_PHRASES, "subagent", "SubagentStart"
+)
+_SUBAGENT_STOP = _ContinuousAnnouncement(
+    SUBAGENT_STOP_PHRASES, "subagent", "SubagentStop"
+)
 
 
 def handle_pre_compact(config: VoxConfig) -> None:
-    """Play a playful message before context compaction.
-
-    Only fires in continuous mode (notify=c). In on-demand (y) or
-    off (n), compaction happens silently.
-    """
-    if config.notify != "c":
-        logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
-        return
-
-    logger.info("PreCompact hook: speaking")
-    _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
-
-
-# UserPromptSubmit — acknowledgment in continuous mode
+    """Play a playful 'be right back' before context compaction."""
+    _PRE_COMPACT.announce(config)
 
 
 def handle_user_prompt_submit(config: VoxConfig) -> None:
-    """Speak a short acknowledgment when the user submits a prompt.
-
-    Only fires in continuous mode (notify=c).  Async — does not block
-    prompt processing.
-    """
-    if config.notify != "c":
-        logger.info(
-            "UserPromptSubmit hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("UserPromptSubmit hook: acknowledging")
-    _speak_phrase(ACKNOWLEDGE_PHRASES, config, chime_signal="acknowledge")
-
-
-# SubagentStart / SubagentStop — continuous mode announcements
+    """Speak a short acknowledgment when the user submits a prompt."""
+    _PROMPT_ACK.announce(config)
 
 
 def handle_subagent_start(config: VoxConfig) -> None:
-    """Announce that a subagent is being spawned.
-
-    Only fires in continuous mode (notify=c).  Async.
-    """
-    if config.notify != "c":
-        logger.info(
-            "SubagentStart hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("SubagentStart hook: announcing")
-    _speak_phrase(SUBAGENT_START_PHRASES, config, chime_signal="subagent")
+    """Announce that a subagent is being spawned."""
+    _SUBAGENT_START.announce(config)
 
 
 def handle_subagent_stop(config: VoxConfig) -> None:
-    """Announce that a subagent has completed.
-
-    Only fires in continuous mode (notify=c).  Async.
-    """
-    if config.notify != "c":
-        logger.info(
-            "SubagentStop hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("SubagentStop hook: announcing")
-    _speak_phrase(SUBAGENT_STOP_PHRASES, config, chime_signal="subagent")
+    """Announce that a subagent has completed."""
+    _SUBAGENT_STOP.announce(config)
 
 
 # SessionEnd — farewell speech

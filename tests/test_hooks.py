@@ -179,6 +179,23 @@ class TestHandleStop:
         # Vibe off — must not write tags to config
         mock_cs.return_value.write_fields.assert_not_called()
 
+    def test_tag_write_failure_is_logged_and_still_blocks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A read-only config dir must not swallow the spoken summary: the tag
+        # write failure is logged, and the block decision is still returned.
+        config = _make_config(vibe_signals="ok,fail")
+        with (
+            patch.object(
+                ConfigStore, "write_fields", side_effect=OSError("read-only fs")
+            ),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            result = handle_stop(_stop(), config, _CONFIG_DIR)
+        assert result is not None
+        assert result["decision"] == "block"
+        assert any("stop:" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # vibe authoritative-over-hooks boundary tests (regression: vox-73m5)
