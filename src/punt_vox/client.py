@@ -14,10 +14,13 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import websockets
 import websockets.asyncio.client
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
@@ -292,7 +295,31 @@ class _VoxdTransport:
 
 
 class VoxClient:
-    """Async RPC client for voxd, composing a :class:`_VoxdTransport`."""
+    """Asynchronous client for the voxd audio daemon.
+
+    Speaks voxd's RPC surface over one WebSocket connection: play speech
+    (:meth:`synthesize`), play a bundled chime (:meth:`chime`), synthesize
+    to MP3 bytes (:meth:`record`), list voices (:meth:`voices`), read daemon
+    health (:meth:`health`), and drive the audio *program* controls
+    (:meth:`program_on`, :meth:`program_status`, and the rest).
+
+    Lifecycle: call :meth:`connect` once before the first request and
+    :meth:`close` when finished, or use the client as an async context
+    manager, which connects on entry and closes on exit::
+
+        async with VoxClient() as vox:
+            await vox.synthesize("build finished")
+
+    A single client is meant to be reused across many calls; it re-reads the
+    daemon's port and reconnects on its own if voxd restarts between
+    requests. Every failure raises a :class:`~punt_vox.VoxError`
+    (:class:`~punt_vox.VoxdConnectionError` when the daemon is unreachable,
+    :class:`~punt_vox.VoxdProtocolError` on an unexpected reply).
+
+    With no *host*/*port*/*token*, the client resolves them from the
+    ``VOXD_HOST``/``VOXD_PORT``/``VOXD_TOKEN`` environment variables and the
+    daemon's run-directory files -- the usual local-daemon case.
+    """
 
     __slots__ = ("_transport",)
 
@@ -317,6 +344,20 @@ class VoxClient:
     async def close(self) -> None:
         """Close the WebSocket connection."""
         await self._transport.close()
+
+    async def __aenter__(self) -> Self:
+        """Connect on entry so the client is ready to send."""
+        await self.connect()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Close the connection on exit, whether or not the body raised."""
+        await self.close()
 
     # -- public API ----------------------------------------------------------
 

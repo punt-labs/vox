@@ -132,6 +132,39 @@ class TestVoxClientConnect:
                 await client.connect()
 
 
+class TestVoxClientContextManager:
+    """The async context manager connects on entry and closes on exit."""
+
+    @pytest.mark.asyncio
+    async def test_enter_connects_and_returns_self(self) -> None:
+        mock_ws = _make_mock_ws()
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            async with client as entered:
+                assert entered is client
+                assert client._transport._ws is mock_ws  # pyright: ignore[reportPrivateUsage]
+            mock_ws.close.assert_awaited_once()
+            assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_exit_closes_even_when_body_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            client = VoxClient(port=8421, token="tok")
+            with pytest.raises(ValueError, match="boom"):
+                async with client:
+                    raise ValueError("boom")
+            mock_ws.close.assert_awaited_once()
+
+
 class TestVoxClientBuildUri:
     """Test URI construction."""
 

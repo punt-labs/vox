@@ -55,10 +55,25 @@ class _SyncRunner:
 
 
 class VoxClientSync:
-    """Synchronous wrapper around :class:`VoxClient` for hooks and CLI.
+    """Synchronous client for the voxd audio daemon.
 
-    Creates a fresh connection per call. Simple and correct -- hooks and
-    CLI commands are short-lived, so connection pooling adds no value.
+    Exposes the same RPC surface as :class:`VoxClient` -- synthesize, chime,
+    record, voices, health, and the program_* controls -- as plain blocking
+    methods, for callers not running an event loop (hooks, CLI commands,
+    one-off scripts).
+
+    Lifecycle: there is nothing to open or close. Each call opens a fresh
+    connection, drives it to completion, and closes it, so a caller just
+    constructs the client and invokes methods::
+
+        vox = VoxClientSync()
+        vox.synthesize("build finished")
+
+    The per-call connection is deliberate: sync callers are short-lived, so
+    pooling would add complexity for no gain. Every failure raises a
+    :class:`~punt_vox.VoxError`. With no arguments, host, port, and token
+    resolve from the ``VOXD_*`` environment variables and the daemon's
+    run-directory files.
     """
 
     __slots__ = ("_host", "_port", "_runner", "_token")
