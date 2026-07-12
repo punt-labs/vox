@@ -1945,3 +1945,38 @@ This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundar
 | Rename the MCP `unmute` tool → `say` to match the CLI | Flattens the human-vs-agent actor distinction; the agent "unmuting its mic" is intentional character the panel shows before every utterance; deletes the metaphor |
 | Rename the `speak` toggle / consolidate `notify`+`speak` | No surface to match against; the user-facing `/mute`+`/unmute` slashes are shipped, documented product (prfaq FAQ, Feature F4); this is invented scope |
 | Leave the intent undocumented | Already caused a false "bug" report (vox-yn8u round, 2026-07-11) where the divergence was misread as an inconsistency — this ADR is the fix |
+
+---
+
+## DES-043: Auto-Vibe Is Exit-Code-Driven, Not Output-Pattern-Driven
+
+**Date:** 2026-07-12
+**Status:** SETTLED (supersedes the vibe-signal machinery of DES-018)
+**Topic:** How `/vibe auto` derives the session mood
+
+### Decision
+
+Auto-vibe derives the TTS mood from each command's **exit code** — `exit 0 → ok`, non-zero → `fail` — over a rolling window, not by pattern-matching command output. The mood is a total function of the window's trailing fail-run: **happy by default**, degrading `focused → frustrated → weary` as failures run consecutively, and `relieved` on the first success after a bad stretch.
+
+Full design of record: `docs/vibe-exit-code-design.md`. Formal model: `docs/vibe-exit-code.tex` (fuzz `-t` clean) — it *forced* two implementation invariants (`focus_from = 1`, else the mood is not total; `weary_from < max_window`, else FIFO eviction can mask `weary`), both asserted at construction and by tests named after the model's schemas.
+
+### Why
+
+The prior classifier grepped command *output* for pytest/ruff/git tokens. It was **narrow** (only this repo's Python/git toolchain), **asymmetric** (a clean exit with no recognized token produced no signal, so successes went uncounted while failures counted — the mood skewed frustrated in every other repo), and **fragile** (output-format drift broke it). vox is language-agnostic; the exit code is the one signal every program on every platform agrees to produce. `vox-p0u6` (the "always frustrated" bug) was the acute symptom; this redesign is the root fix.
+
+### Consequences
+
+- The transcript watcher (`notify=c` milestone announcements) is retired — it classified exit-code-less transcript text and was unwired.
+- The per-signal / mood-pitch chime machinery was dead (reachable only from the unwired watcher, broken for the new vocabulary) and is deleted; notification chimes are two flat tones. The mood colors the **spoken voice** (ElevenLabs `vibe_tags`), not chimes.
+- Milestone excitement (`[excited]` on a win) is lost in v1 — exit code can't tell a PR merge from an `ls`.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Output-pattern classification (DES-018-era) | Narrow, asymmetric, fragile — see Why. |
+| Command-verb regex to judge "significance" | Re-imports the per-command/per-language knowledge the redesign exists to delete; a bad exit is an issue and a clean one is fine regardless of the command. |
+| LLM per command | The hook fires on every Bash command, must be near-instant, runs outside the model context — too slow/expensive. An async agent-from-transcript vibe is the documented escape hatch if the deterministic path proves insufficient, not the per-command path. |
+| Denylist known-benign non-zero (`grep`/`diff`) | Unnecessary — the mood keys on the *consecutive* fail-run, so a scattered benign non-zero is one `focused`, reset by the next `ok`; `frustrated` needs three in a row. |
+
+Closes vox-ek1m.
