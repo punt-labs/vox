@@ -24,13 +24,13 @@ _DR = "punt_vox.daemon_restarter"
 
 
 # ---------------------------------------------------------------------------
-# unmute tests
+# say tests
 # ---------------------------------------------------------------------------
 
 
-class TestUnmuteCommand:
+class TestSayCommand:
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_basic(
+    def test_say_basic(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -43,7 +43,7 @@ class TestUnmuteCommand:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 0
         mock_instance.synthesize.assert_called_once()
@@ -51,7 +51,7 @@ class TestUnmuteCommand:
         assert call_kwargs[0][0] == "hello"
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_custom_voice(
+    def test_say_custom_voice(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -64,19 +64,19 @@ class TestUnmuteCommand:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "Hallo", "--voice", "hans"])
+        result = runner.invoke(app, ["say", "Hallo", "--voice", "hans"])
 
         assert result.exit_code == 0
         call_kwargs = mock_instance.synthesize.call_args
         assert call_kwargs.args[1].voice == "hans"
 
-    def test_unmute_no_text_fails(self) -> None:
+    def test_say_no_text_fails(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute"])
+        result = runner.invoke(app, ["say"])
         assert result.exit_code != 0
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_connection_error(
+    def test_say_connection_error(
         self,
         mock_client_cls: MagicMock,
     ) -> None:
@@ -86,13 +86,13 @@ class TestUnmuteCommand:
         mock_instance.synthesize.side_effect = VoxdConnectionError("not running")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 1
         assert "not running" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_api_key_forwards_to_client(
+    def test_say_api_key_forwards_to_client(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -112,7 +112,7 @@ class TestUnmuteCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            app, ["unmute", "billable work", "--api-key", "sk_project_a"]
+            app, ["say", "billable work", "--api-key", "sk_project_a"]
         )
 
         assert result.exit_code == 0
@@ -121,7 +121,7 @@ class TestUnmuteCommand:
         assert spec.api_key == "sk_project_a"
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_api_key_not_echoed_to_output(
+    def test_say_api_key_not_echoed_to_output(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -140,20 +140,20 @@ class TestUnmuteCommand:
 
         runner = CliRunner()
         secret = "sk_SECRET_never_echo"
-        result = runner.invoke(app, ["unmute", "hello world", "--api-key", secret])
+        result = runner.invoke(app, ["say", "hello world", "--api-key", secret])
 
         assert result.exit_code == 0
         assert secret not in result.output
         # JSON mode also must not echo it — the payload only includes id.
         result_json = runner.invoke(
             app,
-            ["--json", "unmute", "hello world", "--api-key", secret],
+            ["--json", "say", "hello world", "--api-key", secret],
         )
         assert result_json.exit_code == 0
         assert secret not in result_json.output
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_api_key_empty_argv_normalized_to_none(
+    def test_say_api_key_empty_argv_normalized_to_none(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -176,13 +176,13 @@ class TestUnmuteCommand:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
+        result = runner.invoke(app, ["say", "hello", "--api-key", ""])
         assert result.exit_code == 0, result.output
         spec = mock_instance.synthesize.call_args.args[1]
         assert spec.api_key is None
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_no_api_key_omits_kwarg(
+    def test_say_no_api_key_omits_kwarg(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -199,14 +199,14 @@ class TestUnmuteCommand:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 0
         spec = mock_instance.synthesize.call_args.args[1]
         assert spec.api_key is None
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_unmute_preserves_vibe_tags(
+    def test_say_preserves_vibe_tags(
         self,
         mock_client_cls: MagicMock,
         tmp_path: Path,
@@ -228,7 +228,7 @@ class TestUnmuteCommand:
 
         runner = CliRunner()
         text = "Wall from claude: test 1, 2, 1, 2 [alert] [serious]"
-        result = runner.invoke(app, ["unmute", text])
+        result = runner.invoke(app, ["say", text])
 
         assert result.exit_code == 0
         sent_text = mock_instance.synthesize.call_args[0][0]
@@ -271,7 +271,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 0
         spec = mock_instance.synthesize.call_args.args[1]
@@ -299,7 +299,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello", "--api-key", "sk_argv_direct"])
+        result = runner.invoke(app, ["say", "hello", "--api-key", "sk_argv_direct"])
 
         assert result.exit_code == 0
         spec = mock_instance.synthesize.call_args.args[1]
@@ -333,9 +333,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["unmute", "hello", "--api-key-file", str(key_path)]
-        )
+        result = runner.invoke(app, ["say", "hello", "--api-key-file", str(key_path)])
 
         assert result.exit_code == 0
         spec = mock_instance.synthesize.call_args.args[1]
@@ -388,9 +386,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["unmute", "hello", "--api-key-file", str(key_path)]
-        )
+        result = runner.invoke(app, ["say", "hello", "--api-key-file", str(key_path)])
 
         assert result.exit_code == 0, f"{label}: cli exited {result.exit_code}"
         spec = mock_instance.synthesize.call_args.args[1]
@@ -433,7 +429,7 @@ class TestApiKeyInputPaths:
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["unmute", "hello", "--api-key-file", str(missing)],
+            ["say", "hello", "--api-key-file", str(missing)],
             standalone_mode=False,
         )
 
@@ -457,9 +453,7 @@ class TestApiKeyInputPaths:
         key_path.chmod(0o600)
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["unmute", "hello", "--api-key-file", str(key_path)]
-        )
+        result = runner.invoke(app, ["say", "hello", "--api-key-file", str(key_path)])
 
         assert result.exit_code != 0
         assert "is empty" in result.output or "is empty" in result.stderr
@@ -473,7 +467,7 @@ class TestApiKeyInputPaths:
     ) -> None:
         """--api-key-stdin reads one line of piped stdin, strips, no warning.
 
-        Intended usage: ``pass show vox/proj | vox unmute ... --api-key-stdin``.
+        Intended usage: ``pass show vox/proj | vox say ... --api-key-stdin``.
         """
         from punt_vox.client import SynthesizeResult
 
@@ -485,7 +479,7 @@ class TestApiKeyInputPaths:
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["unmute", "hello", "--api-key-stdin"],
+            ["say", "hello", "--api-key-stdin"],
             input="sk_stdin_test\n",
         )
 
@@ -536,7 +530,7 @@ class TestApiKeyInputPaths:
         monkeypatch.delenv("VOX_API_KEY", raising=False)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello", "--api-key-stdin"], input="")
+        result = runner.invoke(app, ["say", "hello", "--api-key-stdin"], input="")
 
         assert result.exit_code != 0
         assert "empty input" in result.output or "empty input" in result.stderr
@@ -568,7 +562,7 @@ class TestApiKeyInputPaths:
         result = runner.invoke(
             app,
             [
-                "unmute",
+                "say",
                 "hello",
                 "--api-key-file",
                 str(key_path),
@@ -610,7 +604,7 @@ class TestApiKeyInputPaths:
         result = runner.invoke(
             app,
             [
-                "unmute",
+                "say",
                 "hello",
                 "--api-key",
                 "sk_argv",
@@ -651,7 +645,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 0
         spec = mock_instance.synthesize.call_args.args[1]
@@ -696,9 +690,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["unmute", "hello", "--api-key-file", str(key_path)]
-        )
+        result = runner.invoke(app, ["say", "hello", "--api-key-file", str(key_path)])
 
         assert result.exit_code == 0, result.output
         spec = mock_instance.synthesize.call_args.args[1]
@@ -724,7 +716,7 @@ class TestApiKeyInputPaths:
         runner = CliRunner()
         result = runner.invoke(
             app,
-            ["unmute", "hello", "--api-key-stdin"],
+            ["say", "hello", "--api-key-stdin"],
             input="sk_stdin_from_empty_env\n",
         )
 
@@ -753,7 +745,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello"])
+        result = runner.invoke(app, ["say", "hello"])
 
         assert result.exit_code == 0, result.output
         spec = mock_instance.synthesize.call_args.args[1]
@@ -771,8 +763,8 @@ class TestApiKeyInputPaths:
         Locks in symmetric behavior with the env-var path: both the
         empty env value and an explicit empty argv value mean "no
         key", not "user error". Pairs with
-        ``test_unmute_api_key_empty_argv_normalized_to_none`` above in
-        TestUnmuteCommand, but lives here as well so the full
+        ``test_say_api_key_empty_argv_normalized_to_none`` above in
+        TestSayCommand, but lives here as well so the full
         empty-source story sits in one place.
         """
         from punt_vox.client import SynthesizeResult
@@ -783,7 +775,7 @@ class TestApiKeyInputPaths:
         mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "hello", "--api-key", ""])
+        result = runner.invoke(app, ["say", "hello", "--api-key", ""])
 
         assert result.exit_code == 0, result.output
         spec = mock_instance.synthesize.call_args.args[1]
@@ -924,7 +916,7 @@ class TestRecordCommand:
     ) -> None:
         """Vibe tags must reach voxd with brackets intact (record path).
 
-        Same regression as test_unmute_preserves_vibe_tags — the CLI
+        Same regression as test_say_preserves_vibe_tags — the CLI
         previously called normalize_for_speech before sending to voxd.
         """
         out = tmp_path / "test.mp3"
@@ -1103,6 +1095,162 @@ class TestVoiceCommand:
 
 
 # ---------------------------------------------------------------------------
+# voices tests
+# ---------------------------------------------------------------------------
+
+
+class TestVoicesCommand:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voices_lists_names(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices"])
+
+        assert result.exit_code == 0
+        assert "matilda" in result.output
+        assert "roger" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voices_passes_provider(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.delenv("TTS_PROVIDER", raising=False)
+        mock_client_cls.return_value.voices.return_value = ["joanna"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices", "--provider", "polly"])
+
+        assert result.exit_code == 0
+        mock_client_cls.return_value.voices.assert_called_once_with("polly")
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voices_json_includes_current(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        import punt_vox.config as cfg
+
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nvoice: "matilda"\n---\n')
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["voices"] == ["matilda", "roger"]
+        assert data["current"] == "matilda"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voices_marks_current_voice(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        import punt_vox.config as cfg
+
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nvoice: "roger"\n---\n')
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices"])
+
+        assert result.exit_code == 0
+        assert "roger (current)" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voices_connection_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices"])
+
+        assert result.exit_code == 1
+        assert "nope" in result.output
+
+
+# ---------------------------------------------------------------------------
+# stdin input tests (say / record read from a pipe or "-")
+# ---------------------------------------------------------------------------
+
+
+class TestStdinInput:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_reads_piped_stdin(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_client_cls.return_value.synthesize.return_value = SynthesizeResult(
+            request_id="abc"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["say"], input="Build finished\n")
+
+        assert result.exit_code == 0, result.output
+        sent = mock_client_cls.return_value.synthesize.call_args.args[0]
+        assert sent == "Build finished"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_dash_reads_stdin(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        mock_client_cls.return_value.synthesize.return_value = SynthesizeResult(
+            request_id="abc"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["say", "-"], input="from dash\n")
+
+        assert result.exit_code == 0, result.output
+        sent = mock_client_cls.return_value.synthesize.call_args.args[0]
+        assert sent == "from dash"
+
+    def test_say_empty_stdin_fails(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(app, ["say", "-"], input="")
+        assert result.exit_code == 1
+        assert "no text on stdin" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_reads_stdin(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "o.mp3"
+        mock_client_cls.return_value.record.return_value = b"\xff\xfb\x90\x00" * 10
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "-", "-o", str(out)], input="recorded\n")
+
+        assert result.exit_code == 0, result.output
+        sent = mock_client_cls.return_value.record.call_args.args[0]
+        assert sent == "recorded"
+
+
+# ---------------------------------------------------------------------------
 # version tests
 # ---------------------------------------------------------------------------
 
@@ -1170,9 +1318,9 @@ class TestMainGroup:
         assert result.exit_code == 0
         assert "vox" in result.output.lower()
 
-    def test_unmute_help(self) -> None:
+    def test_say_help(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(app, ["unmute", "--help"])
+        result = runner.invoke(app, ["say", "--help"])
         assert result.exit_code == 0
         assert "voice" in result.output.lower()
 
@@ -1970,6 +2118,53 @@ class TestGlobalFlags:
     def test_verbose_quiet_mutual_exclusion(self) -> None:
         runner = CliRunner()
         result = runner.invoke(app, ["-v", "-q", "version"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_json_after_version(self) -> None:
+        """--json works in the natural post-subcommand position."""
+        runner = CliRunner()
+        result = runner.invoke(app, ["version", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "version" in data
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
+        mock_client_cls.return_value.health.return_value = {"provider": "polly"}
+        runner = CliRunner()
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["provider"] == "polly"
+
+    def test_quiet_after_version(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["version", "--quiet"])
+        assert result.exit_code == 0
+        assert result.output.strip() == ""
+
+    def test_verbose_quiet_mutual_exclusion_post_subcommand(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["version", "--verbose", "--quiet"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_verbose_quiet_mutual_exclusion_mixed_verbose_pre(self) -> None:
+        """--verbose pre-subcommand + --quiet post must still be caught.
+
+        The flags land in different positions (callback vs command), so a
+        per-position check saw only one each and let the split bypass the guard.
+        """
+        runner = CliRunner()
+        result = runner.invoke(app, ["--verbose", "version", "--quiet"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_verbose_quiet_mutual_exclusion_mixed_quiet_pre(self) -> None:
+        """--quiet pre-subcommand + --verbose post must still be caught."""
+        runner = CliRunner()
+        result = runner.invoke(app, ["--quiet", "version", "--verbose"])
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output
 

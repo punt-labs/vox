@@ -96,7 +96,7 @@ voxd automatically.
 
 ```bash
 vox doctor    # Shows "Remote config: VOXD_HOST=..., VOXD_PORT=..., VOXD_TOKEN=***"
-vox unmute "hello from the remote host"   # Should play on machine A
+vox say "hello from the remote host"   # Should play on machine A
 ```
 
 ---
@@ -152,7 +152,7 @@ export VOXD_TOKEN=<paste token from machine A>
 **4. Test:**
 
 ```bash
-vox unmute "hello through the tunnel"   # Should play on machine A
+vox say "hello through the tunnel"   # Should play on machine A
 ```
 
 The tunnel dies when the SSH session ends. For persistent tunnels,
@@ -213,7 +213,7 @@ section above.
 `cat ~/.punt-labs/vox/run/serve.token`. The token is stable across
 restarts but changes if you delete the file or reinstall.
 
-**`vox doctor` shows the right config but `unmute` fails:** Run
+**`vox doctor` shows the right config but `vox say` fails:** Run
 `vox doctor` on machine A too — confirm the daemon is actually running
 and on the expected port.
 

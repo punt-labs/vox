@@ -66,10 +66,10 @@ The audio should be byte-identical to step 1.
 
 Chunking only triggers when the text **exceeds the active provider's per-request character limit** — `eleven_v3` (default): 5,000; ElevenLabs turbo/multilingual: 10,000; `eleven_flash_v2_5`: 40,000; OpenAI: 4,096. Below that, `split_text()` returns the text as a single chunk and nothing is split. So this step needs a genuinely long input — a short sentence will not exercise the path.
 
-Use the **CLI** (`vox unmute`) to generate a block that clearly exceeds the 5,000-char `eleven_v3` limit:
+Use the **CLI** (`vox say`) to generate a block that clearly exceeds the 5,000-char `eleven_v3` limit:
 
 ```bash
-vox unmute "$(python3 -c 'print("This is the first sentence, long enough to carry weight. Here is a second sentence with several more words in it. And a third sentence to add length. " * 60)')"
+vox say "$(python3 -c 'print("This is the first sentence, long enough to carry weight. Here is a second sentence with several more words in it. And a third sentence to add length. " * 60)')"
 ```
 
 `core.py:split_text()` splits on sentence boundaries; the daemon synthesizes each chunk in parallel and stitches them back into one stream. (To keep the listen short while still exercising split+merge, set `TTS_PROVIDER=openai` — its 4,096 limit chunks a smaller block — or use `vox record -o /tmp/chunk.mp3 "<long text>"` and inspect the single merged file.)

@@ -114,10 +114,12 @@ Run it as your normal user, **not** under `sudo`. On **macOS** this is fully sud
 
 ```bash
 vox doctor                         # report system checks and the daemon's active provider
-vox unmute "hello from vox"        # speak through the default provider
+vox voices                         # list the voices your provider offers
+vox say "hello from vox"           # speak through the default provider
+echo "piped too" | vox say         # ...or read the text from stdin
 ```
 
-`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox unmute` should speak the phrase through your speakers within a few seconds.
+`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox say` should speak the phrase through your speakers within a few seconds.
 
 If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
@@ -284,7 +286,7 @@ Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials valid) > s
 
 If you maintain multiple provider API keys for cost attribution (for
 example, separate ElevenLabs keys for different projects), you can
-pass a per-call override for any `vox unmute` invocation. The override
+pass a per-call override for any `vox say` invocation. The override
 is per-call only: never persisted to `keys.env`, never logged by the
 daemon, never echoed to stdout, never visible to concurrent requests
 on the same daemon. Four input paths are supported, from most to
@@ -294,7 +296,7 @@ least secure:
 
    ```bash
    export VOX_API_KEY=$(pass show vox/proj_a)
-   vox unmute "billable to project A"
+   vox say "billable to project A"
    ```
 
    On Linux, `VOX_API_KEY` is exposed via `/proc/<pid>/environ`,
@@ -308,7 +310,7 @@ least secure:
 2. **File** (recommended for stored keys):
 
    ```bash
-   vox unmute "billable to project A" \
+   vox say "billable to project A" \
      --api-key-file ~/.config/vox/key_project_a.txt
    ```
 
@@ -319,7 +321,7 @@ least secure:
 3. **Standard input** (recommended for password managers):
 
    ```bash
-   pass show vox/proj_a | vox unmute "billable to project A" --api-key-stdin
+   pass show vox/proj_a | vox say "billable to project A" --api-key-stdin
    ```
 
    Reads one line from stdin. Refuses to read from a tty so a
@@ -329,7 +331,7 @@ least secure:
 4. **Command line** (demo only — **not** for real credentials):
 
    ```bash
-   vox unmute "billable to project A" --api-key sk_demo_key
+   vox say "billable to project A" --api-key sk_demo_key
    ```
 
    **Warning**: `--api-key` on the command line exposes the value
@@ -353,7 +355,7 @@ Claude Code ◄── stdio ──► vox mcp ── WebSocket ──► voxd :8
                                                       │
 Hook scripts ──► vox hook <event> ── WebSocket ──►    │
                                                       │
-Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
+Shell        ──► vox say "hi"  ── WebSocket ──►    │
                                                       ▼
                                                    speakers
 ```
@@ -364,7 +366,7 @@ Shell        ──► vox unmute "hi"  ── WebSocket ──►    │
 
 **`vox hook <event>`** handlers call `voxd` for chimes and speech. Hook shell scripts are thin gates per the [hooks standard](https://github.com/punt-labs/punt-kit/blob/main/standards/hooks.md).
 
-**`vox unmute`** and other CLI commands are one-shot WebSocket clients of `voxd`.
+**`vox say`** and other CLI commands are one-shot WebSocket clients of `voxd`.
 
 ### State Paths
 
@@ -407,8 +409,8 @@ The MCP session (Claude Code ↔ `vox mcp`) is stdio — unaffected by daemon re
 punt-vox is also a standalone TTS tool, independent of Claude Code.
 
 ```bash
-vox unmute "Hello world"                       # Synthesize + play
-vox unmute "Wall broadcast" --once 600         # Dedup identical text within 600s (for N-session broadcasts)
+vox say "Hello world"                       # Synthesize + play
+vox say "Wall broadcast" --once 600         # Dedup identical text within 600s (for N-session broadcasts)
 vox record "Hello world" -o hello.mp3          # Synthesize + save
 vox record --from segments.json                # From JSON segments file
 vox vibe excited                               # Set session mood
