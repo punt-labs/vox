@@ -32,7 +32,7 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.command_signal import CommandOutcome
+from punt_vox.command_signal import CommandSignal
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
@@ -263,12 +263,12 @@ def handle_stop(
 def classify_signal(exit_code: int | None, stdout: str) -> str | None:
     """Classify a bash command's output into a signal token.
 
-    Delegates to :class:`CommandOutcome`: exit code is authoritative and
+    Delegates to :class:`CommandSignal`: exit code is authoritative and
     recognition anchors to structured summary tokens. Returns a signal
     name like ``"tests-pass"`` or None when the command cannot be
     confidently classified.
     """
-    return CommandOutcome(exit_code, stdout).signal()
+    return CommandSignal(exit_code, stdout).signal()
 
 
 def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:

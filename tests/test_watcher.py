@@ -365,9 +365,9 @@ class TestResolveChimePath:
 
     def test_all_signals_have_mapping(self) -> None:
         """Every classified signal has a chime filename entry."""
-        from punt_vox.command_signal import CommandOutcome
+        from punt_vox.command_signal import CommandSignal
 
-        assert CommandOutcome.signal_names() == frozenset(_SIGNAL_CHIMES.keys())
+        assert CommandSignal.signal_names() == frozenset(_SIGNAL_CHIMES.keys())
 
     def test_returns_none_when_no_assets_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

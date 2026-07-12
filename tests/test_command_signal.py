@@ -1,12 +1,12 @@
-"""Tests for CommandOutcome (src/punt_vox/command_signal.py)."""
+"""Tests for CommandSignal (src/punt_vox/command_signal.py)."""
 
 from __future__ import annotations
 
-from punt_vox.command_signal import CommandOutcome
+from punt_vox.command_signal import CommandSignal
 
 
 def _signal(exit_code: int | None, stdout: str) -> str | None:
-    return CommandOutcome(exit_code, stdout).signal()
+    return CommandSignal(exit_code, stdout).signal()
 
 
 class TestExitCodeAuthoritative:
@@ -95,7 +95,7 @@ class TestNoExitCode:
 
 class TestSignalNames:
     def test_names_are_the_marker_signals(self) -> None:
-        assert CommandOutcome.signal_names() == frozenset(
+        assert CommandSignal.signal_names() == frozenset(
             {
                 "tests-pass",
                 "tests-fail",
@@ -109,4 +109,4 @@ class TestSignalNames:
         )
 
     def test_cmd_fail_is_not_a_marker(self) -> None:
-        assert "cmd-fail" not in CommandOutcome.signal_names()
+        assert "cmd-fail" not in CommandSignal.signal_names()

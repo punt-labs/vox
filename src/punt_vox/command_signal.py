@@ -7,7 +7,7 @@ from typing import ClassVar, Self, final
 
 
 @final
-class CommandOutcome:
+class CommandSignal:
     """A finished bash command, classifiable into a vibe signal.
 
     Exit code is authoritative: a zero exit never yields a failure signal
