@@ -245,22 +245,17 @@ class _VoxdTransport:
         await ws.send(json.dumps(msg))
         responses: list[dict[str, Any]] = []
         deadline = asyncio.get_running_loop().time() + timeout
+        # One message serves both timeout paths (deadline exceeded, recv timeout).
+        expected = early_terminal or terminal_type
+        timeout_msg = f"Timeout waiting for '{expected}' in '{msg.get('type', '')}'"
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                msg_type = str(msg.get("type", ""))
-                expected = early_terminal or terminal_type
-                raise VoxdProtocolError(
-                    f"Timeout waiting for '{expected}' in '{msg_type}'"
-                )
+                raise VoxdProtocolError(timeout_msg)
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
             except TimeoutError as exc:
-                msg_type = str(msg.get("type", ""))
-                expected = early_terminal or terminal_type
-                raise VoxdProtocolError(
-                    f"Timeout waiting for '{expected}' in '{msg_type}'"
-                ) from exc
+                raise VoxdProtocolError(timeout_msg) from exc
             resp: dict[str, Any] = json.loads(str(raw))
             responses.append(resp)
             if resp.get("type") == "error":
@@ -396,12 +391,18 @@ class VoxClient:
             raise VoxdProtocolError(f"Invalid audio data from voxd: {exc}") from exc
 
     async def voices(self, provider: str | None = None) -> list[str]:
-        """List available voices."""
+        """List available voices; a missing ``voices`` key is a protocol error.
+
+        Defaulting to ``[]`` would hide a misbehaving daemon behind a
+        provider that genuinely offers no voices.
+        """
         msg: dict[str, object] = {"type": "voices"}
         if provider is not None:
             msg["provider"] = provider
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
-        voice_list: list[str] = resp.get("voices", [])
+        if "voices" not in resp:
+            raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")
+        voice_list: list[str] = resp["voices"]
         return voice_list
 
     async def health(self) -> dict[str, object]:

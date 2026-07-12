@@ -474,6 +474,23 @@ class TestVoxClientVoices:
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert "provider" not in sent
 
+    @pytest.mark.asyncio
+    async def test_voices_missing_key_raises_protocol_error(self) -> None:
+        """A response lacking 'voices' is a protocol error, not an empty list.
+
+        A silent ``[]`` would make a misbehaving daemon indistinguishable
+        from a provider that genuinely offers no voices.
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "voices", "provider": "say"})
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="missing 'voices' key"):
+            await client.voices()
+
 
 class TestVoxClientHealth:
     """Test health method."""

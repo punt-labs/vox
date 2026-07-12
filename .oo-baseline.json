@@ -120,7 +120,7 @@
     "method_ratio": 0.923,
     "encapsulation_ratio": 1.0,
     "avg_params": 1.08,
-    "max_complexity": 10.0,
+    "max_complexity": 9.0,
     "avg_complexity": 2.5,
     "module_size": 415.0,
     "classes_per_module": 3.0,
