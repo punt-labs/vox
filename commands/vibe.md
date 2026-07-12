@@ -19,9 +19,10 @@ translate it into ElevenLabs expressive tags.
 ## Modes
 
 **auto** (default): Vibe tags update automatically at each task
-completion based on session signals (test results, lint, git ops).
-You interpret the signals and pick appropriate tags during stop-hook
-continuations.
+completion. A bounded window of recent command outcomes drives the mood:
+every Bash command exits 0 (`ok`) or non-zero (`fail`), and the mood
+deepens with the trailing run of failures. The stop hook resolves the
+mood to tags deterministically — no interpretation needed.
 
 **manual**: User-specified mood overrides auto-detection. The manual
 mood takes priority when choosing tags at stop time.
@@ -50,11 +51,13 @@ Examples of your translation:
 | `just shipped a release` | `[excited]` |
 | `3am and still debugging` | `[tired] [slow]` |
 | `presenting to the board` | `[confident] [dramatic tone]` |
-| tests-fail, tests-fail, cmd-fail | `[frustrated] [sighs]` |
-| tests-pass, tests-pass, git-push-ok | `[excited]` |
-| tests-pass after tests-fail | `[relieved]` |
 
 Keep it to 1-3 tags. Fewer is better — let the mood breathe.
+
+Auto mode (exit-code driven) resolves the trailing failure run to a fixed
+mood: a clean or empty window is `[happy]`; 1-2 failures `[focused]`; 3-4
+`[frustrated] [sighs]`; 5+ `[weary]`; the first `ok` after a recent failure
+`[relieved]`.
 
 ## Implementation
 
