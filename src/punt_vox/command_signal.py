@@ -30,8 +30,19 @@ class CommandSignal:
     _SUCCESS_MARKERS: ClassVar[tuple[tuple[str, re.Pattern[str]], ...]] = (
         ("tests-pass", re.compile(r"\b\d+ passed\b")),
         ("lint-pass", re.compile(r"All checks passed|\b0 errors\b")),
-        ("git-push-ok", re.compile(r"Everything up-to-date|-> .*main")),
-        ("git-commit", re.compile(r"^\[.+\] .+|^create mode", re.MULTILINE)),
+        (
+            "git-push-ok",
+            re.compile(
+                r"Everything up-to-date"
+                r"|\[new branch\]"
+                r"|[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}"
+                r"|-> \S*(?:refs|origin)/"
+            ),
+        ),
+        (
+            "git-commit",
+            re.compile(r"^\[\S+ [0-9a-f]{7,40}\] |^create mode", re.MULTILINE),
+        ),
         ("pr-created", re.compile(r"pull/\d+|created pull request")),
     )
 

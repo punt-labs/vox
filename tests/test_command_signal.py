@@ -63,6 +63,41 @@ class TestStructuredTokens:
         assert _signal(1, "ERROR banner text") == "cmd-fail"
 
 
+class TestAnchoredGitMarkers:
+    """git-push-ok and git-commit anchor to git's real output shapes."""
+
+    def test_status_rename_with_main_substring_is_not_push(self) -> None:
+        # "domain_v2" contains the substring "main"; a `git status` rename
+        # line (exit 0, no push) must not read as a push.
+        out = "renamed: src/domain.py -> src/domain_v2.py"
+        assert _signal(0, out) != "git-push-ok"
+        assert _signal(0, out) is None
+
+    def test_rename_to_remaining_path_is_not_push(self) -> None:
+        assert _signal(0, "        modules/remaining.py -> modules/kept.py") is None
+
+    def test_real_push_ref_update_is_push(self) -> None:
+        assert _signal(0, "   abc1234..def5678  main -> main") == "git-push-ok"
+
+    def test_new_branch_push_is_push(self) -> None:
+        assert _signal(0, " * [new branch]      feat -> feat") == "git-push-ok"
+
+    def test_push_to_origin_ref_is_push(self) -> None:
+        assert _signal(0, "abc123 -> origin/main") == "git-push-ok"
+
+    def test_bracket_log_line_is_not_commit(self) -> None:
+        # A bracket-prefixed log line is not a git commit summary.
+        assert _signal(0, "[INFO] starting up") is None
+        assert _signal(0, "[nodemon] restarting due to changes") is None
+        assert _signal(0, "[2026-07-12 10:23] request handled") is None
+
+    def test_real_commit_summary_is_commit(self) -> None:
+        assert _signal(0, "[main a1b2c3d] feat: add thing") == "git-commit"
+
+    def test_create_mode_line_is_commit(self) -> None:
+        assert _signal(0, " create mode 100644 src/new.py\ncreate mode 100644 x")
+
+
 class TestTailScan:
     """The verdict at the end of a long run must be seen."""
 

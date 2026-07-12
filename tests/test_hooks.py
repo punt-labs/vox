@@ -199,7 +199,7 @@ class TestSuccessfulSessionResolvesNonFrustrated:
                 (0, "==== 2534 passed in 45s ===="),
                 (0, "[main a1b2c3d] feat: add thing"),
                 (0, "==== 2534 passed in 44s ===="),
-                (0, "abc..def -> main"),
+                (0, "   abc1234..def5678  main -> main"),
             ]
         )
         assert "[frustrated]" not in tags
