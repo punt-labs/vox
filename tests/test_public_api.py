@@ -42,11 +42,19 @@ def test_error_hierarchy_allows_one_except_clause() -> None:
             raise error
 
 
+def test_prompt_set_is_public() -> None:
+    """``PromptSet`` -- a program_on/select argument -- is importable publicly."""
+    from punt_vox import PromptSet
+
+    assert PromptSet is punt_vox.PromptSet
+
+
 def test_public_api_is_reexported_from_owning_modules() -> None:
     """Each name is the same object the owning submodule defines."""
     from punt_vox.client import SynthesizeResult, VoxClient
     from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
     from punt_vox.client_sync import VoxClientSync
+    from punt_vox.music_prompts import PromptSet
     from punt_vox.types_synthesis import SynthesisSpec
 
     assert punt_vox.VoxClient is VoxClient
@@ -56,11 +64,13 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
     assert punt_vox.VoxError is VoxError
     assert punt_vox.VoxdConnectionError is VoxdConnectionError
     assert punt_vox.VoxdProtocolError is VoxdProtocolError
+    assert punt_vox.PromptSet is PromptSet
 
 
 def test_all_lists_the_public_api() -> None:
     """``__all__`` names the clients, their types, the errors, and the version."""
     assert set(punt_vox.__all__) == {
+        "PromptSet",
         "SynthesisSpec",
         "SynthesizeResult",
         "VoxClient",
