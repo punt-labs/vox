@@ -69,3 +69,35 @@ class TestOutputFormatter:
         fmt.emit({"x": 1}, "text")
         captured = capsys.readouterr()
         assert json.loads(captured.out) == {"x": 1}
+
+    def test_error_json_wraps_under_error_key(self, capsys: object) -> None:
+        """Under --json, error() emits a structured {"error": ...} on stdout."""
+        import _pytest.capture
+
+        assert isinstance(capsys, _pytest.capture.CaptureFixture)
+        fmt = OutputFormatter(json_output=True)
+        fmt.error("nope", "Error: nope")
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == {"error": "nope"}
+        assert captured.err == ""
+
+    def test_error_human_goes_to_stderr(self, capsys: object) -> None:
+        """Without --json, error() writes the human text to stderr, not stdout."""
+        import _pytest.capture
+
+        assert isinstance(capsys, _pytest.capture.CaptureFixture)
+        fmt = OutputFormatter()
+        fmt.error("nope", "Error: nope")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Error: nope" in captured.err
+
+    def test_error_json_ignores_quiet(self, capsys: object) -> None:
+        """A --json error object must surface even when quiet is set."""
+        import _pytest.capture
+
+        assert isinstance(capsys, _pytest.capture.CaptureFixture)
+        fmt = OutputFormatter(json_output=True, quiet=True)
+        fmt.error({"code": "no_daemon"}, "Error: no daemon")
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == {"error": {"code": "no_daemon"}}

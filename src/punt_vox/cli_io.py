@@ -51,8 +51,9 @@ class OutputFlags:
             self._verbose_seen = True
         if quiet:
             self._quiet_seen = True
-        # Check the accumulated flags, not this call's: a split like
-        # ``vox --verbose status --quiet`` sets each flag in a different position.
+        # The check runs against the accumulated flags, not this call's, so a
+        # split like ``vox --verbose status --quiet`` -- verbose on the callback,
+        # quiet on the command -- cannot slip past by landing one flag per side.
         if self._verbose_seen and self._quiet_seen:
             raise typer.BadParameter("--verbose and --quiet are mutually exclusive.")
         if json_output:
@@ -91,8 +92,9 @@ class TextInput:
         if self._should_read_stdin(text):
             return [self._read_stdin()]
         if text is None:
-            typer.echo(
-                "Error: provide TEXT argument, --from file, or piped stdin.", err=True
+            self._formatter.error(
+                "provide TEXT argument, --from file, or piped stdin",
+                "Error: provide TEXT argument, --from file, or piped stdin.",
             )
             raise typer.Exit(code=1)
         return [text]
@@ -112,7 +114,7 @@ class TextInput:
         """Read and return stripped text from stdin, or exit on empty input."""
         data = sys.stdin.read().strip()
         if not data:
-            typer.echo("Error: no text on stdin.", err=True)
+            self._formatter.error("no text on stdin", "Error: no text on stdin.")
             raise typer.Exit(code=1)
         return data
 

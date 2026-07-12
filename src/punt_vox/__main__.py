@@ -283,7 +283,7 @@ def _speak_segments(
         try:
             result = client.synthesize(seg_text, spec, once=once)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
-            typer.echo(f"Error: {exc}", err=True)
+            _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
         payload: dict[str, object] = {"id": result.request_id, **_dedup_fields(result)}
         _formatter.emit(payload, seg_text)
@@ -438,11 +438,8 @@ def record(  # pyright: ignore[reportUnusedFunction]
 
         try:
             mp3_bytes = client.record(seg_text, spec)
-        except VoxdConnectionError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-        except VoxdProtocolError as exc:
-            typer.echo(f"Error: {exc}", err=True)
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,7 +569,7 @@ def voices_cmd(  # pyright: ignore[reportUnusedFunction]
     try:
         names = VoxClientSync().voices(provider)
     except (VoxdConnectionError, VoxdProtocolError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
+        _formatter.error(str(exc), f"Error: {exc}")
         raise typer.Exit(code=1) from exc
 
     payload: dict[str, object] = {"voices": names, "current": current}

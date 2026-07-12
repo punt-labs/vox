@@ -77,6 +77,15 @@ class TestTextInputResolve:
             TextInput(OutputFormatter()).resolve(None, None)
         assert exc.value.exit_code == 1
 
+    def test_empty_stdin_error_is_structured_under_json(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Under --json, the empty-stdin failure emits a JSON error object."""
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
+        with pytest.raises(typer.Exit):
+            TextInput(OutputFormatter(json_output=True)).resolve("-", None)
+        assert json.loads(capsys.readouterr().out) == {"error": "no text on stdin"}
+
 
 class TestTextInputFromFile:
     """TextInput parses a --from JSON segments file."""

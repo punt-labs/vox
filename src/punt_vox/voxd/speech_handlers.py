@@ -9,6 +9,7 @@ import base64
 import contextlib
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
@@ -33,6 +34,57 @@ from punt_vox.voxd.types import MessageHandler
 __all__ = ["RecordHandler", "SynthesizeHandler"]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _SpeechRequest:
+    """One synthesize/record request: the parsed wire fields plus its reply channel.
+
+    Both handlers previously carried an identical copy of the ``SynthesisSpec``
+    parsing and the id-stamped reply plumbing. Bundling text, spec, request id,
+    and the socket here lets a handler thread one ``req`` through its steps
+    instead of four loose primitives, and gives both handlers one parser and one
+    reply path.
+    """
+
+    text: str
+    spec: SynthesisSpec
+    request_id: str
+    websocket: WebSocket
+
+    @classmethod
+    def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
+        """Parse a wire message into a request; ``auto_detect`` fills the provider."""
+        speaker_boost_raw = msg.get("speaker_boost")
+        spec = SynthesisSpec(
+            voice=parse_optional_str(msg, "voice"),
+            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
+            model=parse_optional_str(msg, "model"),
+            rate=parse_optional_int(msg, "rate"),
+            language=parse_optional_str(msg, "language"),
+            vibe_tags=parse_optional_str(msg, "vibe_tags"),
+            stability=parse_optional_float(msg, "stability"),
+            similarity=parse_optional_float(msg, "similarity"),
+            style=parse_optional_float(msg, "style"),
+            speaker_boost=(
+                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
+            ),
+            api_key=parse_optional_str(msg, "api_key"),
+        )
+        return cls(
+            text=str(msg.get("text", "")),
+            spec=spec,
+            request_id=str(msg.get("id", "")),
+            websocket=websocket,
+        )
+
+    async def reply(self, payload: dict[str, object]) -> None:
+        """Send *payload* to the client, stamped with this request's id."""
+        await self.websocket.send_json({"id": self.request_id, **payload})
+
+    async def error(self, message: str) -> None:
+        """Send an error reply for this request."""
+        await self.reply({"type": "error", "message": message})
 
 
 class SynthesizeHandler(MessageHandler):
@@ -61,144 +113,117 @@ class SynthesizeHandler(MessageHandler):
         self._once_dedup = once_dedup
         return self
 
-    async def __call__(
-        self,
-        msg: dict[str, object],
-        websocket: WebSocket,
-    ) -> None:
+    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and enqueue for playback."""
-        request_id = str(msg.get("id", ""))
-        text = str(msg.get("text", ""))
-        if not text:
-            await websocket.send_json(
-                {"type": "error", "id": request_id, "message": "empty text"}
-            )
+        req = _SpeechRequest.from_msg(msg, websocket)
+        if not req.text:
+            await req.error("empty text")
             return
 
-        speaker_boost_raw = msg.get("speaker_boost")
-        spec = SynthesisSpec(
-            voice=parse_optional_str(msg, "voice"),
-            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
-            model=parse_optional_str(msg, "model"),
-            rate=parse_optional_int(msg, "rate"),
-            language=parse_optional_str(msg, "language"),
-            vibe_tags=parse_optional_str(msg, "vibe_tags"),
-            stability=parse_optional_float(msg, "stability"),
-            similarity=parse_optional_float(msg, "similarity"),
-            style=parse_optional_float(msg, "style"),
-            speaker_boost=(
-                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
-            ),
-            api_key=parse_optional_str(msg, "api_key"),
-        )
-        once = parse_optional_int(msg, "once")
-
-        provider_name = spec.provider or ""
-        resolved_voice = spec.voice or ""
-
         # Opt-in dedup: only when the caller sets `once` to a positive TTL.
-        dedup_recorded = False
-        if once is not None and once > 0:
-            hit = self._once_dedup.check_and_record(text, float(once))
-            if hit is not None:
-                logger.info(
-                    "Dedup hit: id=%s text=%d chars original_played_at=%.3f "
-                    "ttl_remaining=%.1fs",
-                    request_id,
-                    len(text),
-                    hit.original_played_at,
-                    hit.ttl_seconds_remaining,
-                )
-                await websocket.send_json(
-                    {
-                        "type": "done",
-                        "id": request_id,
-                        "deduped": True,
-                        "original_played_at": hit.original_played_at,
-                        "ttl_seconds_remaining": hit.ttl_seconds_remaining,
-                    }
-                )
-                return
-            dedup_recorded = True
-
-        def _rollback_dedup() -> None:
-            if dedup_recorded:
-                self._once_dedup.rollback(text)
+        once = parse_optional_int(msg, "once")
+        dedup_recorded = await self._respond_if_deduped(req, once)
+        if dedup_recorded is None:
+            return
 
         logger.info(
             "Synthesize: id=%s provider=%s voice=%s chars=%d",
-            request_id,
-            provider_name,
-            resolved_voice,
-            len(text),
+            req.request_id,
+            req.spec.provider or "",
+            req.spec.voice or "",
+            len(req.text),
         )
 
-        # Local providers (espeak, say) play directly to the audio device.
-        if provider_name in _LOCAL_PROVIDERS:
-            direct_result = await self._synthesis.try_direct_play(
-                text,
-                spec,
-                record_result=self._record_playback_result,
-            )
-            if isinstance(direct_result, Exception):
-                _rollback_dedup()
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "id": request_id,
-                        "message": str(direct_result),
-                    }
-                )
-                return
-            if direct_result is not None:
-                if direct_result == 0:
-                    await websocket.send_json({"type": "done", "id": request_id})
-                else:
-                    _rollback_dedup()
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "id": request_id,
-                            "message": f"play_directly failed with rc={direct_result}",
-                        }
-                    )
-                return
+        local = (req.spec.provider or "") in _LOCAL_PROVIDERS
+        if local and await self._play_local(req, dedup_recorded=dedup_recorded):
+            return
+        await self._synthesize_and_enqueue(req, dedup_recorded=dedup_recorded)
 
+    async def _respond_if_deduped(
+        self, req: _SpeechRequest, once: int | None
+    ) -> bool | None:
+        """Check the once-dedup window.
+
+        Return ``None`` when the request was a dedup hit (a 'done' reply was sent
+        and the caller must stop); otherwise return whether this call recorded a
+        dedup entry that a later failure must roll back.
+        """
+        if once is None or once <= 0:
+            return False
+        hit = self._once_dedup.check_and_record(req.text, float(once))
+        if hit is None:
+            return True
+        logger.info(
+            "Dedup hit: id=%s text=%d chars original=%.3f ttl_remaining=%.1fs",
+            req.request_id,
+            len(req.text),
+            hit.original_played_at,
+            hit.ttl_seconds_remaining,
+        )
+        await req.reply(
+            {
+                "type": "done",
+                "deduped": True,
+                "original_played_at": hit.original_played_at,
+                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+            }
+        )
+        return None
+
+    async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
+        """Play a local provider (espeak/say) straight to the device.
+
+        Return True when the request was fully handled (a terminal reply was
+        sent); False when no local path applied and the caller should fall
+        through to file synthesis.
+        """
+        result = await self._synthesis.try_direct_play(
+            req.text, req.spec, record_result=self._record_playback_result
+        )
+        if result is None:
+            return False
+        if isinstance(result, Exception):
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            await req.error(str(result))
+        elif result == 0:
+            await req.reply({"type": "done"})
+        else:
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            await req.error(f"play_directly failed with rc={result}")
+        return True
+
+    async def _synthesize_and_enqueue(
+        self, req: _SpeechRequest, *, dedup_recorded: bool
+    ) -> None:
+        """Synthesize to a file, enqueue it, and drive the playing/done replies."""
         try:
             outcome = await self._synthesis.synthesize_to_file(
-                text,
-                spec,
-                request_id=request_id,
+                req.text, req.spec, request_id=req.request_id
             )
         except Exception as exc:
-            _rollback_dedup()
-            logger.exception("Synthesis failed for id=%s", request_id)
-            await websocket.send_json(
-                {"type": "error", "id": request_id, "message": str(exc)}
-            )
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            logger.exception("Synthesis failed for id=%s", req.request_id)
+            await req.error(str(exc))
             return
 
         # `cached` rides the 'playing' response (the client's terminal).
         done_event = asyncio.Event()
-        await self._playback.enqueue(
-            PlaybackItem(path=outcome.path, request_id=request_id, notify=done_event)
+        item = PlaybackItem(
+            path=outcome.path, request_id=req.request_id, notify=done_event
         )
-        await websocket.send_json(
-            {"type": "playing", "id": request_id, "cached": outcome.cached}
-        )
+        await self._playback.enqueue(item)
+        await req.reply({"type": "playing", "cached": outcome.cached})
         await done_event.wait()
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-            await websocket.send_json({"type": "done", "id": request_id})
+            await req.reply({"type": "done"})
 
-    # -- Private helpers -------------------------------------------------------
+    def _rollback(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
+        """Undo a recorded dedup entry when synthesis fails after recording it."""
+        if dedup_recorded:
+            self._once_dedup.rollback(req.text)
 
     def _record_playback_result(
-        self,
-        *,
-        path: Path,
-        rc: int,
-        elapsed: float,
-        stderr: str,
+        self, *, path: Path, rc: int, elapsed: float, stderr: str
     ) -> None:
         """Update the playback queue's last_result with a freshly-observed result."""
         self._playback.set_last_result(
@@ -219,69 +244,37 @@ class RecordHandler(MessageHandler):
 
     _synthesis: SynthesisPipeline
 
-    def __new__(
-        cls,
-        *,
-        synthesis: SynthesisPipeline,
-    ) -> Self:
+    def __new__(cls, *, synthesis: SynthesisPipeline) -> Self:
         self = super().__new__(cls)
         self._synthesis = synthesis
         return self
 
-    async def __call__(
-        self,
-        msg: dict[str, object],
-        websocket: WebSocket,
-    ) -> None:
+    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and return audio bytes without playback."""
-        request_id = str(msg.get("id", ""))
-        text = str(msg.get("text", ""))
-        if not text:
-            await websocket.send_json(
-                {"type": "error", "id": request_id, "message": "empty text"}
-            )
+        req = _SpeechRequest.from_msg(msg, websocket)
+        if not req.text:
+            await req.error("empty text")
             return
-
-        speaker_boost_raw = msg.get("speaker_boost")
-        spec = SynthesisSpec(
-            voice=parse_optional_str(msg, "voice"),
-            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
-            model=parse_optional_str(msg, "model"),
-            rate=parse_optional_int(msg, "rate"),
-            language=parse_optional_str(msg, "language"),
-            vibe_tags=parse_optional_str(msg, "vibe_tags"),
-            stability=parse_optional_float(msg, "stability"),
-            similarity=parse_optional_float(msg, "similarity"),
-            style=parse_optional_float(msg, "style"),
-            speaker_boost=(
-                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
-            ),
-            api_key=parse_optional_str(msg, "api_key"),
-        )
 
         logger.info(
             "Record: id=%s provider=%s voice=%s chars=%d",
-            request_id,
-            spec.provider or "",
-            spec.voice or "",
-            len(text),
+            req.request_id,
+            req.spec.provider or "",
+            req.spec.voice or "",
+            len(req.text),
         )
 
         try:
             outcome = await self._synthesis.synthesize_to_file(
-                text,
-                spec,
-                request_id=request_id,
+                req.text, req.spec, request_id=req.request_id
             )
         except Exception as exc:
-            logger.exception("Record synthesis failed for id=%s", request_id)
-            await websocket.send_json(
-                {"type": "error", "id": request_id, "message": str(exc)}
-            )
+            logger.exception("Record synthesis failed for id=%s", req.request_id)
+            await req.error(str(exc))
             return
 
         audio_data = outcome.path.read_bytes()
         if not outcome.path.is_relative_to(_cache_module.CACHE_DIR):
             outcome.path.unlink(missing_ok=True)
         encoded = base64.b64encode(audio_data).decode("ascii")
-        await websocket.send_json({"type": "audio", "id": request_id, "data": encoded})
+        await req.reply({"type": "audio", "data": encoded})

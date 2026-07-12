@@ -38,3 +38,16 @@ class OutputFormatter:
             typer.echo(json.dumps(payload))
         elif not self._quiet:
             typer.echo(text)
+
+    def error(self, detail: object, text: str) -> None:
+        """Report a failure: an ``{"error": detail}`` object, else *text* to stderr.
+
+        Unlike :meth:`emit`, the machine branch wraps *detail* under an ``error``
+        key on stdout so a --json consumer parses one object instead of a blank
+        stdout plus plain-text stderr; the human branch goes to stderr. Callers
+        pair this with a non-zero ``typer.Exit``.
+        """
+        if self._json:
+            typer.echo(json.dumps({"error": detail}))
+        else:
+            typer.echo(text, err=True)
