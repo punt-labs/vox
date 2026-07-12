@@ -40,7 +40,7 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
-from punt_vox.signal import SignalLog
+from punt_vox.signal import Signal, SignalLog
 
 if TYPE_CHECKING:
     import pytest
@@ -129,6 +129,92 @@ class TestClassifySignal:
     def test_negative_exit_code_string(self) -> None:
         # Negative exit codes passed as strings should still classify
         assert classify_signal(-1, "some unknown output") == "cmd-fail"
+
+
+class TestClassifySignalRegressions:
+    """The audited false positives that made every session 'frustrated'.
+
+    Each case exits 0 (a success) yet the old classifier logged it as a
+    test failure because it matched a bare case-insensitive substring
+    (``error``/``failed``/``AssertionError``) in incidental text.
+    """
+
+    _FAILURE_SIGNALS = frozenset(
+        {"tests-fail", "lint-fail", "cmd-fail", "merge-conflict"}
+    )
+
+    def test_error_filename_in_output_is_not_a_failure(self) -> None:
+        # A command that names client_errors.py must not read as a failure.
+        out = "processing src/punt_vox/client_errors.py\ndone"
+        assert classify_signal(0, out) not in self._FAILURE_SIGNALS
+
+    def test_commit_of_error_handling_file_is_git_commit(self) -> None:
+        out = (
+            "[main a1b2c3d] fix: improve error handling in client_errors.py\n"
+            " 1 file changed, 10 insertions(+), 2 deletions(-)"
+        )
+        assert classify_signal(0, out) == "git-commit"
+
+    def test_pr_with_error_in_title_is_pr_created(self) -> None:
+        out = (
+            "Creating pull request for fix/error-handling into main\n"
+            "https://github.com/punt-labs/vox/pull/300"
+        )
+        signal = classify_signal(0, out)
+        assert signal == "pr-created"
+        assert signal != "tests-fail"
+
+    def test_passing_summary_at_end_of_long_output(self) -> None:
+        # The verdict lives at the END of a make/pytest run. The old code
+        # scanned only stdout[:500] and never saw it.
+        preamble = "collecting ...\n" + ("." * 3000) + "\n"
+        out = preamble + "==== 2534 passed in 45.20s ===="
+        assert len(preamble) > 500  # the summary is well past the old window
+        assert classify_signal(0, out) == "tests-pass"
+
+    def test_real_test_failure_still_classifies(self) -> None:
+        out = (
+            "FAILED tests/test_x.py::test_foo - AssertionError: 1 != 2\n"
+            "==== 1 failed, 3 passed in 2.10s ===="
+        )
+        assert classify_signal(1, out) == "tests-fail"
+
+
+class TestSuccessfulSessionResolvesNonFrustrated:
+    """End-to-end: a productive session must not sound frustrated."""
+
+    @staticmethod
+    def _resolve(commands: list[tuple[int, str]]) -> str:
+        log = SignalLog()
+        for exit_code, out in commands:
+            signal = classify_signal(exit_code, out)
+            assert signal is not None
+            log.append(Signal.now(signal))
+        return log.resolve_tags()
+
+    def test_ship_it_session_is_satisfied(self) -> None:
+        tags = self._resolve(
+            [
+                (0, "All checks passed!"),
+                (0, "==== 2534 passed in 45s ===="),
+                (0, "[main a1b2c3d] feat: add thing"),
+                (0, "==== 2534 passed in 44s ===="),
+                (0, "abc..def -> main"),
+            ]
+        )
+        assert "[frustrated]" not in tags
+
+    def test_passing_checks_naming_error_files_is_not_frustrated(self) -> None:
+        # Reproduces the bug: every make check names client_errors.py but
+        # PASSES. The old classifier logged a pile of tests-fail from the
+        # incidental "error" substring; the mood resolved to frustrated.
+        log = SignalLog()
+        for _ in range(6):
+            out = "checking src/punt_vox/client_errors.py ...\n2534 passed in 45s"
+            signal = classify_signal(0, out)
+            assert signal == "tests-pass"
+            log.append(Signal.now(signal))
+        assert "[frustrated]" not in log.resolve_tags()
 
 
 # ---------------------------------------------------------------------------

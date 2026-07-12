@@ -42,8 +42,9 @@ class TestClassifyOutput:
     def test_tests_pass_pytest(self) -> None:
         assert classify_output("5 passed in 1.23s") == "tests-pass"
 
-    def test_tests_pass_ok(self) -> None:
-        assert classify_output("test ok") == "tests-pass"
+    def test_bare_ok_not_classified(self) -> None:
+        # "ok" is not a structured verdict token — no signal, not a pass.
+        assert classify_output("test ok") is None
 
     def test_tests_pass_checkmark(self) -> None:
         assert classify_output("✓ 42 passed") == "tests-pass"
@@ -51,11 +52,14 @@ class TestClassifyOutput:
     def test_tests_fail_failed(self) -> None:
         assert classify_output("FAILED tests/test_foo.py") == "tests-fail"
 
-    def test_tests_fail_assertion(self) -> None:
-        assert classify_output("AssertionError: expected 1") == "tests-fail"
+    def test_bare_assertion_error_not_failure(self) -> None:
+        # An AssertionError line with no pytest FAILED anchor is incidental
+        # (a traceback, a diff, a log) — it must not manufacture a failure.
+        assert classify_output("AssertionError: expected 1") is None
 
-    def test_tests_fail_errors_during_collection(self) -> None:
-        assert classify_output("2 errors during collection") == "tests-fail"
+    def test_bare_errors_word_not_failure(self) -> None:
+        # The bare word "errors" is not a structured failure token.
+        assert classify_output("2 errors during collection") is None
 
     def test_lint_pass_all_checks(self) -> None:
         assert classify_output("All checks passed!") == "lint-pass"
@@ -361,12 +365,9 @@ class TestResolveChimePath:
 
     def test_all_signals_have_mapping(self) -> None:
         """Every classified signal has a chime filename entry."""
-        from punt_vox.hooks import (
-            _SIGNAL_PATTERNS,  # pyright: ignore[reportPrivateUsage]
-        )
+        from punt_vox.command_signal import CommandOutcome
 
-        signal_names = {name for name, _ in _SIGNAL_PATTERNS}
-        assert signal_names == set(_SIGNAL_CHIMES.keys())
+        assert CommandOutcome.signal_names() == frozenset(_SIGNAL_CHIMES.keys())
 
     def test_returns_none_when_no_assets_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
