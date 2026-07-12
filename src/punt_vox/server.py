@@ -750,14 +750,11 @@ def music_next() -> str:
 
 
 @mcp.tool()
-def who(language: str | None = None) -> str:  # noqa: ARG001 -- reserved for future language filtering
+def who() -> str:
     """List available voices for the current provider.
 
     Returns the voice roster with personality blurbs, the full list
     of available voices, and the current session voice.
-
-    Args:
-        language: ISO 639-1 language code to filter by (e.g. 'de', 'ko').
 
     Returns:
         JSON string with provider, current voice, featured voices,
