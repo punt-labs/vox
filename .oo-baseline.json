@@ -130,12 +130,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/client.py": {
-    "method_ratio": 0.935,
+    "method_ratio": 0.938,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.1,
+    "avg_params": 1.06,
     "max_complexity": 9.0,
-    "avg_complexity": 2.35,
-    "module_size": 495.0,
+    "avg_complexity": 2.34,
+    "module_size": 514.0,
     "classes_per_module": 3.0,
     "class_to_func_ratio": 0.6,
     "init_violations": 0.0,

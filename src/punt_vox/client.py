@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import uuid
+from collections.abc import Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
@@ -487,8 +488,9 @@ class VoxClient:
     async def program_status(self) -> ProgramStatus:
         """Return the daemon's authoritative Program status, parsed from the wire."""
         resp = await self._command("program_status")
-        obj = JsonObject.coerce(resp, "program_status")
-        return ProgramStatus.from_wire(obj.require_object("status"))
+        with self._wire_guard():
+            obj = JsonObject.coerce(resp, "program_status")
+            return ProgramStatus.from_wire(obj.require_object("status"))
 
     async def program_on(
         self,
@@ -541,11 +543,29 @@ class VoxClient:
 
     async def program_list(self) -> tuple[ProgramSummary, ...]:
         """Return every album as a catalogue summary, parsed from the wire."""
-        obj = JsonObject.coerce(await self._command("program_list"), "program_list")
-        return tuple(
-            self._summary(JsonObject.coerce(item, "program_list.programs"))
-            for item in obj.require_list("programs")
-        )
+        resp = await self._command("program_list")
+        with self._wire_guard():
+            obj = JsonObject.coerce(resp, "program_list")
+            return tuple(
+                self._summary(JsonObject.coerce(item, "program_list.programs"))
+                for item in obj.require_list("programs")
+            )
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _wire_guard() -> Generator[None]:
+        """Surface a wire-parse failure as a ``VoxdProtocolError``.
+
+        ``JsonObject`` raises ``ValueError`` on a malformed or missing field,
+        carrying its own field-path context. At the public client boundary that
+        must become the client's own ``VoxdProtocolError``, so a caller catches
+        every failure as a :class:`~punt_vox.VoxError` rather than a bare
+        ``ValueError`` leaking the daemon's wire shape.
+        """
+        try:
+            yield
+        except ValueError as exc:
+            raise VoxdProtocolError(f"malformed reply from voxd: {exc}") from exc
 
     @staticmethod
     def _outcome(resp: dict[str, Any]) -> CommandOutcome:
@@ -559,10 +579,11 @@ class VoxClient:
         ever sent, is guaranteed a non-empty ``message`` so a surface never
         renders a blank line for a refused command.
         """
-        obj = JsonObject.coerce(resp, "command")
-        applied = obj.opt_bool("applied") is not False
-        message = obj.opt_str("message") or ("" if applied else "command rejected")
-        return CommandOutcome(applied=applied, message=message)
+        with VoxClient._wire_guard():
+            obj = JsonObject.coerce(resp, "command")
+            applied = obj.opt_bool("applied") is not False
+            message = obj.opt_str("message") or ("" if applied else "command rejected")
+            return CommandOutcome(applied=applied, message=message)
 
     @staticmethod
     def _summary(obj: JsonObject) -> ProgramSummary:

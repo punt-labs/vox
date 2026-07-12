@@ -637,6 +637,29 @@ class TestVoxClientProgram:
         assert catalog[0].total == 12
         assert catalog[0].name == "mix"
 
+    @pytest.mark.asyncio
+    async def test_malformed_status_raises_protocol_error(self) -> None:
+        """A malformed status payload surfaces as VoxdProtocolError, not ValueError.
+
+        VoxClient promises every failure is a VoxError; a wire-parse ValueError
+        from the daemon's reply must be wrapped, or an MCP tool catching only
+        the Voxd* errors would leak a raw traceback.
+        """
+        client = self._client_returning(
+            {"type": "program_status", "id": "x", "status": {"mode": "off"}}
+        )
+        with pytest.raises(VoxdProtocolError, match="malformed reply"):
+            await client.program_status()
+
+    @pytest.mark.asyncio
+    async def test_malformed_catalog_raises_protocol_error(self) -> None:
+        """A catalogue row missing a required field surfaces as VoxdProtocolError."""
+        client = self._client_returning(
+            {"type": "program_list", "id": "x", "programs": [{"id": "a3f1c9"}]}
+        )
+        with pytest.raises(VoxdProtocolError, match="malformed reply"):
+            await client.program_list()
+
 
 class TestVoxClientReconnect:
     """Test automatic reconnection."""
