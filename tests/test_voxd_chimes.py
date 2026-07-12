@@ -80,7 +80,5 @@ class TestChimeResolver:
             "compact",
             "subagent",
             "farewell",
-            "tests-fail",
-            "lint-fail",
         }
         assert set(ChimeResolver._CHIME_MAP.keys()) == expected

@@ -39,12 +39,10 @@ _ONCE_DEDUP_MAX_ENTRIES: int = 1024
 class ChimeDedup:
     """Always-on in-memory dedup for chime signals.
 
-    Chimes are event markers (tests-pass, lint-fail, git-push-ok, etc)
-    and a user does not want to hear the same event chime twice in rapid
+    Chimes are event markers (done, prompt, subagent, etc) and a user
+    does not want to hear the same event chime twice in rapid
     succession. Unlike speech, chime deduplication is always on and
-    keyed only on the signal name. The window matches the legacy
-    `AudioDedup` default so the user-visible chime behavior is
-    unchanged from versions prior to vox-0e9.
+    keyed only on the signal name.
     """
 
     __slots__ = ("_seen", "_window")

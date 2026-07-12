@@ -18,8 +18,6 @@ _CHIME_MAP: dict[str, str] = {
     "compact": "chime_done.mp3",
     "subagent": "chime_done.mp3",
     "farewell": "chime_done.mp3",
-    "tests-fail": "chime_tests_fail.mp3",
-    "lint-fail": "chime_lint_fail.mp3",
 }
 
 
