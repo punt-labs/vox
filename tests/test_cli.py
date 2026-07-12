@@ -14,6 +14,7 @@ import typer
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
+from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
     from click.testing import Result
@@ -1278,7 +1279,9 @@ class TestStatusCommand:
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         mock_instance = mock_client_cls.return_value
-        mock_instance.health.return_value = {"provider": "elevenlabs"}
+        mock_instance.health.return_value = HealthStatus.from_wire(
+            {"provider": "elevenlabs"}
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["status"])
@@ -1397,7 +1400,7 @@ class TestDoctorCommand:
             }
             if daemon_version is not None:
                 health_payload["daemon_version"] = daemon_version
-            mock_client.health.return_value = health_payload
+            mock_client.health.return_value = HealthStatus.from_wire(health_payload)
         else:
             from punt_vox.client_errors import VoxdConnectionError
 
@@ -1524,12 +1527,14 @@ class TestDoctorCommand:
             return None
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {
-            "provider": "elevenlabs",
-            "active_sessions": 2,
-            "port": 8421,
-            "daemon_version": "4.1.1",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {
+                "provider": "elevenlabs",
+                "active_sessions": 2,
+                "port": 8421,
+                "daemon_version": "4.1.1",
+            }
+        )
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
@@ -1599,12 +1604,14 @@ class TestDoctorCommand:
             return None
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {
-            "provider": "elevenlabs",
-            "active_sessions": 2,
-            "port": 8421,
-            "daemon_version": "4.1.1",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {
+                "provider": "elevenlabs",
+                "active_sessions": 2,
+                "port": 8421,
+                "daemon_version": "4.1.1",
+            }
+        )
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
@@ -2107,7 +2114,9 @@ class TestGlobalFlags:
     @patch(f"{_CLI}.VoxClientSync")
     def test_json_still_emits_with_quiet(self, mock_client_cls: MagicMock) -> None:
         mock_instance = mock_client_cls.return_value
-        mock_instance.health.return_value = {"provider": "polly"}
+        mock_instance.health.return_value = HealthStatus.from_wire(
+            {"provider": "polly"}
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["--json", "-q", "status"])
@@ -2131,7 +2140,9 @@ class TestGlobalFlags:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
-        mock_client_cls.return_value.health.return_value = {"provider": "polly"}
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"provider": "polly"}
+        )
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
         assert result.exit_code == 0
@@ -2247,11 +2258,9 @@ class TestDaemonRestartCommand:
         runner = CliRunner()
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {
-            "pid": 42,
-            "port": 8421,
-            "daemon_version": "9.9.9-test",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {"pid": 42, "port": 8421, "daemon_version": "9.9.9-test"}
+        )
 
         calls: list[tuple[str, ...]] = []
 
@@ -2303,11 +2312,9 @@ class TestDaemonRestartCommand:
         runner = CliRunner()
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {
-            "pid": 99,
-            "port": 8421,
-            "daemon_version": "9.9.9-test",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {"pid": 99, "port": 8421, "daemon_version": "9.9.9-test"}
+        )
 
         calls: list[tuple[str, ...]] = []
 
@@ -2375,11 +2382,9 @@ class TestDaemonRestartCommand:
 
         # Happy health response: matches the (patched) wheel version.
         mock_client = MagicMock()
-        mock_client.health.return_value = {
-            "pid": 1234,
-            "port": 8421,
-            "daemon_version": "9.9.9-test",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {"pid": 1234, "port": 8421, "daemon_version": "9.9.9-test"}
+        )
 
         subprocess_calls: list[tuple[str, ...]] = []
 
@@ -2452,7 +2457,9 @@ class TestDaemonRestartCommand:
         mock_client.health.side_effect = [
             VoxdConnectionError("not yet"),
             VoxdConnectionError("not yet"),
-            {"pid": 7, "port": 8421, "daemon_version": "9.9.9-test"},
+            HealthStatus.from_wire(
+                {"pid": 7, "port": 8421, "daemon_version": "9.9.9-test"}
+            ),
         ]
 
         with (
@@ -2486,11 +2493,9 @@ class TestDaemonRestartCommand:
         mock_client = MagicMock()
         # Running daemon is v4.1.1 but wheel is v4.2.0 — simulated
         # stale process that the service manager failed to restart.
-        mock_client.health.return_value = {
-            "pid": 42,
-            "port": 8421,
-            "daemon_version": "4.1.1",
-        }
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {"pid": 42, "port": 8421, "daemon_version": "4.1.1"}
+        )
 
         with (
             patch(f"{_DR}.os.geteuid", return_value=1000),
@@ -2553,7 +2558,9 @@ class TestDaemonRestartCommand:
         runner = CliRunner()
 
         mock_client = MagicMock()
-        mock_client.health.return_value = {"pid": 42, "port": 8421}
+        mock_client.health.return_value = HealthStatus.from_wire(
+            {"pid": 42, "port": 8421}
+        )
 
         with (
             patch(f"{_DR}.os.geteuid", return_value=1000),

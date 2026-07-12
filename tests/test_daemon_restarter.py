@@ -9,6 +9,7 @@ import typer
 
 from punt_vox.daemon_restarter import DaemonRestarter
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.types_health import HealthStatus
 
 _MOD = "punt_vox.daemon_restarter"
 
@@ -67,11 +68,9 @@ class TestDaemonRestarter:
         )
 
         mock_subprocess.return_value = MagicMock(returncode=0)
-        mock_client_cls.return_value.health.return_value = {
-            "pid": 1234,
-            "port": 8421,
-            "daemon_version": "5.0.0",
-        }
+        mock_client_cls.return_value.health.return_value = HealthStatus(
+            pid=1234, port=8421, daemon_version="5.0.0"
+        )
 
         fmt = OutputFormatter()
         restarter = DaemonRestarter(fmt)
@@ -106,11 +105,9 @@ class TestDaemonRestarter:
         monkeypatch.setattr(f"{_MOD}.installed_version", lambda: "5.1.0")
 
         mock_subprocess.return_value = MagicMock(returncode=0)
-        mock_client_cls.return_value.health.return_value = {
-            "pid": 1234,
-            "port": 8421,
-            "daemon_version": "5.0.0",
-        }
+        mock_client_cls.return_value.health.return_value = HealthStatus(
+            pid=1234, port=8421, daemon_version="5.0.0"
+        )
         # Make time.monotonic() return a value within the deadline
         mock_time.monotonic.side_effect = [0.0, 0.1]
         mock_time.sleep = MagicMock()

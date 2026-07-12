@@ -26,7 +26,11 @@ from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_prompts import PromptSet
 from punt_vox.paths import run_dir as _user_run_dir
+from punt_vox.program_control import CommandOutcome, ProgramSummary
+from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.programs.status import ProgramStatus
+from punt_vox.voxd.programs.wire import JsonObject
 
 logger = logging.getLogger(__name__)
 
@@ -457,11 +461,12 @@ class VoxClient:
         voice_list: list[str] = resp["voices"]
         return voice_list
 
-    async def health(self) -> dict[str, object]:
-        """Check daemon health."""
-        return await self._transport.send_and_recv(
+    async def health(self) -> HealthStatus:
+        """Return the daemon's health snapshot (liveness, port, version)."""
+        resp = await self._transport.send_and_recv(
             {"type": "health"}, timeout=_TIMEOUT_SHORT
         )
+        return HealthStatus.from_wire(resp)
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
@@ -479,9 +484,11 @@ class VoxClient:
         }
         return await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
 
-    async def program_status(self) -> dict[str, Any]:
-        """Return the daemon's authoritative Program status."""
-        return await self._command("program_status")
+    async def program_status(self) -> ProgramStatus:
+        """Return the daemon's authoritative Program status, parsed from the wire."""
+        resp = await self._command("program_status")
+        obj = JsonObject.coerce(resp, "program_status")
+        return ProgramStatus.from_wire(obj.require_object("status"))
 
     async def program_on(
         self,
@@ -490,7 +497,7 @@ class VoxClient:
         vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Turn a Program on, forwarding the session vibe and authored prompts."""
         fields: dict[str, object] = {}
         if style is not None:
@@ -502,15 +509,15 @@ class VoxClient:
         if prompts is not None:
             fields["base_prompt"] = prompts.base
             fields["variations"] = list(prompts.variations)
-        return await self._command("program_on", **fields)
+        return self._outcome(await self._command("program_on", **fields))
 
-    async def program_off(self) -> dict[str, Any]:
+    async def program_off(self) -> CommandOutcome:
         """Turn the active Program off."""
-        return await self._command("program_off")
+        return self._outcome(await self._command("program_off"))
 
-    async def program_next(self) -> dict[str, Any]:
+    async def program_next(self) -> CommandOutcome:
         """Advance to another Part (the one ungated skip/next/loop transition)."""
-        return await self._command("program_next")
+        return self._outcome(await self._command("program_next"))
 
     async def program_select(
         self,
@@ -519,7 +526,7 @@ class VoxClient:
         vibe: str | None = None,
         name: str | None = None,
         album_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Replay a Selection resolved by album id (direct) or by tags."""
         fields: dict[str, object] = {}
         if album_id is not None:
@@ -530,8 +537,40 @@ class VoxClient:
             fields["vibe"] = vibe
         if name is not None:
             fields["name"] = name
-        return await self._command("program_select", **fields)
+        return self._outcome(await self._command("program_select", **fields))
 
-    async def program_list(self) -> dict[str, Any]:
-        """List every album, grouped."""
-        return await self._command("program_list")
+    async def program_list(self) -> tuple[ProgramSummary, ...]:
+        """Return every album as a catalogue summary, parsed from the wire."""
+        obj = JsonObject.coerce(await self._command("program_list"), "program_list")
+        return tuple(
+            self._summary(JsonObject.coerce(item, "program_list.programs"))
+            for item in obj.require_list("programs")
+        )
+
+    @staticmethod
+    def _outcome(resp: dict[str, Any]) -> CommandOutcome:
+        """Read the applied/rejected result (design F7) from a command reply.
+
+        A reply omitting ``applied`` is treated as applied -- the daemon only
+        writes ``applied: false`` to flag a lost race (PY-EH-8: absence is the
+        documented "it went through" contract). A rejection is guaranteed a
+        non-empty ``message`` so a surface never renders a blank line for a
+        refused command; an applied command may carry none.
+        """
+        obj = JsonObject.coerce(resp, "command")
+        applied = obj.opt_bool("applied") is not False
+        message = obj.opt_str("message") or ("" if applied else "command rejected")
+        return CommandOutcome(applied=applied, message=message)
+
+    @staticmethod
+    def _summary(obj: JsonObject) -> ProgramSummary:
+        """Parse one catalogue entry (id, tags, counts) from the wire."""
+        return ProgramSummary(
+            id=obj.require_str("id"),
+            style=obj.require_str("style"),
+            vibe=obj.require_str("vibe"),
+            format=obj.require_str("format"),
+            ready=obj.require_int("ready"),
+            total=obj.opt_int("total") or 0,
+            name=obj.opt_str("name"),
+        )

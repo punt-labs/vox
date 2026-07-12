@@ -18,6 +18,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.programs.status import ProgramStatus
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -538,6 +539,10 @@ class TestVoxClientHealth:
                     "status": "ok",
                     "uptime_seconds": 42.5,
                     "queued": 0,
+                    "port": 8421,
+                    "pid": 4242,
+                    "provider": "elevenlabs",
+                    "daemon_version": "5.0.0",
                 }
             )
         )
@@ -545,8 +550,92 @@ class TestVoxClientHealth:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         result = await client.health()
-        assert result["status"] == "ok"
-        assert result["uptime_seconds"] == 42.5
+        assert result.status == "ok"
+        assert result.uptime_seconds == 42.5
+        assert result.port == 8421
+        assert result.pid == 4242
+        assert result.provider == "elevenlabs"
+        assert result.daemon_version == "5.0.0"
+
+
+class TestVoxClientProgram:
+    """The program_* methods parse the daemon's wire replies into typed values."""
+
+    def _client_returning(self, resp: dict[str, object]) -> VoxClient:
+        client = VoxClient(port=8421, token="tok")
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value=json.dumps(resp))
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+        return client
+
+    @pytest.mark.asyncio
+    async def test_program_status_parses_into_program_status(self) -> None:
+        client = self._client_returning(
+            {
+                "type": "program_status",
+                "id": "x",
+                "status": ProgramStatus.idle().to_dict(),
+            }
+        )
+
+        status = await client.program_status()
+
+        assert isinstance(status, ProgramStatus)
+        assert status.is_idle
+
+    @pytest.mark.asyncio
+    async def test_program_off_returns_applied_outcome(self) -> None:
+        """A bare ack (no 'applied') reads as an applied CommandOutcome."""
+        client = self._client_returning({"type": "program_off", "id": "x"})
+
+        outcome = await client.program_off()
+
+        assert outcome.applied is True
+
+    @pytest.mark.asyncio
+    async def test_program_next_reads_a_rejection(self) -> None:
+        """An 'applied: false' reply becomes a rejected outcome with its reason."""
+        client = self._client_returning(
+            {
+                "type": "program_next",
+                "id": "x",
+                "applied": False,
+                "message": "lost race",
+            }
+        )
+
+        outcome = await client.program_next()
+
+        assert outcome.applied is False
+        assert outcome.message == "lost race"
+
+    @pytest.mark.asyncio
+    async def test_program_list_parses_summaries(self) -> None:
+        client = self._client_returning(
+            {
+                "type": "program_list",
+                "id": "x",
+                "programs": [
+                    {
+                        "id": "a3f1c9",
+                        "style": "trance",
+                        "vibe": "calm",
+                        "name": "mix",
+                        "format": "music",
+                        "ready": 5,
+                        "total": 12,
+                    }
+                ],
+            }
+        )
+
+        catalog = await client.program_list()
+
+        assert len(catalog) == 1
+        assert catalog[0].id == "a3f1c9"
+        assert catalog[0].ready == 5
+        assert catalog[0].total == 12
+        assert catalog[0].name == "mix"
 
 
 class TestVoxClientReconnect:
@@ -577,7 +666,7 @@ class TestVoxClientReconnect:
             client._transport._ws = mock_ws_old  # pyright: ignore[reportPrivateUsage]
 
             result = await client.health()
-            assert result["status"] == "ok"
+            assert result.status == "ok"
             assert client._transport._ws is mock_ws_new  # pyright: ignore[reportPrivateUsage]
 
 
@@ -607,7 +696,7 @@ class TestVoxClientSync:
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.health()
-            assert result["status"] == "ok"
+            assert result.status == "ok"
 
     def test_synthesize(self) -> None:
         mock_ws = _make_mock_ws()

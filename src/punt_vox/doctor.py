@@ -147,9 +147,9 @@ class DoctorCheck:
             results.append(_fail(f"Daemon: reachable but unhealthy — {exc}"))
             return results
 
-        provider_name = str(health.get("provider", "unknown"))
-        port = health.get("port", "?")
-        running_version = str(health.get("daemon_version", ""))
+        provider_name = health.provider
+        port = health.port
+        running_version = health.daemon_version
         wheel_version = installed_version()
 
         if running_version and running_version != wheel_version:

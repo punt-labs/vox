@@ -18,7 +18,10 @@ from typing import Any, Self
 from punt_vox.client import SynthesizeResult, VoxClient
 from punt_vox.client_env import DaemonEnv
 from punt_vox.music_prompts import PromptSet
+from punt_vox.program_control import CommandOutcome, ProgramSummary
+from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.programs.status import ProgramStatus
 
 __all__ = ["VoxClientSync"]
 
@@ -135,13 +138,13 @@ class VoxClientSync:
         """List available voices."""
         return self._runner.run(self._call("voices", provider))  # type: ignore[no-any-return]
 
-    def health(self) -> dict[str, object]:
-        """Check daemon health."""
+    def health(self) -> HealthStatus:
+        """Return the daemon's health snapshot (liveness, port, version)."""
         return self._runner.run(self._call("health"))  # type: ignore[no-any-return]
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
-    def program_status(self) -> dict[str, Any]:
+    def program_status(self) -> ProgramStatus:
         """Return the daemon's authoritative Program status."""
         return self._runner.run(self._call("program_status"))  # type: ignore[no-any-return]
 
@@ -152,17 +155,17 @@ class VoxClientSync:
         vibe: str | None = None,
         name: str | None = None,
         prompts: PromptSet | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Turn a Program on from the session vibe and authored prompts."""
         return self._runner.run(  # type: ignore[no-any-return]
             self._call("program_on", style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
-    def program_off(self) -> dict[str, Any]:
+    def program_off(self) -> CommandOutcome:
         """Turn the active Program off."""
         return self._runner.run(self._call("program_off"))  # type: ignore[no-any-return]
 
-    def program_next(self) -> dict[str, Any]:
+    def program_next(self) -> CommandOutcome:
         """Advance to another Part."""
         return self._runner.run(self._call("program_next"))  # type: ignore[no-any-return]
 
@@ -173,7 +176,7 @@ class VoxClientSync:
         vibe: str | None = None,
         name: str | None = None,
         album_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommandOutcome:
         """Replay a Selection resolved by album id (direct) or by tags."""
         return self._runner.run(  # type: ignore[no-any-return]
             self._call(
@@ -181,6 +184,6 @@ class VoxClientSync:
             )
         )
 
-    def program_list(self) -> dict[str, Any]:
-        """List every album, grouped."""
+    def program_list(self) -> tuple[ProgramSummary, ...]:
+        """Return every album as a catalogue summary."""
         return self._runner.run(self._call("program_list"))  # type: ignore[no-any-return]

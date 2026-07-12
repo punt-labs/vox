@@ -49,6 +49,16 @@ def test_prompt_set_is_public() -> None:
     assert PromptSet is punt_vox.PromptSet
 
 
+def test_result_types_are_public() -> None:
+    """The typed return values of the client methods are importable publicly."""
+    from punt_vox import CommandOutcome, HealthStatus, ProgramStatus, ProgramSummary
+
+    assert HealthStatus is punt_vox.HealthStatus
+    assert ProgramStatus is punt_vox.ProgramStatus
+    assert CommandOutcome is punt_vox.CommandOutcome
+    assert ProgramSummary is punt_vox.ProgramSummary
+
+
 def test_public_api_is_reexported_from_owning_modules() -> None:
     """Each name is the same object the owning submodule defines."""
     from punt_vox.client import SynthesizeResult, VoxClient
@@ -70,6 +80,10 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
 def test_all_lists_the_public_api() -> None:
     """``__all__`` names the clients, their types, the errors, and the version."""
     assert set(punt_vox.__all__) == {
+        "CommandOutcome",
+        "HealthStatus",
+        "ProgramStatus",
+        "ProgramSummary",
         "PromptSet",
         "SynthesisSpec",
         "SynthesizeResult",

@@ -148,9 +148,9 @@ class DaemonRestarter:
                 time.sleep(0.2)
                 continue
 
-            pid = health.get("pid", "?")
-            port = health.get("port", "?")
-            running_version = str(health.get("daemon_version", ""))
+            pid = health.pid
+            port = health.port
+            running_version = health.daemon_version
             wheel_version = installed_version()
             log_path = log_dir() / "voxd.log"
 

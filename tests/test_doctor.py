@@ -16,6 +16,7 @@ from punt_vox.doctor import (
     DoctorCheck,
     format_results,
 )
+from punt_vox.types_health import HealthStatus
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -119,11 +120,9 @@ class TestCheckFfmpeg:
 class TestCheckDaemonHealth:
     def test_daemon_running_version_match(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
-        mock_client.health.return_value = {
-            "provider": "elevenlabs",
-            "port": 8421,
-            "daemon_version": "5.0.0",
-        }
+        mock_client.health.return_value = HealthStatus(
+            provider="elevenlabs", port=8421, daemon_version="5.0.0"
+        )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()
         assert len(results) == 1
@@ -132,11 +131,9 @@ class TestCheckDaemonHealth:
 
     def test_daemon_running_version_mismatch(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
-        mock_client.health.return_value = {
-            "provider": "elevenlabs",
-            "port": 8421,
-            "daemon_version": "4.8.0",
-        }
+        mock_client.health.return_value = HealthStatus(
+            provider="elevenlabs", port=8421, daemon_version="4.8.0"
+        )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()
         assert len(results) == 1
