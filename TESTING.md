@@ -18,7 +18,8 @@ tests/
   test_output.py             # Output path resolution
   test_playback.py           # Audio playback (afplay/ffplay)
   test_config.py             # .vox/config.md YAML frontmatter read/write
-  test_mood.py               # Mood classification (bright/dark/neutral)
+  test_vibe_mood.py          # Mood derivation from the exit-code window
+  test_vibe_window.py        # Outcome window: FIFO, run/recency, serialization
   test_hooks.py              # Claude Code hook dispatchers: stop, post-bash, notification
   test_cli.py                # Typer CLI invocations via CliRunner
   test_client.py             # VoxClient/VoxClientSync WebSocket client for voxd
@@ -29,7 +30,6 @@ tests/
   test_normalize.py          # Text normalization for speech
   test_cache.py              # MP3 synthesis cache
   test_applet.py             # Lux display applet
-  test_watcher.py            # Session watcher for real-time signal classification
   test_polly_provider.py     # AWS Polly provider
   test_openai_provider.py    # OpenAI TTS provider
   test_elevenlabs_provider.py # ElevenLabs provider
@@ -87,8 +87,8 @@ Key patterns tested:
 - Stop hook returns only a `♪` phrase with no internal data
 - Auto-vibe mode writes resolved tags to config and clears consumed signals
 - Manual/off vibe modes skip config writes
-- Signal classification maps bash output to signal tokens (tests-pass, lint-fail, etc.)
-- Signal accumulation appends timestamped tokens across multiple bash invocations
+- Each Bash command records one outcome (exit 0 → `ok`, non-zero → `fail`)
+- Outcome accumulation appends `ok`/`fail` tokens across multiple bash invocations
 
 ## Server Testing
 
@@ -108,10 +108,6 @@ Config tests (`test_config.py`) use `tmp_path` fixtures to create real `.vox/con
 - Field writing (insert, update, multi-field atomic writes)
 - Key validation (unknown keys raise `ValueError`)
 - Edge cases: missing file, empty frontmatter, no frontmatter delimiters
-
-## Watcher Testing
-
-Watcher tests (`test_watcher.py`) exercise the file-watching thread that hot-reloads config changes. Tests use real temp files and short poll intervals. Platform-specific tests (macOS `fsevents`, Linux `select`) are skipped on unsupported platforms via `pytest.mark.skipif`.
 
 ## Running Tests
 
