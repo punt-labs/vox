@@ -43,16 +43,16 @@ SessionEventConsumer = Callable[[SessionEvent], None]
 
 
 # ---------------------------------------------------------------------------
-# Classification — delegates to hooks.classify_signal (single source of truth)
+# Classification — CommandSignal owns the marker table (single source of truth)
 # ---------------------------------------------------------------------------
 
 
 def classify_output(text: str) -> str | None:
     """Classify bash output into a signal name, or None if unrecognized.
 
-    Delegates to :func:`punt_vox.hooks.classify_signal` which owns the
-    canonical pattern table.  Passes ``exit_code=None`` since the watcher
-    only has text, not exit codes.
+    Delegates to :func:`punt_vox.hooks.classify_signal`, a thin wrapper
+    over :class:`~punt_vox.command_signal.CommandSignal`, which owns the
+    marker table.  Passes ``exit_code=None`` (watcher has no exit codes).
     """
     from punt_vox.hooks import classify_signal
 
