@@ -218,6 +218,17 @@ class _VoxdTransport:
             raise VoxdProtocolError(
                 f"Timeout waiting for response to '{msg_type}'"
             ) from exc
+        return self._decode(raw)
+
+    @staticmethod
+    def _decode(raw: object) -> dict[str, Any]:
+        """Parse a wire frame, raising ``VoxdProtocolError`` on an error frame.
+
+        The one place both drain and single-response paths turn ``voxd``'s
+        ``{"type": "error", "message": ...}`` into a raised protocol error, so
+        the error contract lives in a single spot rather than duplicated at
+        every receive site.
+        """
         resp: dict[str, Any] = json.loads(str(raw))
         if resp.get("type") == "error":
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
