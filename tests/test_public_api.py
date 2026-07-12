@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 import punt_vox
+
+# Run in a fresh interpreter: sys.modules is process-global, and the rest of the
+# suite has already imported the daemon and its heavy deps, so an in-process
+# check would always see them.
+_IMPORT_LIGHTNESS_PROBE = """
+import sys
+import punt_vox
+from punt_vox import VoxClient, VoxClientSync  # noqa: F401
+
+heavy = {"starlette", "pydub", "elevenlabs", "boto3", "openai", "fastmcp", "uvicorn"}
+loaded_heavy = sorted(m for m in sys.modules if m.split(".")[0] in heavy)
+voxd = sorted(m for m in sys.modules if m.startswith("punt_vox.voxd"))
+if loaded_heavy:
+    raise SystemExit("heavy deps loaded: " + ", ".join(loaded_heavy))
+if voxd:
+    raise SystemExit("voxd modules loaded: " + ", ".join(voxd))
+"""
 
 
 def test_top_level_imports_resolve() -> None:
@@ -75,6 +95,23 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
     assert punt_vox.VoxdConnectionError is VoxdConnectionError
     assert punt_vox.VoxdProtocolError is VoxdProtocolError
     assert punt_vox.PromptSet is PromptSet
+
+
+def test_import_stays_light_and_daemon_free() -> None:
+    """``import punt_vox`` loads no heavy dep and no voxd module.
+
+    Guards the layering the neutral ``types_programs`` extraction protects: a
+    third party importing the client gets stdlib + websockets + neutral types,
+    never the daemon's state machine (``program``/``state``/``retry_machine``)
+    or its heavy deps (starlette, pydub, the provider SDKs).
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _IMPORT_LIGHTNESS_PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_all_lists_the_public_api() -> None:
