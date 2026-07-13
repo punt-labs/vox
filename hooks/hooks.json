@@ -19,15 +19,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/suppress-output.sh"
           }
         ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/signal.sh"
-          }
-        ]
       }
     ],
     "Stop": [
@@ -80,6 +71,10 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/acknowledge.sh",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/vibe-nudge.sh"
           }
         ]
       }

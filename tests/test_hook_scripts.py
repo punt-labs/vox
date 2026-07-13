@@ -8,6 +8,7 @@ legacy config.md references are gone.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 _SCRIPTS = (
     "notify.sh",
     "notify-permission.sh",
-    "signal.sh",
+    "vibe-nudge.sh",
     "subagent.sh",
     "farewell.sh",
     "pre-compact.sh",
@@ -47,3 +48,24 @@ class TestHookScripts:
     def test_extracts_cwd_from_stdin(self, name: str) -> None:
         text = _read(name)
         assert ".cwd // empty" in text
+
+
+class TestVibeNudgeHook:
+    """The auto-vibe nudge must inject context, never block or run async."""
+
+    def test_script_never_emits_a_decision(self) -> None:
+        # Non-blocking by construction: blocking is the Stop hook's job.
+        assert "decision" not in _read("vibe-nudge.sh")
+
+    def test_registered_synchronously(self) -> None:
+        # Only synchronous UserPromptSubmit stdout is injected as
+        # additionalContext; an async registration would silently drop it.
+        config = json.loads((_HOOKS_DIR / "hooks.json").read_text(encoding="utf-8"))
+        entries = [
+            hook
+            for group in config["hooks"]["UserPromptSubmit"]
+            for hook in group["hooks"]
+            if hook["command"].endswith("vibe-nudge.sh")
+        ]
+        assert len(entries) == 1
+        assert "async" not in entries[0]
