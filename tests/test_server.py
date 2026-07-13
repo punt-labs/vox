@@ -342,12 +342,12 @@ class TestWriteConfigField:
     def test_preserves_other_fields(self, _patch_config: Path) -> None:
         local_md = _patch_config / "vox.local.md"
         local_md.write_text(
-            '---\nvibe: "happy"\nvibe_tags: "[tired]"\nvibe_signals: "x"\n---\n'
+            '---\nvibe: "happy"\nvibe_tags: "[tired]"\nvibe_nudge_turns: "2"\n---\n'
         )
         ConfigStore().write_field("vibe_tags", "[excited]")
         text = local_md.read_text()
         assert 'vibe: "happy"' in text
-        assert 'vibe_signals: "x"' in text
+        assert 'vibe_nudge_turns: "2"' in text
         assert 'vibe_tags: "[excited]"' in text
 
     def test_clears_field_with_empty_string(self, _patch_config: Path) -> None:
@@ -579,8 +579,6 @@ class TestUnmute:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session._vibe_signals = "ok,fail"
-
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="req789")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
@@ -588,7 +586,6 @@ class TestUnmute:
         unmute(text="Done.", vibe_tags="[warm] [satisfied]")
 
         assert srv._session._vibe_tags == "[warm] [satisfied]"
-        assert srv._session._vibe_signals == ""
 
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -752,7 +749,6 @@ class TestVibeTool:
         result = json.loads(vibe(tags="[warm] [calm]"))
         assert result["vibe"]["vibe_tags"] == "[warm] [calm]"
         assert srv._session._vibe_tags == "[warm] [calm]"
-        assert srv._session._vibe_signals == ""
 
     def test_set_mode(self) -> None:
         import punt_vox.server as srv
@@ -787,7 +783,6 @@ class TestVibeTool:
         assert updates["vibe_mode"] == "auto"
         assert srv._session._vibe is None
         assert srv._session._vibe_tags is None
-        assert srv._session._vibe_signals == ""
         assert srv._session._vibe_mode == "auto"
 
     def test_off_clears_stale_mood(self) -> None:
@@ -1063,7 +1058,6 @@ class TestStatusTool:
         srv._session.provider = "elevenlabs"
         srv._session._vibe_mode = "auto"
         srv._session._vibe_tags = "[excited]"
-        srv._session._vibe_signals = "ok,fail"
 
         result = json.loads(status())
         assert result["provider"] == "elevenlabs"
@@ -1072,7 +1066,12 @@ class TestStatusTool:
         assert result["speak"] == "y"
         assert result["vibe_mode"] == "auto"
         assert result["vibe_tags"] == "[excited]"
-        assert result["vibe_signals"] == "ok,fail"
+        # The status surfaces exactly the live vibe cluster — no dead accumulator.
+        assert {k for k in result if k.startswith("vibe")} == {
+            "vibe_mode",
+            "vibe",
+            "vibe_tags",
+        }
 
     def test_defaults_when_no_state_set(self) -> None:
         """A bare ``status`` reads the hermetic idle default, never the live daemon.
@@ -1479,22 +1478,20 @@ class TestRefreshFromConfig:
     def test_ephemeral_fields_always_updated(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Vibe/tags/signals written externally are picked up on refresh."""
+        """Vibe/tags written externally are picked up on refresh."""
         import punt_vox.server as srv
 
         srv._session._vibe = "old-mood"
         srv._session._vibe_tags = "[old]"
-        srv._session._vibe_signals = "old-signal"
 
         (_refresh_config / "vox.local.md").write_text(
-            '---\nvibe: "happy"\nvibe_tags: "[warm]"\nvibe_signals: "ok,fail"\n---\n'
+            '---\nvibe: "happy"\nvibe_tags: "[warm]"\n---\n'
         )
 
         srv._session.refresh_from_config()
 
         assert srv._session._vibe == "happy"
         assert srv._session._vibe_tags == "[warm]"
-        assert srv._session._vibe_signals == "ok,fail"
 
     def test_ephemeral_cleared_when_config_empty(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
@@ -1504,7 +1501,6 @@ class TestRefreshFromConfig:
 
         srv._session._vibe = "stale-mood"
         srv._session._vibe_tags = "[stale]"
-        srv._session._vibe_signals = "stale-signal"
 
         # Config exists but has no vibe fields
         (_refresh_config / "vox.local.md").write_text("---\n---\n")
@@ -1514,7 +1510,6 @@ class TestRefreshFromConfig:
 
         assert srv._session._vibe is None
         assert srv._session._vibe_tags is None  # type: ignore[unreachable]
-        assert srv._session._vibe_signals == ""
 
     def test_durable_fields_updated_from_config(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch

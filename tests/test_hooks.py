@@ -8,11 +8,11 @@ import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir
-from punt_vox.hook_payload import BashPayload, NotificationPayload, StopPayload
+from punt_vox.hook_payload import NotificationPayload, StopPayload
 from punt_vox.hooks import (
     _chime_via_voxd,  # pyright: ignore[reportPrivateUsage]
     _pick_notification_phrase,  # pyright: ignore[reportPrivateUsage]
@@ -21,13 +21,13 @@ from punt_vox.hooks import (
     _speak_phrase,  # pyright: ignore[reportPrivateUsage]
     _with_repo_name,  # pyright: ignore[reportPrivateUsage]
     handle_notification,
-    handle_post_bash,
     handle_pre_compact,
     handle_session_end,
     handle_stop,
     handle_subagent_start,
     handle_subagent_stop,
     handle_user_prompt_submit,
+    handle_vibe_nudge,
     notification_cmd,
     stop_cmd,
 )
@@ -39,7 +39,7 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
-from punt_vox.vibe_mood import DEFAULT_THRESHOLDS
+from punt_vox.vibe_nudge import DEFAULT_THRESHOLD, VIBE_NUDGE_REMINDER
 
 if TYPE_CHECKING:
     import pytest
@@ -53,21 +53,22 @@ def _make_config(
     *,
     notify: str = "y",
     speak: str = "y",
+    vibe_mode: str = "auto",
     vibe: str | None = None,
-    vibe_signals: str | None = "ok",
+    vibe_nudge_turns: int = 0,
     voice: str | None = None,
     repo_name: str | None = None,
 ) -> VoxConfig:
     return VoxConfig(
         notify=notify,
         speak=speak,
-        vibe_mode="auto",
+        vibe_mode=vibe_mode,
         voice=voice,
         provider=None,
         model=None,
         vibe=vibe,
         vibe_tags=None,
-        vibe_signals=vibe_signals,
+        vibe_nudge_turns=vibe_nudge_turns,
         repo_name=repo_name,
     )
 
@@ -93,22 +94,15 @@ class TestHandleStop:
         config = _make_config()
         assert handle_stop(_stop(active=True), config, _CONFIG_DIR) is None
 
-    def test_no_signals(self) -> None:
-        config = _make_config(vibe_signals=None)
-        assert handle_stop(_stop(), config, _CONFIG_DIR) is None
-
-    def test_empty_signals(self) -> None:
-        config = _make_config(vibe_signals="")
-        assert handle_stop(_stop(), config, _CONFIG_DIR) is None
-
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: object) -> None:
         config = _make_config(speak="n")
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is None
 
-    @patch("punt_vox.hooks.ConfigStore")
-    def test_voice_mode_blocks_clean_reason(self, _mock_cs: MagicMock) -> None:
+    def test_voice_mode_blocks_clean_reason(self) -> None:
+        # The summary fires on the live conditions:
+        # notify != n, speak != n, not stop_hook_active.
         config = _make_config()
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
@@ -118,83 +112,22 @@ class TestHandleStop:
         assert any(reason == phrase for phrase in STOP_PHRASES)
         assert "|" not in reason
         assert "vibe_tags" not in reason
-        assert "vibe_signals" not in reason
 
-    @patch("punt_vox.hooks.ConfigStore")
-    def test_auto_mode_writes_tags_to_passed_config_dir(
-        self, mock_cs: MagicMock
-    ) -> None:
-        # The vibe-tag write lands in the config_dir resolved from the
-        # session cwd, not a re-resolved Path.cwd(). Three trailing fails
-        # resolve to frustrated.
-        config = _make_config(vibe_signals="ok,fail,fail,fail")
-        handle_stop(_stop(), config, _CONFIG_DIR)
-        mock_cs.assert_called_once_with(_CONFIG_DIR)
-        assert mock_cs.return_value.write_fields.call_count == 1
-        assert mock_cs.return_value.write_fields.call_args == call(
-            {"vibe_tags": "[frustrated] [sighs]", "vibe_signals": ""}
-        )
+    def test_stop_writes_nothing_to_config(self) -> None:
+        # The agent sets vibe tags directly during the session; the stop hook
+        # no longer resolves or persists anything.
+        config = _make_config()
+        with patch("punt_vox.hooks.ConfigStore") as mock_cs:
+            result = handle_stop(_stop(), config, _CONFIG_DIR)
+        assert result is not None
+        mock_cs.return_value.write_fields.assert_not_called()
+        mock_cs.return_value.write_field.assert_not_called()
 
-    @patch("punt_vox.hooks.ConfigStore")
-    def test_continuous_mode_blocks(self, _mock_cs: MagicMock) -> None:
+    def test_continuous_mode_blocks(self) -> None:
         config = _make_config(notify="c")
         result = handle_stop(_stop(), config, _CONFIG_DIR)
         assert result is not None
         assert result["decision"] == "block"
-
-    def test_manual_vibe_skips_config_write(self) -> None:
-        config = VoxConfig(
-            notify="y",
-            speak="y",
-            vibe_mode="manual",
-            voice=None,
-            provider=None,
-            model=None,
-            vibe=None,
-            vibe_tags="[excited] [warm]",
-            vibe_signals="ok",
-        )
-        with patch("punt_vox.hooks.ConfigStore") as mock_cs:
-            result = handle_stop(_stop(), config, _CONFIG_DIR)
-        assert result is not None
-        # Manual mode with existing tags — no write needed
-        mock_cs.return_value.write_fields.assert_not_called()
-
-    def test_vibe_off_skips_config_write(self) -> None:
-        config = VoxConfig(
-            notify="y",
-            speak="y",
-            vibe_mode="off",
-            voice=None,
-            provider=None,
-            model=None,
-            vibe=None,
-            vibe_tags=None,
-            vibe_signals="ok",
-        )
-        with patch("punt_vox.hooks.ConfigStore") as mock_cs:
-            result = handle_stop(_stop(), config, _CONFIG_DIR)
-        assert result is not None
-        assert result["decision"] == "block"
-        # Vibe off — must not write tags to config
-        mock_cs.return_value.write_fields.assert_not_called()
-
-    def test_tag_write_failure_is_logged_and_still_blocks(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # A read-only config dir must not swallow the spoken summary: the tag
-        # write failure is logged, and the block decision is still returned.
-        config = _make_config(vibe_signals="ok,fail")
-        with (
-            patch.object(
-                ConfigStore, "write_fields", side_effect=OSError("read-only fs")
-            ),
-            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
-        ):
-            result = handle_stop(_stop(), config, _CONFIG_DIR)
-        assert result is not None
-        assert result["decision"] == "block"
-        assert any("stop:" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +138,9 @@ class TestHandleStop:
 class TestVibeAuthoritativeBoundary:
     """A vibe change through config must survive hook write-backs.
 
-    Exercises the real config/hook boundary: an authoritative ``/vibe auto``
-    clears the whole cluster, then a post-bash signal write and a stop-hook
-    tag write land on top. Neither may resurrect the cleared mood or flip
-    the mode away from auto.
+    An authoritative ``/vibe auto`` clears the mood cluster; a later nudge
+    write-back touches only the cadence counter and must not resurrect the
+    cleared mood or flip the mode away from auto.
     """
 
     @staticmethod
@@ -219,24 +151,20 @@ class TestVibeAuthoritativeBoundary:
                 "notify": "y",
                 "vibe": "",
                 "vibe_tags": "",
-                "vibe_signals": "",
+                "vibe_nudge_turns": "0",
                 "vibe_mode": "auto",
             }
         )
 
-    def test_cleared_mood_stays_cleared_after_write_backs(self, tmp_path: Path) -> None:
+    def test_cleared_mood_stays_cleared_after_nudge_write(self, tmp_path: Path) -> None:
         self._set_vibe_auto(tmp_path)
-        # A Bash signal write-back (e.g. during make check) accumulates a signal.
-        handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
-        # The stop hook then resolves tags from that signal and writes them.
-        handle_stop(_stop(), ConfigStore(tmp_path).read(), tmp_path)
-        # The mood the user cleared must not come back.
+        # A nudge write-back advances the cadence counter; nothing else.
+        handle_vibe_nudge(ConfigStore(tmp_path).read(), tmp_path)
         assert ConfigStore(tmp_path).read().vibe is None
 
-    def test_auto_mode_survives_hook_write_backs(self, tmp_path: Path) -> None:
+    def test_auto_mode_survives_nudge_write(self, tmp_path: Path) -> None:
         self._set_vibe_auto(tmp_path)
-        handle_post_bash(BashPayload(exit_code=0, stdout="5 passed in 1.2s"), tmp_path)
-        handle_stop(_stop(), ConfigStore(tmp_path).read(), tmp_path)
+        handle_vibe_nudge(ConfigStore(tmp_path).read(), tmp_path)
         assert ConfigStore(tmp_path).read().vibe_mode == "auto"
 
     def test_committed_manual_does_not_resurrect_stale_mood(
@@ -323,149 +251,65 @@ class TestHandleNotification:
 
 
 # ---------------------------------------------------------------------------
-# handle_post_bash tests
+# handle_vibe_nudge tests
 # ---------------------------------------------------------------------------
 
 
-class TestHandlePostBash:
-    def test_real_claude_payload_records_ok(self, tmp_path: Path) -> None:
-        # End-to-end through the real parse path: a Claude Code PostToolUse
-        # Bash payload puts the exit code under camelCase ``exitCode``.
-        (tmp_path / "vox.md").write_text('---\nnotify: "y"\n---\n')
-        payload = BashPayload.parse(
-            {"tool_response": {"exitCode": 0, "stdout": "ok"}, "cwd": str(tmp_path)}
+class TestHandleVibeNudge:
+    def _seed(self, config_dir: Path, *, mode: str, turns: int) -> VoxConfig:
+        """Write a vox.local.md with the given vibe mode and cadence, return config."""
+        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
+        (config_dir / "vox.local.md").write_text(
+            f'---\nvibe_mode: "{mode}"\nvibe_nudge_turns: "{turns}"\n---\n'
         )
-        handle_post_bash(payload, tmp_path)
-        assert 'vibe_signals: "ok"' in (tmp_path / "vox.local.md").read_text()
+        return ConfigStore(config_dir).read()
 
-    def test_real_claude_payload_records_fail(self, tmp_path: Path) -> None:
-        (tmp_path / "vox.md").write_text('---\nnotify: "y"\n---\n')
-        payload = BashPayload.parse(
-            {"tool_response": {"exitCode": 1, "stdout": "boom"}, "cwd": str(tmp_path)}
-        )
-        handle_post_bash(payload, tmp_path)
-        assert 'vibe_signals: "fail"' in (tmp_path / "vox.local.md").read_text()
+    def test_reminder_lands_on_nth_auto_prompt(self, tmp_path: Path) -> None:
+        # Below the threshold every prompt stays silent and the counter climbs.
+        for turns in range(DEFAULT_THRESHOLD - 1):
+            config = self._seed(tmp_path, mode="auto", turns=turns)
+            assert handle_vibe_nudge(config, tmp_path) is None
+            assert ConfigStore(tmp_path).read().vibe_nudge_turns == turns + 1
 
-    def test_records_ok_on_zero_exit(self, tmp_path: Path) -> None:
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
+        # The Nth prompt fires the reminder and resets the counter.
+        config = self._seed(tmp_path, mode="auto", turns=DEFAULT_THRESHOLD - 1)
+        result = handle_vibe_nudge(config, tmp_path)
+        assert result is not None
+        envelope = result["hookSpecificOutput"]
+        assert isinstance(envelope, dict)
+        assert envelope["hookEventName"] == "UserPromptSubmit"
+        assert envelope["additionalContext"] == VIBE_NUDGE_REMINDER
+        assert ConfigStore(tmp_path).read().vibe_nudge_turns == 0
 
-        payload = BashPayload(exit_code=0, stdout="anything at all")
-        handle_post_bash(payload, config_dir)
+    def test_never_emits_a_decision(self, tmp_path: Path) -> None:
+        config = self._seed(tmp_path, mode="auto", turns=DEFAULT_THRESHOLD - 1)
+        result = handle_vibe_nudge(config, tmp_path)
+        assert result is not None
+        assert "decision" not in result
 
-        # vibe_signals is ephemeral — written to vox.local.md
-        local_md = config_dir / "vox.local.md"
-        assert local_md.exists()
-        text = local_md.read_text()
-        assert "vibe_signals" in text
-        assert "ok" in text
+    def test_manual_mode_stays_silent_and_leaves_counter(self, tmp_path: Path) -> None:
+        config = self._seed(tmp_path, mode="manual", turns=DEFAULT_THRESHOLD - 1)
+        assert handle_vibe_nudge(config, tmp_path) is None
+        # Manual mode does not advance the cadence.
+        assert ConfigStore(tmp_path).read().vibe_nudge_turns == DEFAULT_THRESHOLD - 1
 
-    def test_records_fail_on_nonzero_exit(self, tmp_path: Path) -> None:
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
+    def test_off_mode_stays_silent(self, tmp_path: Path) -> None:
+        config = self._seed(tmp_path, mode="off", turns=DEFAULT_THRESHOLD - 1)
+        assert handle_vibe_nudge(config, tmp_path) is None
 
-        # Exit code alone decides — the output text is never parsed.
-        payload = BashPayload(exit_code=1, stdout="2534 passed")
-        handle_post_bash(payload, config_dir)
-
-        local_md = config_dir / "vox.local.md"
-        text = local_md.read_text()
-        assert 'vibe_signals: "fail"' in text
-
-    def test_none_exit_code_no_write(self, tmp_path: Path) -> None:
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
-
-        # A command with no exit code contributes nothing.
-        payload = BashPayload(exit_code=None, stdout="5 passed in 1.2s")
-        handle_post_bash(payload, config_dir)
-
-        local_md = config_dir / "vox.local.md"
-        assert not local_md.exists()
-
-    def test_accumulates_outcomes(self, tmp_path: Path) -> None:
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
-        local_md = config_dir / "vox.local.md"
-        local_md.write_text('---\nvibe_signals: "ok,fail"\n---\n')
-
-        payload = BashPayload(exit_code=0, stdout="done")
-        handle_post_bash(payload, config_dir)
-
-        text = local_md.read_text()
-        assert 'vibe_signals: "ok,fail,ok"' in text
-
-    def test_invalid_tool_response(self, tmp_path: Path) -> None:
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
-
-        payload = BashPayload(exit_code=None, stdout="")
-        handle_post_bash(payload, config_dir)
-
-        local_md = config_dir / "vox.local.md"
-        assert not local_md.exists()
-
-    def test_prunes_outcomes_at_max(self, tmp_path: Path) -> None:
-        max_window = DEFAULT_THRESHOLDS.max_window
-        config_dir = tmp_path
-        vox_md = config_dir / "vox.md"
-        vox_md.write_text('---\nnotify: "y"\n---\n')
-        local_md = config_dir / "vox.local.md"
-        # Seed with a full window of fails already present.
-        existing = ",".join("fail" for _ in range(max_window))
-        local_md.write_text(f'---\nvibe_signals: "{existing}"\n---\n')
-
-        payload = BashPayload(exit_code=0, stdout="done")
-        handle_post_bash(payload, config_dir)
-
-        text = local_md.read_text()
-        for line in text.splitlines():
-            if "vibe_signals" in line:
-                signals = line.split(":", 1)[1].strip().strip('"')
-                parts = signals.split(",")
-                assert len(parts) == max_window
-                # The newest outcome is the ok we just appended.
-                assert parts[-1] == "ok"
-                # One fail was evicted to make room.
-                assert parts.count("fail") == max_window - 1
-                break
-        else:
-            raise AssertionError("vibe_signals not found in config")
-
-    def test_write_failure_warns_and_returns(
+    def test_persist_failure_still_stays_silent(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # A corrupt/unwritable vox.local.md must not crash the PostToolUse hook.
-        config_dir = tmp_path
-        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
-        payload = BashPayload(exit_code=0, stdout="done")
+        # An unwritable vox.local.md must not crash the nudge hook.
+        config = self._seed(tmp_path, mode="auto", turns=0)
         with (
             patch.object(
                 ConfigStore, "write_field", side_effect=OSError("read-only fs")
             ),
             caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
         ):
-            handle_post_bash(payload, config_dir)  # must not raise
-        assert any("post-bash" in r.getMessage() for r in caplog.records)
-
-    def test_read_failure_warns_and_returns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # A malformed config that raises on read is swallowed with a warning.
-        config_dir = tmp_path
-        (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n')
-        payload = BashPayload(exit_code=0, stdout="5 passed in 1.2s")
-        with (
-            patch.object(ConfigStore, "read", side_effect=ValueError("bad yaml")),
-            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
-        ):
-            handle_post_bash(payload, config_dir)  # must not raise
-        assert any("post-bash" in r.getMessage() for r in caplog.records)
+            assert handle_vibe_nudge(config, tmp_path) is None  # must not raise
+        assert any("vibe-nudge" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -698,13 +542,13 @@ class TestHandleSessionEnd:
     @patch("punt_vox.hooks._chime_via_voxd")
     def test_chime_mode(self, mock_enqueue: MagicMock) -> None:
         """Fires for notify=y (not just continuous)."""
-        config = _make_config(notify="y", speak="n", vibe_signals=None)
+        config = _make_config(notify="y", speak="n")
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_enqueue.assert_called_once()
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_voice_mode_speaks(self, mock_speak: MagicMock) -> None:
-        config = _make_config(notify="y", speak="y", vibe_signals=None)
+        config = _make_config(notify="y", speak="y")
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
         text = mock_speak.call_args[0][0]
@@ -712,38 +556,40 @@ class TestHandleSessionEnd:
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_continuous_mode_speaks(self, mock_speak: MagicMock) -> None:
-        config = _make_config(notify="c", speak="y", vibe_signals=None)
+        config = _make_config(notify="c", speak="y")
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
 
     @patch("punt_vox.hooks.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_clears_vibe_signals(
+    def test_resets_nudge_cadence(
         self, _mock_run: MagicMock, mock_cs: MagicMock
     ) -> None:
-        """SessionEnd clears vibe_signals to prevent stale leakage."""
-        config = _make_config(notify="y", speak="y", vibe_signals="ok")
+        """SessionEnd resets the nudge cadence so it never leaks to the next session."""
+        config = _make_config(notify="y", speak="y", vibe_nudge_turns=3)
         config_dir = Path("/fake/.punt-labs/vox")
         handle_session_end(config, config_dir)
         mock_cs.assert_called_once_with(config_dir)
-        mock_cs.return_value.write_field.assert_called_once_with("vibe_signals", "")
+        mock_cs.return_value.write_field.assert_called_once_with(
+            "vibe_nudge_turns", "0"
+        )
 
     @patch("punt_vox.hooks.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_no_write_when_no_signals(
+    def test_no_write_when_cadence_at_zero(
         self, _mock_run: MagicMock, mock_cs: MagicMock
     ) -> None:
-        """Does not write config if vibe_signals is already empty."""
-        config = _make_config(notify="y", speak="y", vibe_signals=None)
+        """Does not write config if the cadence counter is already zero."""
+        config = _make_config(notify="y", speak="y", vibe_nudge_turns=0)
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_cs.return_value.write_field.assert_not_called()
 
     @patch("punt_vox.hooks._speak_via_voxd")
-    def test_clear_failure_warns_and_returns(
+    def test_reset_failure_warns_and_returns(
         self, _mock_speak: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # An unwritable vox.local.md must not crash the Stop/SessionEnd hook.
-        config = _make_config(notify="y", speak="y", vibe_signals="ok")
+        # An unwritable vox.local.md must not crash the SessionEnd hook.
+        config = _make_config(notify="y", speak="y", vibe_nudge_turns=2)
         with (
             patch.object(
                 ConfigStore, "write_field", side_effect=OSError("read-only fs")
@@ -882,7 +728,7 @@ class TestRepoNamePrefix:
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_handle_session_end_prepends_repo_name(self, mock_speak: MagicMock) -> None:
         """handle_session_end speaks with repo_name prefix."""
-        config = _make_config(notify="y", speak="y", vibe_signals=None, repo_name="lux")
+        config = _make_config(notify="y", speak="y", repo_name="lux")
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         text = mock_speak.call_args[0][0]
         assert text.startswith("lux. ")
@@ -1142,8 +988,6 @@ class TestCommandsResolveFromCwd:
         self, mock_speak: MagicMock, tmp_path: Path
     ) -> None:
         repo = _make_repo(tmp_path / "vox", notify="y")
-        local = repo / ".punt-labs" / "vox" / "vox.local.md"
-        local.write_text('---\nvibe_signals: "ok"\n---\n')
         payload = {"cwd": str(repo), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),
@@ -1195,20 +1039,20 @@ class TestCommandsResolveFromCwd:
         mock_speak.assert_not_called()
         mock_chime.assert_not_called()
 
-    def test_stop_cmd_vibe_write_targets_cwd_repo(self, tmp_path: Path) -> None:
-        # The vibe-tag write lands in the repo resolved from payload.cwd.
+    def test_stop_cmd_leaves_agent_vibe_tags_untouched(self, tmp_path: Path) -> None:
+        # The stop hook blocks for a summary but writes nothing: the vibe tags
+        # the agent set during the session survive unchanged.
         repo = _make_repo(tmp_path / "vox", notify="y")
         config_dir = repo / ".punt-labs" / "vox"
-        (config_dir / "vox.local.md").write_text('---\nvibe_signals: "ok"\n---\n')
+        (config_dir / "vox.local.md").write_text('---\nvibe_tags: "[warm]"\n---\n')
         payload = {"cwd": str(repo), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),
-            patch("punt_vox.hooks._emit"),
+            patch("punt_vox.hooks._emit") as mock_emit,
         ):
             stop_cmd()
-        # The vibe write targeted config_dir: the signal it consumed is cleared there.
-        assert ConfigStore(config_dir).read_field("vibe_signals") is None
-        assert ConfigStore(config_dir).read_field("vibe_tags") is not None
+        assert mock_emit.call_args[0][0]["decision"] == "block"
+        assert ConfigStore(config_dir).read_field("vibe_tags") == "[warm]"
 
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_stop_cmd_inherited_config_uses_child_repo_name(
@@ -1227,9 +1071,6 @@ class TestCommandsResolveFromCwd:
         child = workspace / "biff"
         child.mkdir()
         (child / ".git").mkdir()
-        # Seed signals in the workspace config so stop hook fires
-        local = workspace / ".punt-labs" / "vox" / "vox.local.md"
-        local.write_text('---\nvibe_signals: "ok"\n---\n')
         payload = {"cwd": str(child), "stop_hook_active": False}
         with (
             patch("punt_vox.hooks._read_hook_input", return_value=payload),

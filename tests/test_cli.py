@@ -941,7 +941,7 @@ class TestRecordCommand:
 
 
 class TestVibeCommand:
-    def test_vibe_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
@@ -963,7 +963,10 @@ class TestVibeCommand:
         result = runner.invoke(app, ["vibe", "auto"])
         assert result.exit_code == 0
         assert "auto" in result.output
-        assert 'vibe_mode: "auto"' in (tmp_path / "vox.local.md").read_text()
+        local = (tmp_path / "vox.local.md").read_text()
+        assert 'vibe_mode: "auto"' in local
+        # A mode change resets the nudge cadence to a clean N-prompt runway.
+        assert 'vibe_nudge_turns: "0"' in local
 
     def test_vibe_off(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
@@ -975,7 +978,9 @@ class TestVibeCommand:
         result = runner.invoke(app, ["vibe", "off"])
         assert result.exit_code == 0
         assert "off" in result.output
-        assert 'vibe_mode: "off"' in (tmp_path / "vox.local.md").read_text()
+        local = (tmp_path / "vox.local.md").read_text()
+        assert 'vibe_mode: "off"' in local
+        assert 'vibe_nudge_turns: "0"' in local
 
 
 # ---------------------------------------------------------------------------

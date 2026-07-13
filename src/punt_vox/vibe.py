@@ -16,13 +16,12 @@ class VibeChange:
     Resolving a change yields the authoritative config field updates.  The
     rules make ``/vibe`` the single source of truth for the vibe cluster:
 
-    - ``auto`` / ``off`` reset the whole cluster -- mood, tags, and any
-      accumulated signals are cleared so nothing stale (a mood the user
-      meant to drop, tags from a prior manual vibe) survives the transition
-      (vox-73m5).
+    - ``auto`` / ``off`` reset the whole cluster -- mood and tags are cleared
+      so nothing stale (a mood the user meant to drop, tags from a prior
+      manual vibe) survives the transition (vox-73m5).
     - ``manual`` (or no mode) records whichever of mood/tags was supplied.
-    - Setting tags always clears signals, since tags are the resolved form
-      of signals.
+    - Any mode change resets the nudge cadence counter so re-entering
+      ``auto`` starts a clean N-prompt runway.
     """
 
     mood: str | None
@@ -40,13 +39,13 @@ class VibeChange:
         self.validate()
         updates: dict[str, str] = {}
         if self.mode in ("auto", "off"):
-            updates.update(vibe="", vibe_tags="", vibe_signals="")
+            updates.update(vibe="", vibe_tags="")
         else:
             if self.mood is not None:
                 updates["vibe"] = self.mood
             if self.tags is not None:
                 updates["vibe_tags"] = self.tags
-                updates["vibe_signals"] = ""
         if self.mode is not None:
             updates["vibe_mode"] = self.mode
+            updates["vibe_nudge_turns"] = "0"
         return updates

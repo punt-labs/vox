@@ -8,7 +8,7 @@ do in-process synthesis, caching, or direct playback.
 
 Events:
 - **stop**: task-completion notification (decision-block pattern)
-- **post-bash**: exit-code outcome accumulator for auto-vibe
+- **vibe-nudge**: cadence-gated reminder for the agent to set the auto vibe
 - **notification**: permission/idle prompt audio alerts
 - **pre-compact**: playful 'be right back' before context compaction
 - **user-prompt-submit**: acknowledgment in continuous mode
@@ -36,7 +36,6 @@ from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
-    BashPayload,
     NotificationPayload,
     StopPayload,
 )
@@ -51,7 +50,7 @@ from punt_vox.quips import (
     SUBAGENT_STOP_PHRASES,
 )
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.vibe_window import Outcome, OutcomeWindow
+from punt_vox.vibe_nudge import VibeNudge
 
 logger = logging.getLogger(__name__)
 
@@ -208,10 +207,10 @@ def handle_stop(
 ) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
-    Returns a decision-block dict if Claude should speak a summary,
-    or None to let it stop normally.  *config_dir* is the session's
-    resolved repo config — the vibe-tag write lands there so the
-    spoken name and the persisted tags agree on one repo.
+    Returns a decision-block dict if Claude should speak a summary, or None to
+    let it stop normally.  The summary fires when notifications and speech are
+    both enabled and this is not a re-entrant stop; the vibe the agent set
+    during the session already colors the synthesized speech via config tags.
     """
     # Not enabled
     if config.notify == "n":
@@ -223,11 +222,6 @@ def handle_stop(
         logger.info("Stop hook: skip (stop_hook_active=True, preventing loop)")
         return None
 
-    # No signals = no meaningful work to summarize
-    if not config.vibe_signals:
-        logger.info("Stop hook: skip (no vibe_signals)")
-        return None
-
     # Chime mode: fire-and-forget chime, let Claude stop immediately.
     # Must not block — the Stop hook is sync and Claude waits.
     if config.speak == "n":
@@ -235,61 +229,45 @@ def handle_stop(
         _chime_via_voxd("done", wait=False)
         return None
 
-    # Voice mode: block the stop, ask Claude to summarize and speak.
-    # Resolve tags and write to config so apply_vibe picks them up
-    # automatically — no vibe tags or signals in the reason string.
+    # Voice mode: block the stop, ask Claude to summarize and speak. The session
+    # vibe tags are already in config; no data goes in the reason string.
     phrase = random.choice(STOP_PHRASES)
     if config.repo_name:
         phrase = f"{config.repo_name}. {phrase}"
-    logger.info(
-        "Stop hook: blocking for voice summary (signals=%s)",
-        config.vibe_signals,
-    )
-    _persist_auto_vibe_tags(config, config_dir)
+    logger.info("Stop hook: blocking for voice summary")
+    # config_dir is threaded for symmetry with the other stop-path handlers.
+    _ = config_dir
     return {"decision": "block", "reason": phrase}
 
 
-def _persist_auto_vibe_tags(config: VoxConfig, config_dir: Path) -> None:
-    """Resolve accumulated outcomes to vibe tags and persist them.
+# UserPromptSubmit — cadence-gated auto-vibe reminder
 
-    A no-op when the user turned vibe off, or set manual tags already —
-    those are authoritative and must survive the stop-hook write-back.
+
+def handle_vibe_nudge(config: VoxConfig, config_dir: Path) -> dict[str, object] | None:
+    """Return a UserPromptSubmit additionalContext envelope, or None to stay silent.
+
+    In ``auto`` mode the cadence counter advances every prompt and the reminder
+    fires (resetting the counter) every Nth prompt; outside ``auto`` nothing
+    happens. Non-blocking always — this never emits a decision.
     """
-    if config.vibe_mode == "off":
-        return
-    if config.vibe_mode == "manual" and config.vibe_tags:
-        return
-    window = OutcomeWindow.deserialize(config.vibe_signals or "")
-    try:
-        ConfigStore(config_dir).write_fields(
-            {"vibe_tags": window.resolve_tags(), "vibe_signals": ""}
-        )
-    except OSError as exc:
-        logger.warning("stop: cannot persist vibe tags in %s: %s", config_dir, exc)
-
-
-# PostToolUse Bash — exit-code outcome accumulator
-
-
-def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
-    """Record one command outcome (ok/fail) from its exit code.
-
-    A command with no exit code contributes nothing. Otherwise the outcome is
-    appended to the bounded window persisted in ``vibe_signals`` — exit 0 reads
-    as ``ok``, any non-zero exit as ``fail``. No output parsing.
-    """
-    if payload.exit_code is None:
-        return
-
-    outcome = Outcome.from_exit_code(payload.exit_code)
-    try:
-        window = OutcomeWindow.deserialize(
-            ConfigStore(config_dir).read().vibe_signals or ""
-        )
-        window.record(outcome)
-        ConfigStore(config_dir).write_field("vibe_signals", window.serialize())
-    except (OSError, ValueError) as exc:
-        logger.warning("post-bash: cannot save vibe outcome in %s: %s", config_dir, exc)
+    decision = VibeNudge().advance(mode=config.vibe_mode, turns=config.vibe_nudge_turns)
+    if config.vibe_mode == "auto":
+        try:
+            ConfigStore(config_dir).write_field(
+                "vibe_nudge_turns", str(decision.next_turns)
+            )
+        except OSError as exc:
+            logger.warning(
+                "vibe-nudge: cannot persist cadence in %s: %s", config_dir, exc
+            )
+    if decision.reminder is None:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": decision.reminder,
+        }
+    }
 
 
 # Notification — permission/idle prompt audio alerts
@@ -430,20 +408,19 @@ def handle_subagent_stop(config: VoxConfig) -> None:
 # SessionEnd — farewell speech
 
 
-def _clear_vibe_signals(config_dir: Path) -> None:
-    """Reset accumulated vibe signals, warning instead of raising on failure."""
+def _reset_nudge_cadence(config_dir: Path) -> None:
+    """Reset the nudge cadence counter, warning instead of raising on failure."""
     try:
-        ConfigStore(config_dir).write_field("vibe_signals", "")
+        ConfigStore(config_dir).write_field("vibe_nudge_turns", "0")
     except OSError as exc:
-        logger.warning("session-end: cannot clear signals in %s: %s", config_dir, exc)
+        logger.warning("session-end: cannot reset cadence in %s: %s", config_dir, exc)
 
 
 def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     """Speak a farewell and clean up session state.
 
     Fires when notify != 'n' (both on-demand and continuous).
-    Clears vibe_signals to prevent stale signals leaking to the
-    next session.
+    Resets the nudge cadence so the counter never leaks into the next session.
     """
     if config.notify == "n":
         logger.info("SessionEnd hook: skip (notify=n)")
@@ -453,8 +430,8 @@ def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     _speak_phrase(FAREWELL_PHRASES, config, chime_signal="farewell")
 
     # Clean slate for next session
-    if config.vibe_signals:
-        _clear_vibe_signals(config_dir)
+    if config.vibe_nudge_turns:
+        _reset_nudge_cadence(config_dir)
 
 
 # CLI commands
@@ -487,14 +464,16 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         _emit(result)
 
 
-@hook_app.command("post-bash")
-def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """PostToolUse hook: accumulate vibe signals from Bash."""
-    payload = BashPayload.parse(_read_hook_input())
-    config_dir = find_config_dir(payload.cwd)
-    if config_dir is None:
+@hook_app.command("vibe-nudge")
+def vibe_nudge_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """UserPromptSubmit hook: cadence-gated auto-vibe reminder."""
+    resolved = _resolve_continuous_config()
+    if resolved is None:
         return
-    handle_post_bash(payload, config_dir)
+    config, config_dir = resolved
+    result = handle_vibe_nudge(config, config_dir)
+    if result is not None:
+        _emit(result)
 
 
 @hook_app.command("notification")

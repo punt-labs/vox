@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from punt_vox.hook_payload import (
-    BashPayload,
     NotificationPayload,
     StopPayload,
 )
@@ -40,56 +39,6 @@ class TestStopPayload:
     def test_stop_hook_active_integer_zero_rejected(self) -> None:
         result = StopPayload.parse({"stop_hook_active": 0})
         assert result.stop_hook_active is False
-
-
-# ---------------------------------------------------------------------------
-# BashPayload
-# ---------------------------------------------------------------------------
-
-
-class TestBashPayload:
-    def test_tool_response_as_dict(self) -> None:
-        # Claude Code emits the exit code under the camelCase key ``exitCode``.
-        data: dict[str, object] = {"tool_response": {"exitCode": 0, "stdout": "hello"}}
-        result = BashPayload.parse(data)
-        assert result.exit_code == 0
-        assert result.stdout == "hello"
-
-    def test_snake_case_exit_code_is_ignored(self) -> None:
-        # The real payload key is ``exitCode``; a snake_case ``exit_code`` is
-        # not Claude Code's schema and must not be read.
-        result = BashPayload.parse({"tool_response": {"exit_code": 0}})
-        assert result.exit_code is None
-
-    def test_tool_response_non_dict_treated_as_empty(self) -> None:
-        result = BashPayload.parse({"tool_response": "oops"})
-        assert result.exit_code is None
-        assert result.stdout == ""
-
-    def test_tool_response_absent(self) -> None:
-        result = BashPayload.parse({})
-        assert result.exit_code is None
-        assert result.stdout == ""
-
-    def test_exit_code_as_int(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exitCode": 1}})
-        assert result.exit_code == 1
-
-    def test_exit_code_as_string_int(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exitCode": "42"}})
-        assert result.exit_code == 42
-
-    def test_exit_code_non_numeric_string_becomes_none(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exitCode": "boom"}})
-        assert result.exit_code is None
-
-    def test_exit_code_absent_becomes_none(self) -> None:
-        result = BashPayload.parse({"tool_response": {}})
-        assert result.exit_code is None
-
-    def test_stdout_absent_defaults_to_empty_string(self) -> None:
-        result = BashPayload.parse({"tool_response": {"exitCode": 0}})
-        assert result.stdout == ""
 
 
 # ---------------------------------------------------------------------------
@@ -138,19 +87,12 @@ class TestPayloadCwd:
         result = StopPayload.parse({"cwd": "/Users/me/Coding/punt-labs/vox"})
         assert result.cwd == Path("/Users/me/Coding/punt-labs/vox")
 
-    def test_bash_cwd_present(self) -> None:
-        result = BashPayload.parse({"cwd": "/Users/me/Coding/punt-labs/vox"})
-        assert result.cwd == Path("/Users/me/Coding/punt-labs/vox")
-
     def test_notification_cwd_present(self) -> None:
         result = NotificationPayload.parse({"cwd": "/Users/me/Coding/punt-labs/vox"})
         assert result.cwd == Path("/Users/me/Coding/punt-labs/vox")
 
     def test_stop_cwd_absent_is_none(self) -> None:
         assert StopPayload.parse({}).cwd is None
-
-    def test_bash_cwd_absent_is_none(self) -> None:
-        assert BashPayload.parse({}).cwd is None
 
     def test_notification_cwd_absent_is_none(self) -> None:
         assert NotificationPayload.parse({}).cwd is None

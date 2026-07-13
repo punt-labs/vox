@@ -15,8 +15,8 @@ class TestVibeChangeResolve:
         assert updates == {
             "vibe": "excited",
             "vibe_tags": "[excited]",
-            "vibe_signals": "",
             "vibe_mode": "manual",
+            "vibe_nudge_turns": "0",
         }
 
     def test_mood_only(self) -> None:
@@ -24,18 +24,19 @@ class TestVibeChangeResolve:
             "vibe": "calm"
         }
 
-    def test_tags_only_clears_signals(self) -> None:
+    def test_tags_only_without_mode_leaves_cadence(self) -> None:
+        # No mode change means the cadence counter is untouched.
         updates = VibeChange(mood=None, tags="[warm]", mode=None).resolve()
-        assert updates == {"vibe_tags": "[warm]", "vibe_signals": ""}
+        assert updates == {"vibe_tags": "[warm]"}
 
     def test_auto_resets_whole_cluster(self) -> None:
-        # /vibe auto: mood + tags + signals cleared, mode set (vox-73m5).
+        # /vibe auto: mood + tags cleared, mode set, cadence reset (vox-73m5).
         updates = VibeChange(mood=None, tags="", mode="auto").resolve()
         assert updates == {
             "vibe": "",
             "vibe_tags": "",
-            "vibe_signals": "",
             "vibe_mode": "auto",
+            "vibe_nudge_turns": "0",
         }
 
     def test_auto_ignores_supplied_mood(self) -> None:

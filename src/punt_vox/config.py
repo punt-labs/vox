@@ -48,12 +48,12 @@ DURABLE_KEYS: frozenset[str] = frozenset(
 # The whole vibe cluster is session state, not a durable preference. Keeping
 # vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
 # "manual" mode while the gitignored mood lingered (vox-73m5). Mode, mood, tags,
-# and signals now live together in the ephemeral vox.local.md.
+# and the nudge cadence counter now live together in the ephemeral vox.local.md.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
         "vibe",
         "vibe_mode",
-        "vibe_signals",
+        "vibe_nudge_turns",
         "vibe_tags",
     }
 )
@@ -73,8 +73,18 @@ class VoxConfig:
     model: str | None
     vibe: str | None
     vibe_tags: str | None
-    vibe_signals: str | None
+    vibe_nudge_turns: int = 0
     repo_name: str | None = None
+
+    @staticmethod
+    def coerce_turns(raw: str | None) -> int:
+        """Return *raw* as a non-negative int, defaulting to 0 on absence or garbage."""
+        if raw is None:
+            return 0
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return 0
 
 
 # ── Internal helpers ─────────────────────────────────────────────────
@@ -120,9 +130,19 @@ def _fields_to_config(
         model=fields.get("model"),
         vibe=fields.get("vibe"),
         vibe_tags=fields.get("vibe_tags"),
-        vibe_signals=fields.get("vibe_signals"),
+        vibe_nudge_turns=_parse_int(fields.get("vibe_nudge_turns")),
         repo_name=repo_name,
     )
+
+
+def _parse_int(raw: str | None) -> int:
+    """Return *raw* as a non-negative int, defaulting to 0 on absence or garbage."""
+    if raw is None:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
 
 
 def _read_single_field(path: Path, field: str) -> str | None:

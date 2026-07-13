@@ -38,11 +38,11 @@ class TestWriteFieldRouting:
         assert ConfigStore(tmp_path).read_field("voice") == "charlie"
 
     def test_write_field_routes_ephemeral_to_vox_local_md(self, tmp_path: Path) -> None:
-        """Test 2: write 'vibe_signals' lands in vox.local.md only."""
-        ConfigStore(tmp_path).write_field("vibe_signals", "ok,fail")
+        """Test 2: write 'vibe_nudge_turns' lands in vox.local.md only."""
+        ConfigStore(tmp_path).write_field("vibe_nudge_turns", "3")
         assert (tmp_path / "vox.local.md").exists()
         assert not (tmp_path / "vox.md").exists()
-        assert ConfigStore(tmp_path).read_field("vibe_signals") == "ok,fail"
+        assert ConfigStore(tmp_path).read_field("vibe_nudge_turns") == "3"
 
     def test_write_field_creates_dir(self, tmp_path: Path) -> None:
         """Test 11: write to nonexistent dir creates it."""
@@ -150,7 +150,7 @@ class TestReadConfig:
         assert cfg.model is None
         assert cfg.vibe is None
         assert cfg.vibe_tags is None
-        assert cfg.vibe_signals is None
+        assert cfg.vibe_nudge_turns == 0
 
     def test_read_config_only_durable(self, tmp_path: Path) -> None:
         """Test 7: only vox.md exists, ephemeral fields default."""
@@ -165,13 +165,13 @@ class TestReadConfig:
         """Test 8: only vox.local.md exists, durable fields default."""
         _write_frontmatter(
             tmp_path / "vox.local.md",
-            {"vibe": "chill", "vibe_signals": "test@12"},
+            {"vibe": "chill", "vibe_nudge_turns": "4"},
         )
         cfg = ConfigStore(tmp_path).read()
         assert cfg.notify == "n"  # default
         assert cfg.speak == "y"  # default
         assert cfg.vibe == "chill"
-        assert cfg.vibe_signals == "test@12"
+        assert cfg.vibe_nudge_turns == 4
 
 
 class TestReadField:
@@ -184,13 +184,13 @@ class TestReadField:
         assert ConfigStore(tmp_path).read_field("voice") == "fin"
 
     def test_read_field_ephemeral_key(self, tmp_path: Path) -> None:
-        """Test 10: read_field('vibe_signals') reads from vox.local.md."""
+        """Test 10: read_field('vibe_nudge_turns') reads from vox.local.md."""
         _write_frontmatter(tmp_path / "vox.md", {"voice": "fin"})
         _write_frontmatter(
             tmp_path / "vox.local.md",
-            {"vibe_signals": "deploy@15:30"},
+            {"vibe_nudge_turns": "2"},
         )
-        assert ConfigStore(tmp_path).read_field("vibe_signals") == "deploy@15:30"
+        assert ConfigStore(tmp_path).read_field("vibe_nudge_turns") == "2"
 
 
 # -- Design tests 13-15: dirs.py ------------------------------------------
@@ -258,8 +258,8 @@ class TestReadFieldLegacy:
     def test_returns_none_for_empty_value(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"
         vox_local.parent.mkdir(parents=True, exist_ok=True)
-        vox_local.write_text('---\nvibe_signals: ""\n---\n')
-        assert ConfigStore(tmp_path).read_field("vibe_signals") is None
+        vox_local.write_text('---\nvibe_nudge_turns: ""\n---\n')
+        assert ConfigStore(tmp_path).read_field("vibe_nudge_turns") is None
 
 
 class TestReadConfigLegacy:
@@ -275,7 +275,7 @@ class TestReadConfigLegacy:
         assert result.model is None
         assert result.vibe is None
         assert result.vibe_tags is None
-        assert result.vibe_signals is None
+        assert result.vibe_nudge_turns == 0
 
     def test_reads_all_fields(self, tmp_path: Path) -> None:
         _write_frontmatter(
@@ -291,7 +291,7 @@ class TestReadConfigLegacy:
             {
                 "vibe_mode": "manual",
                 "vibe_tags": "[happy] [calm]",
-                "vibe_signals": "ok,fail",
+                "vibe_nudge_turns": "3",
                 "vibe": "happy",
             },
         )
@@ -302,7 +302,7 @@ class TestReadConfigLegacy:
         assert result.voice == "charlie"
         assert result.vibe == "happy"
         assert result.vibe_tags == "[happy] [calm]"
-        assert result.vibe_signals == "ok,fail"
+        assert result.vibe_nudge_turns == 3
 
     def test_invalid_notify_defaults_to_n(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "invalid"})
@@ -338,11 +338,17 @@ class TestReadConfigLegacy:
         _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "off"})
         assert ConfigStore(tmp_path).read().vibe_mode == "off"
 
-    def test_empty_signals_returns_none(self, tmp_path: Path) -> None:
+    def test_empty_nudge_turns_defaults_to_zero(self, tmp_path: Path) -> None:
         vox_local = tmp_path / "vox.local.md"
         vox_local.parent.mkdir(parents=True, exist_ok=True)
-        vox_local.write_text('---\nvibe_signals: ""\n---\n')
-        assert ConfigStore(tmp_path).read().vibe_signals is None
+        vox_local.write_text('---\nvibe_nudge_turns: ""\n---\n')
+        assert ConfigStore(tmp_path).read().vibe_nudge_turns == 0
+
+    def test_garbage_nudge_turns_defaults_to_zero(self, tmp_path: Path) -> None:
+        vox_local = tmp_path / "vox.local.md"
+        vox_local.parent.mkdir(parents=True, exist_ok=True)
+        vox_local.write_text('---\nvibe_nudge_turns: "not-a-number"\n---\n')
+        assert ConfigStore(tmp_path).read().vibe_nudge_turns == 0
 
     def test_partial_config_fills_defaults(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"notify": "y", "voice": "matilda"})

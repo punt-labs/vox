@@ -26,6 +26,7 @@ from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_di
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
     # Annotation-only; keeps `client` off __main__'s runtime import graph.
@@ -457,16 +458,16 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
 ) -> None:
     """Set session mood for TTS voice."""
-    cd = find_config_dir() or DEFAULT_CONFIG_DIR
-    store = ConfigStore(cd)
-    if mood == "auto":
-        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "auto"})
-        _formatter.emit({"vibe_mode": "auto"}, "Vibe mode: auto")
-    elif mood == "off":
-        store.write_fields({"vibe_tags": "", "vibe": "", "vibe_mode": "off"})
-        _formatter.emit({"vibe_mode": "off"}, "Vibe mode: off")
+    # Route through VibeChange so the CLI and MCP tool share one transition rule
+    # (a mode change resets the nudge cadence).
+    is_mode = mood in ("auto", "off")
+    change = VibeChange(
+        mood=None if is_mode else mood, tags=None, mode=mood if is_mode else "manual"
+    )
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(change.resolve())
+    if is_mode:
+        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
     else:
-        store.write_fields({"vibe": mood, "vibe_tags": "", "vibe_mode": "manual"})
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
 
 
@@ -638,7 +639,6 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         "vibe_mode": cfg.vibe_mode,
         "vibe": cfg.vibe,
         "vibe_tags": cfg.vibe_tags,
-        "vibe_signals": cfg.vibe_signals,
     }
 
     text_lines = [
@@ -653,8 +653,6 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         text_lines.append(f"Vibe:      {cfg.vibe}")
     if cfg.vibe_tags:
         text_lines.append(f"Tags:      {cfg.vibe_tags}")
-    if cfg.vibe_signals:
-        text_lines.append(f"Signals:   {cfg.vibe_signals}")
     _formatter.emit(info, "\n".join(text_lines))
 
 
