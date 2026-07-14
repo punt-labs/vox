@@ -253,17 +253,17 @@ class TestChimeDedup:
 
     def test_first_chime_plays(self) -> None:
         dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
+        assert dedup.should_play("done") is True
 
     def test_duplicate_chime_within_window_dropped(self) -> None:
         dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
-        assert dedup.should_play("tests-pass") is False
+        assert dedup.should_play("done") is True
+        assert dedup.should_play("done") is False
 
     def test_different_signal_not_dropped(self) -> None:
         dedup = ChimeDedup()
-        assert dedup.should_play("tests-pass") is True
-        assert dedup.should_play("lint-fail") is True
+        assert dedup.should_play("done") is True
+        assert dedup.should_play("prompt") is True
 
     def test_chime_dedup_after_window_plays_again(
         self, monkeypatch: pytest.MonkeyPatch
@@ -271,6 +271,6 @@ class TestChimeDedup:
         dedup = ChimeDedup(window=5.0)
         clock = [1000.0]
         monkeypatch.setattr("punt_vox.voxd.dedup.time.monotonic", lambda: clock[0])
-        assert dedup.should_play("tests-pass") is True
+        assert dedup.should_play("done") is True
         clock[0] = 1010.0  # past 5s window
-        assert dedup.should_play("tests-pass") is True
+        assert dedup.should_play("done") is True

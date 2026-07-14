@@ -74,7 +74,6 @@ class SessionConfig:
     _vibe_mode: str = "off"
     _vibe: str | None = None
     _vibe_tags: str | None = None
-    _vibe_signals: str = ""
     _speak_explicit: bool = False
 
     # -- Properties (read access) ------------------------------------------
@@ -137,11 +136,6 @@ class SessionConfig:
         return self._vibe_tags
 
     @property
-    def vibe_signals(self) -> str:
-        """Return the accumulated vibe signals string."""
-        return self._vibe_signals
-
-    @property
     def speak_explicit(self) -> bool:
         """Return whether the user has explicitly set speak mode."""
         return self._speak_explicit
@@ -169,15 +163,11 @@ class SessionConfig:
             self._speak_explicit = True
 
     def set_vibe(self, mood: str | None = None, tags: str | None = None) -> None:
-        """Set vibe mood and/or tags together.
-
-        Setting tags clears vibe_signals (tags are the resolved form).
-        """
+        """Set vibe mood and/or tags together."""
         if mood is not None:
             self._vibe = mood
         if tags is not None:
             self._vibe_tags = tags
-            self._vibe_signals = ""
 
     def change_vibe(self, change: VibeChange) -> dict[str, str]:
         """Apply an authoritative vibe change; return the fields to persist.
@@ -191,8 +181,6 @@ class SessionConfig:
             self._vibe = updates["vibe"] or None
         if "vibe_tags" in updates:
             self._vibe_tags = updates["vibe_tags"] or None
-        if "vibe_signals" in updates:
-            self._vibe_signals = updates["vibe_signals"]
         if "vibe_mode" in updates:
             self._vibe_mode = updates["vibe_mode"]
         return updates
@@ -229,15 +217,14 @@ class SessionConfig:
             _vibe_mode=cfg.vibe_mode,
             _vibe=cfg.vibe,
             _vibe_tags=cfg.vibe_tags,
-            _vibe_signals=cfg.vibe_signals or "",
         )
 
     def refresh_from_config(self) -> None:
         """Re-read config files and update self with current values.
 
-        Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags,
-        vibe_signals) always take the config value -- the config file is
-        the source of truth since CLI and hooks write there directly.
+        Config-sourced fields (notify, speak, vibe_mode, vibe, vibe_tags)
+        always take the config value -- the config file is the source of
+        truth since CLI and hooks write there directly.
 
         For voice, provider, and model the MCP tool may have set a value
         that was not persisted to config (e.g. an in-tool override).  Only
@@ -252,7 +239,6 @@ class SessionConfig:
 
         self._vibe = cfg.vibe
         self._vibe_tags = cfg.vibe_tags
-        self._vibe_signals = cfg.vibe_signals or ""
         self._vibe_mode = cfg.vibe_mode
         self._notify = cfg.notify
         self._speak = cfg.speak
@@ -398,7 +384,7 @@ def unmute(
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
         speaker_boost: ElevenLabs speaker boost toggle.
         vibe_tags: ElevenLabs expressive tags (e.g. "[warm] [satisfied]").
-            When provided, writes tags to config and clears vibe_signals.
+            When provided, writes tags to config.
         provider: TTS provider override (elevenlabs, openai, polly, say,
             espeak). When provided, persists to session config for
             subsequent calls.
@@ -598,10 +584,11 @@ def vibe(
         mood: Human-readable mood (e.g. "3am debugging", "excited").
             Stored as the ``vibe`` config field.
         tags: ElevenLabs expressive tags (e.g. "[tired] [slow]").
-            Stored as ``vibe_tags``. Clears ``vibe_signals``.
+            Stored as ``vibe_tags``.
         mode: Vibe detection mode: "auto", "manual", or "off".
-            Auto mode reads signals from tool use; manual uses
-            the mood/tags you set here.
+            In auto mode a prompt-time reminder nudges you to set the
+            vibe from the conversation; manual uses the mood/tags you
+            set here.
 
     Returns:
         JSON string with the updated vibe state.
@@ -620,7 +607,10 @@ def vibe(
     # must not be replayed as an authoritative music transition. The vibe is
     # display/record state; a Program retune is a
     # deliberate music command, never a side effect of setting the session mood.
-    ConfigStore(_find_config_dir()).write_fields(updates)
+    try:
+        ConfigStore(_find_config_dir()).write_fields(updates)
+    except ValueError as exc:  # mood/tags carrying a newline or double-quote
+        return _error(str(exc))
 
     return json.dumps({"vibe": updates})
 
@@ -897,7 +887,6 @@ def status() -> str:
         "vibe_mode": _session.vibe_mode,
         "vibe": _session.vibe,
         "vibe_tags": _session.vibe_tags,
-        "vibe_signals": _session.vibe_signals,
     }
     try:
         program_status = _program_tools.status()

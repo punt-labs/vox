@@ -70,18 +70,18 @@ provider: ""
 model: ""
 notify: "n"
 speak: "y"
-vibe_mode: "auto"
 ---
 
 .punt-labs/vox/vox.local.md    # gitignored — ephemeral session state
 ---
 vibe: ""
+vibe_mode: "auto"
 vibe_tags: ""
-vibe_signals: ""
+vibe_nudge_turns: "0"
 ---
 ```
 
-Durable keys (voice, provider, model, notify, speak, vibe_mode) route to `vox.md`. Ephemeral keys (vibe, vibe_tags, vibe_signals) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
+Durable keys (voice, provider, model, notify, speak) route to `vox.md`. Ephemeral keys (vibe, vibe_mode, vibe_tags, vibe_nudge_turns) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
 
 ---
 
@@ -1945,3 +1945,38 @@ This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundar
 | Rename the MCP `unmute` tool → `say` to match the CLI | Flattens the human-vs-agent actor distinction; the agent "unmuting its mic" is intentional character the panel shows before every utterance; deletes the metaphor |
 | Rename the `speak` toggle / consolidate `notify`+`speak` | No surface to match against; the user-facing `/mute`+`/unmute` slashes are shipped, documented product (prfaq FAQ, Feature F4); this is invented scope |
 | Leave the intent undocumented | Already caused a false "bug" report (vox-yn8u round, 2026-07-11) where the divergence was misread as an inconsistency — this ADR is the fix |
+
+---
+
+## DES-043: Auto-Vibe Is Agent-Driven, Not Deterministically Classified
+
+**Date:** 2026-07-13
+**Status:** SETTLED (supersedes the vibe-signal machinery of DES-018)
+**Topic:** How `/vibe auto` derives the session mood
+
+### Decision
+
+Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
+
+Design of record: `docs/vibe-agent-driven.md`. **No formal model:** the state that justified the interim Z model (an exit-code window/mood accumulator) is deleted; the replacement is a stateless nudge plus a bounded mod-N counter, below the formal-modeling trigger.
+
+### Why
+
+Two prior deterministic mechanisms failed. (1) The output-pattern classifier grepped command *output* for pytest/ruff/git tokens — **narrow** (only this repo's toolchain), **asymmetric** (a clean exit with no recognized token produced no signal, so successes went uncounted and the mood skewed frustrated everywhere else), and **fragile** (`vox-p0u6` was the acute symptom). (2) An interim exit-code accumulator tried to derive the mood from each Bash command's exit code read from the `PostToolUse` hook — but **that signal does not exist**: Claude Code does not expose the exit code to `PostToolUse` hooks (the `tool_response` carries only `stdout`/`stderr`/`interrupted`/`isImage`/`noOutputExpected`, and the result is finalized *after* the hook runs), confirmed from the Claude Code docs and a live payload capture, so the accumulator recorded nothing. The agent, which sees the whole conversation, holds the success/failure context no per-command hook ever could. Validated by a live spike.
+
+### Consequences
+
+- The exit-code accumulator (`vibe_window`, `vibe_mood`), the `PostToolUse` Bash hook and `BashPayload`, the `vibe_signals` config field, and the interim design doc + Z model (`docs/vibe-exit-code*`) are deleted (forward integration, no shims). `vibe_signals` is replaced by the `vibe_nudge_turns` cadence counter.
+- The transcript watcher and the dead mood-pitch chime machinery stay deleted; notification chimes are two flat tones. The mood colors the **spoken voice** (ElevenLabs `vibe_tags`), not chimes.
+- The nudge fires only every Nth prompt, so a mood shift inside a short window registers on the next nudge, not instantly — acceptable for ambient TTS mood, and the agent may set the vibe at any time regardless.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Exit-code per command (interim) | The signal does not exist — `PostToolUse` hooks never see the Bash exit code (see Why). |
+| Output-pattern classification (DES-018-era) | Narrow, asymmetric, fragile. |
+| LLM call inside the hook | The hook runs outside the model context and must be near-instant; an in-hook LLM call is slow, costly, and blind to the conversation the reminder exists to leverage. |
+| Nudge every prompt | Nags. The cadence counter throttles to every Nth prompt. |
+
+Closes vox-ek1m.

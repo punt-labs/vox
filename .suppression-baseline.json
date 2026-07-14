@@ -1,29 +1,32 @@
 {
-  "total": 226,
+  "total": 213,
   "by_category": {
-    "noqa": 33,
-    "type_ignore": 20,
+    "noqa": 32,
+    "type_ignore": 14,
     "pylint_disable": 0,
-    "pyright_ignore": 94,
-    "per_file_ignores": 79
+    "pyright_ignore": 93,
+    "per_file_ignores": 74
   },
   "by_file": {
     "src/punt_vox/__main__.py": {
-      "noqa": 9,
-      "pyright_ignore": 18
+      "noqa": 8,
+      "pyright_ignore": 17
+    },
+    "src/punt_vox/cli_io.py": {
+      "pyright_ignore": 2
     },
     "src/punt_vox/client_sync.py": {
-      "type_ignore": 16
+      "type_ignore": 10
     },
     "src/punt_vox/core.py": {
       "noqa": 1
     },
     "src/punt_vox/daemon_restarter.py": {
-      "noqa": 7,
+      "noqa": 3,
       "pyright_ignore": 2
     },
     "src/punt_vox/doctor.py": {
-      "pyright_ignore": 3
+      "pyright_ignore": 2
     },
     "src/punt_vox/hooks.py": {
       "pyright_ignore": 11
@@ -50,11 +53,14 @@
       "pyright_ignore": 3
     },
     "src/punt_vox/server.py": {
-      "noqa": 6,
+      "noqa": 5,
       "pyright_ignore": 1
     },
     "src/punt_vox/service/installer.py": {
       "pyright_ignore": 2
+    },
+    "src/punt_vox/service/launchctl.py": {
+      "noqa": 5
     },
     "src/punt_vox/types_errors.py": {
       "pyright_ignore": 1
@@ -64,7 +70,7 @@
       "pyright_ignore": 1
     },
     "src/punt_vox/voxd/playback.py": {
-      "pyright_ignore": 2
+      "pyright_ignore": 1
     },
     "src/punt_vox/voxd/programs/music_producer.py": {
       "pyright_ignore": 1
@@ -85,5 +91,5 @@
       "noqa": 1
     }
   },
-  "updated_at": "2026-07-05T21:18:37Z"
+  "updated_at": "2026-07-12T17:30:02Z"
 }

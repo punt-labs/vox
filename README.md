@@ -148,7 +148,7 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 ## Features
 
 - **Notification layer** --- spoken summaries when tasks finish, chimes when Claude needs input
-- **Session vibe** --- `/vibe` sets the mood for all speech. Auto-mode reads session signals (test results, lint, git ops) and adapts the voice. Manual mode lets you set it yourself. ElevenLabs expressive tags (`[weary]`, `[excited]`, `[sighs]`) color every utterance.
+- **Session vibe** --- `/vibe` sets the mood for all speech. Auto-mode keeps the voice in step with the session --- the agent sets the mood from the conversation, nudged by a periodic reminder: happy when flowing, focused/frustrated/weary when stuck, relieved after a fix. Manual mode lets you set it yourself. ElevenLabs expressive tags (`[happy]`, `[frustrated]`, `[sighs]`, `[weary]`) color every utterance.
 - **Five providers** --- ElevenLabs, OpenAI, AWS Polly, macOS `say`, and Linux `espeak-ng`. The full experience (natural voice, expressive tags, `/vibe`) requires ElevenLabs.
 - **Opt-in only** --- no audio until you enable it, no surprises
 - **Voice or chime** --- `/mute` switches to audio tones, no TTS API calls
@@ -252,7 +252,7 @@ in the session middleware. All 47 tests pass."
 Vibe: banging my head against the wall → [frustrated] [sighs] [manual]
 ```
 
-Auto-mode (default) reads session signals and adapts automatically --- after a string of test failures the voice sounds `[weary]`, after a successful release it sounds `[excited]`.
+Auto-mode (default) keeps the mood current automatically --- the agent sets it from the conversation, nudged by a periodic reminder: a stretch of getting stuck degrades the voice toward `[frustrated]` then `[weary]`, and it returns to `[happy]` (through a `[relieved]` beat) once things are flowing again.
 
 ### Switch to chime-only
 
@@ -262,7 +262,7 @@ Auto-mode (default) reads session signals and adapts automatically --- after a s
 Muted — chimes only.
 ```
 
-Chimes are mood-aware: when a vibe is active, chimes pitch-shift to match (bright for happy sessions, dark for frustrated ones). Eight distinct signals (tests pass/fail, lint pass/fail, git push, merge conflict, done, prompt) × three mood variants = 24 chime assets.
+Chimes are two short notification tones — one for task completion, one for a permission prompt. The session mood colors the spoken voice (via ElevenLabs expressive tags), not the chimes.
 
 ## Commands
 
@@ -416,7 +416,7 @@ On **macOS** the install is fully sudo-free: `voxd` is a user LaunchAgent, so no
 
 ### Session State
 
-Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory. The daemon is stateless with respect to sessions. Per-project config lives in `.punt-labs/vox/` as two files: `vox.md` (tracked, durable preferences) and `vox.local.md` (gitignored, ephemeral session state like vibe signals). The MCP server reads these at startup; hook handlers read and write `vox.local.md` for signal accumulation. The daemon never reads either file.
+Session state (voice, provider, vibe, notify mode) lives in the MCP server's memory. The daemon is stateless with respect to sessions. Per-project config lives in `.punt-labs/vox/` as two files: `vox.md` (tracked, durable preferences) and `vox.local.md` (gitignored, ephemeral session state like the current vibe and its nudge cadence). The MCP server reads these at startup; hook handlers read and write `vox.local.md`. The daemon never reads either file.
 
 ### Daemon Restart
 
@@ -476,12 +476,12 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 - Notification layer: `/vox y|n|c`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
-- CLI: unmute, record, vibe, on/off, mute, version, status, doctor
+- CLI: say, voices, record, vibe, on/off, mute, version, status, doctor
 - Two-channel display: `♪` panel summaries with voice/provider context
 - ElevenLabs streaming API for lower time-to-first-audio
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
-- Auto-vibe signal accumulator: test pass/fail, lint, git ops feed mood detection
-- Per-signal chime assets and vibe-driven chimes with mood-aware pitch shifting
+- Auto-vibe: the agent sets the mood from the conversation, nudged by a periodic reminder --- happy when flowing, focused/frustrated/weary when stuck, relieved after a fix
+- Notification chimes: two flat tones (task done, permission prompt)
 - Audio daemon (`voxd`): system-level audio server with in-memory playback queue, dedup, synthesis cache, launchd/systemd service management
 
 ### Coming Soon

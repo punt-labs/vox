@@ -8,7 +8,7 @@ do in-process synthesis, caching, or direct playback.
 
 Events:
 - **stop**: task-completion notification (decision-block pattern)
-- **post-bash**: signal accumulator for auto-vibe
+- **vibe-nudge**: cadence-gated reminder for the agent to set the auto vibe
 - **notification**: permission/idle prompt audio alerts
 - **pre-compact**: playful 'be right back' before context compaction
 - **user-prompt-submit**: acknowledgment in continuous mode
@@ -32,12 +32,10 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.command_signal import CommandSignal
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
-    BashPayload,
     NotificationPayload,
     StopPayload,
 )
@@ -51,8 +49,8 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
-from punt_vox.signal import Signal, SignalLog
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.vibe_nudge import VibeNudge
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +149,7 @@ def _make_client() -> VoxClientSync:
     return VoxClientSync()
 
 
-def _speak_via_voxd(
-    text: str,
-    config: VoxConfig,
-) -> None:
+def _speak_via_voxd(text: str, config: VoxConfig) -> None:
     """Synthesize and play a phrase via voxd.
 
     Catches ``VoxdConnectionError`` so a missing daemon never crashes
@@ -209,10 +204,10 @@ def handle_stop(
 ) -> dict[str, object] | None:
     """Decide whether to block Claude from stopping.
 
-    Returns a decision-block dict if Claude should speak a summary,
-    or None to let it stop normally.  *config_dir* is the session's
-    resolved repo config — the vibe-tag write lands there so the
-    spoken name and the persisted tags agree on one repo.
+    Returns a decision-block dict if Claude should speak a summary, or None to
+    let it stop normally.  The summary fires when notifications and speech are
+    both enabled and this is not a re-entrant stop; the vibe the agent set
+    during the session already colors the synthesized speech via config tags.
     """
     # Not enabled
     if config.notify == "n":
@@ -224,11 +219,6 @@ def handle_stop(
         logger.info("Stop hook: skip (stop_hook_active=True, preventing loop)")
         return None
 
-    # No signals = no meaningful work to summarize
-    if not config.vibe_signals:
-        logger.info("Stop hook: skip (no vibe_signals)")
-        return None
-
     # Chime mode: fire-and-forget chime, let Claude stop immediately.
     # Must not block — the Stop hook is sync and Claude waits.
     if config.speak == "n":
@@ -236,60 +226,47 @@ def handle_stop(
         _chime_via_voxd("done", wait=False)
         return None
 
-    # Voice mode: block the stop, ask Claude to summarize and speak.
-    # Resolve tags and write to config so apply_vibe picks them up
-    # automatically — no vibe tags or signals in the reason string.
+    # Voice mode: block the stop, ask Claude to summarize and speak. The session
+    # vibe tags are already in config; no data goes in the reason string.
     phrase = random.choice(STOP_PHRASES)
     if config.repo_name:
         phrase = f"{config.repo_name}. {phrase}"
-    logger.info(
-        "Stop hook: blocking for voice summary (signals=%s)",
-        config.vibe_signals,
-    )
-    if config.vibe_mode == "off":
-        pass  # User disabled vibe — don't write tags
-    elif config.vibe_mode == "manual" and config.vibe_tags:
-        pass  # Manual mode with existing tags — already set
-    else:
-        log = SignalLog.deserialize(config.vibe_signals or "")
-        tags = log.resolve_tags()
-        ConfigStore(config_dir).write_fields({"vibe_tags": tags, "vibe_signals": ""})
+    logger.info("Stop hook: blocking for voice summary")
+    # config_dir is threaded for symmetry with the other stop-path handlers.
+    _ = config_dir
     return {"decision": "block", "reason": phrase}
 
 
-# PostToolUse Bash — signal accumulator
+# UserPromptSubmit — cadence-gated auto-vibe reminder
 
 
-def classify_signal(exit_code: int | None, stdout: str) -> str | None:
-    """Classify a bash command's output into a signal token.
+def handle_vibe_nudge(config: VoxConfig, config_dir: Path) -> dict[str, object] | None:
+    """Return a UserPromptSubmit additionalContext envelope, or None to stay silent.
 
-    Delegates to :class:`CommandSignal`: exit code is authoritative and
-    recognition anchors to structured summary tokens. Returns a signal
-    name like ``"tests-pass"`` or None when the command cannot be
-    confidently classified.
+    In ``auto`` mode the cadence counter advances every prompt and the reminder
+    fires (resetting the counter) every Nth prompt; outside ``auto`` nothing
+    happens. Non-blocking always — this never emits a decision. The reminder is
+    coupled to the reset: a failed persist stays silent (see the write below).
     """
-    return CommandSignal(exit_code, stdout).signal()
-
-
-def handle_post_bash(payload: BashPayload, config_dir: Path) -> None:
-    """Accumulate vibe signals from Bash tool execution.
-
-    Appends a signal token to ``vibe_signals`` in ``vox.local.md``.
-
-    .. todo:: Signal accumulation should move to the MCP server so hooks
-       don't write to config. Kept here as the one exception to preserve
-       auto-vibe detection until a proper communication channel exists.
-    """
-    signal = classify_signal(payload.exit_code, payload.stdout)
-    if signal is None:
-        return
-
-    try:
-        log = SignalLog.deserialize(ConfigStore(config_dir).read().vibe_signals or "")
-        log.append(Signal.now(signal))
-        ConfigStore(config_dir).write_field("vibe_signals", log.serialize())
-    except (OSError, ValueError) as exc:
-        logger.warning("post-bash: cannot save vibe signal in %s: %s", config_dir, exc)
+    decision = VibeNudge().advance(mode=config.vibe_mode, turns=config.vibe_nudge_turns)
+    if config.vibe_mode == "auto":
+        try:
+            ConfigStore(config_dir).write_field(
+                "vibe_nudge_turns", str(decision.next_turns)
+            )
+        except OSError as exc:
+            logger.warning(
+                "vibe-nudge: cannot persist cadence in %s: %s", config_dir, exc
+            )
+            return None  # reset didn't land — stay silent, don't re-fire it
+    if decision.reminder is None:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": decision.reminder,
+        }
+    }
 
 
 # Notification — permission/idle prompt audio alerts
@@ -369,95 +346,80 @@ def _speak_phrase(
     _speak_via_voxd(text, config)
 
 
-# PreCompact — playful 'be right back' before context compaction
+# Continuous-mode announcements (pre-compact, prompt ack, subagent lifecycle)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ContinuousAnnouncement:
+    """A continuous-mode spoken announcement: a phrase pool, chime, and label.
+
+    The continuous-mode hooks differ only in these three values, so each is a
+    constant instance and the shared guard lives in one place.
+    """
+
+    phrases: tuple[str, ...]
+    chime_signal: str
+    event: str
+
+    def announce(self, config: VoxConfig) -> None:
+        """Speak the announcement in continuous mode; a no-op otherwise."""
+        if config.notify != "c":
+            logger.info(
+                "%s hook: skip (notify=%s, not continuous)", self.event, config.notify
+            )
+            return
+        logger.info("%s hook: announcing", self.event)
+        _speak_phrase(self.phrases, config, chime_signal=self.chime_signal)
+
+
+_PRE_COMPACT = _ContinuousAnnouncement(PRE_COMPACT_PHRASES, "compact", "PreCompact")
+_PROMPT_ACK = _ContinuousAnnouncement(
+    ACKNOWLEDGE_PHRASES, "acknowledge", "UserPromptSubmit"
+)
+_SUBAGENT_START = _ContinuousAnnouncement(
+    SUBAGENT_START_PHRASES, "subagent", "SubagentStart"
+)
+_SUBAGENT_STOP = _ContinuousAnnouncement(
+    SUBAGENT_STOP_PHRASES, "subagent", "SubagentStop"
+)
 
 
 def handle_pre_compact(config: VoxConfig) -> None:
-    """Play a playful message before context compaction.
-
-    Only fires in continuous mode (notify=c). In on-demand (y) or
-    off (n), compaction happens silently.
-    """
-    if config.notify != "c":
-        logger.info("PreCompact hook: skip (notify=%s, not continuous)", config.notify)
-        return
-
-    logger.info("PreCompact hook: speaking")
-    _speak_phrase(PRE_COMPACT_PHRASES, config, chime_signal="compact")
-
-
-# UserPromptSubmit — acknowledgment in continuous mode
+    """Play a playful 'be right back' before context compaction."""
+    _PRE_COMPACT.announce(config)
 
 
 def handle_user_prompt_submit(config: VoxConfig) -> None:
-    """Speak a short acknowledgment when the user submits a prompt.
-
-    Only fires in continuous mode (notify=c).  Async — does not block
-    prompt processing.
-    """
-    if config.notify != "c":
-        logger.info(
-            "UserPromptSubmit hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("UserPromptSubmit hook: acknowledging")
-    _speak_phrase(ACKNOWLEDGE_PHRASES, config, chime_signal="acknowledge")
-
-
-# SubagentStart / SubagentStop — continuous mode announcements
+    """Speak a short acknowledgment when the user submits a prompt."""
+    _PROMPT_ACK.announce(config)
 
 
 def handle_subagent_start(config: VoxConfig) -> None:
-    """Announce that a subagent is being spawned.
-
-    Only fires in continuous mode (notify=c).  Async.
-    """
-    if config.notify != "c":
-        logger.info(
-            "SubagentStart hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("SubagentStart hook: announcing")
-    _speak_phrase(SUBAGENT_START_PHRASES, config, chime_signal="subagent")
+    """Announce that a subagent is being spawned."""
+    _SUBAGENT_START.announce(config)
 
 
 def handle_subagent_stop(config: VoxConfig) -> None:
-    """Announce that a subagent has completed.
-
-    Only fires in continuous mode (notify=c).  Async.
-    """
-    if config.notify != "c":
-        logger.info(
-            "SubagentStop hook: skip (notify=%s, not continuous)",
-            config.notify,
-        )
-        return
-
-    logger.info("SubagentStop hook: announcing")
-    _speak_phrase(SUBAGENT_STOP_PHRASES, config, chime_signal="subagent")
+    """Announce that a subagent has completed."""
+    _SUBAGENT_STOP.announce(config)
 
 
 # SessionEnd — farewell speech
 
 
-def _clear_vibe_signals(config_dir: Path) -> None:
-    """Reset accumulated vibe signals, warning instead of raising on failure."""
+def _reset_nudge_cadence(config_dir: Path) -> None:
+    """Reset the nudge cadence counter, warning instead of raising on failure."""
     try:
-        ConfigStore(config_dir).write_field("vibe_signals", "")
+        ConfigStore(config_dir).write_field("vibe_nudge_turns", "0")
     except OSError as exc:
-        logger.warning("session-end: cannot clear signals in %s: %s", config_dir, exc)
+        logger.warning("session-end: cannot reset cadence in %s: %s", config_dir, exc)
 
 
 def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     """Speak a farewell and clean up session state.
 
     Fires when notify != 'n' (both on-demand and continuous).
-    Clears vibe_signals to prevent stale signals leaking to the
-    next session.
+    Resets the nudge cadence so the counter never leaks into the next session.
     """
     if config.notify == "n":
         logger.info("SessionEnd hook: skip (notify=n)")
@@ -467,8 +429,8 @@ def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     _speak_phrase(FAREWELL_PHRASES, config, chime_signal="farewell")
 
     # Clean slate for next session
-    if config.vibe_signals:
-        _clear_vibe_signals(config_dir)
+    if config.vibe_nudge_turns:
+        _reset_nudge_cadence(config_dir)
 
 
 # CLI commands
@@ -501,14 +463,16 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
         _emit(result)
 
 
-@hook_app.command("post-bash")
-def post_bash_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """PostToolUse hook: accumulate vibe signals from Bash."""
-    payload = BashPayload.parse(_read_hook_input())
-    config_dir = find_config_dir(payload.cwd)
-    if config_dir is None:
+@hook_app.command("vibe-nudge")
+def vibe_nudge_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+    """UserPromptSubmit hook: cadence-gated auto-vibe reminder."""
+    resolved = _resolve_continuous_config()
+    if resolved is None:
         return
-    handle_post_bash(payload, config_dir)
+    config, config_dir = resolved
+    result = handle_vibe_nudge(config, config_dir)
+    if result is not None:
+        _emit(result)
 
 
 @hook_app.command("notification")

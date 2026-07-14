@@ -15,27 +15,47 @@ class TestVibeChangeResolve:
         assert updates == {
             "vibe": "excited",
             "vibe_tags": "[excited]",
-            "vibe_signals": "",
             "vibe_mode": "manual",
+            "vibe_nudge_turns": "0",
         }
 
-    def test_mood_only(self) -> None:
+    def test_mood_without_tags_clears_stale_tags(self) -> None:
+        # A new mood with no tags resets vibe_tags so a prior vibe's
+        # expressive tags never keep coloring the new mood text.
         assert VibeChange(mood="calm", tags=None, mode=None).resolve() == {
-            "vibe": "calm"
+            "vibe": "calm",
+            "vibe_tags": "",
         }
 
-    def test_tags_only_clears_signals(self) -> None:
+    def test_manual_mood_without_tags_clears_stale_tags(self) -> None:
+        updates = VibeChange(mood="calm", tags=None, mode="manual").resolve()
+        assert updates["vibe"] == "calm"
+        assert updates["vibe_tags"] == ""
+
+    def test_manual_mood_with_tags_records_tags(self) -> None:
+        updates = VibeChange(mood="calm", tags="[calm]", mode="manual").resolve()
+        assert updates["vibe"] == "calm"
+        assert updates["vibe_tags"] == "[calm]"
+
+    def test_manual_tags_only_updates_only_tags(self) -> None:
+        # Setting tags without a mood touches vibe_tags alone -- no vibe key.
+        updates = VibeChange(mood=None, tags="[x]", mode="manual").resolve()
+        assert "vibe" not in updates
+        assert updates["vibe_tags"] == "[x]"
+
+    def test_tags_only_without_mode_leaves_cadence(self) -> None:
+        # No mode change means the cadence counter is untouched.
         updates = VibeChange(mood=None, tags="[warm]", mode=None).resolve()
-        assert updates == {"vibe_tags": "[warm]", "vibe_signals": ""}
+        assert updates == {"vibe_tags": "[warm]"}
 
     def test_auto_resets_whole_cluster(self) -> None:
-        # /vibe auto: mood + tags + signals cleared, mode set (vox-73m5).
+        # /vibe auto: mood + tags cleared, mode set, cadence reset (vox-73m5).
         updates = VibeChange(mood=None, tags="", mode="auto").resolve()
         assert updates == {
             "vibe": "",
             "vibe_tags": "",
-            "vibe_signals": "",
             "vibe_mode": "auto",
+            "vibe_nudge_turns": "0",
         }
 
     def test_auto_ignores_supplied_mood(self) -> None:

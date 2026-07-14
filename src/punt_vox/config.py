@@ -10,12 +10,12 @@ missing.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.frontmatter import Frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +28,6 @@ __all__ = [
     "VoxConfig",
     "find_config_dir",
 ]
-
-
-_FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
 
 # ── Field-to-file routing ────────────────────────────────────────────
 
@@ -48,20 +44,23 @@ DURABLE_KEYS: frozenset[str] = frozenset(
 # The whole vibe cluster is session state, not a durable preference. Keeping
 # vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
 # "manual" mode while the gitignored mood lingered (vox-73m5). Mode, mood, tags,
-# and signals now live together in the ephemeral vox.local.md.
+# and the nudge cadence counter now live together in the ephemeral vox.local.md.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
         "vibe",
         "vibe_mode",
-        "vibe_signals",
+        "vibe_nudge_turns",
         "vibe_tags",
     }
 )
 
 ALLOWED_CONFIG_KEYS: frozenset[str] = DURABLE_KEYS | EPHEMERAL_KEYS
 
+DURABLE_FILENAME = "vox.md"
+EPHEMERAL_FILENAME = "vox.local.md"
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, slots=True)
 class VoxConfig:
     """Snapshot of all config fields from vox.md + vox.local.md."""
 
@@ -73,127 +72,99 @@ class VoxConfig:
     model: str | None
     vibe: str | None
     vibe_tags: str | None
-    vibe_signals: str | None
+    vibe_nudge_turns: int = 0
     repo_name: str | None = None
 
+    @classmethod
+    def from_fields(
+        cls,
+        fields: dict[str, str],
+        *,
+        repo_name: str | None,
+        source: Path,
+    ) -> Self:
+        """Build a config from a raw field dict, applying validation and defaults.
 
-# ── Internal helpers ─────────────────────────────────────────────────
+        *source* names the file a present-but-invalid ``vibe_mode`` came from,
+        so the warning points at the offending config rather than a bare value.
+        """
+        notify = fields.get("notify", "n")
+        if notify not in ("y", "c", "n"):
+            notify = "n"
 
+        speak = fields.get("speak", "y")
+        if speak not in ("y", "n"):
+            speak = "y"
 
-def _parse_frontmatter(path: Path) -> dict[str, str]:
-    """Parse YAML frontmatter fields from *path*.  Returns empty dict if missing."""
-    if not path.exists():
-        return {}
-    text = path.read_text(encoding="utf-8")
-    fields: dict[str, str] = {}
-    for match in _FIELD_RE.finditer(text):
-        val = match.group(2).strip()
-        if val:
-            fields[match.group(1)] = val
-    return fields
+        # A present-but-invalid vibe_mode used to fail open to "auto" -- the mode
+        # that injects nudges -- silently masking a user's deliberate off/manual.
+        # Warn before defaulting; an absent field defaults silently (the legit case).
+        vibe_mode = fields.get("vibe_mode", "auto")
+        if vibe_mode not in ("auto", "manual", "off"):
+            logger.warning(
+                "Invalid vibe_mode %r in %s, using 'auto'", vibe_mode, source
+            )
+            vibe_mode = "auto"
 
+        return cls(
+            notify=notify,
+            speak=speak,
+            vibe_mode=vibe_mode,
+            voice=fields.get("voice"),
+            provider=fields.get("provider"),
+            model=fields.get("model"),
+            vibe=fields.get("vibe"),
+            vibe_tags=fields.get("vibe_tags"),
+            vibe_nudge_turns=cls._parse_int(fields.get("vibe_nudge_turns")),
+            repo_name=repo_name,
+        )
 
-def _fields_to_config(
-    fields: dict[str, str],
-    *,
-    repo_name: str | None = None,
-) -> VoxConfig:
-    """Build a VoxConfig from raw field dict, applying validation and defaults."""
-    notify = fields.get("notify", "n")
-    if notify not in ("y", "c", "n"):
-        notify = "n"
-
-    speak = fields.get("speak", "y")
-    if speak not in ("y", "n"):
-        speak = "y"
-
-    vibe_mode = fields.get("vibe_mode", "auto")
-    if vibe_mode not in ("auto", "manual", "off"):
-        vibe_mode = "auto"
-
-    return VoxConfig(
-        notify=notify,
-        speak=speak,
-        vibe_mode=vibe_mode,
-        voice=fields.get("voice"),
-        provider=fields.get("provider"),
-        model=fields.get("model"),
-        vibe=fields.get("vibe"),
-        vibe_tags=fields.get("vibe_tags"),
-        vibe_signals=fields.get("vibe_signals"),
-        repo_name=repo_name,
-    )
-
-
-def _read_single_field(path: Path, field: str) -> str | None:
-    """Read a single YAML frontmatter field from *path*.  Returns None if absent."""
-    if not path.exists():
-        return None
-    text = path.read_text(encoding="utf-8")
-    pattern = re.compile(rf"^{re.escape(field)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
-    match = pattern.search(text)
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    return None
-
-
-def _write_single(path: Path, key: str, value: str) -> None:
-    """Write a single key-value pair to the YAML frontmatter in *path*."""
-    _write_batch(path, {key: value})
-
-
-def _write_batch(path: Path, updates: dict[str, str]) -> None:
-    """Write multiple key-value pairs in a single read-write cycle."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not path.exists():
-        lines = [f'{k}: "{v}"' for k, v in updates.items()]
-        path.write_text("---\n" + "\n".join(lines) + "\n---\n", encoding="utf-8")
-        return
-
-    text = path.read_text(encoding="utf-8")
-    for key, value in updates.items():
-        replacement = f'{key}: "{value}"'
-        field_re = re.compile(rf"^{re.escape(key)}:\s*\"?[^\"\n]*\"?\s*$", re.MULTILINE)
-        if field_re.search(text):
-            text = field_re.sub(replacement, text)
-        elif _CLOSING_FENCE_RE.search(text):
-            text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
-        else:
-            logger.warning("Malformed config (no closing ---): %s", path)
-            lines = [f'{k}: "{v}"' for k, v in updates.items()]
-            text = "---\n" + "\n".join(lines) + "\n---\n"
-            break
-
-    path.write_text(text, encoding="utf-8")
-    for key, value in updates.items():
-        logger.info("Config: set %s = %r in %s", key, value, path)
-
-
-# ── Filenames ───────────────────────────────────────────────────────
-
-DURABLE_FILENAME = "vox.md"
-EPHEMERAL_FILENAME = "vox.local.md"
-
-
-# ── ConfigStore ─────────────────────────────────────────────────────
+    @staticmethod
+    def _parse_int(raw: str | None) -> int:
+        """Return *raw* as a non-negative int, defaulting to 0 on absence or garbage."""
+        if raw is None:
+            return 0
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return 0
 
 
 class ConfigStore:
     """Owns a config directory and provides read/write access to vox config."""
 
-    __slots__ = ("_dir", "_durable_path", "_ephemeral_path")
+    __slots__ = ("_dir", "_durable", "_ephemeral", "_repo_name")
 
     _dir: Path
-    _durable_path: Path
-    _ephemeral_path: Path
+    _durable: Frontmatter
+    _ephemeral: Frontmatter
+    _repo_name: str | None
 
     def __new__(cls, config_dir: Path | None = None) -> Self:
         self = super().__new__(cls)
         self._dir = config_dir or DEFAULT_CONFIG_DIR
-        self._durable_path = self._dir / DURABLE_FILENAME
-        self._ephemeral_path = self._dir / EPHEMERAL_FILENAME
+        self._durable = Frontmatter(self._dir / DURABLE_FILENAME)
+        self._ephemeral = Frontmatter(self._dir / EPHEMERAL_FILENAME)
+        self._repo_name = cls._repo_name_for(self._dir)
         return self
+
+    @staticmethod
+    def _repo_name_for(config_dir: Path) -> str | None:
+        """Return the repo name only when *config_dir* is a repo's ``.punt-labs/vox``.
+
+        A global ``~/.punt-labs/vox`` shares that shape but sits directly under
+        ``$HOME``; a tmp dir matches neither.  Deriving a name from a non-repo
+        path would prefix spoken phrases with an unrelated directory name, so
+        both cases yield ``None``.  The expected shape is read off
+        ``DEFAULT_CONFIG_DIR`` to keep the two in lockstep.
+        """
+        expected = (DEFAULT_CONFIG_DIR.parent.name, DEFAULT_CONFIG_DIR.name)
+        repo_root = config_dir.parent.parent
+        if (config_dir.parent.name, config_dir.name) != expected:
+            return None
+        if repo_root == Path.home() or not repo_root.name:
+            return None
+        return repo_root.name
 
     @property
     def dir(self) -> Path:
@@ -210,68 +181,48 @@ class ConfigStore:
         """
         fields: dict[str, str] = {}
 
-        durable = _parse_frontmatter(self._durable_path)
+        durable = self._durable.read_fields()
         fields.update({k: v for k, v in durable.items() if k in DURABLE_KEYS})
 
-        local = _parse_frontmatter(self._ephemeral_path)
+        local = self._ephemeral.read_fields()
         fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
 
-        return _fields_to_config(fields, repo_name=_derive_repo_name(self._dir))
+        return VoxConfig.from_fields(
+            fields, repo_name=self._repo_name, source=self._ephemeral.path
+        )
 
     def read_field(self, field: str) -> str | None:
         """Read a single config field from the correct file."""
         if field in EPHEMERAL_KEYS:
-            return _read_single_field(self._ephemeral_path, field)
-        return _read_single_field(self._durable_path, field)
+            return self._ephemeral.read_field(field)
+        return self._durable.read_field(field)
 
     def write_field(self, key: str, value: str) -> None:
         """Write a single config field to the correct file."""
-        if key not in ALLOWED_CONFIG_KEYS:
-            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-            raise ValueError(msg)
-        _validate_value(value)
+        self._reject_unknown(key)
+        Frontmatter.validate_value(value)
 
         if key in EPHEMERAL_KEYS:
-            _write_single(self._ephemeral_path, key, value)
+            self._ephemeral.write_field(key, value)
         else:
-            _write_single(self._durable_path, key, value)
+            self._durable.write_field(key, value)
 
     def write_fields(self, updates: dict[str, str]) -> None:
         """Write multiple config fields, routing each to the correct file."""
         for key, value in updates.items():
-            if key not in ALLOWED_CONFIG_KEYS:
-                allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
-                msg = f"Unknown config key '{key}'. Allowed: {allowed}"
-                raise ValueError(msg)
-            _validate_value(value)
+            self._reject_unknown(key)
+            Frontmatter.validate_value(value)
 
-        durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
-        ephemeral_updates = {k: v for k, v in updates.items() if k in EPHEMERAL_KEYS}
-        if durable_updates:
-            _write_batch(self._durable_path, durable_updates)
-        if ephemeral_updates:
-            _write_batch(self._ephemeral_path, ephemeral_updates)
+        routes = ((self._durable, DURABLE_KEYS), (self._ephemeral, EPHEMERAL_KEYS))
+        for store, keys in routes:
+            subset = {k: v for k, v in updates.items() if k in keys}
+            if subset:
+                store.write_fields(subset)
 
-
-# ── Module-level helpers ────────────────────────────────────────────
-
-
-def _derive_repo_name(config_dir: Path) -> str | None:
-    """Derive the repo name from config_dir.
-
-    config_dir is ``<repo>/.punt-labs/vox/``, so the repo root is two
-    parents up and its ``.name`` gives the repo directory name.  Returns
-    None when the path is too shallow.
-    """
-    repo_root = config_dir.parent.parent
-    # Guard against degenerate paths like "/" where .name is ""
-    name = repo_root.name
-    return name if name else None
-
-
-def _validate_value(value: str) -> None:
-    """Reject values that would corrupt YAML frontmatter."""
-    if "\n" in value or "\r" in value:
-        msg = f"Config values must not contain newlines, got: {value!r}"
-        raise ValueError(msg)
+    @staticmethod
+    def _reject_unknown(key: str) -> None:
+        """Raise if *key* is not a routable config key."""
+        if key not in ALLOWED_CONFIG_KEYS:
+            allowed = ", ".join(sorted(ALLOWED_CONFIG_KEYS))
+            msg = f"Unknown config key '{key}'. Allowed: {allowed}"
+            raise ValueError(msg)

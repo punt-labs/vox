@@ -18,8 +18,9 @@ tests/
   test_output.py             # Output path resolution
   test_playback.py           # Audio playback (afplay/ffplay)
   test_config.py             # .vox/config.md YAML frontmatter read/write
-  test_mood.py               # Mood classification (bright/dark/neutral)
-  test_hooks.py              # Claude Code hook dispatchers: stop, post-bash, notification
+  test_vibe_nudge.py         # Vibe-nudge cadence: threshold fire, reset, auto-only gating
+  test_frontmatter.py        # YAML frontmatter I/O: read/write/validate, OSError degradation
+  test_hooks.py              # Claude Code hook dispatchers: stop, vibe-nudge, notification
   test_cli.py                # Typer CLI invocations via CliRunner
   test_client.py             # VoxClient/VoxClientSync WebSocket client for voxd
   test_server.py             # MCP server tools: unmute, record, vibe, notify, status
@@ -29,7 +30,6 @@ tests/
   test_normalize.py          # Text normalization for speech
   test_cache.py              # MP3 synthesis cache
   test_applet.py             # Lux display applet
-  test_watcher.py            # Session watcher for real-time signal classification
   test_polly_provider.py     # AWS Polly provider
   test_openai_provider.py    # OpenAI TTS provider
   test_elevenlabs_provider.py # ElevenLabs provider
@@ -75,7 +75,7 @@ Mock responses use `side_effect=lambda` instead of `return_value` so each call g
 
 ## Hook Testing
 
-Hook tests (`test_hooks.py`) verify the Claude Code plugin integration — stop hooks, post-bash signal accumulation, and notification dispatch. These mock at two boundaries:
+Hook tests (`test_hooks.py`) verify the Claude Code plugin integration — stop hooks, the vibe-nudge cadence, and notification dispatch. These mock at two boundaries:
 
 1. **Config I/O** — `write_field`, `write_fields`, `resolve_config_path` are patched to avoid filesystem interaction
 2. **Audio dispatch** — `_enqueue_audio` and `subprocess.run` are patched to prevent actual playback
@@ -85,10 +85,10 @@ The `_make_config()` helper constructs `VoxConfig` objects directly, bypassing f
 Key patterns tested:
 
 - Stop hook returns only a `♪` phrase with no internal data
-- Auto-vibe mode writes resolved tags to config and clears consumed signals
-- Manual/off vibe modes skip config writes
-- Signal classification maps bash output to signal tokens (tests-pass, lint-fail, etc.)
-- Signal accumulation appends timestamped tokens across multiple bash invocations
+- The vibe-nudge hook fires the reminder only on the Nth auto-mode prompt, then resets the counter
+- Below the threshold, and in manual/off mode, the nudge emits nothing
+- On a counter-persist failure the nudge stays silent (no reminder) rather than firing every prompt
+- The nudge is non-blocking (never emits a `decision`) and synchronous
 
 ## Server Testing
 
@@ -108,10 +108,6 @@ Config tests (`test_config.py`) use `tmp_path` fixtures to create real `.vox/con
 - Field writing (insert, update, multi-field atomic writes)
 - Key validation (unknown keys raise `ValueError`)
 - Edge cases: missing file, empty frontmatter, no frontmatter delimiters
-
-## Watcher Testing
-
-Watcher tests (`test_watcher.py`) exercise the file-watching thread that hot-reloads config changes. Tests use real temp files and short poll intervals. Platform-specific tests (macOS `fsevents`, Linux `select`) are skipped on unsupported platforms via `pytest.mark.skipif`.
 
 ## Running Tests
 

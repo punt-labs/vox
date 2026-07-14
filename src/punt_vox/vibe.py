@@ -13,16 +13,14 @@ __all__ = ["VALID_VIBE_MODES", "VibeChange"]
 class VibeChange:
     """A requested vibe change: an optional mood, tags, and detection mode.
 
-    Resolving a change yields the authoritative config field updates.  The
-    rules make ``/vibe`` the single source of truth for the vibe cluster:
+    Resolving yields the authoritative config updates -- ``/vibe`` is the
+    single source of truth for the vibe cluster:
 
-    - ``auto`` / ``off`` reset the whole cluster -- mood, tags, and any
-      accumulated signals are cleared so nothing stale (a mood the user
-      meant to drop, tags from a prior manual vibe) survives the transition
-      (vox-73m5).
-    - ``manual`` (or no mode) records whichever of mood/tags was supplied.
-    - Setting tags always clears signals, since tags are the resolved form
-      of signals.
+    - ``auto`` / ``off`` clear the whole cluster so nothing stale survives.
+    - A manual mood clears stale tags unless tags are supplied alongside it:
+      a mood alone resets ``vibe_tags`` to empty; a mood with tags records
+      them.  Tags without a mood update ``vibe_tags`` alone.
+    - Any mode change resets the nudge cadence counter.
     """
 
     mood: str | None
@@ -40,13 +38,13 @@ class VibeChange:
         self.validate()
         updates: dict[str, str] = {}
         if self.mode in ("auto", "off"):
-            updates.update(vibe="", vibe_tags="", vibe_signals="")
-        else:
-            if self.mood is not None:
-                updates["vibe"] = self.mood
-            if self.tags is not None:
-                updates["vibe_tags"] = self.tags
-                updates["vibe_signals"] = ""
+            updates.update(vibe="", vibe_tags="")
+        elif self.mood is not None:
+            updates["vibe"] = self.mood
+            updates["vibe_tags"] = self.tags if self.tags is not None else ""
+        elif self.tags is not None:
+            updates["vibe_tags"] = self.tags
         if self.mode is not None:
             updates["vibe_mode"] = self.mode
+            updates["vibe_nudge_turns"] = "0"
         return updates
