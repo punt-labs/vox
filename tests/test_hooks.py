@@ -311,6 +311,26 @@ class TestHandleVibeNudge:
             assert handle_vibe_nudge(config, tmp_path) is None  # must not raise
         assert any("vibe-nudge" in r.getMessage() for r in caplog.records)
 
+    def test_firing_prompt_stays_silent_when_reset_cannot_persist(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # At the threshold with an unwritable counter, the reminder must NOT
+        # fire: emitting it without resetting would re-hit the threshold and
+        # nudge on every later prompt (reminder spam). Silent is the safe mode.
+        config = self._seed(tmp_path, mode="auto", turns=DEFAULT_THRESHOLD - 1)
+        with (
+            patch.object(
+                ConfigStore, "write_field", side_effect=OSError("read-only fs")
+            ),
+            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+        ):
+            # Every prompt in the failing-write regime stays silent — no spam.
+            for _ in range(3):
+                assert handle_vibe_nudge(config, tmp_path) is None
+        assert any("vibe-nudge" in r.getMessage() for r in caplog.records)
+        # The reset never landed, so the on-disk counter keeps its pre-fire value.
+        assert ConfigStore(tmp_path).read().vibe_nudge_turns == DEFAULT_THRESHOLD - 1
+
 
 # ---------------------------------------------------------------------------
 # handle_pre_compact tests

@@ -149,10 +149,7 @@ def _make_client() -> VoxClientSync:
     return VoxClientSync()
 
 
-def _speak_via_voxd(
-    text: str,
-    config: VoxConfig,
-) -> None:
+def _speak_via_voxd(text: str, config: VoxConfig) -> None:
     """Synthesize and play a phrase via voxd.
 
     Catches ``VoxdConnectionError`` so a missing daemon never crashes
@@ -248,7 +245,8 @@ def handle_vibe_nudge(config: VoxConfig, config_dir: Path) -> dict[str, object] 
 
     In ``auto`` mode the cadence counter advances every prompt and the reminder
     fires (resetting the counter) every Nth prompt; outside ``auto`` nothing
-    happens. Non-blocking always — this never emits a decision.
+    happens. Non-blocking always — this never emits a decision. The reminder is
+    coupled to the reset: a failed persist stays silent (see the write below).
     """
     decision = VibeNudge().advance(mode=config.vibe_mode, turns=config.vibe_nudge_turns)
     if config.vibe_mode == "auto":
@@ -260,6 +258,7 @@ def handle_vibe_nudge(config: VoxConfig, config_dir: Path) -> dict[str, object] 
             logger.warning(
                 "vibe-nudge: cannot persist cadence in %s: %s", config_dir, exc
             )
+            return None  # reset didn't land — stay silent, don't re-fire it
     if decision.reminder is None:
         return None
     return {
