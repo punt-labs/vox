@@ -607,7 +607,10 @@ def vibe(
     # must not be replayed as an authoritative music transition. The vibe is
     # display/record state; a Program retune is a
     # deliberate music command, never a side effect of setting the session mood.
-    ConfigStore(_find_config_dir()).write_fields(updates)
+    try:
+        ConfigStore(_find_config_dir()).write_fields(updates)
+    except ValueError as exc:  # mood/tags carrying a newline or double-quote
+        return _error(str(exc))
 
     return json.dumps({"vibe": updates})
 

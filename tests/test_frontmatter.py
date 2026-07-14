@@ -87,6 +87,27 @@ class TestWrite:
         assert Frontmatter(path).read_field("voice") == "fin"
         assert any("Malformed config" in r.getMessage() for r in caplog.records)
 
+    def test_write_fields_validates_before_touching_file(self, tmp_path: Path) -> None:
+        """A corrupting value is rejected and no file is created."""
+        path = tmp_path / "vox.md"
+        fm = Frontmatter(path)
+        with pytest.raises(ValueError, match="double-quotes"):
+            fm.write_fields({"voice": "fin", "vibe": 'I"m tired'})
+        assert not path.exists()
+
+    def test_write_field_rejects_double_quote(self, tmp_path: Path) -> None:
+        """The single-field path routes through the same validation."""
+        path = tmp_path / "vox.md"
+        with pytest.raises(ValueError, match="double-quotes"):
+            Frontmatter(path).write_field("vibe", 'say "hi"')
+        assert not path.exists()
+
+    def test_write_field_accepts_apostrophe_round_trips(self, tmp_path: Path) -> None:
+        """Apostrophes are safe -- mood text like ``I'm tired`` survives."""
+        fm = Frontmatter(tmp_path / "vox.md")
+        fm.write_field("vibe", "I'm tired")
+        assert fm.read_field("vibe") == "I'm tired"
+
 
 class TestValidateValue:
     @pytest.mark.parametrize("bad", ["a\nb", "a\rb"])
@@ -94,8 +115,16 @@ class TestValidateValue:
         with pytest.raises(ValueError, match="must not contain newlines"):
             Frontmatter.validate_value(bad)
 
+    @pytest.mark.parametrize("bad", ['I"m tired', 'say "hi"', '"'])
+    def test_rejects_double_quotes(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="must not contain double-quotes"):
+            Frontmatter.validate_value(bad)
+
     def test_accepts_plain_value(self) -> None:
         Frontmatter.validate_value("charlie")  # no raise
+
+    def test_accepts_apostrophe(self) -> None:
+        Frontmatter.validate_value("I'm tired")  # no raise
 
 
 class TestPath:

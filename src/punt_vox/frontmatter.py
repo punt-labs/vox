@@ -35,10 +35,22 @@ class Frontmatter:
 
     @staticmethod
     def validate_value(value: str) -> None:
-        """Reject values that would corrupt YAML frontmatter."""
+        """Reject values that would corrupt the ``key: "<value>"`` round-trip.
+
+        The parser reads up to the first quote or newline, so either would
+        truncate the field. Apostrophes are safe, so ``I'm tired`` survives.
+        """
         if "\n" in value or "\r" in value:
-            msg = f"Config values must not contain newlines, got: {value!r}"
+            msg = f"config values must not contain newlines, got: {value!r}"
             raise ValueError(msg)
+        if '"' in value:
+            msg = f"config values must not contain double-quotes, got: {value!r}"
+            raise ValueError(msg)
+
+    def _validate_all(self, updates: dict[str, str]) -> None:
+        """Reject the whole batch if any value would corrupt the file."""
+        for value in updates.values():
+            self.validate_value(value)
 
     def read_fields(self) -> dict[str, str]:
         """Return all non-empty frontmatter fields, or ``{}`` if unreadable."""
@@ -70,7 +82,13 @@ class Frontmatter:
         self.write_fields({key: value})
 
     def write_fields(self, updates: dict[str, str]) -> None:
-        """Write multiple key-value pairs in a single read-write cycle."""
+        """Write multiple key-value pairs in a single read-write cycle.
+
+        Every value is validated up front, so the serialization invariant
+        is enforced by the class that serializes -- a caller bypassing
+        ``ConfigStore`` still cannot corrupt the frontmatter (PY-EH-1).
+        """
+        self._validate_all(updates)
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         if not self._path.exists():
