@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,30 @@ class TestReadConfigLegacy:
     def test_invalid_vibe_mode_defaults_to_auto(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.local.md", {"vibe_mode": "invalid"})
         assert ConfigStore(tmp_path).read().vibe_mode == "auto"
+
+    def test_invalid_vibe_mode_warns_naming_file_and_value(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A present-but-invalid vibe_mode warns before failing open to auto.
+
+        Silent defaulting used to mask a user's deliberate off/manual by
+        promoting garbage to the nudge-injecting mode.
+        """
+        local = tmp_path / "vox.local.md"
+        _write_frontmatter(local, {"vibe_mode": "loud"})
+        with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
+            assert ConfigStore(tmp_path).read().vibe_mode == "auto"
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("loud" in m and str(local) in m for m in messages)
+
+    def test_absent_vibe_mode_defaults_silently(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An absent vibe_mode is the legitimate default -- no warning."""
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe": "happy"})
+        with caplog.at_level(logging.WARNING, logger="punt_vox.config"):
+            assert ConfigStore(tmp_path).read().vibe_mode == "auto"
+        assert not any("vibe_mode" in r.getMessage() for r in caplog.records)
 
     def test_committed_vibe_mode_in_durable_file_is_ignored(
         self, tmp_path: Path
