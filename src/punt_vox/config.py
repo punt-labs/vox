@@ -145,12 +145,26 @@ class ConfigStore:
         self._dir = config_dir or DEFAULT_CONFIG_DIR
         self._durable = Frontmatter(self._dir / DURABLE_FILENAME)
         self._ephemeral = Frontmatter(self._dir / EPHEMERAL_FILENAME)
-        # The directory is ``<repo>/.punt-labs/vox/``, so the repo root is two
-        # parents up; its ``.name`` is the repo directory name.  Empty for a
-        # degenerate path like "/".  Derived once -- it never changes.
-        name = self._dir.parent.parent.name
-        self._repo_name = name if name else None
+        self._repo_name = cls._repo_name_for(self._dir)
         return self
+
+    @staticmethod
+    def _repo_name_for(config_dir: Path) -> str | None:
+        """Return the repo name only when *config_dir* is a repo's ``.punt-labs/vox``.
+
+        A global ``~/.punt-labs/vox`` shares that shape but sits directly under
+        ``$HOME``; a tmp dir matches neither.  Deriving a name from a non-repo
+        path would prefix spoken phrases with an unrelated directory name, so
+        both cases yield ``None``.  The expected shape is read off
+        ``DEFAULT_CONFIG_DIR`` to keep the two in lockstep.
+        """
+        expected = (DEFAULT_CONFIG_DIR.parent.name, DEFAULT_CONFIG_DIR.name)
+        repo_root = config_dir.parent.parent
+        if (config_dir.parent.name, config_dir.name) != expected:
+            return None
+        if repo_root == Path.home() or not repo_root.name:
+            return None
+        return repo_root.name
 
     @property
     def dir(self) -> Path:
@@ -199,12 +213,11 @@ class ConfigStore:
             self._reject_unknown(key)
             Frontmatter.validate_value(value)
 
-        durable_updates = {k: v for k, v in updates.items() if k in DURABLE_KEYS}
-        ephemeral_updates = {k: v for k, v in updates.items() if k in EPHEMERAL_KEYS}
-        if durable_updates:
-            self._durable.write_fields(durable_updates)
-        if ephemeral_updates:
-            self._ephemeral.write_fields(ephemeral_updates)
+        routes = ((self._durable, DURABLE_KEYS), (self._ephemeral, EPHEMERAL_KEYS))
+        for store, keys in routes:
+            subset = {k: v for k, v in updates.items() if k in keys}
+            if subset:
+                store.write_fields(subset)
 
     @staticmethod
     def _reject_unknown(key: str) -> None:

@@ -128,6 +128,29 @@ class TestReadConfig:
         cfg = ConfigStore(None).read()
         assert cfg.repo_name is None
 
+    def test_repo_name_none_for_bare_dir(self, tmp_path: Path) -> None:
+        """A dir that is not shaped ``.../.punt-labs/vox`` carries no repo name.
+
+        ``tmp_path`` grandparent would otherwise yield an unrelated directory
+        name that gets prefixed onto spoken phrases.
+        """
+        cfg = ConfigStore(tmp_path).read()
+        assert cfg.repo_name is None
+
+    def test_repo_name_none_for_global_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A global ``~/.punt-labs/vox`` shares the shape but carries no repo.
+
+        Its grandparent is the home directory, not a repo root -- deriving a
+        name there would prefix phrases with the home directory's name.
+        """
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+        global_dir = tmp_path / ".punt-labs" / "vox"
+        global_dir.mkdir(parents=True)
+        cfg = ConfigStore(global_dir).read()
+        assert cfg.repo_name is None
+
     def test_local_durable_keys_ignored(self, tmp_path: Path) -> None:
         """Durable keys in vox.local.md must not override vox.md."""
         _write_frontmatter(tmp_path / "vox.md", {"notify": "n", "provider": "polly"})
