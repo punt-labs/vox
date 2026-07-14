@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-07-14
+
 ### Added
 
 - **`vox voices` and stdin input on the CLI (vox-2vto)**: `vox voices [--provider X] [--json]` lists the voices the active (or given) provider offers plus the current session voice — previously you could *set* a voice (`vox voice NAME`) but had no way to *discover* one from the CLI (the capability existed only via the MCP `who` tool and `VoxClientSync.voices()`). And `vox say`/`vox record` now read the text from stdin — `echo "Build finished" | vox say`, or `vox say -` — so the CLI composes in shell pipelines.
