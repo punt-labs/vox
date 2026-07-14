@@ -19,10 +19,29 @@ class TestVibeChangeResolve:
             "vibe_nudge_turns": "0",
         }
 
-    def test_mood_only(self) -> None:
+    def test_mood_without_tags_clears_stale_tags(self) -> None:
+        # A new mood with no tags resets vibe_tags so a prior vibe's
+        # expressive tags never keep coloring the new mood text.
         assert VibeChange(mood="calm", tags=None, mode=None).resolve() == {
-            "vibe": "calm"
+            "vibe": "calm",
+            "vibe_tags": "",
         }
+
+    def test_manual_mood_without_tags_clears_stale_tags(self) -> None:
+        updates = VibeChange(mood="calm", tags=None, mode="manual").resolve()
+        assert updates["vibe"] == "calm"
+        assert updates["vibe_tags"] == ""
+
+    def test_manual_mood_with_tags_records_tags(self) -> None:
+        updates = VibeChange(mood="calm", tags="[calm]", mode="manual").resolve()
+        assert updates["vibe"] == "calm"
+        assert updates["vibe_tags"] == "[calm]"
+
+    def test_manual_tags_only_updates_only_tags(self) -> None:
+        # Setting tags without a mood touches vibe_tags alone -- no vibe key.
+        updates = VibeChange(mood=None, tags="[x]", mode="manual").resolve()
+        assert "vibe" not in updates
+        assert updates["vibe_tags"] == "[x]"
 
     def test_tags_only_without_mode_leaves_cadence(self) -> None:
         # No mode change means the cadence counter is untouched.
