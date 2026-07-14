@@ -100,7 +100,7 @@ host over the network (\texttt{VOXD\_HOST} / \texttt{VOXD\_PORT} /
     per-repo split config (\texttt{.punt-labs/vox/vox.md} for durable
     preferences, \texttt{.punt-labs/vox/vox.local.md} for ephemeral
     session state) at startup; hook handlers also read and write these
-    files for signal accumulation.  The \texttt{voxd} daemon
+    files for the vibe-nudge cadence.  The \texttt{voxd} daemon
     is stateless with respect to \emph{speech} sessions---it synthesizes
     and plays whatever clients send it.  Background music is the one
     piece of daemon-owned state: a single persisted, ownership-free
@@ -528,17 +528,17 @@ asynchronously.  The agent never blocks on synthesis or playback.
   \item \textbf{User enables voice.}  \cmd{unmute} or \cmd{vox}
     sets \field{notify} to \texttt{"y"} or \texttt{"c"}.  This
     is the first moment audio becomes possible.
-  \item \textbf{Signal accumulation.}  Each \hook{PostToolUse}
-    (Bash) event classifies stdout against regex patterns and
-    appends a timestamped signal (e.g.,
-    \texttt{tests-pass@10:45}) to \field{vibe\_signals} in
-    config.
-  \item \textbf{Mood inference.}  On Stop hooks, the signal
-    history is deterministically mapped to ElevenLabs expressive
-    tags (e.g., \texttt{[relieved] [satisfied]}) without any
-    LLM call.
+  \item \textbf{Vibe nudge.}  In \field{vibe\_mode}=auto, the
+    \hook{UserPromptSubmit} hook \texttt{vibe-nudge.sh} increments
+    \field{vibe\_nudge\_turns} each prompt and, every $N$th prompt,
+    injects an \texttt{additionalContext} reminder asking the agent
+    to set the vibe from the conversation.
+  \item \textbf{Mood set by the agent.}  Prompted by the nudge, the
+    agent calls the \tool{vibe} tool with expressive tags (e.g.,
+    \texttt{[relieved]}); the tags color subsequent synthesized
+    speech.  No deterministic classification, no in-hook LLM call.
   \item \textbf{Session end.}  \hook{SessionEnd} hook speaks a
-    farewell phrase and clears \field{vibe\_signals}.
+    farewell phrase and resets \field{vibe\_nudge\_turns}.
 \end{enumerate}
 
 
@@ -1042,11 +1042,11 @@ speak: "y"
 voice: "matilda"
 provider: "elevenlabs"
 model: "eleven_v3"
-vibe_mode: "auto"
 ---
 
 # .punt-labs/vox/vox.local.md  (ephemeral, gitignored)
 ---
+vibe_mode: "auto"
 vibe: "focused coding session"
 vibe_tags: "[calm] [focused]"
 vibe_nudge_turns: "3"
@@ -1068,14 +1068,14 @@ vibe_nudge_turns: "3"
   TTS provider override \\
 \field{model}        & \texttt{vox.md} & string or null &
   TTS model override \\
-\field{vibe\_mode}   & \texttt{vox.md} & \texttt{auto/manual/off} &
-  Mood tracking mode \\
+\field{vibe\_mode}   & \texttt{vox.local.md} & \texttt{auto/manual/off} &
+  Auto-vibe mode \\
 \field{vibe}         & \texttt{vox.local.md} & string or null &
   Human-readable mood \\
 \field{vibe\_tags}   & \texttt{vox.local.md} & string or null &
   ElevenLabs expressive tags \\
-\field{vibe\_signals} & \texttt{vox.local.md} & string or null &
-  Timestamped signal history \\
+\field{vibe\_nudge\_turns} & \texttt{vox.local.md} & \texttt{integer} &
+  Prompts since the last vibe nudge \\
 \bottomrule
 \end{tabular}
 \end{center}

@@ -1,6 +1,6 @@
 # Agent-Driven Auto-Vibe — Design
 
-**Bead:** vox-ek1m · **Status:** DESIGN (under review) · **Supersedes:** `docs/vibe-exit-code-design.md` (deleted)
+**Bead:** vox-ek1m · **Status:** IMPLEMENTED · **Supersedes:** `docs/vibe-exit-code-design.md` (deleted)
 
 ## Problem
 
@@ -120,11 +120,11 @@ accumulator, no state machine.
 
 ### Where the reminder prose lives
 
-`quips.py` — the existing home for hook prose. It gains one constant,
-`VIBE_NUDGE_REMINDER`, a single deterministic string (not a random pool: the
-user never sees it, the agent reads it, and a fixed string is testable). It is
-silent injected context, not spoken audio — the module docstring notes the
-distinction.
+`vibe_nudge.py` — the `VIBE_NUDGE_REMINDER` constant lives beside `VibeNudge`,
+the class that consumes it. It is a single deterministic string (not a random
+pool: the user never sees it, the agent reads it, and a fixed string is
+testable), and it is silent injected context, not spoken audio — so it stays
+out of the `quips.py` speech registry.
 
 ## No formal model
 

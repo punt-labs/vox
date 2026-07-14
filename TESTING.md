@@ -18,9 +18,9 @@ tests/
   test_output.py             # Output path resolution
   test_playback.py           # Audio playback (afplay/ffplay)
   test_config.py             # .vox/config.md YAML frontmatter read/write
-  test_vibe_mood.py          # Mood derivation from the exit-code window
-  test_vibe_window.py        # Outcome window: FIFO, run/recency, serialization
-  test_hooks.py              # Claude Code hook dispatchers: stop, post-bash, notification
+  test_vibe_nudge.py         # Vibe-nudge cadence: threshold fire, reset, auto-only gating
+  test_frontmatter.py        # YAML frontmatter I/O: read/write/validate, OSError degradation
+  test_hooks.py              # Claude Code hook dispatchers: stop, vibe-nudge, notification
   test_cli.py                # Typer CLI invocations via CliRunner
   test_client.py             # VoxClient/VoxClientSync WebSocket client for voxd
   test_server.py             # MCP server tools: unmute, record, vibe, notify, status
@@ -75,7 +75,7 @@ Mock responses use `side_effect=lambda` instead of `return_value` so each call g
 
 ## Hook Testing
 
-Hook tests (`test_hooks.py`) verify the Claude Code plugin integration — stop hooks, post-bash signal accumulation, and notification dispatch. These mock at two boundaries:
+Hook tests (`test_hooks.py`) verify the Claude Code plugin integration — stop hooks, the vibe-nudge cadence, and notification dispatch. These mock at two boundaries:
 
 1. **Config I/O** — `write_field`, `write_fields`, `resolve_config_path` are patched to avoid filesystem interaction
 2. **Audio dispatch** — `_enqueue_audio` and `subprocess.run` are patched to prevent actual playback
@@ -85,10 +85,10 @@ The `_make_config()` helper constructs `VoxConfig` objects directly, bypassing f
 Key patterns tested:
 
 - Stop hook returns only a `♪` phrase with no internal data
-- Auto-vibe mode writes resolved tags to config and clears consumed signals
-- Manual/off vibe modes skip config writes
-- Each Bash command records one outcome (exit 0 → `ok`, non-zero → `fail`)
-- Outcome accumulation appends `ok`/`fail` tokens across multiple bash invocations
+- The vibe-nudge hook fires the reminder only on the Nth auto-mode prompt, then resets the counter
+- Below the threshold, and in manual/off mode, the nudge emits nothing
+- On a counter-persist failure the nudge stays silent (no reminder) rather than firing every prompt
+- The nudge is non-blocking (never emits a `decision`) and synchronous
 
 ## Server Testing
 

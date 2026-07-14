@@ -70,18 +70,18 @@ provider: ""
 model: ""
 notify: "n"
 speak: "y"
-vibe_mode: "auto"
 ---
 
 .punt-labs/vox/vox.local.md    # gitignored — ephemeral session state
 ---
 vibe: ""
+vibe_mode: "auto"
 vibe_tags: ""
 vibe_nudge_turns: "0"
 ---
 ```
 
-Durable keys (voice, provider, model, notify, speak, vibe_mode) route to `vox.md`. Ephemeral keys (vibe, vibe_tags, vibe_nudge_turns) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
+Durable keys (voice, provider, model, notify, speak) route to `vox.md`. Ephemeral keys (vibe, vibe_mode, vibe_tags, vibe_nudge_turns) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
 
 ---
 
