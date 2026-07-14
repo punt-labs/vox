@@ -60,7 +60,7 @@ DURABLE_FILENAME = "vox.md"
 EPHEMERAL_FILENAME = "vox.local.md"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VoxConfig:
     """Snapshot of all config fields from vox.md + vox.local.md."""
 
