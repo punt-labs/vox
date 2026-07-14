@@ -77,11 +77,11 @@ vibe_mode: "auto"
 ---
 vibe: ""
 vibe_tags: ""
-vibe_signals: ""
+vibe_nudge_turns: "0"
 ---
 ```
 
-Durable keys (voice, provider, model, notify, speak, vibe_mode) route to `vox.md`. Ephemeral keys (vibe, vibe_tags, vibe_signals) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
+Durable keys (voice, provider, model, notify, speak, vibe_mode) route to `vox.md`. Ephemeral keys (vibe, vibe_tags, vibe_nudge_turns) route to `vox.local.md`. All hooks and commands read these files for current state. See DES-012 for why this is per-project, not global, and DES-036 for the two-file split.
 
 ---
 
@@ -1948,35 +1948,35 @@ This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundar
 
 ---
 
-## DES-043: Auto-Vibe Is Exit-Code-Driven, Not Output-Pattern-Driven
+## DES-043: Auto-Vibe Is Agent-Driven, Not Deterministically Classified
 
-**Date:** 2026-07-12
+**Date:** 2026-07-13
 **Status:** SETTLED (supersedes the vibe-signal machinery of DES-018)
 **Topic:** How `/vibe auto` derives the session mood
 
 ### Decision
 
-Auto-vibe derives the TTS mood from each command's **exit code** — `exit 0 → ok`, non-zero → `fail` — over a rolling window, not by pattern-matching command output. The mood is a total function of the window's trailing fail-run: **happy by default**, degrading `focused → frustrated → weary` as failures run consecutively, and `relieved` on the first success after a bad stretch.
+Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
 
-Full design of record: `docs/vibe-exit-code-design.md`. Formal model: `docs/vibe-exit-code.tex` (fuzz `-t` clean) — it *forced* two implementation invariants (`focus_from = 1`, else the mood is not total; `weary_from < max_window`, else FIFO eviction can mask `weary`), both asserted at construction and by tests named after the model's schemas.
+Design of record: `docs/vibe-agent-driven.md`. **No formal model:** the state that justified the interim Z model (an exit-code window/mood accumulator) is deleted; the replacement is a stateless nudge plus a bounded mod-N counter, below the formal-modeling trigger.
 
 ### Why
 
-The prior classifier grepped command *output* for pytest/ruff/git tokens. It was **narrow** (only this repo's Python/git toolchain), **asymmetric** (a clean exit with no recognized token produced no signal, so successes went uncounted while failures counted — the mood skewed frustrated in every other repo), and **fragile** (output-format drift broke it). vox is language-agnostic; the exit code is the one signal every program on every platform agrees to produce. `vox-p0u6` (the "always frustrated" bug) was the acute symptom; this redesign is the root fix.
+Two prior deterministic mechanisms failed. (1) The output-pattern classifier grepped command *output* for pytest/ruff/git tokens — **narrow** (only this repo's toolchain), **asymmetric** (a clean exit with no recognized token produced no signal, so successes went uncounted and the mood skewed frustrated everywhere else), and **fragile** (`vox-p0u6` was the acute symptom). (2) An interim exit-code accumulator tried to derive the mood from each Bash command's exit code read from the `PostToolUse` hook — but **that signal does not exist**: Claude Code does not expose the exit code to `PostToolUse` hooks (the `tool_response` carries only `stdout`/`stderr`/`interrupted`/`isImage`/`noOutputExpected`, and the result is finalized *after* the hook runs), confirmed from the Claude Code docs and a live payload capture, so the accumulator recorded nothing. The agent, which sees the whole conversation, holds the success/failure context no per-command hook ever could. Validated by a live spike.
 
 ### Consequences
 
-- The transcript watcher (`notify=c` milestone announcements) is retired — it classified exit-code-less transcript text and was unwired.
-- The per-signal / mood-pitch chime machinery was dead (reachable only from the unwired watcher, broken for the new vocabulary) and is deleted; notification chimes are two flat tones. The mood colors the **spoken voice** (ElevenLabs `vibe_tags`), not chimes.
-- Milestone excitement (`[excited]` on a win) is lost in v1 — exit code can't tell a PR merge from an `ls`.
+- The exit-code accumulator (`vibe_window`, `vibe_mood`), the `PostToolUse` Bash hook and `BashPayload`, the `vibe_signals` config field, and the interim design doc + Z model (`docs/vibe-exit-code*`) are deleted (forward integration, no shims). `vibe_signals` is replaced by the `vibe_nudge_turns` cadence counter.
+- The transcript watcher and the dead mood-pitch chime machinery stay deleted; notification chimes are two flat tones. The mood colors the **spoken voice** (ElevenLabs `vibe_tags`), not chimes.
+- The nudge fires only every Nth prompt, so a mood shift inside a short window registers on the next nudge, not instantly — acceptable for ambient TTS mood, and the agent may set the vibe at any time regardless.
 
 ### Alternatives Considered
 
 | Alternative | Rejected Because |
 |-------------|-----------------|
-| Output-pattern classification (DES-018-era) | Narrow, asymmetric, fragile — see Why. |
-| Command-verb regex to judge "significance" | Re-imports the per-command/per-language knowledge the redesign exists to delete; a bad exit is an issue and a clean one is fine regardless of the command. |
-| LLM per command | The hook fires on every Bash command, must be near-instant, runs outside the model context — too slow/expensive. An async agent-from-transcript vibe is the documented escape hatch if the deterministic path proves insufficient, not the per-command path. |
-| Denylist known-benign non-zero (`grep`/`diff`) | Unnecessary — the mood keys on the *consecutive* fail-run, so a scattered benign non-zero is one `focused`, reset by the next `ok`; `frustrated` needs three in a row. |
+| Exit-code per command (interim) | The signal does not exist — `PostToolUse` hooks never see the Bash exit code (see Why). |
+| Output-pattern classification (DES-018-era) | Narrow, asymmetric, fragile. |
+| LLM call inside the hook | The hook runs outside the model context and must be near-instant; an in-hook LLM call is slow, costly, and blind to the conversation the reminder exists to leverage. |
+| Nudge every prompt | Nags. The cadence counter throttles to every Nth prompt. |
 
 Closes vox-ek1m.

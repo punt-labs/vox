@@ -18,11 +18,12 @@ translate it into ElevenLabs expressive tags.
 
 ## Modes
 
-**auto** (default): Vibe tags update automatically at each task
-completion. A bounded window of recent command outcomes drives the mood:
-every Bash command exits 0 (`ok`) or non-zero (`fail`), and the mood
-deepens with the trailing run of failures. The stop hook resolves the
-mood to tags deterministically — no interpretation needed.
+**auto** (default): the agent keeps the vibe current from the
+conversation. Every few user prompts a non-blocking reminder nudges the
+agent to glance at how the session is going and, if the mood has clearly
+shifted, set the vibe — using the same tag translation below. No
+deterministic classification: the agent has the whole-session context
+(the real success/failure signal) that a per-command hook never did.
 
 **manual**: User-specified mood overrides auto-detection. The manual
 mood takes priority when choosing tags at stop time.
@@ -54,10 +55,10 @@ Examples of your translation:
 
 Keep it to 1-3 tags. Fewer is better — let the mood breathe.
 
-Auto mode (exit-code driven) resolves the trailing failure run to a fixed
-mood: a clean or empty window is `[happy]`; 1-2 failures `[focused]`; 3-4
-`[frustrated] [sighs]`; 5+ `[weary]`; the first `ok` after a recent failure
-`[relieved]`.
+When the auto reminder fires, read the mood the same way and pick tags:
+`[happy]` when things are flowing, `[focused]` mid-problem, `[frustrated]
+[sighs]` when stuck, `[relieved]` just after a fix, `[weary]` on a long
+grind. Skip the update when the mood hasn't changed.
 
 ## Implementation
 

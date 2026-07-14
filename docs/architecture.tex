@@ -16,6 +16,11 @@
 \usepackage{enumitem}
 \usepackage{longtable}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{microtype}
+% Let long typewriter tokens (paths, identifiers) break at separators so they
+% never run past the margin; \emergencystretch soaks up the small residuals.
+\usepackage[htt]{hyphenat}
+\emergencystretch=3em
 
 \lstset{
   basicstyle=\ttfamily\small,
@@ -114,17 +119,18 @@ host over the network (\texttt{VOXD\_HOST} / \texttt{VOXD\_PORT} /
 
 \subsection{Component Map}
 
-\texttt{src/punt\_vox/} holds roughly thirty modules plus three
-sub-packages (\modpath{voxd/}, \modpath{service/}, \modpath{providers/}).
-The daemon and the system-service installer were split from single
-files into packages as they grew.  Domain types were split out of a
-single \texttt{types.py} into purpose-scoped modules.  The tables below
-list the top-level modules first, then the package contents.
+The \texttt{src/punt\_vox/} package holds roughly thirty top-level
+modules plus three sub-packages --- \modpath{voxd/},
+\modpath{service/}, and \modpath{providers/}.  The daemon and the
+system-service installer were split from single files into packages
+as they grew.  Domain types were split out of a single
+\texttt{types.py} into purpose-scoped modules.  The tables below list
+the top-level modules first, then the package contents.
 
 \subsubsection*{Top-level modules}
 
 \begin{center}
-\begin{longtable}{llp{7cm}}
+\begin{longtable}{llp{6.2cm}}
 \toprule
 \textbf{Module} & \textbf{File} & \textbf{Responsibility} \\
 \midrule
@@ -1010,7 +1016,7 @@ ffmpeg is available.
   \texttt{install}, \texttt{uninstall}, \texttt{status},
   \texttt{restart}. \\
 \texttt{vox hook <event>}  & Dispatch hook handler (stop,
-  post-bash, notification, pre-compact, user-prompt-submit,
+  vibe-nudge, notification, pre-compact, user-prompt-submit,
   subagent-start, subagent-stop, session-end). \\
 \bottomrule
 \end{longtable}
@@ -1043,7 +1049,7 @@ vibe_mode: "auto"
 ---
 vibe: "focused coding session"
 vibe_tags: "[calm] [focused]"
-vibe_signals: "tests-pass@10:45,git-commit@10:47"
+vibe_nudge_turns: "3"
 ---
 \end{lstlisting}
 
@@ -1333,9 +1339,10 @@ Vox integrates with Claude Code through a plugin manifest
   tools.  No audio. \\
 \hook{PostToolUse} (MCP)  & \texttt{suppress-output.sh} &
   Format MCP tool output as compact UI panel text. \\
-\hook{PostToolUse} (Bash) & \texttt{signal.sh} &
-  Classify stdout, append signal to
-  \field{vibe\_signals}. \\
+\hook{UserPromptSubmit} (vibe) & \texttt{vibe-nudge.sh} &
+  Remind the agent to set the session vibe from the conversation,
+  every $N$th prompt in \field{vibe\_mode}=auto (synchronous,
+  non-blocking). \\
 \hook{Stop}               & \texttt{notify.sh} &
   Block with speech phrase or play chime.  Returns
   \texttt{\{decision: "block"\}} to pause Claude while audio
@@ -1351,7 +1358,7 @@ Vox integrates with Claude Code through a plugin manifest
   Announce subagent spawn/completion (continuous mode only,
   async). \\
 \hook{SessionEnd}         & \texttt{farewell.sh} &
-  Speak farewell, clear \field{vibe\_signals} (async). \\
+  Speak farewell, reset \field{vibe\_nudge\_turns} (async). \\
 \bottomrule
 \end{longtable}
 \end{center}
@@ -1386,65 +1393,38 @@ Three notification states control audio behavior:
     from \texttt{assets/} (no provider API call).
 \end{itemize}
 
-\subsection{Signal Classification}
+\subsection{Auto-Vibe}
 
-Signal classification uses a single canonical pattern table in
-\texttt{hooks.py}.  The \hook{PostToolUse} (Bash) hook calls
-\texttt{classify\_signal()} directly.  The session watcher in
-\texttt{watcher.py} delegates to the same function via
-\texttt{classify\_output()}, passing \texttt{exit\_code=None}.
-The eight regex-based signal patterns are:
+In \field{vibe\_mode}=auto, the session mood is set by the main
+agent from the conversation, not by any deterministic per-command
+classifier.  The \hook{UserPromptSubmit} hook \texttt{vibe-nudge.sh}
+(\texttt{vox hook vibe-nudge} $\to$ \texttt{handle\_vibe\_nudge})
+injects a soft \texttt{additionalContext} reminder every $N$th user
+prompt ($N=5$), and only when \field{vibe\_mode}=auto.  The reminder
+asks the agent to judge how the session is going and, if the mood has
+shifted, call the \tool{vibe} tool with expressive tags --- e.g.\
+\texttt{[happy]} when work flows,
+\texttt{[focused]}/\texttt{[frustrated]}/\texttt{[weary]} when stuck,
+\texttt{[relieved]} after a fix.  The agent, which sees the whole
+conversation, holds the success/failure context no per-command hook
+could.
 
-\begin{center}
-\begin{tabular}{lp{7cm}}
-\toprule
-\textbf{Signal} & \textbf{Detection Patterns} \\
-\midrule
-\texttt{lint-fail}     & \texttt{Found [0-9]+ error} \\
-\texttt{lint-pass}     & \texttt{All checks passed}, \texttt{0 errors} \\
-\texttt{tests-pass}    & \texttt{[0-9]+ passed}, \texttt{tests? ok},
-  \texttt{$\checkmark$.*passed} \\
-\texttt{tests-fail}    & \texttt{FAILED}, \texttt{AssertionError},
-  \texttt{ERRORS?\textbackslash{}b} \\
-\texttt{merge-conflict} & \texttt{CONFLICT} \\
-\texttt{git-push-ok}   & \texttt{Everything up-to-date},
-  \texttt{->.*main} \\
-\texttt{git-commit}    & \texttt{\^{}\textbackslash{}[.+\textbackslash{}] .+}, \texttt{\^{}create mode} \\
-\texttt{pr-created}    & \texttt{pull/[0-9]+},
-  \texttt{created pull request} \\
-\bottomrule
-\end{tabular}
-\end{center}
+Cadence state is one bounded integer, \field{vibe\_nudge\_turns}, in
+the ephemeral \texttt{vox.local.md}: incremented each auto-mode prompt,
+reset to $0$ on fire, on any \tool{vibe} mode change, and at session
+end.  The hook is synchronous (only synchronous \hook{UserPromptSubmit}
+output is injected) and non-blocking (it never returns
+\texttt{\{decision: "block"\}} --- that is the Stop hook's role).
 
-If no pattern matches but exit code is non-zero, the signal is
-\texttt{cmd-fail}.  Signals are appended as
-\texttt{\{signal\}@\{HH:MM\}} to the comma-separated
-\field{vibe\_signals} config field.
+The mood colors the \emph{spoken voice} via ElevenLabs expressive tags
+(\texttt{eleven\_v3} model only; other providers ignore the tags
+silently), not the notification chimes.
 
-\subsection{Mood Inference}
-
-On Stop hooks, accumulated signals are deterministically mapped
-to ElevenLabs expressive tags.  No LLM call is involved:
-
-\begin{center}
-\begin{tabular}{lp{6cm}}
-\toprule
-\textbf{Signal Trajectory} & \textbf{Tags} \\
-\midrule
-Recovery (fail $\to$ pass) & \texttt{[relieved]} \\
-Shipped, no failures       & \texttt{[satisfied]} \\
-Shipped after failures     & \texttt{[relieved] [satisfied]} \\
-Ended with failure, many fails & \texttt{[frustrated] [sighs]} \\
-Many passes, no failures   & \texttt{[excited]} \\
-Some passes                & \texttt{[calm]} \\
-Default                    & \texttt{[calm]} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-This only affects audio when the provider supports expressive
-tags (\texttt{eleven\_v3} model only).  All other providers
-ignore the tags silently.
+Earlier deterministic mechanisms --- an output-pattern classifier and
+an interim exit-code accumulator --- were removed (see DES-043): the
+Bash exit code is not available to \hook{PostToolUse} hooks, so the
+accumulator recorded nothing, and output-pattern matching was narrow,
+asymmetric, and fragile.
 
 
 % ===================================================================
