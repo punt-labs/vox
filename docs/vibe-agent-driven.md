@@ -30,11 +30,12 @@ Confirmed two ways:
 - **Live capture.** A payload capture this session showed exactly those fields
   and no exit code under any key (`exitCode`, `exit_code`, `code`, `status`).
 
-`BashPayload.parse` reads `tool_response["exitCode"]`
-(`src/punt_vox/hook_payload.py:44`); that key is never present, so
-`exit_code` is always `None`, `handle_post_bash` returns early every time
-(`src/punt_vox/hooks.py:281`), and the window records nothing. The exit-code
-machinery is dead on arrival and cannot be fixed — the data is not in the hook.
+The interim exit-code accumulator read `tool_response["exitCode"]` from the
+`PostToolUse` payload; that key is never present, so the parsed exit code was
+always absent, the post-bash handler returned early on every event, and the
+outcome window recorded nothing. The exit-code machinery was dead on arrival
+and could not be fixed — the data is not in the hook. (All of it is deleted in
+this change.)
 
 ## Decision
 
@@ -123,8 +124,8 @@ accumulator, no state machine.
 `vibe_nudge.py` — the `VIBE_NUDGE_REMINDER` constant lives beside `VibeNudge`,
 the class that consumes it. It is a single deterministic string (not a random
 pool: the user never sees it, the agent reads it, and a fixed string is
-testable), and it is silent injected context, not spoken audio — so it stays
-out of the `quips.py` speech registry.
+testable), and it is silent injected context, not spoken audio — so it is not
+a speech quip.
 
 ## No formal model
 
