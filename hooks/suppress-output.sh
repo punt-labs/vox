@@ -192,24 +192,11 @@ if [[ "$TOOL_NAME" == "who" ]]; then
   exit 0
 fi
 
-if [[ "$TOOL_NAME" == "music" ]]; then
-  MSG=$(message_line "$RESULT")
-  [[ -z "$MSG" ]] && MSG=$(pick_random "♪ music updated" "♪ the set rolls on")
-  emit "$MSG" "$STOP_NARRATION"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "music_play" ]]; then
-  MSG=$(message_line "$RESULT")
-  [[ -z "$MSG" ]] && MSG=$(pick_random "♪ back from the vault" "♪ replaying a set" "♪ encore")
-  emit "$MSG" "$STOP_NARRATION"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "music_next" ]]; then
-  MSG=$(message_line "$RESULT")
-  [[ -z "$MSG" ]] && MSG="♪ next track"
-  emit "$MSG" "$STOP_NARRATION"
+# The music control tools author their own DJ-flavored ♪ panel line server-side
+# (see MusicMarquee). The hook is a dumb echo of that .message, never a content
+# generator: it branches on no fields the tools do not emit.
+if [[ "$TOOL_NAME" == "music" || "$TOOL_NAME" == "music_play" || "$TOOL_NAME" == "music_next" ]]; then
+  emit "$(message_line "$RESULT")" "$STOP_NARRATION"
   exit 0
 fi
 
