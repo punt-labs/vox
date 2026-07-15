@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 
 import pytest
 
@@ -113,6 +114,39 @@ class TestVibeNormalization:
         stored = AlbumTags(style="trance", vibe=_PATHOLOGICAL_MOOD)
         query = TagQuery(style="trance", vibe=_PATHOLOGICAL_MOOD)
         assert query.matches(stored) is True
+
+
+class TestNameNormalization:
+    """The stored ``name`` is always a non-empty trimmed handle or ``None``."""
+
+    def test_blank_name_becomes_none(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm", name="").name is None
+
+    def test_whitespace_name_becomes_none(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm", name="   ").name is None
+
+    def test_surrounding_whitespace_is_trimmed(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm", name="  focus  ").name == "focus"
+
+    def test_curated_name_is_preserved(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm", name="focus").name == "focus"
+
+    def test_none_name_stays_none(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm").name is None
+
+    def test_from_wire_empty_name_becomes_none(self) -> None:
+        tags = AlbumTags.from_wire(
+            _obj({"style": "trance", "vibe": "calm", "name": ""})
+        )
+        assert tags.name is None
+
+    def test_formerly_empty_name_mints_an_auto_name(self) -> None:
+        # An empty handle canonicalizes to None, so with_auto_name mints one
+        # rather than persisting "" -- the unreachable-by-name failure mode.
+        tags = AlbumTags(style="trance", vibe="calm", name="")
+        named = tags.with_auto_name(datetime(2026, 7, 14, 9, 30))
+        assert named.name is not None
+        assert named.name != ""
 
 
 class TestTagQueryMatches:

@@ -46,14 +46,21 @@ class AlbumTags:
     name: str | None = None  # None means an unnamed, tag-addressed album
 
     def __post_init__(self) -> None:
-        """Bound the raw session mood to a short, tag-safe vibe before storing it.
+        """Canonicalize the tags before storing them: bound the vibe, gate the name.
 
-        The auto-vibe mood is a whole session narrative; the persisted tag (and
-        any ID3 frame derived from it) must be a short label, not prose. This is
-        the one write-path seam that enforces that -- ``VibeLabel`` is idempotent,
-        so a re-stored value stays stable.
+        The auto-vibe mood is a whole session narrative; the persisted vibe tag
+        (and any ID3 frame derived from it) must be a short label, not prose.
+        ``VibeLabel`` is idempotent, so a re-stored value stays stable.
+
+        ``name`` is the enforced-unique handle :meth:`Catalog.by_name` keys on, so
+        a blank one is unreachable and would let two albums share the empty
+        handle. Trimming with blank-as-``None`` guarantees the invariant at
+        construction for every caller (service, ``from_wire``, or any future one):
+        ``name`` is always a non-empty trimmed handle or ``None``, never ``""``.
         """
         object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
+        if self.name is not None:
+            object.__setattr__(self, "name", self.canonical(self.name) or None)
 
     def with_auto_name(
         self, created: datetime, taken: Container[str] = frozenset()
