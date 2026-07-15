@@ -61,12 +61,18 @@ emit() {
   }'
 }
 
-# Control tools are fire-and-forget: the panel line above is the entire
-# user-facing response. Handing the agent the result JSON reads as "here is
-# data, describe it" and provokes redundant narration. On a control-tool
-# success additionalContext carries this terminal stop-narration directive
-# instead. Query tools (status/who/music_list) keep the JSON — the agent must
-# report that data back to the user.
+# Music control (music/music_play/music_next) and vibe are pure
+# fire-and-forget: EVERY slash-command flow that drives them documents "no text
+# output — the panel confirms," so the panel line above is the entire response.
+# Handing the agent the result JSON reads as "here is data, describe it" and
+# provokes redundant narration. On success their additionalContext carries this
+# terminal stop-narration directive instead.
+#
+# The other mic tools each back at least one flow that REQUIRES an agent reply
+# derived from the payload — record returns saved file paths, unmute drives
+# /vox model|provider ("Switched … to X"), speak drives /mute (a phrase reply),
+# notify drives /vox c (lists featured voices). Those keep the RESULT, exactly
+# like the query tools (status/who/music_list), so the flow has the data.
 STOP_NARRATION="The audio panel has already shown this to the user. This tool call is the complete response — reply with no text, no summary, no narration. Stop."
 
 # Error guard: if the result contains an error field, surface it directly.
@@ -95,7 +101,7 @@ if [[ "$TOOL_NAME" == "unmute" ]]; then
     "♪ ${VOICE} delivered"
     "♪ heard from ${VOICE}"
   )
-  emit "$(pick_random "${PHRASES[@]}")" "$STOP_NARRATION"
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 
@@ -106,7 +112,7 @@ if [[ "$TOOL_NAME" == "record" ]]; then
     "♪ ${VOICE} recorded ${COUNT} track(s)"
     "♪ ${COUNT} track(s) saved"
   )
-  emit "$(pick_random "${PHRASES[@]}")" "$STOP_NARRATION"
+  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
 
@@ -139,7 +145,7 @@ if [[ "$TOOL_NAME" == "notify" ]]; then
     c) MSG="♪ continuous mode on" ;;
     *) MSG="♪ notify updated" ;;
   esac
-  emit "$MSG" "$STOP_NARRATION"
+  emit "$MSG" "$RESULT"
   exit 0
 fi
 
@@ -157,7 +163,7 @@ if [[ "$TOOL_NAME" == "speak" ]]; then
     n) MSG="♪ chimes only" ;;
     *) MSG="♪ speak updated" ;;
   esac
-  emit "$MSG" "$STOP_NARRATION"
+  emit "$MSG" "$RESULT"
   exit 0
 fi
 

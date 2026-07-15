@@ -2,12 +2,18 @@
 
 The hook drives the two-channel display: ``updatedMCPToolOutput`` (the panel
 line the user sees) and ``additionalContext`` (text injected back into the
-agent). The invariant under test is the control/query split — for a
-fire-and-forget CONTROL tool the hook must, on success, put a terminal
-stop-narration directive in ``additionalContext`` (not the result JSON) so the
-agent stays silent; for a QUERY tool it must keep the JSON so the agent can
-report the data; and on any tool error the failure must still reach
-``additionalContext``.
+agent). The invariant under test is which tools stay silent.
+
+The same mic tool backs multiple slash commands, so silence is decided per
+tool by whether EVERY flow that drives it wants the panel as the whole
+response. Only the pure music-control and vibe tools qualify: on success
+``music``/``music_play``/``music_next``/``vibe`` put a terminal stop-narration
+directive in ``additionalContext`` instead of the result JSON. Every other
+tool keeps its RESULT so the flow that needs it can reply — ``record`` returns
+saved file paths, ``unmute`` drives ``/vox model|provider``, ``speak`` drives
+``/mute``, ``notify`` drives ``/vox c``, and the query tools
+(``status``/``who``/``music_list``) report data. On any tool error the failure
+must still reach ``additionalContext``.
 
 Driven as a subprocess against the real script — the interface is the
 contract, so we exercise the shell, not a reimplementation of it.
@@ -77,8 +83,12 @@ def _invoke(tool: str, text: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in output.items()}
 
 
-class TestControlToolsStopNarration:
-    """A control-tool success replaces the result JSON with the directive."""
+class TestSilentToolsStopNarration:
+    """Music-control and vibe success replace the result JSON with the directive.
+
+    These are the only tools every slash-command flow drives silently, so the
+    panel line is the whole response and the payload must not leak.
+    """
 
     def test_vibe_context_is_the_directive_not_json(self) -> None:
         out = _run_hook("vibe", {"vibe": {"vibe": "focused", "vibe_tags": "[calm]"}})
@@ -95,6 +105,23 @@ class TestControlToolsStopNarration:
         assert "trance" not in out["additionalContext"]
         assert out["updatedMCPToolOutput"].startswith("♪")
 
+    def test_music_playing_status_is_the_directive(self) -> None:
+        out = _run_hook("music", {"status": "playing", "name": "focus-beats"})
+        assert _STOP_MARK in out["additionalContext"]
+        assert "focus-beats" not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+
+    def test_music_stopped_status_is_the_directive(self) -> None:
+        out = _run_hook("music", {"status": "stopped"})
+        assert _STOP_MARK in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+
+    def test_music_play_context_is_the_directive(self) -> None:
+        out = _run_hook("music_play", {"name": "focus-beats"})
+        assert _STOP_MARK in out["additionalContext"]
+        assert "focus-beats" not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+
     def test_music_next_context_is_the_directive(self) -> None:
         out = _run_hook(
             "music_next",
@@ -105,9 +132,43 @@ class TestControlToolsStopNarration:
         # The panel keeps the tool's own message line.
         assert out["updatedMCPToolOutput"] == "♪ Skipping — generating next track..."
 
-    def test_notify_context_is_the_directive(self) -> None:
+
+class TestReplyToolsKeepData:
+    """Tools whose slash-command flows need an agent reply keep the JSON.
+
+    record returns saved file paths (the agent must report them), unmute drives
+    ``/vox model|provider`` ("Switched … to X"), speak drives ``/mute`` (a
+    phrase reply), and notify drives ``/vox c`` (lists featured voices).
+    """
+
+    def test_record_paths_reach_context(self) -> None:
+        # HIGH regression: the agent needs the saved paths to report/reuse.
+        out = _run_hook(
+            "record",
+            [{"voice": "Matilda", "path": "/tmp/vox/take-1.mp3"}],
+        )
+        assert "/tmp/vox/take-1.mp3" in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+
+    def test_unmute_payload_reaches_context(self) -> None:
+        # MED regression: /vox model|provider derive their confirmation text
+        # from the payload.
+        out = _run_hook("unmute", [{"voice": "Matilda", "model": "eleven_v3"}])
+        assert "eleven_v3" in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+
+    def test_speak_payload_reaches_context(self) -> None:
+        out = _run_hook("speak", {"speak": "n"})
+        assert '"speak"' in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ chimes only"
+
+    def test_notify_payload_reaches_context(self) -> None:
         out = _run_hook("notify", {"notify": {"notify": "y"}})
-        assert _STOP_MARK in out["additionalContext"]
+        assert '"notify"' in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ vox enabled"
 
 
