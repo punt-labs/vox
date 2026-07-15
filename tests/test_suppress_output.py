@@ -99,28 +99,49 @@ class TestSilentToolsStopNarration:
         # The panel line is untouched.
         assert out["updatedMCPToolOutput"] == "♪ vibe shifted to [calm]"
 
-    def test_music_context_is_the_directive(self) -> None:
-        out = _run_hook("music", {"status": "generating", "style": "trance"})
+    def test_music_on_panel_is_the_message(self) -> None:
+        # music returns {"message", "applied"} — the panel is the message line,
+        # and additionalContext is the stop directive (no payload to narrate).
+        out = _run_hook(
+            "music",
+            {"message": "♪ Music on — generating a trance track...", "applied": True},
+        )
         assert _STOP_MARK in out["additionalContext"]
-        assert "trance" not in out["additionalContext"]
-        assert out["updatedMCPToolOutput"].startswith("♪")
+        assert "applied" not in out["additionalContext"]
+        assert (
+            out["updatedMCPToolOutput"] == "♪ Music on — generating a trance track..."
+        )
 
-    def test_music_playing_status_is_the_directive(self) -> None:
-        out = _run_hook("music", {"status": "playing", "name": "focus-beats"})
+    def test_music_on_ambient_panel_is_the_message(self) -> None:
+        out = _run_hook(
+            "music",
+            {"message": "♪ Music on — generating ambient music...", "applied": True},
+        )
         assert _STOP_MARK in out["additionalContext"]
-        assert "focus-beats" not in out["additionalContext"]
-        assert out["updatedMCPToolOutput"].startswith("♪")
+        assert out["updatedMCPToolOutput"] == "♪ Music on — generating ambient music..."
 
-    def test_music_stopped_status_is_the_directive(self) -> None:
-        out = _run_hook("music", {"status": "stopped"})
+    def test_music_off_panel_is_the_message(self) -> None:
+        out = _run_hook("music", {"message": "♪ Music off.", "applied": True})
         assert _STOP_MARK in out["additionalContext"]
-        assert out["updatedMCPToolOutput"].startswith("♪")
+        assert out["updatedMCPToolOutput"] == "♪ Music off."
 
-    def test_music_play_context_is_the_directive(self) -> None:
-        out = _run_hook("music_play", {"name": "focus-beats"})
+    def test_music_multiline_message_panel_takes_first_line(self) -> None:
+        out = _run_hook(
+            "music",
+            {"message": "♪ Music on — generating...\nsecond line", "applied": True},
+        )
         assert _STOP_MARK in out["additionalContext"]
-        assert "focus-beats" not in out["additionalContext"]
-        assert out["updatedMCPToolOutput"].startswith("♪")
+        assert out["updatedMCPToolOutput"] == "♪ Music on — generating..."
+
+    def test_music_play_panel_is_the_message(self) -> None:
+        # music_play returns {"message", "applied"} — no "name" field.
+        out = _run_hook(
+            "music_play",
+            {"message": "♪ Playing selection.", "applied": True},
+        )
+        assert _STOP_MARK in out["additionalContext"]
+        assert "applied" not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ Playing selection."
 
     def test_music_next_context_is_the_directive(self) -> None:
         out = _run_hook(
@@ -182,9 +203,17 @@ class TestQueryToolsKeepData:
         assert out["updatedMCPToolOutput"] == "♪ Matilda · notify=y"
 
     def test_music_list_context_carries_the_data(self) -> None:
-        out = _run_hook("music_list", {"tracks": [{"name": "focus-beats"}]})
+        # music_list returns {"message", "programs"} — the panel counts programs.
+        out = _run_hook(
+            "music_list",
+            {
+                "message": "♪ 1 saved album(s):",
+                "programs": [{"id": "a1", "name": "focus-beats"}],
+            },
+        )
         assert "focus-beats" in out["additionalContext"]
         assert _STOP_MARK not in out["additionalContext"]
+        assert "1 album(s)" in out["updatedMCPToolOutput"]
 
 
 class TestErrorGuardPreserved:

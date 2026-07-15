@@ -50,6 +50,14 @@ pick_random() {
   echo "$1"
 }
 
+# First line of a tool's ♪-prefixed "message" field, or empty when absent.
+# The music tools author their own concise panel line; the panel shows it
+# verbatim (first line only, to stay within the compact channel).
+message_line() {
+  echo "$1" | jq -r 'if type == "object" and has("message")
+    then (.message | split("\n")[0]) else empty end' 2>/dev/null
+}
+
 emit() {
   local summary="$1" ctx="$2"
   jq -n --arg summary "$summary" --arg ctx "$ctx" '{
@@ -185,51 +193,29 @@ if [[ "$TOOL_NAME" == "who" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "music" ]]; then
-  STATUS=$(echo "$RESULT" | jq -r '.status // empty' 2>/dev/null)
-  STYLE=$(echo "$RESULT" | jq -r '.style // empty' 2>/dev/null)
-  case "$STATUS" in
-    generating)
-      if [[ -n "$STYLE" ]]; then
-        PHRASES=("♪ dropping a ${STYLE} beat" "♪ ${STYLE} in the booth" "♪ cueing up ${STYLE}" "♪ ${STYLE} on deck")
-      else
-        PHRASES=("♪ next track loading" "♪ beat incoming" "♪ stepping up to the decks")
-      fi
-      ;;
-    playing)
-      NAME=$(echo "$RESULT" | jq -r '.name // empty' 2>/dev/null)
-      if [[ -n "$NAME" ]]; then
-        PHRASES=("♪ now spinning: ${NAME}" "♪ ${NAME} on the decks" "♪ ${NAME} on repeat")
-      else
-        PHRASES=("♪ and we're live" "♪ track on loop" "♪ the set continues")
-      fi
-      ;;
-    stopped)
-      PHRASES=("♪ fading out" "♪ set over" "♪ decks off" "♪ last call")
-      ;;
-    *)
-      PHRASES=("♪ music updated")
-      ;;
-  esac
-  emit "$(pick_random "${PHRASES[@]}")" "$STOP_NARRATION"
+  MSG=$(message_line "$RESULT")
+  [[ -z "$MSG" ]] && MSG=$(pick_random "♪ music updated" "♪ the set rolls on")
+  emit "$MSG" "$STOP_NARRATION"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "music_play" ]]; then
-  NAME=$(echo "$RESULT" | jq -r '.name // "track"' 2>/dev/null)
-  PHRASES=("♪ bringing back ${NAME}" "♪ ${NAME} encore" "♪ ${NAME} from the vault")
-  emit "$(pick_random "${PHRASES[@]}")" "$STOP_NARRATION"
+  MSG=$(message_line "$RESULT")
+  [[ -z "$MSG" ]] && MSG=$(pick_random "♪ back from the vault" "♪ replaying a set" "♪ encore")
+  emit "$MSG" "$STOP_NARRATION"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "music_next" ]]; then
-  MSG=$(echo "$RESULT" | jq -r '.message // "♪ next track"' 2>/dev/null)
+  MSG=$(message_line "$RESULT")
+  [[ -z "$MSG" ]] && MSG="♪ next track"
   emit "$MSG" "$STOP_NARRATION"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "music_list" ]]; then
-  COUNT=$(echo "$RESULT" | jq -r '.tracks | length' 2>/dev/null || echo "?")
-  PHRASES=("♪ ${COUNT} track(s) in the crate" "♪ your crate: ${COUNT} track(s)")
+  COUNT=$(echo "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
+  PHRASES=("♪ ${COUNT} album(s) in the crate" "♪ your crate: ${COUNT} album(s)")
   emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
 fi
