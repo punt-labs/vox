@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
@@ -144,3 +145,54 @@ class TestManifestDraft:
         manifest = self._draft().stamped(_CREATED)
         assert manifest.created == _CREATED
         assert manifest.id == AlbumId("a3f1c9")
+
+
+_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*-\d{8}-\d{4}$")
+_STAMP = datetime(2026, 7, 15, 3, 56, 12, tzinfo=UTC)
+_PATHOLOGICAL_MOOD = (
+    "a long brutal grind that shipped: 6 review rounds — 4.12.0 out the "
+    "door — and this very nudge just proved itself firing live"
+)
+
+
+def _stamped_tags_name(*, style: str, vibe: str, name: str | None) -> str | None:
+    draft = ManifestDraft(
+        album_id=AlbumId("a3f1c9"),
+        tags=AlbumTags(style=style, vibe=vibe, name=name),
+        fingerprint=_FINGERPRINT,
+    )
+    return draft.stamped(_STAMP).tags.name
+
+
+class TestAutoName:
+    """A minted pool always gets a non-null, slug-safe, timestamped name."""
+
+    def test_unnamed_pool_gets_a_non_null_name(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe="calm", name=None)
+        assert name is not None
+
+    def test_auto_name_matches_the_documented_shape(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe="calm", name=None)
+        assert name is not None
+        assert _NAME_PATTERN.match(name)
+        assert name.endswith("-20260715-0356")
+        assert name.startswith("calm-trance-")
+
+    def test_pathological_mood_yields_a_valid_bounded_name(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe=_PATHOLOGICAL_MOOD, name=None)
+        assert name is not None
+        assert _NAME_PATTERN.match(name)
+        assert len(name) <= 80
+        assert name.endswith("-trance-20260715-0356")
+
+    def test_empty_mood_drops_the_vibe_segment(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe="", name=None)
+        assert name == "trance-20260715-0356"
+
+    def test_vibe_equal_to_style_is_not_duplicated(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe="trance", name=None)
+        assert name == "trance-20260715-0356"
+
+    def test_curated_name_is_preserved(self) -> None:
+        name = _stamped_tags_name(style="trance", vibe="calm", name="late-night-flow")
+        assert name == "late-night-flow"

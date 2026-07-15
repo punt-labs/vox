@@ -64,6 +64,57 @@ class TestAlbumTagsMintUniqueName:
         assert AlbumTags.mint_unique_name("focus", taken) == "focus3"
 
 
+_PATHOLOGICAL_MOOD = (
+    "a long brutal grind that shipped: 6 review rounds — 4.12.0 out the "
+    "door — and this very nudge just proved itself firing live"
+)
+
+
+class TestVibeNormalization:
+    """The persisted vibe tag is a short, bounded, tag-safe label -- never prose."""
+
+    def test_long_mood_is_bounded_and_sanitized(self) -> None:
+        tags = AlbumTags(style="trance", vibe=_PATHOLOGICAL_MOOD)
+        assert tags.vibe != _PATHOLOGICAL_MOOD
+        assert len(tags.vibe) <= 48
+        assert ":" not in tags.vibe
+        assert "\n" not in tags.vibe
+
+    def test_control_characters_are_stripped(self) -> None:
+        tags = AlbumTags(style="trance", vibe="line one\nline two\ttabbed")
+        assert "\n" not in tags.vibe
+        assert "\t" not in tags.vibe
+
+    def test_interior_whitespace_collapses(self) -> None:
+        tags = AlbumTags(style="trance", vibe="late   night     flow")
+        assert tags.vibe == "late night flow"
+
+    def test_already_short_mood_is_preserved(self) -> None:
+        assert AlbumTags(style="trance", vibe="calm").vibe == "calm"
+
+    def test_unicode_mood_is_preserved(self) -> None:
+        assert AlbumTags(style="lo-fi", vibe="néon 夜").vibe == "néon 夜"
+
+    def test_punctuation_only_mood_normalizes_to_empty(self) -> None:
+        # Empty is a valid vibe; junk punctuation is not (keep empty over prose).
+        assert AlbumTags(style="trance", vibe="???:::!!!").vibe == ""
+
+    def test_empty_mood_stays_empty(self) -> None:
+        assert AlbumTags(style="trance", vibe="").vibe == ""
+
+    def test_normalization_is_idempotent(self) -> None:
+        once = AlbumTags(style="trance", vibe=_PATHOLOGICAL_MOOD).vibe
+        twice = AlbumTags(style="trance", vibe=once).vibe
+        assert once == twice
+
+    def test_query_vibe_matches_the_stored_bounded_vibe(self) -> None:
+        # The resume path filters on the raw mood; it must still match the pool's
+        # bounded vibe, or every session mints a fresh album instead of resuming.
+        stored = AlbumTags(style="trance", vibe=_PATHOLOGICAL_MOOD)
+        query = TagQuery(style="trance", vibe=_PATHOLOGICAL_MOOD)
+        assert query.matches(stored) is True
+
+
 class TestTagQueryMatches:
     _TAGS = AlbumTags(style="trance", vibe="calm", name="mix")
 
