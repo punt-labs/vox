@@ -65,7 +65,10 @@ BROKEN = "def oops(:\n    pass\n"
 # Byte-different from GOOD but metric-identical: same line count, same
 # complexity, only a string literal differs. Models a mechanical version bump
 # (e.g. __version__ = "1.0.0" -> "1.0.1") that touches a scored file yet
-# improves no metric.
+# improves no metric. Guard the substring so a drift in GOOD fails loudly here
+# instead of silently no-op'ing .replace() (GOOD_VARIANT == GOOD would stop
+# exercising the metric-neutral case).
+assert 'return "pos"' in GOOD, "GOOD fixture drifted; GOOD_VARIANT target missing"
 GOOD_VARIANT = GOOD.replace('return "pos"', 'return "neg"')
 
 
