@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.1] - 2026-07-15
+
 ### Changed
 
 - **The ♪ music panel speaks like a DJ (vox-1jke)**: the `music` control panel lines are now DJ-booth flavored and varied — `/music on` reads `♪ dropping a trance beat` / `♪ trance in the booth` / `♪ cueing up trance`, `/music off` reads `♪ fading out` / `♪ that's a wrap` / `♪ decks off`, a replay reads `♪ now spinning: <name>` / `♪ <name> — encore`, a skip reads `♪ mixing the next one in`. Previously these lines were dead: the hook's phrase pools keyed off `.status`/`.style`/`.name` fields the music tools never return, so the panel silently showed a generic line (fixed to echo the plain server message in vox-lf6b). Now the **server** authors the flavored line — a new `MusicMarquee` (`music_phrases.py`) selects a randomized phrase from a curated per-action pool and interpolates the real style/name — and the `suppress-output.sh` hook stays a dumb `.message` echo (dead pools deleted). The panel uses the style/name, never the session mood (per vox-5aom). Design: DES-044. Closes vox-1jke.
