@@ -62,6 +62,12 @@ class Widget:
 
 BROKEN = "def oops(:\n    pass\n"
 
+# Byte-different from GOOD but metric-identical: same line count, same
+# complexity, only a string literal differs. Models a mechanical version bump
+# (e.g. __version__ = "1.0.0" -> "1.0.1") that touches a scored file yet
+# improves no metric.
+GOOD_VARIANT = GOOD.replace('return "pos"', 'return "neg"')
+
 
 class GitFixture:
     """A throwaway git repo for exercising the ratchet end to end."""
@@ -197,6 +203,90 @@ class TestBaseCompare:
         outcome = fx.ratchet().check(fx.scorer(), base_ref=None, require_base=True)
         assert outcome.exit_code == 0
         assert fx.root  # b.py's main-only regression did not fail the PR
+
+
+class TestAllowNoImprovement:
+    """--allow-no-improvement waives only the must-improve gate.
+
+    Regressions, baseline lock-in, and completeness stay enforced. This is the
+    gate mechanical version-bump PRs (release/* and post-release/*) need: they
+    touch a scored file (__version__) but improve no metric.
+    """
+
+    def test_flag_passes_no_improvement_no_regression(self, fx: GitFixture) -> None:
+        # A metric-neutral change (version bump) touches the file but neither
+        # improves nor regresses: the flag lets it pass.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", GOOD_VARIANT)
+        fx.snapshot("sub")  # in-tree baseline == current, locked
+        fx.commit("metric-neutral change")
+        outcome = fx.ratchet().check(
+            fx.scorer(), base_ref=base, require_base=True, allow_no_improvement=True
+        )
+        assert outcome.exit_code == 0
+        assert any("must-improve gate waived" in line for line in outcome.lines)
+
+    def test_flag_still_fails_regression(self, fx: GitFixture) -> None:
+        # The flag never launders a regression.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", WORSE)
+        fx.snapshot("sub")
+        fx.commit("regress")
+        outcome = fx.ratchet().check(
+            fx.scorer(), base_ref=base, require_base=True, allow_no_improvement=True
+        )
+        assert outcome.exit_code == 1
+        assert any("regression" in line for line in outcome.lines)
+
+    def test_default_still_fails_no_improvement(self, fx: GitFixture) -> None:
+        # Without the flag, a metric-neutral change fails the must-improve gate
+        # exactly as before -- the default is unchanged.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", GOOD_VARIANT)
+        fx.snapshot("sub")
+        fx.commit("metric-neutral change")
+        outcome = fx.ratchet().check(fx.scorer(), base_ref=base, require_base=True)
+        assert outcome.exit_code == 1
+        assert any("no metric improved" in line for line in outcome.lines)
+
+    def test_flag_still_enforces_lock_in(self, fx: GitFixture) -> None:
+        # A stale in-tree baseline (out of date vs current) still fails under the
+        # flag: lock-in is orthogonal to the must-improve gate.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", GOOD_VARIANT)
+        current = Baseline.metrics_by_file(fx.scorer().results)["sub/w.py"]
+        fx.write_baseline(
+            {"sub/w.py": {**current, "module_size": current["module_size"] + 5}}
+        )
+        fx.commit("touch but leave baseline stale")
+        outcome = fx.ratchet().check(
+            fx.scorer(), base_ref=base, require_base=True, allow_no_improvement=True
+        )
+        assert outcome.exit_code == 1
+        assert any("baseline out of date" in line for line in outcome.lines)
+
+    def test_flag_still_requires_baseline_entry(self, fx: GitFixture) -> None:
+        # A touched file absent from the in-tree baseline still fails under the
+        # flag: completeness is orthogonal to the must-improve gate.
+        fx.write("sub/w.py", GOOD)
+        fx.snapshot("sub")
+        base = fx.commit("base")
+        fx.write("sub/w.py", GOOD_VARIANT)
+        fx.write_baseline({})  # drop the file's in-tree entry
+        fx.commit("touch but empty in-tree baseline")
+        outcome = fx.ratchet().check(
+            fx.scorer(), base_ref=base, require_base=True, allow_no_improvement=True
+        )
+        assert outcome.exit_code == 1
+        assert any("not in baseline" in line for line in outcome.lines)
 
 
 class TestEmptyBaseBaseline:

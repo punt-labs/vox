@@ -33,6 +33,7 @@ class Options:
     justify: str
     base_ref: str | None
     require_base: bool
+    allow_no_improvement: bool
     allow_ci_write: bool
     source: str | None
 
@@ -55,6 +56,7 @@ class Options:
             justify=ns.justify or "",
             base_ref=ns.base_ref,
             require_base=bool(ns.require_base),
+            allow_no_improvement=bool(ns.allow_no_improvement),
             allow_ci_write=bool(ns.allow_ci_write),
             source=ns.source,
         )
@@ -86,6 +88,13 @@ class Options:
         parser.add_argument("--base-ref", metavar="REF", help="comparison base commit")
         parser.add_argument(
             "--require-base", action="store_true", help="fail if base unresolvable"
+        )
+        # Waive only the must-improve gate (mechanical version-bump PRs improve
+        # no metric); regressions and baseline lock-in are still enforced.
+        parser.add_argument(
+            "--allow-no-improvement",
+            action="store_true",
+            help="waive the must-improve gate; still reject regressions",
         )
         parser.add_argument(
             "--allow-ci-write", action="store_true", help="permit writes under CI"
@@ -132,7 +141,10 @@ class Cli:
         writer = BaselineWriter(self._root, self._git)
         if opts.check:
             return ratchet.check(
-                scorer, base_ref=opts.base_ref, require_base=opts.require_base
+                scorer,
+                base_ref=opts.base_ref,
+                require_base=opts.require_base,
+                allow_no_improvement=opts.allow_no_improvement,
             )
         if opts.rebaseline:
             return writer.rebaseline(
