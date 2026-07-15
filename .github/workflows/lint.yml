@@ -34,8 +34,13 @@ jobs:
       # merge-base (S1/S2). --require-base AND the explicit fetch are both
       # mandatory — with either missing, an unfetched/unresolvable base would
       # fail open and let a regression pass. See docs/oo-ratchet-improvements.md.
+      # release/* and post-release/* PRs are mechanical version bumps (punt
+      # release): their only scored Python change is __version__, which improves
+      # no OO metric, so the "at least one metric improved" gate structurally
+      # fails them. Exempt those head branches from the ratchet step only —
+      # ruff/format/mypy/pyright/shellcheck still run and pass on a version bump.
       - name: OO ratchet (PR — merge-base compare)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/') && !startsWith(github.head_ref, 'post-release/')
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
           BASE="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
