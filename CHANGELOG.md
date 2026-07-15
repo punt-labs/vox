@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Test suite no longer emits a `starlette.testclient` deprecation warning**: added `httpx2` to the dev dependency group so `starlette.testclient.TestClient` (used in `tests/test_voxd_health.py` and `tests/test_voxd_synthesis.py`) uses its preferred HTTP backend — `make test` now runs warning-free instead of surfacing `StarletteDeprecationWarning: Using 'httpx' with 'starlette.testclient' is deprecated; install 'httpx2' instead`.
+
 ## [4.12.0] - 2026-07-14
 
 ### Added

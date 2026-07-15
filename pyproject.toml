@@ -56,6 +56,9 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    # starlette.testclient prefers httpx2; without it, TestClient emits a
+    # StarletteDeprecationWarning. Test-only — not a runtime dependency.
+    "httpx2>=2.7.0",
 ]
 
 [build-system]
