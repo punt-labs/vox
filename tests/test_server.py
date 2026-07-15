@@ -16,6 +16,7 @@ from punt_vox.client import SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.music_phrases import (
+    GENERATING_NO_STYLE,
     GENERATING_WITH_STYLE,
     REPLAY_RADIO,
     REPLAY_WITH_NAME,
@@ -1221,6 +1222,25 @@ class TestMusicTool:
         request = fake.calls[0].request
         assert request is not None and request.style == "techno"
 
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_style_is_no_tag_and_no_style_pool(
+        self, blank: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blank style reaches the daemon as None and the panel as no-style.
+
+        The pool pick and the forwarded tag must agree: a blank/whitespace style
+        is canonicalized to None before both, so the daemon never receives an
+        explicit "" while the panel shows the no-style phrase.
+        """
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music(mode="on", style=blank))
+
+        request = fake.calls[0].request
+        assert request is not None and request.style is None
+        assert result["message"] in {f"♪ {p}" for p in GENERATING_NO_STYLE}
+
     def test_on_forwards_agent_prompts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
@@ -1321,6 +1341,23 @@ class TestMusicPlayTool:
 
         expected = {f"♪ {p.format(name='deep cuts')}" for p in REPLAY_WITH_NAME}
         assert result["message"] in expected
+
+    def test_blank_name_is_radio_not_named_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A whitespace name reaches the daemon as None and the panel as radio.
+
+        The canonicalized name is None before both the pool pick and the query,
+        so a blank name never becomes an "" filter or a named-replay line.
+        """
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music_play(name="  "))
+
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.name is None
+        assert result["message"] in {f"♪ {p}" for p in REPLAY_RADIO}
 
     def test_play_forwards_the_album_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()

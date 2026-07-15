@@ -170,6 +170,17 @@ class SessionConfig:
         if tags is not None:
             self._vibe_tags = tags
 
+    @staticmethod
+    def canonical_tag(value: str | None) -> str | None:
+        """Return a trimmed tag, or ``None`` when it is absent or blank.
+
+        The one boundary normalizer the music tools apply to a style/name/vibe
+        tag before it drives both the panel phrase and the daemon request, so a
+        whitespace-only tag is treated as absent by both -- never as an explicit
+        ``""`` the daemon stores while the panel reads it as no tag.
+        """
+        return (value or "").strip() or None
+
     def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
         """Return *spec* with unset voice/provider/model/vibe_tags from session."""
         return replace(
@@ -595,6 +606,10 @@ def music(
     _session.refresh_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
+    # Canonicalize tags so the panel phrase and the daemon request agree on
+    # presence: a blank style/name is absent (None), never an explicit "".
+    style = SessionConfig.canonical_tag(style)
+    name = SessionConfig.canonical_tag(name)
     try:
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
@@ -632,6 +647,11 @@ def music_play(
         JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
+    # Canonicalize tags so the panel phrase and the daemon query agree: a blank
+    # tag is a wildcard (None), never an "" filter. album_id is an id, not a tag.
+    style = SessionConfig.canonical_tag(style)
+    vibe = SessionConfig.canonical_tag(vibe)
+    name = SessionConfig.canonical_tag(name)
     try:
         outcome = _program_tools.select(
             SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
