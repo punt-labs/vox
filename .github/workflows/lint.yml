@@ -34,8 +34,23 @@ jobs:
       # merge-base (S1/S2). --require-base AND the explicit fetch are both
       # mandatory — with either missing, an unfetched/unresolvable base would
       # fail open and let a regression pass. See docs/oo-ratchet-improvements.md.
+      # A mechanical version bump (release/* and post-release/* PRs from punt
+      # release) changes only __version__ in src/punt_vox/__init__.py, which
+      # improves no OO metric, so check-oo's "at least one metric improved" gate
+      # structurally fails it. For those head branches we pass
+      # --allow-no-improvement, which waives ONLY the must-improve requirement —
+      # a regression is still rejected and baseline completeness/lock-in still
+      # enforced. This is safe even though github.head_ref is attacker-controlled
+      # on fork PRs: the flag removes only the must-improve nicety, and
+      # check-coupling / check-suppressions (regression-only gates) run
+      # unconditionally below, so a fork PR named release/* gains nothing
+      # exploitable. head_ref reaches the shell via the HEAD_REF env var and is
+      # matched with `case`, never interpolated into the command, to avoid
+      # script injection.
       - name: OO ratchet (PR — merge-base compare)
         if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
           BASE="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
@@ -43,15 +58,26 @@ jobs:
             echo "FATAL: cannot resolve merge-base with origin/${{ github.base_ref }}" >&2
             exit 1
           fi
-          make check-oo OO_BASE="--base-ref ${BASE} --require-base"
+          OO_ARGS="--base-ref ${BASE} --require-base"
+          case "${HEAD_REF}" in
+            release/*|post-release/*)
+              OO_ARGS="${OO_ARGS} --allow-no-improvement" ;;
+          esac
+          make check-oo OO_BASE="${OO_ARGS}"
           make check-coupling COUPLING_BASE="--base-ref ${BASE} --require-base"
           make check-suppressions SUPPRESSION_BASE="--base-ref ${BASE} --require-base"
       # OO ratchet on main after a merge: HEAD~1 is the squash's merge-base, so
       # the ratchet re-runs on merged reality — the tripwire that catches a red
       # main from a bad squash or a direct push (S1 push:[main] + §5 runbook).
+      # This step is REGRESSION-ONLY: must-improve is already enforced on the PR,
+      # so re-requiring it here would turn main red after every metric-neutral
+      # squash — most visibly a release commit that changes only __version__.
+      # --allow-no-improvement waives only the must-improve gate; regressions,
+      # baseline lock-in, and completeness stay enforced. check-coupling and
+      # check-suppressions are regression-only by construction.
       - name: OO ratchet (main — post-merge tripwire)
         if: github.event_name == 'push'
         run: |
-          make check-oo OO_BASE="--base-ref HEAD~1 --require-base"
+          make check-oo OO_BASE="--base-ref HEAD~1 --require-base --allow-no-improvement"
           make check-coupling COUPLING_BASE="--base-ref HEAD~1 --require-base"
           make check-suppressions SUPPRESSION_BASE="--base-ref HEAD~1 --require-base"

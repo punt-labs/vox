@@ -39,9 +39,20 @@ class Ratchet:
         return self
 
     def check(
-        self, scorer: Scorer, *, base_ref: str | None, require_base: bool
+        self,
+        scorer: Scorer,
+        *,
+        base_ref: str | None,
+        require_base: bool,
+        allow_no_improvement: bool = False,
     ) -> Outcome:
-        """Compare touched files at HEAD against the base baseline."""
+        """Compare touched files at HEAD against the base baseline.
+
+        ``allow_no_improvement`` waives only the must-improve gate — a change
+        that pays down no debt still passes — while regressions, baseline
+        lock-in, and completeness stay enforced. It exists for mechanical
+        version-bump PRs whose only scored change improves no metric.
+        """
         base = self._git.resolve_base(base_ref)
         if base is None:
             return self._no_base(require_base=require_base)
@@ -72,7 +83,12 @@ class Ratchet:
             touched, current, base_baseline, diff.renames, waivable
         )
         lock_fail, missing = self._integrity(touched, current)
-        return self._verdict(Review(reviews), lock_fail, missing)
+        return self._verdict(
+            Review(reviews),
+            lock_fail,
+            missing,
+            allow_no_improvement=allow_no_improvement,
+        )
 
     def _no_base(self, *, require_base: bool) -> Outcome:
         """Decide the verdict when no comparison base can be resolved.
@@ -201,7 +217,12 @@ class Ratchet:
         )
 
     def _verdict(
-        self, review: Review, lock_fail: list[str], missing: list[str]
+        self,
+        review: Review,
+        lock_fail: list[str],
+        missing: list[str],
+        *,
+        allow_no_improvement: bool,
     ) -> Outcome:
         lines = self._render_rows(review)
         failed = False
@@ -221,12 +242,15 @@ class Ratchet:
             lines.append("FAIL: regression detected")
             lines.extend(f"  {path}: {metric}" for path, metric in review.regressions)
             failed = True
-        if not review.improvement_satisfied:
+        if not allow_no_improvement and not review.improvement_satisfied:
             lines.append("FAIL: no metric improved on any touched file")
             failed = True
         if failed:
             return Outcome(1, tuple(lines))
-        lines.append("PASS: at least one metric improved, no regressions")
+        if allow_no_improvement and not review.improvement_satisfied:
+            lines.append("PASS: no regressions (must-improve gate waived)")
+        else:
+            lines.append("PASS: at least one metric improved, no regressions")
         return Outcome(0, tuple(lines))
 
     @staticmethod
