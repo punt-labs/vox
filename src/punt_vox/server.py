@@ -169,6 +169,16 @@ class SessionConfig:
         if tags is not None:
             self._vibe_tags = tags
 
+    def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
+        """Return *spec* with unset voice/provider/model/vibe_tags from session."""
+        return replace(
+            spec,
+            voice=spec.voice or self._voice,
+            provider=spec.provider or self._provider,
+            model=spec.model or self._model,
+            vibe_tags=spec.vibe_tags or self._vibe_tags,
+        )
+
     def change_vibe(self, change: VibeChange) -> dict[str, str]:
         """Apply an authoritative vibe change; return the fields to persist.
 
@@ -403,32 +413,35 @@ def unmute(
     # ephemeral is accepted for callers but voxd cleans up internally today.
     _ = ephemeral
 
-    # Update in-memory state for persistent fields.
-    if provider is not None:
-        _session.provider = provider
-    if model is not None:
-        _session.model = model
-    if vibe_tags is not None:
-        _session.set_vibe(tags=vibe_tags)
+    # Persist explicit overrides; a None argument leaves the session untouched.
+    _session.provider = provider if provider is not None else _session.provider
+    _session.model = model if model is not None else _session.model
+    _session.set_vibe(tags=vibe_tags)
 
     # Normalize input: text -> single segment.
     if segments is None:
         if text is None:
-            updates = {
-                key: value
-                for key, value in (
-                    ("provider", provider),
-                    ("model", model),
-                    ("vibe_tags", vibe_tags),
-                )
-                if value is not None
-            }
+            given = {"provider": provider, "model": model, "vibe_tags": vibe_tags}
+            updates = {key: val for key, val in given.items() if val is not None}
             if updates:
                 return json.dumps({"status": "config updated", **updates})
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    effective_provider = provider or _session.provider
+    defaults = _session.fill_defaults(
+        SynthesisSpec(
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+            vibe_tags=vibe_tags,
+        )
+    )
     client = _voxd_client()
 
     def _synth_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
@@ -437,7 +450,7 @@ def unmute(
             "id": result.request_id,
             "text": seg_text,
             "voice": seg_spec.voice,
-            "provider": effective_provider,
+            "provider": seg_spec.provider,
             "cached": result.cached,
         }
         if result.deduped:
@@ -448,18 +461,6 @@ def unmute(
                 entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
         return entry
 
-    defaults = SynthesisSpec(
-        voice=voice or _session.voice,
-        language=language,
-        rate=rate,
-        provider=effective_provider,
-        model=model or _session.model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        vibe_tags=vibe_tags or _session.vibe_tags,
-    )
     return _process_segments(
         segments, defaults, handler=_synth_handler, error_label="Synthesis"
     )
