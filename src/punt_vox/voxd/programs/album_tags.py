@@ -14,16 +14,20 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Container, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import ClassVar, Final, Self, final
 
 from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.hex_token import HexToken
+from punt_vox.voxd.programs.vibe_label import VibeLabel
 
 __all__ = ["AlbumTags", "PromptFingerprint", "TagQuery"]
 
 _UNSAFE: Final = re.compile(r"[^a-z0-9]+")
 _FINGERPRINT_CHARS: Final = 16  # 64-bit truncation of the sha256 hex digest
+_NAME_SEGMENT_CHARS: Final = 32  # per-segment cap keeping an auto-name a short handle
+_SEGMENT_FLOOR: Final = "album"  # leading token when a slug segment is otherwise empty
 
 
 @final
@@ -40,6 +44,58 @@ class AlbumTags:
     style: str
     vibe: str
     name: str | None = None  # None means an unnamed, tag-addressed album
+
+    def __post_init__(self) -> None:
+        """Canonicalize the tags before storing them: bound the vibe, gate the name.
+
+        The auto-vibe mood is a whole session narrative; the persisted vibe tag
+        (and any ID3 frame derived from it) must be a short label, not prose.
+        ``VibeLabel`` is idempotent, so a re-stored value stays stable.
+
+        ``name`` is the enforced-unique handle :meth:`Catalog.by_name` keys on, so
+        a blank one is unreachable and would let two albums share the empty
+        handle. Trimming with blank-as-``None`` guarantees the invariant at
+        construction for every caller (service, ``from_wire``, or any future one):
+        ``name`` is always a non-empty trimmed handle or ``None``, never ``""``.
+        """
+        object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
+        if self.name is not None:
+            object.__setattr__(self, "name", self.canonical(self.name) or None)
+
+    def with_auto_name(
+        self, created: datetime, taken: Container[str] = frozenset()
+    ) -> AlbumTags:
+        """Return a copy carrying a guaranteed unique name, minting one when unnamed.
+
+        A curated ``name`` is kept verbatim; an unnamed pool gets a slug-safe
+        ``{vibe}-{style}-{YYYYMMDD-HHMM}`` handle so a generated pool is never
+        persisted nameless. ``created`` is passed in (the store's clock), so the
+        name is deterministic under a fixed clock. An empty or style-equal vibe
+        segment collapses out, yielding the bare ``{style}-{stamp}`` form; the
+        style segment floors to ``_SEGMENT_FLOOR`` so the name always leads with
+        an alpha token. The base name is disambiguated against ``taken`` via
+        :meth:`mint_unique_name` -- two same-``(style, vibe)`` pools minted in the
+        same clock-minute get distinct names, preserving the unique-``name``
+        invariant :meth:`Catalog.by_name` relies on.
+        """
+        if self.name is not None:
+            return self
+        segments = self._dedupe(
+            VibeLabel(self.vibe).name_segment(_NAME_SEGMENT_CHARS),
+            VibeLabel(self.style).name_segment(_NAME_SEGMENT_CHARS) or _SEGMENT_FLOOR,
+        )
+        stamp = created.strftime("%Y%m%d-%H%M")
+        base = "-".join((*segments, stamp))
+        return replace(self, name=self.mint_unique_name(base, taken))
+
+    @staticmethod
+    def _dedupe(*segments: str) -> tuple[str, ...]:
+        """Return the non-empty segments with adjacent duplicates collapsed."""
+        kept: list[str] = []
+        for segment in segments:
+            if segment and (not kept or kept[-1] != segment):
+                kept.append(segment)
+        return tuple(kept)
 
     def slug(self) -> str:
         """Return the filesystem-safe Finder prefix (curated name, else tags)."""
@@ -89,7 +145,7 @@ class AlbumTags:
     def _slugify(text: str) -> str:
         """Return ``text`` as a single filesystem-safe lowercase segment."""
         cleaned = _UNSAFE.sub("-", text.strip().lower()).strip("-")
-        return cleaned or "album"
+        return cleaned or _SEGMENT_FLOOR
 
 
 @final
@@ -106,6 +162,22 @@ class TagQuery:
     style: str | None = None  # None wildcards the style axis
     vibe: str | None = None  # None wildcards the vibe axis
     name: str | None = None  # None wildcards the name axis
+
+    def __post_init__(self) -> None:
+        """Bound a present vibe filter to the same label the write path stores.
+
+        The resume path queries on the raw session mood; the pool stores the
+        *bounded* vibe. Applying the identical ``VibeLabel`` here keeps the two
+        sides in agreement, so a matching mood resumes its pool instead of
+        minting a fresh one every session.
+
+        Direct construction applies *exact-empty* semantics: an empty/punctuation
+        vibe becomes the ``""`` filter (matches only ``""``-vibe pools). For the
+        *wildcard* reading -- empty collapses to ``None`` (matches any vibe) --
+        use :meth:`normalized` (the ``select`` path), not direct construction.
+        """
+        if self.vibe is not None:
+            object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
 
     @classmethod
     def normalized(
@@ -133,10 +205,13 @@ class TagQuery:
 
     def matches(self, tags: AlbumTags) -> bool:
         """Return whether ``tags`` satisfies every present (non-wildcard) axis."""
-        return (
-            (self.style is None or self.style == tags.style)
-            and (self.vibe is None or self.vibe == tags.vibe)
-            and (self.name is None or self.name == tags.name)
+        return all(
+            wanted is None or wanted == actual
+            for wanted, actual in (
+                (self.style, tags.style),
+                (self.vibe, tags.vibe),
+                (self.name, tags.name),
+            )
         )
 
 
