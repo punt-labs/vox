@@ -376,6 +376,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/music_phrases.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.6,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.4,
+    "module_size": 79.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/normalize.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
@@ -761,6 +774,19 @@
     "avg_complexity": 0.0,
     "module_size": 8.0,
     "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/synthesis_batch.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.5,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.75,
+    "module_size": 62.0,
+    "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
