@@ -9,9 +9,9 @@
 # malformed input rather than failing the tool call.
 
 INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name')
+TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
-RESULT=$(echo "$INPUT" | jq -r '
+RESULT=$(printf '%s' "$INPUT" | jq -r '
   def unpack: if type == "string" then (fromjson? // .) else . end;
   if (.tool_response | type) == "array" then
     (.tool_response[0].text // "" | unpack)
@@ -25,7 +25,7 @@ RESULT=$(echo "$INPUT" | jq -r '
 # Falls back to "the voice" when missing or empty.
 extract_voice() {
   local data="$1"
-  VOICE=$(echo "$data" | jq -r '.[0].voice // .voice // empty' 2>/dev/null)
+  VOICE=$(printf '%s' "$data" | jq -r '.[0].voice // .voice // empty' 2>/dev/null)
   [[ -z "$VOICE" ]] && VOICE="the voice"
 }
 
@@ -54,7 +54,7 @@ pick_random() {
 # The music tools author their own concise panel line; the panel shows it
 # verbatim (first line only, to stay within the compact channel).
 message_line() {
-  echo "$1" | jq -r 'if type == "object" and has("message")
+  printf '%s' "$1" | jq -r 'if type == "object" and has("message")
     then (.message | split("\n")[0]) else empty end' 2>/dev/null
 }
 
@@ -84,7 +84,7 @@ emit() {
 STOP_NARRATION="The audio panel has already shown this to the user. This tool call is the complete response — reply with no text, no summary, no narration. Stop."
 
 # Error guard: if the result contains an error field, surface it directly.
-ERROR_MSG=$(echo "$RESULT" | jq -r '.error // empty' 2>/dev/null)
+ERROR_MSG=$(printf '%s' "$RESULT" | jq -r '.error // empty' 2>/dev/null)
 if [[ -n "$ERROR_MSG" ]]; then
   emit "♪ error: ${ERROR_MSG}" "$RESULT"
   exit 0
@@ -95,7 +95,7 @@ fi
 # string (e.g. "Error executing tool music: KeyError: 'style'"), which is bare
 # text — not our {"error":...} contract. Surface it; never let a success branch
 # turn it into a stay-silent directive.
-if [[ -n "$RESULT" ]] && ! echo "$RESULT" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+if [[ -n "$RESULT" ]] && ! printf '%s' "$RESULT" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
   emit "♪ error" "$RESULT"
   exit 0
 fi
@@ -114,7 +114,7 @@ if [[ "$TOOL_NAME" == "unmute" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "record" ]]; then
-  COUNT=$(echo "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
+  COUNT=$(printf '%s' "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
   extract_voice "$RESULT"
   PHRASES=(
     "♪ ${VOICE} recorded ${COUNT} track(s)"
@@ -125,13 +125,13 @@ if [[ "$TOOL_NAME" == "record" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "vibe" ]]; then
-  VIBE_DATA=$(echo "$RESULT" | jq -r '.vibe // empty' 2>/dev/null)
+  VIBE_DATA=$(printf '%s' "$RESULT" | jq -r '.vibe // empty' 2>/dev/null)
   if [[ -n "$VIBE_DATA" ]]; then
-    VIBE_TAGS=$(echo "$VIBE_DATA" | jq -r '.vibe_tags // empty' 2>/dev/null)
+    VIBE_TAGS=$(printf '%s' "$VIBE_DATA" | jq -r '.vibe_tags // empty' 2>/dev/null)
     if [[ -n "$VIBE_TAGS" ]]; then
       MSG="♪ vibe shifted to ${VIBE_TAGS}"
     else
-      MOOD=$(echo "$VIBE_DATA" | jq -r '.vibe // empty' 2>/dev/null)
+      MOOD=$(printf '%s' "$VIBE_DATA" | jq -r '.vibe // empty' 2>/dev/null)
       if [[ -n "$MOOD" ]]; then
         MSG="♪ mood: ${MOOD}"
       else
@@ -146,7 +146,7 @@ if [[ "$TOOL_NAME" == "vibe" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "notify" ]]; then
-  MODE=$(echo "$RESULT" | jq -r '.notify.notify // empty' 2>/dev/null)
+  MODE=$(printf '%s' "$RESULT" | jq -r '.notify.notify // empty' 2>/dev/null)
   case "$MODE" in
     y) MSG="♪ vox enabled" ;;
     n) MSG="♪ vox disabled" ;;
@@ -158,8 +158,8 @@ if [[ "$TOOL_NAME" == "notify" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "speak" ]]; then
-  MODE=$(echo "$RESULT" | jq -r '.speak // empty' 2>/dev/null)
-  VOICE=$(echo "$RESULT" | jq -r '.voice // empty' 2>/dev/null)
+  MODE=$(printf '%s' "$RESULT" | jq -r '.speak // empty' 2>/dev/null)
+  VOICE=$(printf '%s' "$RESULT" | jq -r '.voice // empty' 2>/dev/null)
   case "$MODE" in
     y)
       if [[ -n "$VOICE" ]]; then
@@ -176,14 +176,14 @@ if [[ "$TOOL_NAME" == "speak" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "status" ]]; then
-  VOICE=$(echo "$RESULT" | jq -r '.voice // "unknown"' 2>/dev/null)
-  NOTIFY=$(echo "$RESULT" | jq -r '.notify // "?"' 2>/dev/null)
+  VOICE=$(printf '%s' "$RESULT" | jq -r '.voice // "unknown"' 2>/dev/null)
+  NOTIFY=$(printf '%s' "$RESULT" | jq -r '.notify // "?"' 2>/dev/null)
   emit "♪ ${VOICE} · notify=${NOTIFY}" "$RESULT"
   exit 0
 fi
 
 if [[ "$TOOL_NAME" == "who" ]]; then
-  COUNT=$(echo "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
+  COUNT=$(printf '%s' "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
   PHRASES=(
     "♪ ${COUNT} agents standing by"
     "♪ here's who's around"
@@ -214,7 +214,7 @@ if [[ "$TOOL_NAME" == "music_next" ]]; then
 fi
 
 if [[ "$TOOL_NAME" == "music_list" ]]; then
-  COUNT=$(echo "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
+  COUNT=$(printf '%s' "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
   PHRASES=("♪ ${COUNT} album(s) in the crate" "♪ your crate: ${COUNT} album(s)")
   emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
   exit 0
@@ -223,7 +223,7 @@ fi
 # Generic message fallback: if the result has a "message" field, use it.
 # Safety net for any tool that returns human-readable text but doesn't
 # have a dedicated formatter above.
-MSG_FIELD=$(echo "$RESULT" | jq -r '.message // empty' 2>/dev/null)
+MSG_FIELD=$(printf '%s' "$RESULT" | jq -r '.message // empty' 2>/dev/null)
 if [[ -n "$MSG_FIELD" ]]; then
   emit "$MSG_FIELD" "$RESULT"
   exit 0
