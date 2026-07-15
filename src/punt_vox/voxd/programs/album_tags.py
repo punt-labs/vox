@@ -14,16 +14,19 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Container, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import ClassVar, Final, Self, final
 
 from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs.hex_token import HexToken
+from punt_vox.voxd.programs.vibe_label import VibeLabel
 
 __all__ = ["AlbumTags", "PromptFingerprint", "TagQuery"]
 
 _UNSAFE: Final = re.compile(r"[^a-z0-9]+")
 _FINGERPRINT_CHARS: Final = 16  # 64-bit truncation of the sha256 hex digest
+_NAME_SEGMENT_CHARS: Final = 32  # per-segment cap keeping an auto-name a short handle
 
 
 @final
@@ -40,6 +43,43 @@ class AlbumTags:
     style: str
     vibe: str
     name: str | None = None  # None means an unnamed, tag-addressed album
+
+    def __post_init__(self) -> None:
+        """Bound the raw session mood to a short, tag-safe vibe before storing it.
+
+        The auto-vibe mood is a whole session narrative; the persisted tag (and
+        any ID3 frame derived from it) must be a short label, not prose. This is
+        the one write-path seam that enforces that -- ``VibeLabel`` is idempotent,
+        so a re-stored value stays stable.
+        """
+        object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
+
+    def with_auto_name(self, created: datetime) -> AlbumTags:
+        """Return a copy carrying a guaranteed name, minting one when unnamed.
+
+        A curated ``name`` is kept verbatim; an unnamed pool gets a slug-safe
+        ``{vibe}-{style}-{YYYYMMDD-HHMM}`` handle so a generated pool is never
+        persisted nameless. ``created`` is passed in (the store's clock), so the
+        name is deterministic under a fixed clock. An empty or style-equal vibe
+        segment collapses out, yielding the bare ``{style}-{stamp}`` form.
+        """
+        if self.name is not None:
+            return self
+        segments = self._dedupe(
+            VibeLabel(self.vibe).name_segment(_NAME_SEGMENT_CHARS),
+            VibeLabel(self.style).name_segment(_NAME_SEGMENT_CHARS),
+        )
+        stamp = created.strftime("%Y%m%d-%H%M")
+        return replace(self, name="-".join((*segments, stamp)))
+
+    @staticmethod
+    def _dedupe(*segments: str) -> tuple[str, ...]:
+        """Return the non-empty segments with adjacent duplicates collapsed."""
+        kept: list[str] = []
+        for segment in segments:
+            if segment and (not kept or kept[-1] != segment):
+                kept.append(segment)
+        return tuple(kept)
 
     def slug(self) -> str:
         """Return the filesystem-safe Finder prefix (curated name, else tags)."""
@@ -107,6 +147,17 @@ class TagQuery:
     vibe: str | None = None  # None wildcards the vibe axis
     name: str | None = None  # None wildcards the name axis
 
+    def __post_init__(self) -> None:
+        """Bound a present vibe filter to the same label the write path stores.
+
+        The resume path queries on the raw session mood; the pool stores the
+        *bounded* vibe. Applying the identical ``VibeLabel`` here keeps the two
+        sides in agreement, so a matching mood resumes its pool instead of
+        minting a fresh one every session.
+        """
+        if self.vibe is not None:
+            object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
+
     @classmethod
     def normalized(
         cls, *, style: str | None, vibe: str | None, name: str | None
@@ -133,10 +184,13 @@ class TagQuery:
 
     def matches(self, tags: AlbumTags) -> bool:
         """Return whether ``tags`` satisfies every present (non-wildcard) axis."""
-        return (
-            (self.style is None or self.style == tags.style)
-            and (self.vibe is None or self.vibe == tags.vibe)
-            and (self.name is None or self.name == tags.name)
+        return all(
+            wanted is None or wanted == actual
+            for wanted, actual in (
+                (self.style, tags.style),
+                (self.vibe, tags.vibe),
+                (self.name, tags.name),
+            )
         )
 
 

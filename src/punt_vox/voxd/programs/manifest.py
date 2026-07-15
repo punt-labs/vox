@@ -279,13 +279,13 @@ class ManifestDraft:
         """Return the manifest for this draft stamped with ``created``.
 
         The store is the sole clock owner: it calls this with
-        ``datetime.now(UTC)`` at materialisation, so the draft stays a pure value
-        object no caller can use to forge a creation time.
+        ``datetime.now(UTC)`` at materialisation, which also stamps an unnamed
+        pool's auto-name here so a generated pool is never persisted nameless.
         """
         return AlbumManifest(
             album_id=self.album_id,
             fmt=self.fmt,
-            tags=self.tags,
+            tags=self.tags.with_auto_name(created),
             created=created,
             fingerprint=self.fingerprint,
             parts=self.parts,
