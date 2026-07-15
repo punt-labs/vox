@@ -15,6 +15,14 @@ from _program_fakes import FakeProgramGateway
 from punt_vox.client import SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
+from punt_vox.music_phrases import (
+    GENERATING_NO_STYLE,
+    GENERATING_WITH_STYLE,
+    REPLAY_RADIO,
+    REPLAY_WITH_NAME,
+    SKIP,
+    STOPPED,
+)
 from punt_vox.resolve import (
     apply_vibe,
     split_leading_expressive_tags,
@@ -1205,10 +1213,33 @@ class TestMusicTool:
         result = json.loads(music(mode="on", style="techno"))
 
         assert result["applied"] is True
-        assert "techno" in result["message"] and "focused" in result["message"]
+        # The panel line is a DJ phrase with the style interpolated -- and, per
+        # vox-5aom, never the raw session mood.
+        expected = {f"♪ {p.format(style='techno')}" for p in GENERATING_WITH_STYLE}
+        assert result["message"] in expected
+        assert "focused" not in result["message"]
         assert fake.verbs() == ["start"]
         request = fake.calls[0].request
         assert request is not None and request.style == "techno"
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_style_is_no_tag_and_no_style_pool(
+        self, blank: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blank style reaches the daemon as None and the panel as no-style.
+
+        The pool pick and the forwarded tag must agree: a blank/whitespace style
+        is canonicalized to None before both, so the daemon never receives an
+        explicit "" while the panel shows the no-style phrase.
+        """
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music(mode="on", style=blank))
+
+        request = fake.calls[0].request
+        assert request is not None and request.style is None
+        assert result["message"] in {f"♪ {p}" for p in GENERATING_NO_STYLE}
 
     def test_on_forwards_agent_prompts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
@@ -1239,6 +1270,7 @@ class TestMusicTool:
         result = json.loads(music(mode="off"))
 
         assert result["applied"] is True
+        assert result["message"] in {f"♪ {p}" for p in STOPPED}
         assert fake.verbs() == ["stop"]
 
     def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1293,9 +1325,39 @@ class TestMusicPlayTool:
         result = json.loads(music_play(style="trance", vibe="calm"))
 
         assert result["applied"] is True
+        # No name -> the radio (crate) pool, never a named-replay line.
+        assert result["message"] in {f"♪ {p}" for p in REPLAY_RADIO}
         assert fake.calls[0].verb == "select"
         assert fake.calls[0].selection is not None
         assert fake.calls[0].selection.style == "trance"
+
+    def test_play_by_name_uses_named_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A named replay draws from the named pool with the name interpolated."""
+        _install_fake(monkeypatch, FakeProgramGateway())
+
+        result = json.loads(music_play(name="deep cuts"))
+
+        expected = {f"♪ {p.format(name='deep cuts')}" for p in REPLAY_WITH_NAME}
+        assert result["message"] in expected
+
+    def test_blank_name_is_radio_not_named_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A whitespace name reaches the daemon as None and the panel as radio.
+
+        The canonicalized name is None before both the pool pick and the query,
+        so a blank name never becomes an "" filter or a named-replay line.
+        """
+        fake = FakeProgramGateway()
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music_play(name="  "))
+
+        assert fake.calls[0].selection is not None
+        assert fake.calls[0].selection.name is None
+        assert result["message"] in {f"♪ {p}" for p in REPLAY_RADIO}
 
     def test_play_forwards_the_album_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
@@ -1365,6 +1427,7 @@ class TestMusicNextTool:
         result = json.loads(music_next())
 
         assert result["applied"] is True
+        assert result["message"] in {f"♪ {p}" for p in SKIP}
         assert fake.verbs() == ["advance"]
 
     def test_next_rejected_surfaces_not_applied(
@@ -1635,13 +1698,13 @@ class TestRefreshIntegrationWithTools:
 
         assert result["notify"] == "c"
 
-    def test_music_display_uses_fresh_vibe(
+    def test_music_panel_never_carries_the_session_mood(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """music reads fresh config for its display line, not stale in-memory.
+        """The DJ panel line uses style/name only, never the raw mood (vox-5aom).
 
-        The session vibe personalises the generating *message* only -- it is
-        never forwarded as a Program transition input.
+        The session vibe is display/record state; it neither surfaces in the
+        panel line nor travels into a Program transition.
         """
         import punt_vox.server as srv
 
@@ -1656,7 +1719,7 @@ class TestRefreshIntegrationWithTools:
 
         message = json.loads(music(mode="on"))["message"]
 
-        # The cleared vibe means the generic line, not "for your old-mood mood".
+        # The mood never reaches the panel, cleared or not.
         assert "old-mood" not in message
         # And no vibe travelled into the Program start request.
         request = fake.calls[0].request

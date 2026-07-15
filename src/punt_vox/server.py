@@ -12,7 +12,6 @@ import json
 import logging
 import random
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -25,7 +24,9 @@ from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
+from punt_vox.music_phrases import MusicMarquee
 from punt_vox.program_gateway import ProgramGateway
+from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.prompts import PromptSet
@@ -169,6 +170,17 @@ class SessionConfig:
         if tags is not None:
             self._vibe_tags = tags
 
+    @staticmethod
+    def canonical_tag(value: str | None) -> str | None:
+        """Return a trimmed tag, or ``None`` when it is absent or blank.
+
+        The one boundary normalizer the music tools apply to a style/name/vibe
+        tag before it drives both the panel phrase and the daemon request, so a
+        whitespace-only tag is treated as absent by both -- never as an explicit
+        ``""`` the daemon stores while the panel reads it as no tag.
+        """
+        return (value or "").strip() or None
+
     def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
         """Return *spec* with unset voice/provider/model/vibe_tags from session."""
         return replace(
@@ -194,22 +206,6 @@ class SessionConfig:
         if "vibe_mode" in updates:
             self._vibe_mode = updates["vibe_mode"]
         return updates
-
-    def generating_message(self, style: str | None) -> str:
-        """Return the music-on success line (the caller adds the ♪ marker).
-
-        Reads the session vibe (``self._vibe``) only to *personalise the display*
-        -- it is never fed back as an input to a Program transition.
-        """
-        prefix = "Music on — generating"
-        vibe = self._vibe
-        if style and vibe:
-            return f"{prefix} a {style} track for your {vibe} mood..."
-        if style:
-            return f"{prefix} a {style} track..."
-        if vibe:
-            return f"{prefix} a track for your {vibe} mood..."
-        return f"{prefix} ambient music..."
 
     @classmethod
     def from_config(cls, config_dir: Path | None) -> SessionConfig:
@@ -267,6 +263,10 @@ class SessionConfig:
 # Module-level singleton; initialized in run_server().
 _session: SessionConfig = SessionConfig()
 
+# Authors the DJ-booth panel line for each music action. A module-level value so
+# it adds no procedural surface; tests replace it with a deterministic chooser.
+_marquee: MusicMarquee = MusicMarquee()
+
 
 # ---------------------------------------------------------------------------
 # Config discovery and seeding
@@ -307,42 +307,6 @@ _program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 def _error(message: str) -> str:
     """Return a JSON error string."""
     return json.dumps({"error": message})
-
-
-def _process_segments(
-    segments: list[dict[str, str]],
-    defaults: SynthesisSpec,
-    *,
-    handler: Callable[[str, SynthesisSpec], dict[str, object]],
-    error_label: str,
-) -> str:
-    """Synthesize each segment against *defaults* and delegate to *handler*.
-
-    *defaults* bundles the call-level synthesis parameters; each segment may
-    override ``voice``, ``language``, and ``vibe_tags``. Returns a JSON string:
-    a list of result dicts, or an error dict. The *handler* receives
-    (seg_text, seg_spec) and returns one result dict.
-    """
-    results: list[dict[str, object]] = []
-    try:
-        for seg in segments:
-            seg_text = seg.get("text", "")
-            if not seg_text:
-                continue
-            seg_spec = replace(
-                defaults,
-                voice=seg.get("voice") or defaults.voice,
-                language=seg.get("language") or defaults.language,
-                vibe_tags=seg.get("vibe_tags") or defaults.vibe_tags,
-            )
-            results.append(handler(seg_text, seg_spec))
-    except VoxdConnectionError as exc:
-        return _error(str(exc))
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.exception("%s failed", error_label)
-        return _error(str(exc))
-
-    return json.dumps(results if results else [])
 
 
 # ---------------------------------------------------------------------------
@@ -461,8 +425,8 @@ def unmute(
                 entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
         return entry
 
-    return _process_segments(
-        segments, defaults, handler=_synth_handler, error_label="Synthesis"
+    return SegmentBatch(segments, defaults).render(
+        handler=_synth_handler, error_label="Synthesis"
     )
 
 
@@ -565,8 +529,8 @@ def record(
         speaker_boost=speaker_boost,
         vibe_tags=_session.vibe_tags,
     )
-    return _process_segments(
-        segments, defaults, handler=_record_handler, error_label="Record"
+    return SegmentBatch(segments, defaults).render(
+        handler=_record_handler, error_label="Record"
     )
 
 
@@ -642,6 +606,10 @@ def music(
     _session.refresh_from_config()
     if mode not in ("on", "off"):
         return _error(f"Invalid mode '{mode}'. Use on/off.")
+    # Canonicalize tags so the panel phrase and the daemon request agree on
+    # presence: a blank style/name is absent (None), never an explicit "".
+    style = SessionConfig.canonical_tag(style)
+    name = SessionConfig.canonical_tag(name)
     try:
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
@@ -650,10 +618,10 @@ def music(
                     style=style, vibe=_session.vibe, name=name, prompts=prompts
                 )
             )
-            message = f"\u266a {outcome.display(_session.generating_message(style))}"
+            message = f"\u266a {outcome.display(_marquee.generating(style))}"
         else:
             outcome = _program_tools.stop()
-            message = f"\u266a {outcome.display('Music off.')}"
+            message = f"\u266a {outcome.display(_marquee.stopped())}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
@@ -679,6 +647,11 @@ def music_play(
         JSON string with a ``message`` line and the ``applied`` result.
     """
     _session.refresh_from_config()
+    # Canonicalize tags so the panel phrase and the daemon query agree: a blank
+    # tag is a wildcard (None), never an "" filter. album_id is an id, not a tag.
+    style = SessionConfig.canonical_tag(style)
+    vibe = SessionConfig.canonical_tag(vibe)
+    name = SessionConfig.canonical_tag(name)
     try:
         outcome = _program_tools.select(
             SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
@@ -687,7 +660,7 @@ def music_play(
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    message = f"\u266a {outcome.display('Playing selection.')}"
+    message = f"\u266a {outcome.display(_marquee.replay(name))}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 
@@ -736,7 +709,7 @@ def music_next() -> str:
         outcome = _program_tools.advance()
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    message = f"♪ {outcome.display('Skipping — generating next track...')}"
+    message = f"♪ {outcome.display(_marquee.skip())}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
 
