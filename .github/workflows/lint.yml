@@ -69,9 +69,15 @@ jobs:
       # OO ratchet on main after a merge: HEAD~1 is the squash's merge-base, so
       # the ratchet re-runs on merged reality — the tripwire that catches a red
       # main from a bad squash or a direct push (S1 push:[main] + §5 runbook).
+      # This step is REGRESSION-ONLY: must-improve is already enforced on the PR,
+      # so re-requiring it here would turn main red after every metric-neutral
+      # squash — most visibly a release commit that changes only __version__.
+      # --allow-no-improvement waives only the must-improve gate; regressions,
+      # baseline lock-in, and completeness stay enforced. check-coupling and
+      # check-suppressions are regression-only by construction.
       - name: OO ratchet (main — post-merge tripwire)
         if: github.event_name == 'push'
         run: |
-          make check-oo OO_BASE="--base-ref HEAD~1 --require-base"
+          make check-oo OO_BASE="--base-ref HEAD~1 --require-base --allow-no-improvement"
           make check-coupling COUPLING_BASE="--base-ref HEAD~1 --require-base"
           make check-suppressions SUPPRESSION_BASE="--base-ref HEAD~1 --require-base"
