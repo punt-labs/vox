@@ -276,14 +276,14 @@ class ProgramService:
         self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
     ) -> Album:
         """Create a fresh album (auto-suffixing a colliding name), register it."""
-        final_name = (
-            None
-            if name is None
-            else AlbumTags.mint_unique_name(name, self._catalog.taken_names())
-        )
+        taken = self._catalog.taken_names()
+        final_name = None if name is None else AlbumTags.mint_unique_name(name, taken)
         tags = AlbumTags(style=style, vibe=vibe, name=final_name)
         draft = ManifestDraft(
-            album_id=self._catalog.mint_id(), tags=tags, fingerprint=fingerprint
+            album_id=self._catalog.mint_id(),
+            tags=tags,
+            fingerprint=fingerprint,
+            taken_names=taken,
         )
         store = self._store.create(draft)
         album = Album(store.manifest(), draft.locator, self._store)

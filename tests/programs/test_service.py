@@ -101,6 +101,22 @@ class TestResumeVsMint:
         service.shutdown()
         assert len(service.catalog_albums()) == 2
 
+    def test_two_unnamed_mints_get_distinct_reachable_names(
+        self, tmp_path: Path
+    ) -> None:
+        # Same (style, vibe), different prompt-sets (a fingerprint miss) mint two
+        # pools in the same clock-minute. Their auto-names must differ, or by_name
+        # ("0 or 1") would strand the second pool as unreachable.
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_TWO)
+        service.shutdown()
+        albums = service.catalog_albums()
+        by_name = {a.manifest.tags.name: a for a in albums}
+        assert len(albums) == 2
+        assert None not in by_name
+        assert len(by_name) == 2  # distinct names -> both by_name-reachable
+
     def test_named_partial_foreign_prompts_mints_fresh(self, tmp_path: Path) -> None:
         # A partly-filled named album must never have its remaining tracks
         # generated from a foreign prompt set -- that blends two prompt sets into
