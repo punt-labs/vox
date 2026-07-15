@@ -193,6 +193,14 @@ class TestAutoName:
         name = _stamped_tags_name(style="trance", vibe="trance", name=None)
         assert name == "trance-20260715-0356"
 
+    def test_all_punctuation_style_still_leads_with_an_alpha_token(self) -> None:
+        # A style that slugs to empty must floor to a leading alpha token, not a
+        # bare timestamp, so the name keeps the documented vibe-style-stamp shape.
+        name = _stamped_tags_name(style="???", vibe="", name=None)
+        assert name is not None
+        assert _NAME_PATTERN.match(name)
+        assert name == "album-20260715-0356"
+
     def test_curated_name_is_preserved(self) -> None:
         name = _stamped_tags_name(style="trance", vibe="calm", name="late-night-flow")
         assert name == "late-night-flow"

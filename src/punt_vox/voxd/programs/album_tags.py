@@ -27,6 +27,7 @@ __all__ = ["AlbumTags", "PromptFingerprint", "TagQuery"]
 _UNSAFE: Final = re.compile(r"[^a-z0-9]+")
 _FINGERPRINT_CHARS: Final = 16  # 64-bit truncation of the sha256 hex digest
 _NAME_SEGMENT_CHARS: Final = 32  # per-segment cap keeping an auto-name a short handle
+_SEGMENT_FLOOR: Final = "album"  # leading token when a slug segment is otherwise empty
 
 
 @final
@@ -54,23 +55,31 @@ class AlbumTags:
         """
         object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)
 
-    def with_auto_name(self, created: datetime) -> AlbumTags:
-        """Return a copy carrying a guaranteed name, minting one when unnamed.
+    def with_auto_name(
+        self, created: datetime, taken: Container[str] = frozenset()
+    ) -> AlbumTags:
+        """Return a copy carrying a guaranteed unique name, minting one when unnamed.
 
         A curated ``name`` is kept verbatim; an unnamed pool gets a slug-safe
         ``{vibe}-{style}-{YYYYMMDD-HHMM}`` handle so a generated pool is never
         persisted nameless. ``created`` is passed in (the store's clock), so the
         name is deterministic under a fixed clock. An empty or style-equal vibe
-        segment collapses out, yielding the bare ``{style}-{stamp}`` form.
+        segment collapses out, yielding the bare ``{style}-{stamp}`` form; the
+        style segment floors to ``_SEGMENT_FLOOR`` so the name always leads with
+        an alpha token. The base name is disambiguated against ``taken`` via
+        :meth:`mint_unique_name` -- two same-``(style, vibe)`` pools minted in the
+        same clock-minute get distinct names, preserving the unique-``name``
+        invariant :meth:`Catalog.by_name` relies on.
         """
         if self.name is not None:
             return self
         segments = self._dedupe(
             VibeLabel(self.vibe).name_segment(_NAME_SEGMENT_CHARS),
-            VibeLabel(self.style).name_segment(_NAME_SEGMENT_CHARS),
+            VibeLabel(self.style).name_segment(_NAME_SEGMENT_CHARS) or _SEGMENT_FLOOR,
         )
         stamp = created.strftime("%Y%m%d-%H%M")
-        return replace(self, name="-".join((*segments, stamp)))
+        base = "-".join((*segments, stamp))
+        return replace(self, name=self.mint_unique_name(base, taken))
 
     @staticmethod
     def _dedupe(*segments: str) -> tuple[str, ...]:
@@ -129,7 +138,7 @@ class AlbumTags:
     def _slugify(text: str) -> str:
         """Return ``text`` as a single filesystem-safe lowercase segment."""
         cleaned = _UNSAFE.sub("-", text.strip().lower()).strip("-")
-        return cleaned or "album"
+        return cleaned or _SEGMENT_FLOOR
 
 
 @final
@@ -154,6 +163,11 @@ class TagQuery:
         *bounded* vibe. Applying the identical ``VibeLabel`` here keeps the two
         sides in agreement, so a matching mood resumes its pool instead of
         minting a fresh one every session.
+
+        Direct construction applies *exact-empty* semantics: an empty/punctuation
+        vibe becomes the ``""`` filter (matches only ``""``-vibe pools). For the
+        *wildcard* reading -- empty collapses to ``None`` (matches any vibe) --
+        use :meth:`normalized` (the ``select`` path), not direct construction.
         """
         if self.vibe is not None:
             object.__setattr__(self, "vibe", VibeLabel(self.vibe).value)

@@ -269,6 +269,9 @@ class ManifestDraft:
     fingerprint: PromptFingerprint
     fmt: Format = Format.PLAYLIST
     parts: tuple[PartEntry, ...] = field(default_factory=tuple)
+    # Names already in use when this draft is minted -- the auto-name is
+    # disambiguated against them so two same-tag pools never collide by name.
+    taken_names: frozenset[str] = frozenset()
 
     @property
     def locator(self) -> str:
@@ -280,12 +283,13 @@ class ManifestDraft:
 
         The store is the sole clock owner: it calls this with
         ``datetime.now(UTC)`` at materialisation, which also stamps an unnamed
-        pool's auto-name here so a generated pool is never persisted nameless.
+        pool's auto-name -- disambiguated against ``taken_names`` -- here so a
+        generated pool is never persisted nameless or with a colliding name.
         """
         return AlbumManifest(
             album_id=self.album_id,
             fmt=self.fmt,
-            tags=self.tags.with_auto_name(created),
+            tags=self.tags.with_auto_name(created, self.taken_names),
             created=created,
             fingerprint=self.fingerprint,
             parts=self.parts,
