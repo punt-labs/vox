@@ -49,6 +49,13 @@ style jazz` changes it.
 
 ## Implementation
 
+> **Control actions produce NO agent text.** `on`, `off`, `next`, and `play`
+> are fire-and-forget: the `suppress-output.sh` hook and the audio panel are the
+> whole response. After calling their tool, stop -- write no summary, no
+> confirmation, no narration. Only the query actions (`list` and the no-arg
+> status) return data for you to report. The hook enforces this; this line is
+> the reminder behind it.
+
 Parse `$ARGUMENTS`:
 
 ### `on` (with optional `--name ...` and `style ...`)
@@ -59,23 +66,20 @@ provided, pass as `name`.
 
 **Author the prompts.** Before calling the tool, write `base_prompt` plus
 exactly 12 `variations` for the requested style (see "Authoring prompts" below)
-and pass them. Re-author them whenever the style or vibe changes. No text output
-after changes -- the panel confirms.
+and pass them. Re-author them whenever the style or vibe changes.
 
 ### `off`
 
-Call the `music` MCP tool with `mode="off"`. No text output -- the
-panel confirms.
+Call the `music` MCP tool with `mode="off"`.
 
 ### `next`
 
 Call the `music_next` MCP tool. Triggers regeneration while the current
-track keeps playing (gapless). No text output -- the panel confirms.
+track keeps playing (gapless).
 
 ### `play <name>`
 
-Call the `music_play` MCP tool with the track name. No text output --
-the panel confirms.
+Call the `music_play` MCP tool with the track name.
 
 ### `list`
 
