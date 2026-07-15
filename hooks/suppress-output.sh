@@ -76,6 +76,16 @@ if [[ -n "$ERROR_MSG" ]]; then
   exit 0
 fi
 
+# Every legitimate success payload is a JSON object (control tools) or array
+# (record/unmute). Anything else non-empty is a FastMCP uncaught-exception error
+# string (e.g. "Error executing tool music: KeyError: 'style'"), which is bare
+# text — not our {"error":...} contract. Surface it; never let a success branch
+# turn it into a stay-silent directive.
+if [[ -n "$RESULT" ]] && ! echo "$RESULT" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+  emit "♪ error" "$RESULT"
+  exit 0
+fi
+
 if [[ "$TOOL_NAME" == "unmute" ]]; then
   extract_voice "$RESULT"
   PRONOUN=$(voice_pronoun "$VOICE")

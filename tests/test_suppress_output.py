@@ -41,9 +41,28 @@ def _run_hook(tool: str, result: object) -> dict[str, str]:
     the parsed ``hookSpecificOutput`` mapping. Raises if the hook exits
     non-zero or emits no output.
     """
+    return _invoke(tool, json.dumps(result))
+
+
+def _run_hook_raw(tool: str, text: str) -> dict[str, str]:
+    """Run the hook with a raw, non-JSON ``text`` as the tool response.
+
+    FastMCP surfaces an uncaught tool exception as a bare content string
+    (e.g. "Error executing tool music: KeyError: 'style'"), not our
+    ``{"error": ...}`` contract. This drives that path.
+    """
+    return _invoke(tool, text)
+
+
+def _invoke(tool: str, text: str) -> dict[str, str]:
+    """Run the hook for ``tool`` with ``text`` as the response content.
+
+    Returns the parsed ``hookSpecificOutput`` mapping. Raises if the hook
+    exits non-zero or emits no output.
+    """
     payload = {
         "tool_name": f"mcp__plugin_vox_mic__{tool}",
-        "tool_response": [{"type": "text", "text": json.dumps(result)}],
+        "tool_response": [{"type": "text", "text": text}],
     }
     proc = subprocess.run(
         ["bash", str(_HOOK)],
@@ -115,3 +134,14 @@ class TestErrorGuardPreserved:
         assert "voxd unreachable" in out["additionalContext"]
         assert _STOP_MARK not in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ error: voxd unreachable"
+
+    def test_uncaught_exception_string_reaches_context(self) -> None:
+        # FastMCP surfaces an uncaught tool exception as a bare, non-JSON
+        # string. It matches neither the {"error":...} contract nor a success
+        # object/array, so without the bare-string guard it would fall through
+        # to a success branch and be overwritten by the stop-directive.
+        msg = "Error executing tool music: KeyError: 'style'"
+        out = _run_hook_raw("music", msg)
+        assert msg in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ error"
