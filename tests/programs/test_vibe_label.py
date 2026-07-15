@@ -57,6 +57,12 @@ class TestValue:
         assert not value.endswith("wor")
         assert value == value.rstrip()
 
+    def test_separatorless_token_is_hard_capped_not_dropped(self) -> None:
+        # A single long word has no boundary to cut on -- bound it, never drop it.
+        value = VibeLabel("x" * 100).value
+        assert len(value) == 48
+        assert value == "x" * 48
+
 
 class TestTruthiness:
     def test_populated_label_is_truthy(self) -> None:
@@ -84,6 +90,17 @@ class TestNameSegment:
         segment = VibeLabel("néon 夜 flow").name_segment(32)
         assert segment.isascii()
         assert all(char.islower() or char.isdigit() or char == "-" for char in segment)
+
+    def test_separatorless_slug_is_hard_capped_not_dropped(self) -> None:
+        # A hyphen-free slug has no boundary to cut on -- bound it, never drop it.
+        segment = VibeLabel("x" * 100).name_segment(16)
+        assert len(segment) == 16
+        assert segment == "x" * 16
+
+    @pytest.mark.parametrize("limit", [0, -5])
+    def test_non_positive_limit_yields_empty_segment(self, limit: int) -> None:
+        # A non-positive cap has no room and must not fall into negative indexing.
+        assert VibeLabel("focused calm").name_segment(limit) == ""
 
 
 class TestValueObject:

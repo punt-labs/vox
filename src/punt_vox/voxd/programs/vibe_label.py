@@ -20,9 +20,10 @@ class VibeLabel:
     seconds of speech, wrong for a persisted pool tag or an ID3 frame. This value
     object is the one seam that bounds it: control characters and tag-hostile
     punctuation collapse to spaces, interior whitespace collapses to one space,
-    and the result is capped to a short label at a word boundary. A mood with no
-    alphanumeric content normalizes to the empty label -- empty is a valid vibe,
-    junk prose is not.
+    and the result is capped to a short label -- at a word boundary when the cap
+    lands near one, otherwise a hard cut so a long single word is bounded, never
+    dropped. A mood with no alphanumeric content normalizes to the empty label --
+    empty is a valid vibe, junk prose is not.
     """
 
     __slots__ = ("_value",)
@@ -42,8 +43,10 @@ class VibeLabel:
         """Return the label as a length-capped slug segment (``""`` when empty).
 
         Lowercases and hyphen-slugs the bounded value, then clips it to ``limit``
-        at a hyphen boundary -- the safe, non-null building block for a pool's
-        auto-name, which must never balloon into a many-word slug.
+        -- at a hyphen boundary when the cap lands near one, otherwise a hard cut
+        so a single long token is bounded, not dropped. The safe, non-null
+        building block for a pool's auto-name, which must never balloon into a
+        many-word slug.
         """
         slug = _NON_SLUG.sub("-", self._value.lower()).strip("-")
         return self._clip(slug, limit, "-")
@@ -80,11 +83,18 @@ class VibeLabel:
 
     @staticmethod
     def _clip(text: str, limit: int, sep: str) -> str:
-        """Return ``text`` capped to ``limit`` chars, cut on the last ``sep``."""
+        """Return ``text`` bounded to ``limit`` chars, cut on a ``sep`` when one fits.
+
+        Prefer the last ``sep`` within the cap; with none, hard-cap at ``limit``
+        so a separator-less token is bounded, never dropped. ``len <= limit`` is
+        the contract; the boundary cut is a nicety. A non-positive ``limit``
+        yields ``""``.
+        """
+        if limit <= 0:  # non-positive cap has no room; guard the negative index below
+            return ""
         if len(text) <= limit:
             return text
-        if text[limit] == sep:  # limit already lands on a boundary
-            return text[:limit]
-        head = text[:limit]
-        cut = head.rfind(sep)
-        return head[:cut] if cut > 0 else head
+        # Search one past the cap so a ``sep`` exactly on ``limit`` keeps the whole
+        # prefix; ``> 0`` rejects a leading ``sep`` and the -1 miss (both hard-cap).
+        boundary = text[: limit + 1].rfind(sep)
+        return text[:boundary] if boundary > 0 else text[:limit]
