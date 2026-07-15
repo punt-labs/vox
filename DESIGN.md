@@ -1980,3 +1980,43 @@ Two prior deterministic mechanisms failed. (1) The output-pattern classifier gre
 | Nudge every prompt | Nags. The cadence counter throttles to every Nth prompt. |
 
 Closes vox-ek1m.
+
+## DES-044: The Music Panel Speaks Like a DJ — Server-Authored, Not Hook-Composed
+
+**Date:** 2026-07-15
+**Status:** SETTLED
+**Topic:** Where the fun in the `♪` music panel line lives
+
+### Decision
+
+The **server authors** the music panel line (`updatedMCPToolOutput`) with DJ-booth personality, drawing a randomized phrase from a curated pool and filling in the real `style`/`name`. The `suppress-output.sh` hook stays a **dumb echo** of the tool's `.message` (first line, ≤ 80 cols). The dead DJ phrase pools in the hook — which keyed off `.status`/`.style`/`.name` fields the music tools never return, so they never fired — are **deleted** (forward integration, no dead code).
+
+Phrase pools (curated here; the implementation lifts them into the phrase registry, `quips.py` or a sibling, as immutable tuples and selects one per call). Each is `♪`-prefixed at emit and kept short so the prefixed line stays ≤ 80 cols:
+
+- **Music on / generating, with `{style}`:** "dropping a {style} beat" · "{style} in the booth" · "cueing up {style}" · "{style} on the decks" · "spinning up some {style}" · "{style} — beat incoming"
+- **Music on / generating, no style:** "beat incoming" · "stepping up to the decks" · "warming up the decks" · "cueing the first track"
+- **Music off / stopped:** "fading out" · "that's a wrap" · "decks off" · "last call" · "killing the lights"
+- **Replay (`music_play`) with `{name}`:** "now spinning: {name}" · "{name} on the decks" · "{name} on repeat" · "pulling {name} from the crate" · "{name} — encore"
+- **Replay, no name (radio):** "back to the crate" · "shuffling the crate" · "radio mode — full crate"
+- **Skip (`music_next`):** "mixing the next one in" · "next track loading" · "cueing the next" · "on to the next"
+
+### Why
+
+vox-lf6b's review discovered the hook's DJ pools were unreachable dead code: `music`/`music_play`/`music_list` return only `{message, applied}` / `{message, programs}` — no `.status`/`.style`/`.name` for the hook to branch on — so the panel silently fell back to a generic "♪ music updated", and vox-lf6b corrected the hook to echo the server's plain `.message`. The fun the operator wanted ("fun is a feature") was never shipping. The tool is the one place that holds the real action + style + name, so it is the correct author of a flavored line; the hook is a display surface, not a content generator. This also keeps the phrase logic in Python — testable (pool membership, injected selection) — instead of in bash.
+
+### Consequences
+
+- The hook's `music`/`music_play`/`music_next`/`music_list` DJ phrase pools and their `.status`/`.style`/`.name`/`.tracks` branching are deleted; the hook echoes `.message` and derives the `music_list` count from `.programs` (already true after vox-lf6b).
+- The panel line loses the informative "generating a trance track for your `<mood>`" wording in favor of DJ flavor; the agent does not need that wording (control tools carry the stop-narration directive in `additionalContext`, per vox-lf6b).
+- Selection is randomized per call; tests assert pool membership and (via an injected chooser) determinism, never a live RNG assertion.
+- No genre-alien constraint applies — these are panel *action* phrases, not ElevenLabs music prompts, so the artist/copyright rule of DES-039-era music generation does not govern them.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Hook composes from structured fields | Requires the tools to return `style`/`name`/`status`, widening the tool contract, and keeps hard-to-test phrase logic in bash. The tool already holds the context. |
+| Keep the plain server `.message` | Ships correctness but not the fun; the operator explicitly wants the DJ personality. |
+| Curate phrases per genre | The panel line is an *action* confirmation, not genre-specific; genre variety belongs in music *generation*, not the panel. |
+
+Closes vox-1jke.
