@@ -196,3 +196,21 @@ class TestAutoName:
     def test_curated_name_is_preserved(self) -> None:
         name = _stamped_tags_name(style="trance", vibe="calm", name="late-night-flow")
         assert name == "late-night-flow"
+
+    def test_auto_name_dedupes_against_taken_names(self) -> None:
+        # Two unnamed pools, same (style, vibe), same clock-minute, different
+        # fingerprint (a resume miss) must NOT collide on the auto-name: by_name
+        # is documented "0 or 1", so a duplicate would strand the second pool.
+        tags = AlbumTags(style="trance", vibe="calm")
+        first = ManifestDraft(
+            album_id=AlbumId("a3f1c9"), tags=tags, fingerprint=_FINGERPRINT
+        ).stamped(_STAMP)
+        assert first.tags.name == "calm-trance-20260715-0356"
+        second = ManifestDraft(
+            album_id=AlbumId("b7e204"),
+            tags=tags,
+            fingerprint=PromptFingerprint("1122334455"),
+            taken_names=frozenset({first.tags.name}),
+        ).stamped(_STAMP)
+        assert second.tags.name != first.tags.name
+        assert second.tags.name == "calm-trance-20260715-03561"
