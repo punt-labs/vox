@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Control-tool actions produce no agent narration — the audio panel is the whole response (vox-lf6b)**: the fire-and-forget vox control tools (`music` on/off/next/play, `vibe`, `notify`, `speak`, `unmute`, `record`) are meant to be confirmed by the ♪ audio panel alone, but nothing enforced it — only a soft "no text output" line in `commands/music.md` that the agent had to read and remember, and which failed in practice (the agent narrated "Trance pool is generating…" after `/music on`). The `suppress-output.sh` PostToolUse hook — which fires on every `mic` tool call — now enforces it: on a control-tool **success** it injects a terminal stop-narration directive into the model's `additionalContext` channel instead of the raw result JSON that was inviting narration, so the silence is automatic regardless of whether the command file was read. Query tools (`status`, `who`, `music_list`) keep their JSON — the agent must report that data. The user-facing ♪ panel phrases are byte-identical to before. A bare-string guard ensures a FastMCP uncaught-exception error (surfaced as non-JSON text, not the `{"error":...}` contract) is still shown to the agent and never overwritten by the silence directive, so a control-tool failure is never reported as a silent success. Closes vox-lf6b.
+
 ### Fixed
 
 - **Test suite no longer emits a `starlette.testclient` deprecation warning**: added `httpx2` to the dev dependency group so `starlette.testclient.TestClient` (used in `tests/test_voxd_health.py` and `tests/test_voxd_synthesis.py`) uses its preferred HTTP backend — `make test` now runs warning-free instead of surfacing `StarletteDeprecationWarning: Using 'httpx' with 'starlette.testclient' is deprecated; install 'httpx2' instead`.
