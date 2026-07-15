@@ -1,0 +1,92 @@
+mission_id: m-2026-07-13-002
+status: open
+type: design
+created_at: "2026-07-13T00:08:12Z"
+updated_at: "2026-07-13T00:08:12Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-13T00:08:12Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-ek1m
+write_set:
+    - .tmp/missions/results/vox-ek1m-design.md
+    - docs/vibe-agent-driven.md
+success_criteria:
+    - A design note at .tmp/missions/results/vox-ek1m-design.md that names the implementation write-set (every file to CREATE / DELETE / MODIFY, each with a one-line rationale), the decomposition, the test plan, and the OO/paydown plan (hold-or-improve on every touched file). This note IS the implementation mission input.
+    - 'A short design doc docs/vibe-agent-driven.md capturing: the mechanism (non-blocking UserPromptSubmit reminder -> main agent sets the vibe via the vibe tool); the "why exit codes are unavailable to PostToolUse hooks" finding (docs + live capture); and the full deletion list. It replaces docs/vibe-exit-code-design.md.'
+    - 'The design answers every open question explicitly: (a) the cadence/throttle mechanism and WHERE its small state lives; (b) how the hook reads vibe_mode and fires ONLY in auto mode; (c) exactly what of the post-bash / BashPayload machinery is deleted vs retained, decided by first READING what those currently do (continuous-mode signals may still need the post-bash hook); (d) where the reminder prose lives.'
+    - 'The design explicitly confirms: NO Z model is written (the exit-code window/mood state machine is being removed; the replacement is a stateless nudge plus at most a trivial cadence counter) and NO migration/compat/shim code (forward integration per PL-PP-1 / PY-RF-6).'
+    - The design specifies what DESIGN.md (rewrite DES-043 exit-code -> agent-driven), README, and CHANGELOG must say, but does NOT edit them — the leader owns those docs.
+    - NO implementation code is written in this mission. Design artifacts only.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: |
+    Design the agent-driven auto-vibe that replaces the dead exit-code design
+    (ticket vox-ek1m). You produce the WRITE-SET and design — you do NOT write
+    implementation code. The write-set you produce becomes the implementation
+    mission's input, so decide the decomposition yourself; do not assume the
+    prior branch's structure is right.
+
+    WHY THE PIVOT (this is settled — do not relitigate):
+    The feat/vibe-exit-code branch bets auto-vibe on the Bash exit code read from
+    the PostToolUse hook. THAT SIGNAL DOES NOT EXIST. Claude Code does not expose
+    the Bash exit code to PostToolUse hooks — confirmed two ways: (1) the Claude
+    Code architecture docs (BashTool interprets return codes internally into
+    rendered messages; the hook tool_response carries only stdout / stderr /
+    interrupted / isImage / noOutputExpected; and 10-tool-orchestration states the
+    final tool result is constructed AFTER post-tool hooks run, so the hook
+    structurally cannot see a finalized exit code); (2) a live payload capture this
+    session showing exactly those fields and no exit code in any casing. The
+    exit-code machinery records nothing and cannot be fixed.
+
+    THE VALIDATED REPLACEMENT (proven by a live spike this session):
+    Drive the vibe from the MAIN agent. A non-blocking UserPromptSubmit hook
+    injects a soft additionalContext reminder ("glance at how the session is going;
+    set the vibe if the mood shifted"); the main agent — which sees the whole
+    conversation, the real success/failure signal a per-command payload lacks —
+    sets the vibe via the existing vibe MCP tool. The spike (a settings-level
+    UserPromptSubmit hook emitting hookSpecificOutput.additionalContext) fired live,
+    delivered the reminder, and the agent set an accurate vibe end-to-end with zero
+    deterministic classification. The docs basis: 07-instructions-memory names
+    UserPromptSubmit as THE mechanism for "prompt-time dynamic context," and notes
+    hooks are more reliable than a static CLAUDE.md instruction.
+
+    CONSTRAINTS / INVARIANTS (you decide HOW; these are the WHAT):
+    1. Mechanism: a UserPromptSubmit hook shipped in the vox PLUGIN (hooks/ +
+       hooks/hooks.json + a `vox hook ...` CLI entrypoint), emitting
+       hookSpecificOutput.additionalContext. It MUST be non-blocking — never
+       decision:block. (decision:block is the Stop/summary hook's job — a different
+       mechanism; do not touch it.)
+    2. Gating: the reminder fires ONLY when vibe_mode == auto. In manual the user
+       owns the vibe; in off there is no vibe. Read vibe_mode from config.
+    3. Cadence: do NOT nag every turn. Decide the throttle (every Nth prompt,
+       staleness, etc.) and where the minimal state lives (config? ephemeral
+       vox.local.md?). Keep it small and justify it.
+    4. Reminder text is prose — decide where it lives (the quips.py registry is the
+       existing home for hook speech prose; a silent additionalContext string may
+       belong there too, or nearby).
+    5. DELETE the dead exit-code machinery entirely — forward integration, NO
+       shims/compat (PL-PP-1, PY-RF-6). Likely candidates: vibe_window.py,
+       vibe_mood.py, the post-bash exit-code accumulation in hooks.py, BashPayload
+       exit-code parsing (and BashPayload itself if nothing else uses it),
+       docs/vibe-exit-code.tex, docs/vibe-exit-code-design.md. But FIRST read what
+       the post-bash hook and BashPayload currently do — the post-bash hook may
+       still serve continuous-mode or other signals; determine precisely what stays
+       vs goes. Keep the branch's already-landed dead-code deletions (old
+       output-pattern classifier, watcher, dead chimes).
+    6. Keep /vibe modes coherent: /vibe auto re-enables the nudge; /vibe off and
+       /vibe manual silence it.
+    7. NO Z model, and do NOT write one — say so explicitly in the design. The
+       state machine that justified the earlier Z model (the exit-code window/mood
+       accumulator) is being removed; the replacement is a stateless nudge plus at
+       most a trivial cadence counter, below the formal-modeling trigger.
+
+    Read before designing: hooks.py, hook_payload.py, config.py, quips.py,
+    hooks/hooks.json, the /vibe skill (commands/vibe.md), and the current
+    feat/vibe-exit-code diff so you know what the branch added (to be dropped) vs
+    deleted (to be kept). Cite file:line in the write-set.

@@ -1,0 +1,84 @@
+mission_id: m-2026-07-13-005
+status: closed
+type: implement
+created_at: "2026-07-13T01:13:52Z"
+updated_at: "2026-07-15T14:30:04Z"
+closed_at: "2026-07-15T14:30:04Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-13T01:13:52Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-ek1m
+write_set:
+    - src/punt_vox/vibe_nudge.py
+    - hooks/vibe-nudge.sh
+    - tests/test_vibe_nudge.py
+    - src/punt_vox/hooks.py
+    - src/punt_vox/hook_payload.py
+    - src/punt_vox/config.py
+    - src/punt_vox/vibe.py
+    - src/punt_vox/server.py
+    - src/punt_vox/__main__.py
+    - src/punt_vox/quips.py
+    - hooks/hooks.json
+    - tests/test_hooks.py
+    - tests/test_hook_payload.py
+    - tests/test_config.py
+    - tests/test_vibe.py
+    - tests/test_server.py
+    - tests/test_hook_scripts.py
+    - tests/test_cli.py
+    - src/punt_vox/vibe_window.py
+    - src/punt_vox/vibe_mood.py
+    - tests/test_vibe_window.py
+    - tests/test_vibe_mood.py
+    - hooks/signal.sh
+    - docs/vibe-exit-code.tex
+    - docs/vibe-exit-code-design.md
+success_criteria:
+    - 'Implements the approved write-set in .tmp/missions/results/vox-ek1m-design.md exactly: CREATE vibe_nudge.py (VibeNudge + NudgeDecision, pure cadence logic), hooks/vibe-nudge.sh (synchronous non-async UserPromptSubmit hook), tests/test_vibe_nudge.py; MODIFY hooks.py/hook_payload.py/config.py/vibe.py/server.py/__main__.py/quips.py/hooks.json + the listed test files; DELETE vibe_window.py, vibe_mood.py, their tests, hooks/signal.sh, docs/vibe-exit-code.tex, docs/vibe-exit-code-design.md.'
+    - The UserPromptSubmit nudge hook is NON-BLOCKING (never emits decision:block) and SYNCHRONOUS (not async — async UserPromptSubmit output is not injected). It emits hookSpecificOutput.additionalContext only when vibe_mode == auto AND the cadence counter has reached the threshold; otherwise emits nothing and exits 0.
+    - 'Cadence: every Nth prompt, N=5 (operator-confirmed default, tunable via the VibeNudge threshold). Counter vibe_nudge_turns lives in ephemeral vox.local.md; increments each auto-mode prompt; resets to 0 on fire, on any /vibe mode change (VibeChange.resolve), and on SessionEnd. A test asserts the reminder lands on the Nth auto prompt and NOT on 1..N-1.'
+    - 'Stop-summary gate (operator-confirmed): remove the dead vibe_signals gate and the _persist_auto_vibe_tags call from handle_stop; the summary fires on the live conditions (notify != n AND speak != n AND not stop_hook_active); the decision-block mechanism itself is preserved. A reworked stop test asserts the summary fires without any vibe_signals dependency.'
+    - 'Delete-set is exhaustive and VERIFIED. Run the design''s verification and paste results: (1) grep -rn for vibe_signals, BashPayload, handle_post_bash, post_bash/post-bash, OutcomeWindow, vibe_window, vibe_mood, MoodThresholds, _persist_auto_vibe_tags, _clear_vibe_signals, signal.sh across src/ tests/ hooks/ commands/ docs/ returns ZERO hits; (2) the deleted files are gone; (3) make report SRC=src/punt_vox/ shows no new dead code (vulture). Any surviving reference is an incomplete deletion — fix before closing. No shims, no re-export tombstones, no compat wrappers (PL-PP-1, PY-RF-6).'
+    - 'Tests cover both success and silent paths: nudge fires at threshold / stays silent below it and in manual+off; malformed stdin to vox hook vibe-nudge emits nothing and exits 0; voxd-down does not break the nudge (it never touches the daemon). Every new module has a test file (PY-BS-6). Fixture discipline per TESTING.md.'
+    - OO hold-or-improve on every touched file (make check-oo in the make check chain). hooks.py module_size must improve (net deletion + logic extracted to vibe_nudge.py); vibe_nudge.py all-PASS from birth. Run make update-oo after green; stage .oo-baseline.json + .oo-audit.jsonl. Check .oo-coupling-baseline.json — deletions should reduce coupling; re-baseline coupling only if a real edge changed, with justification.
+    - make check exits 0. No print() in daemon/server code. No suppressions (noqa / type:ignore / pylint-disable) added without operator approval.
+    - Commit incrementally — one commit per logical step (delete-set; config field swap; new vibe_nudge module; hook wiring + hooks.json; each reworked test module). Each commit passes make check. Do NOT accumulate more than 30 minutes of uncommitted changes.
+    - Do NOT edit DESIGN.md, README.md, CHANGELOG.md, or commands/vibe.md — the LEADER owns those and edits them separately. Do NOT open a PR — the leader opens it after local review + an audio flight with the operator.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: |
+    Implement the agent-driven auto-vibe (ticket vox-ek1m) per the APPROVED
+    design. Read both first, end to end, and follow them exactly:
+      - docs/vibe-agent-driven.md (design of record)
+      - .tmp/missions/results/vox-ek1m-design.md (the write-set: every
+        CREATE/DELETE/MODIFY with file:line, the handle_stop + handle_session_end
+        rework, the handle_vibe_nudge/VibeNudge shapes, the delete-set with a
+        per-symbol trace, the verification block, the test plan, the OO plan).
+
+    Work on branch feat/vibe-exit-code (already checked out). Do NOT touch
+    .punt-labs/ethos/. Do NOT open a PR.
+
+    Two operator-confirmed decisions (non-negotiable):
+    1. Cadence N=5 (first nudge on the 5th auto-mode prompt, then every 5th).
+    2. The Stop-summary gate: drop the dead vibe_signals gate and
+       _persist_auto_vibe_tags; the summary fires on the live conditions
+       (notify != n AND speak != n AND not stop_hook_active). The vibe the agent
+       set during the session (config.vibe_tags) colors the summary; the
+       decision-block mechanism is preserved.
+
+    The pivot (settled — do not relitigate): the Bash exit code is structurally
+    unavailable to PostToolUse hooks, so the exit-code accumulator records nothing
+    and is deleted. The vibe is now driven by the MAIN agent, prompted by a
+    non-blocking UserPromptSubmit additionalContext reminder, cadence-gated and
+    gated on vibe_mode==auto. Validated live by a spike this session.
+
+    Deletion is weighted EQUALLY with the additions — the net effect is a smaller
+    codebase. Run the delete-set verification and paste the (expected-empty) grep
+    output in your results so the leader can confirm nothing dead remains.

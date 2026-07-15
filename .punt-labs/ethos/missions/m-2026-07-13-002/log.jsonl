@@ -1,0 +1,2 @@
+{"ts":"2026-07-13T00:08:12Z","event":"create","actor":"claude","details":{"evaluator":"gvr","ticket":"vox-ek1m","worker":"rmh"}}
+{"ts":"2026-07-13T00:16:34Z","event":"result","actor":"rmh","details":{"confidence":0.9,"evidence_entries":11,"files_changed":2,"round":1,"verdict":"pass"}}

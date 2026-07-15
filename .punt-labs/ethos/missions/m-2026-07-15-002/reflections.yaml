@@ -1,0 +1,12 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-15T12:31:41Z"
+      author: claude
+      converging: true
+      signals:
+        - round 1 is correct on the control-vs-query split, panel text, Bash-3.2/shellcheck, tests, and CI wiring (code-reviewer found nothing >=80)
+        - 'silent-failure-hunter found ONE HIGH regression: an uncaught-exception error (FastMCP surfaces a bare non-JSON string, not the {"error":...} contract) falls through the top guard into a control-tool success branch, so additionalContext becomes STOP_NARRATION -- a real tool failure is reported to the agent as a silent success with an explicit stay-silent directive'
+        - verified on both trees — main routed the error string to additionalContext; this branch overwrites it with STOP_NARRATION
+        - fix is a small second guard (bare-string RESULT -> emit error, exit) plus a test; no redesign
+      recommendation: continue
+      reason: One HIGH fix — reinstate the error signal for the non-contract (bare-string) error shape so STOP_NARRATION can never shadow an uncaught-exception failure. Round-2 spec in the reflection message. CHANGELOG is leader-owned, added after the fix lands.

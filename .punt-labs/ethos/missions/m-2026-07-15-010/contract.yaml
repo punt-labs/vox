@@ -1,0 +1,89 @@
+mission_id: m-2026-07-15-010
+status: closed
+type: implement
+created_at: "2026-07-15T14:30:04Z"
+updated_at: "2026-07-15T15:05:32Z"
+closed_at: "2026-07-15T15:05:32Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-15T14:30:04Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-1jke
+    files:
+        - src/punt_vox/server.py
+        - src/punt_vox/quips.py
+        - hooks/suppress-output.sh
+        - tests/test_server.py
+        - tests/test_quips.py
+        - DESIGN.md
+write_set:
+    - src/punt_vox/server.py
+    - src/punt_vox/quips.py
+    - hooks/suppress-output.sh
+    - tests/test_server.py
+    - tests/test_quips.py
+success_criteria:
+    - Implement DES-044 (in DESIGN.md, read it first). The SERVER authors the music panel line (`.message`) with DJ-booth personality, selecting a randomized phrase from a curated pool and interpolating the real `style`/`name`. The phrase pools are specified verbatim in DES-044 — lift them into the phrase registry (`quips.py` or a sibling module you create) as immutable `tuple[str, ...]`, one pool per action bucket (generating-with-style, generating-no-style, stopped, replay-with-name, replay-radio, skip).
+    - 'server.py: replace the plain fallback strings in the music tools — `generating_message(style)` (music on), `"Music off."` (music off), `"Playing selection."` (music_play, with a name vs radio/no-name split), `"Skipping — generating next track..."` (music_next) — with a DJ phrase chosen from the matching pool and interpolated with the real `style`/`name`. Keep the `♪ ` prefix applied once at emit (do not double-prefix). Preserve `outcome.display(...)` behavior where the outcome carries a genuinely informative message; the DJ phrase is the base/fallback voice.'
+    - 'hooks/suppress-output.sh: DELETE the dead DJ phrase pools and the `.status`/`.style`/`.name` branching in the `music` and `music_play` formatters (they key off fields the tools never return). The hook must stay a dumb echo of `.message` (first line, via the existing `message_line` helper) for music/music_play/music_next, and derive the music_list count from `.programs` (already true). Do NOT reintroduce any hook-side branching on fields the tools do not emit. Leave the control/reply STOP_NARRATION split, the error guard, the bare-string guard, and the printf''d jq pipes (vox-lf6b) exactly as they are.'
+    - 'Selection is randomized per call. Make the chooser INJECTABLE for deterministic tests (e.g. a module-level `_choose = random.choice` tests can monkeypatch, or accept a seed) — do NOT assert against a live RNG. Tests (test_quips.py / test_server.py): assert each pool is non-empty and every phrase fits the ≤80-col prefixed budget; assert `style`/`name` interpolation for the parameterized pools; assert the radio (no-name) and no-style paths pick from the correct pool; assert a music panel line is a member of the expected pool. TDD where practical.'
+    - 'Preserve vox-5aom: the DJ phrase uses `style`/`name`, NOT the raw session mood — the long mood narrative must NOT reappear in the panel line.'
+    - voxd/server logs to stderr only — never `print()`. Follow python-*.md (frozen tuples, from __future__ import annotations, exact types, no Any).
+    - make check exits 0 (read FULL output, no tail/head/grep). shellcheck stays clean on the hook. OO ratchet must not regress on touched files and must improve at least one metric on a touched file (deleting the dead hook pools is a genuine simplification — a real paydown, not a nudge); run make update-oo after green and stage baselines if they change (coupling too). No suppressions.
+    - make install, then restart voxd (vox daemon restart), then make test against the installed artifact.
+    - 'Commit incrementally: (1) phrase pools + their tests, (2) server.py DJ message composition + tests, (3) delete the dead hook pools. Each commit passes make check. Do not accumulate >30 min uncommitted.'
+    - 'Do NOT touch CHANGELOG/README/pyproject or DESIGN.md (DES-044 is already logged) or open a PR — the leader owns those. Branch: feat/vox-1jke-dj-panel (already created; base it there).'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Goal
+
+    Revive the ♪ music panel's DJ personality ("fun is a feature") — the operator
+    explicitly asked for it. Design of record: DES-044 in DESIGN.md, which carries
+    the DECISION and the exact curated phrase pools. Read it first.
+
+    ## Background (why the fun was missing)
+
+    The music MCP tools (`server.py`) return only `{message, applied}` /
+    `{message, programs}` — NO `.status`/`.style`/`.name`/`.tracks`. The hook's DJ
+    phrase pools branched on those nonexistent fields, so they were dead code and
+    the panel silently showed a generic line. vox-lf6b corrected the hook to echo
+    the server's plain `.message`. The fix here is DES-044's option A: the SERVER —
+    the one place that holds the real action + style + name — authors the flavored,
+    randomized line; the hook stays a dumb `.message` echo; the dead hook pools are
+    deleted.
+
+    ## Seams (scoping — you own the exact decomposition)
+
+    - `src/punt_vox/quips.py` — the immutable phrase-pool registry (existing pools
+      are `tuple[str, ...]`). Add the DJ pools here or in a sibling music-phrases
+      module — your call.
+    - `src/punt_vox/server.py` — music (line ~653), music off (~656), music_play
+      (~690), music_next (~739): each builds `message = f"♪ {outcome.display(<fallback>)}"`.
+      The `<fallback>` string is where the DJ phrase goes. `generating_message` is at
+      ~198. Decide the cleanest composition (a small helper that picks + interpolates,
+      the injectable chooser for tests).
+    - `hooks/suppress-output.sh` — delete the dead `music`/`music_play` DJ pools and
+      their field-branching; keep the `.message` echo.
+
+    ## Invariants
+
+    - Hook is a display surface, not a content generator — no hook-side branching on
+      fields the tools do not emit.
+    - Keep vox-lf6b intact: STOP_NARRATION control/reply split, error guard,
+      bare-string guard, printf'd jq pipes.
+    - Keep vox-5aom intact: the panel uses style/name, never the raw session mood.
+    - Randomized per call, but tests are deterministic via an injected chooser.
+    - Panel line ≤ 80 cols after the ♪ prefix.
+
+    ## Deliverable
+
+    DJ-flavored, varied music panel lines authored server-side, the dead hook pools
+    gone, tests locking pool membership + interpolation + the radio/no-style paths.
+    make check green, daemon restarted + tested against the installed wheel. The
+    leader handles CHANGELOG, PR, and review.

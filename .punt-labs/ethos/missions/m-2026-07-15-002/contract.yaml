@@ -1,0 +1,99 @@
+mission_id: m-2026-07-15-002
+status: closed
+type: implement
+created_at: "2026-07-15T04:02:22Z"
+updated_at: "2026-07-15T12:43:44Z"
+closed_at: "2026-07-15T12:43:44Z"
+leader: claude
+worker: mdm
+evaluator:
+    handle: rop
+    pinned_at: "2026-07-15T04:02:22Z"
+    hash: 6e1a3cdfadb9e663c7a9ff6b37cad82ad05a05e94bb6f458ca592d20d1e5839b
+inputs:
+    ticket: vox-lf6b
+    files:
+        - hooks/suppress-output.sh
+        - hooks/hooks.json
+        - commands/music.md
+        - commands/mute.md
+        - commands/vibe.md
+        - tests/test_suppress_output.sh
+        - tests/
+write_set:
+    - hooks/suppress-output.sh
+    - commands/music.md
+success_criteria:
+    - 'vox-lf6b: For the fire-and-forget CONTROL tools — music (on/off/generating/playing/stopped), music_play, music_next, vibe, notify, speak, unmute, record — suppress-output.sh must, ON SUCCESS, set additionalContext to an imperative terminal directive that tells the agent to emit no text (the panel line is the entire user-facing response), NOT the raw result JSON. The directive must be unambiguous and terminal (e.g. ''The audio panel has already shown this to the user. This tool call is the complete response — reply with no text, no summary, no narration. Stop.''). You author the exact wording; it is model-facing, so it must be a plain hard instruction, not DJ prose.'
+    - The user-facing panel line (updatedMCPToolOutput) is UNCHANGED — the existing DJ-character phrase pools stay exactly as they are. This change touches ONLY the additionalContext channel for control tools.
+    - 'QUERY tools — status, who, music_list — keep their current behavior: additionalContext carries the result JSON (or is whatever it is today) because the agent must report that data to the user. Do NOT add the stop-directive to these three.'
+    - 'The error guard (the top-of-script branch that emits ''♪ error: ...'' and puts RESULT in additionalContext) is PRESERVED unchanged. On a control-tool FAILURE the agent must still see the error in additionalContext so it can react — the stop-directive applies only to the SUCCESS branch of each control tool.'
+    - 'Update commands/music.md: replace the scattered per-subcommand ''No text output after changes -- the panel confirms'' lines with a single prominent terminal directive near the top of ## Implementation stating that control actions (on/off/next/play) produce NO agent text — the hook and panel are the whole response — and that only list/no-arg (query) produce agent output. This is belt-and-suspenders behind the hook, not the primary control.'
+    - 'Tests: add/extend a shell test (tests/test_suppress_output.sh or the existing suppress-output test harness — discover what exists) that pipes a synthetic PostToolUse payload for (a) a control tool success -> asserts additionalContext contains the stop-directive and NOT the raw JSON, (b) a query tool (status) success -> asserts additionalContext still carries the data, (c) a control tool error payload -> asserts the error still reaches additionalContext. If no such harness exists, create one and wire it into make lint/make check so it runs in CI.'
+    - make check exits 0 (this repo runs shellcheck on hooks/*.sh via make lint — the script must stay shellcheck-clean; no new warnings). Read the FULL output, do not pipe through tail/head/grep.
+    - No suppressions to pass checks (no shellcheck disable directives added to dodge a real finding). Fix the script or escalate to the leader.
+    - Commit incrementally — one commit for the hook change (+ its test), one for the command-file doc change; each commit passes make check. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do NOT touch DESIGN.md, CHANGELOG.md, README.md, pyproject version, or open a PR — the leader owns those. Work on branch fix/vox-lf6b-suppress-control-narration.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    ## Goal
+
+    Make "no agent narration after a fire-and-forget vox control tool" an
+    AUTOMATIC, RELIABLE behavior enforced by the plugin hook — not a soft
+    markdown line the agent has to read and remember. The current soft line in
+    commands/music.md was observed failing live: after `/music on style trance`
+    the agent narrated "Trance pool is generating…", which is redundant with the
+    audio panel and off-character for the DJ CX.
+
+    ## Why the hook is the right layer
+
+    hooks/suppress-output.sh is a PostToolUse hook wired (hooks.json matcher
+    `mcp__(plugin_vox(-dev)?_)?mic__.*`) to fire on EVERY vox mic tool call. It
+    already runs the two-channel display pattern
+    (punt-kit/patterns/two-channel-display.md):
+
+      - updatedMCPToolOutput  → the compact ♪ panel line the USER sees
+        (DJ-character phrase pools — keep these exactly as-is)
+      - additionalContext     → text injected back into the AGENT's context
+
+    The narration bug is entirely in channel 2: for control tools it currently
+    hands the agent the raw result JSON, which reads as "here is data, tell the
+    user about it," so the agent narrates. The fix is to make additionalContext,
+    for control-tool successes, an explicit stop-narration directive. The hook
+    fires unconditionally, so this is reliable in a way the markdown line never
+    was.
+
+    ## Control vs query split (the whole design)
+
+    CONTROL (fire-and-forget → agent stays silent, panel is the whole response):
+      music (all statuses: generating / playing / stopped / other),
+      music_play, music_next, vibe, notify, speak, unmute, record.
+
+    QUERY (agent must answer with the data → keep JSON in additionalContext):
+      status, who, music_list.
+
+    ## Hard constraints / invariants
+
+    - Do NOT change the user-facing panel line (updatedMCPToolOutput) for any
+      tool. The DJ phrase pools are correct and stay verbatim.
+    - Do NOT change hooks.json matchers or any other hook.
+    - PRESERVE the error guard: on any tool error the failure text must still
+      reach additionalContext. The stop-directive is SUCCESS-branch only.
+    - suppress-output.sh has NO `set -euo pipefail` on purpose — hooks must
+      degrade gracefully on malformed input. Keep that property; do not add it.
+    - shellcheck-clean is mandatory (make lint runs it). No disable directives.
+    - Bash 3.2 compatible (macOS system bash) — the script already targets it
+      (see pick_random). Keep it portable.
+
+    ## Deliverable
+
+    Two commits on fix/vox-lf6b-suppress-control-narration:
+      1. suppress-output.sh: control-tool successes emit a stop-narration
+         directive in additionalContext; query tools + error path unchanged;
+         + a shell test asserting the split and the preserved error path.
+      2. commands/music.md: single prominent terminal directive replacing the
+         scattered "No text output" lines.
+    make check green, shellcheck clean. The leader handles CHANGELOG, PR, review.

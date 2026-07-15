@@ -1,0 +1,87 @@
+results:
+    - mission: m-2026-07-15-002
+      round: 1
+      created_at: "2026-07-15T04:20:53Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: hooks/suppress-output.sh
+          added: 21
+          removed: 7
+        - path: commands/music.md
+          added: 11
+          removed: 7
+      evidence:
+        - name: uv run pytest tests/test_suppress_output.py -v (control/query/error split)
+          status: pass
+        - name: make check (ruff, format, shellcheck clean, mypy, pyright, markdownlint, 2429 pytest, OO/coupling/suppression ratchets)
+          status: pass
+      open_questions:
+        - Test harness is pytest (tests/test_suppress_output.py), not the named tests/test_suppress_output.sh. CI runs `uv run pytest`, not `make lint`/`make check`, so a bare .sh wired into make lint would not run in CI; the pytest subprocess harness exercises the real shell script AND runs in CI with no Makefile/workflow edits (both outside the write-set). Confirm if the literal .sh form is also wanted.
+      prose: |
+        Enforces 'no agent narration after a fire-and-forget vox control tool' in the
+        PostToolUse hook rather than a soft markdown line. Two commits on
+        fix/vox-lf6b-suppress-control-narration: 1adbcdf (hook + test), 8b5a940 (doc).
+
+        Branch hazard (resolved): the checkout is shared across many concurrent
+        agents. Between my `git checkout -b` and the first commit, another agent
+        switched the working tree to fix/vox-5aom-music-metadata-normalization (at
+        main, no commits), so 1adbcdf landed on their branch. I relocated it to my
+        branch and restored their branch to c34a7e2 (main) via `git branch -f`, after
+        confirming only my two files/one commit were involved — no other agent's work
+        was touched. Flagging because this race will recur for anyone committing here.
+
+        Not done (leader owns): CHANGELOG, README, DESIGN, pyproject version, PR.
+    - mission: m-2026-07-15-002
+      round: 2
+      created_at: "2026-07-15T12:40:15Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: hooks/suppress-output.sh
+          added: 31
+          removed: 7
+        - path: commands/music.md
+          added: 11
+          removed: 7
+      evidence:
+        - name: 'manual: FastMCP uncaught-exception string -> additionalContext carries the error, panel ''♪ error'', NOT STOP_NARRATION'
+          status: pass
+        - name: 'manual: control-tool success (music generating) still gets STOP_NARRATION, DJ panel line intact'
+          status: pass
+        - name: uv run pytest tests/test_suppress_output.py -v — 8 passed (added uncaught-exception case)
+          status: pass
+        - name: make check (ruff, format, shellcheck clean, mypy, pyright, markdownlint, 2430 pytest, OO/coupling/suppression ratchets)
+          status: pass
+      prose: |
+        Round-2 HIGH fix: a vox tool raising an UNCAUGHT exception is surfaced by
+        FastMCP as a bare non-JSON string ("Error executing tool music: KeyError:
+        'style'"). The top error guard (.error // empty) only matched the
+        {"error":...} contract, so the bare string fell through to a control-tool
+        SUCCESS branch and additionalContext became STOP_NARRATION — a real failure
+        reported as a silent success with an explicit stay-silent directive.
+
+        Added a second guard after the error guard. The leader's suggested check
+        (jq -r 'type' == "string") does NOT fire here: the bare error text is not
+        valid JSON, so `jq type` errors rather than returning "string". Instead I test
+        the positive shape — every legitimate success is a JSON object (control) or
+        array (record/unmute):
+
+            if [[ -n "$RESULT" ]] && ! echo "$RESULT" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+              emit "♪ error" "$RESULT"
+              exit 0
+            fi
+
+        A non-empty RESULT that is neither object nor array (bare string, number,
+        bool, or unparseable text) is surfaced as an error and exits before any
+        success branch runs. Empty/malformed RESULT is left to the existing
+        fallthrough (unchanged). shellcheck-clean, no `set -e`, Bash 3.2 safe, guard
+        ends `exit 0`.
+
+        Commit 20ef550 on fix/vox-lf6b-suppress-control-narration, stacked on the two
+        round-1 commits (1adbcdf hook+test, 8b5a940 doc). Verified manually both ways
+        (error string surfaced; normal success still silenced) and via the new pytest
+        case. make check exits 0. CHANGELOG/README/DESIGN/pyproject/PR untouched —
+        leader-owned.

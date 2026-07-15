@@ -1,0 +1,13 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-15T05:00:33Z"
+      author: claude
+      converging: true
+      signals:
+        - round 1 passed make check with correct TDD structure (red tests then fix)
+        - silent-failure-hunter clean on the failure axis; write/query normalization symmetric so resume matching holds
+        - 'code-reviewer found 1 material defect: auto-name can collide (no taken-names dedup), violating the names-are-unique invariant that by_name relies on'
+        - two small items — style-segment has no alpha floor (all-punctuation style breaks the name pattern), and a one-line docstring nit on TagQuery empty semantics
+        - all fixes are additive on the same branch; no redesign, no history rewrite
+      recommendation: continue
+      reason: One material fix (thread taken-names into the auto-name path so generated names dedupe like curated names do), plus a style-segment floor and a docstring line. Round-2 spec in .tmp/missions/vox-5aom-r2-findings.md. TDD the uniqueness fix. CHANGELOG is leader-owned and added after the fix lands.

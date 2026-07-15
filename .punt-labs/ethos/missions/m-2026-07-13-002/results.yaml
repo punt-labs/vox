@@ -1,0 +1,57 @@
+results:
+    - mission: m-2026-07-13-002
+      round: 1
+      created_at: "2026-07-13T00:16:34Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vibe-agent-driven.md
+          added: 197
+          removed: 0
+        - path: .tmp/missions/results/vox-ek1m-design.md
+          added: 293
+          removed: 0
+      evidence:
+        - name: docs/vibe-agent-driven.md written — non-blocking UserPromptSubmit additionalContext reminder; agent sets vibe via the vibe MCP tool
+          status: pass
+        - name: Documented WHY exit codes are unavailable to PostToolUse hooks (docs + live capture); BashPayload.parse reads exitCode which never exists
+          status: pass
+        - name: Cadence answered — every Nth prompt (N=5), counter vibe_nudge_turns in ephemeral vox.local.md; fires only in vibe_mode==auto; /vibe modes coherent
+          status: pass
+        - name: Reminder prose home decided — quips.py VIBE_NUDGE_REMINDER (single deterministic string, silent injected context)
+          status: pass
+        - name: Post-bash / BashPayload decided by reading the code — DELETE both; no continuous-mode or other live consumer, nothing retained
+          status: pass
+        - name: Exhaustive delete-set — whole vibe/signal path traced; every dead file and every dead symbol enumerated with a reason; forward integration only (PL-PP-1/PY-RF-6)
+          status: pass
+        - name: Delete-set verification step included — grep to zero, ls of deleted files, make report vulture, make check
+          status: pass
+        - name: Live-path retentions justified — /vibe + vibe tool, async acknowledge.sh, notification chimes, Stop summary (decision-block preserved, dead vibe_signals dependency removed)
+          status: pass
+        - name: States explicitly NO Z model is written and NO migration/compat/shim code
+          status: pass
+        - name: Write-set names every CREATE/MODIFY/DELETE with file:line citations, plus test plan and hold-or-improve OO paydown per touched file
+          status: pass
+        - name: DESIGN.md/README/CHANGELOG/commands changes specified but NOT edited — leader owns those docs
+          status: pass
+      open_questions:
+        - commands/vibe.md still describes auto as exit-code driven (lines 21-25, 57-60). It is a plugin command doc, not source. Leader to decide whether it rides the implementation mission or the leader edits it directly.
+        - handle_stop gate change is a small behavior shift (summary fires on notify!=n & speak!=n & not stop_hook_active, no longer gated on a work signal). Recommend accept — the old vibe_signals gate is dead and firing whenever notify is opt-in-enabled is more correct. Leader to confirm in the DES-043 rewrite.
+      prose: |
+        Two deliverables on disk: the design of record docs/vibe-agent-driven.md and
+        the implementation write-set .tmp/missions/results/vox-ek1m-design.md (this
+        note IS the implementation mission input).
+
+        The pivot is settled and reflected: auto-vibe is driven by the main agent via
+        a non-blocking, synchronous UserPromptSubmit additionalContext reminder,
+        cadence-gated (every Nth prompt, counter in ephemeral vox.local.md), fired
+        only when vibe_mode==auto. The exit-code approach is abandoned because the
+        Bash exit code is structurally unavailable to PostToolUse hooks.
+
+        Per the coordinator's mid-task directive, the delete-set is treated as a
+        first-class, exhaustive deliverable: the whole vibe/signal path is traced, not
+        just the exit-code files; every dead file and every dead function/method is
+        enumerated with a reason; retentions are justified against a delete-by-default
+        stance; and a concrete verification step (grep to zero, vulture clean, make
+        check) is specified so the implementation can prove nothing dead remains.

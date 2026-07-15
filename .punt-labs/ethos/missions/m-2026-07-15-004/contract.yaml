@@ -1,0 +1,106 @@
+mission_id: m-2026-07-15-004
+status: closed
+type: implement
+created_at: "2026-07-15T04:15:14Z"
+updated_at: "2026-07-15T12:43:43Z"
+closed_at: "2026-07-15T12:43:43Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-15T04:15:14Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-5aom
+    files:
+        - src/punt_vox/voxd/programs/album_tags.py
+        - src/punt_vox/voxd/programs/album_id.py
+        - src/punt_vox/voxd/programs/manifest.py
+        - src/punt_vox/voxd/programs/part_tags.py
+        - src/punt_vox/voxd/programs/catalog.py
+        - src/punt_vox/voxd/programs/on_handler.py
+        - src/punt_vox/voxd/programs/music_producer.py
+        - tests/programs/test_album_tags.py
+        - tests/programs/test_album_id.py
+        - tests/programs/test_manifest.py
+write_set:
+    - src/punt_vox/voxd/programs/album_tags.py
+    - src/punt_vox/voxd/programs/album_id.py
+    - src/punt_vox/voxd/programs/manifest.py
+    - tests/programs/test_album_tags.py
+    - tests/programs/test_album_id.py
+    - tests/programs/test_manifest.py
+success_criteria:
+    - 'STEP 0 — TDD, do this FIRST and commit it as a FAILING test before writing any production fix: the root miss is that nothing pinned the SHAPE of a generated pool''s metadata. Add tests that encode the correct contract and FAIL against current code: (a) a pool built from a long, multi-word, punctuation-laden mood (e.g. ''a long brutal grind that shipped: 6 review rounds — 4.12.0 out the door'') produces a SHORT, bounded, sanitized vibe tag (no newlines/control chars/colons, length-capped) — NOT the raw narrative; (b) a pool generated with NO explicit name gets a non-null, slug-safe auto-name matching vibe-style-YYYYMMDD-HHMM; (c) the same pathological mood still yields a valid bounded name. Run them, PASTE the failing output into the result artifact. Only then implement.'
+    - 'vox-5aom: normalize/bound the vibe before it is persisted to pool metadata (manifest) and to any ID3 tag written on the mp3 parts. The persisted vibe tag is a SHORT mood label (or empty), never free-form prose. Decide the bound and sanitization (recommend: collapse whitespace, strip control chars and tag-hostile punctuation, cap length ~<=48 chars, lowercase-or-as-appropriate for the field). The descriptive session mood and the persisted tag are DIFFERENT concerns — do not persist the raw mood string. If a small value type (e.g. a VibeLabel / MoodTag) makes this clean and testable, introduce it (PY: dataclass(frozen=True), from __future__ import annotations, exact type annotations).'
+    - 'vox-g58t: the auto-namer must GUARANTEE a non-null, filesystem-safe name for every generated pool regardless of vibe content — slug-safe (lowercase, hyphen-separated, no spaces/colons/control chars), matching the documented vibe-style-YYYYMMDD-HHMM shape. It must not bail to null and must not emit a 40-word slug. A sane normalized vibe (5aom) plus a hard slug/length bound gives the correct name.'
+    - 'Both fixes ship together on one branch / one PR (g58t depends on 5aom). Timestamp note: the runtime cannot call Date.now()-equivalent in a way that breaks determinism of tests — inject/parameterize the timestamp (pass a datetime in) so the naming is unit-testable with a fixed clock; do NOT assert against a live wall clock in tests.'
+    - 'Every changed module has real coverage: the three new/extended tests above, plus any boundary the normalization introduces (empty mood, already-short mood, unicode mood, mood that is only punctuation). Mock at boundaries only; do not test internals.'
+    - make check exits 0. Read the FULL output — never pipe make through tail/head/grep. OO ratchet must not regress on touched files and must IMPROVE at least one metric (this is a normalization extraction — a genuine paydown opportunity in album_tags/album_id, not a metric nudge). Run make update-oo after green and stage .oo-baseline.json + .oo-audit.jsonl if changed; check .oo-coupling-baseline.json too.
+    - make install, then restart voxd (vox daemon restart), then run make test against the INSTALLED artifact — the daemon serves code from startup and will run the old normalization until restarted.
+    - 'Follow python-*.md. No suppressions (# noqa / # type: ignore / xfail / --no-verify) to pass checks — fix the code or escalate to the leader.'
+    - 'Commit incrementally: (1) failing tests [Step 0], (2) vox-5aom vibe normalization, (3) vox-g58t naming guarantee. Each commit after Step 0 passes make check; Step 0''s commit is intentionally red and must say so in its message. Do not accumulate >30 min of uncommitted changes.'
+    - 'Do NOT touch DESIGN.md, CHANGELOG.md, README.md, pyproject version, or open a PR — the leader owns those. Branch: fix/vox-5aom-music-metadata-normalization.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    ## Goal
+
+    Fix two linked defects in generated music-pool metadata, TDD-first, shipping
+    as one PR. Root cause is shared: the auto-vibe MOOD text (a long session
+    narrative, fine for coloring ~5 words of TTS delivery) is persisted verbatim
+    as a pool's 'vibe' tag, and the auto-namer — which builds the pool name from
+    vibe + style + timestamp — then bails to null rather than emit a 40-word slug.
+
+    ## Evidence (real manifest from 2026-07-15T03:56, style trance)
+
+        "tags": {
+          "style": "trance",                      <- correct
+          "vibe": "a long brutal grind that shipped: 6 review rounds, a release
+                   that misfired twice, recovered by reading the code, 4.12.0 out
+                   the door — and this very nudge just proved itself firing live",
+          "name": null                            <- should be trance-20260715-0356
+        }
+
+    style is right. vibe is a 40+-word narrative (wrong shape for metadata and for
+    an ID3 comment/genre frame). name is null (contract says auto-name on
+    generation, vibe-style-YYYYMMDD-HHMM).
+
+    ## Why TDD
+
+    The miss is a TEST-COVERAGE gap: tests/programs/{test_album_tags,test_album_id,
+    test_manifest}.py exist but none asserted the SHAPE of the persisted vibe tag
+    or that the name is non-null and slug-safe. Had they, both defects fail at CI.
+    So Step 0 is: write those assertions as FAILING tests, prove they fail against
+    today's code (paste the red output), THEN implement. This is non-negotiable
+    ordering.
+
+    ## Where things live (scoping only — you own the exact edits)
+
+    - album_tags.py / album_id.py — build the pool's tags (style/vibe/name) and id.
+    - manifest.py — the persisted pool manifest (the JSON shown above).
+    - part_tags.py — per-part (mp3) tags; check whether the vibe reaches ID3 here.
+    - on_handler.py / music_producer.py — where a pool is created and the current
+      vibe/mood is read in and seeded. Trace where the raw mood enters.
+    Find the true seams. You may introduce a small frozen value type for the
+    bounded label if it makes the normalization cohesive and testable.
+
+    ## Constraints / invariants
+
+    - Daemon-side (voxd). voxd logs to stderr only — logger.*, never print().
+    - This is value NORMALIZATION at a persistence boundary, not a state-machine
+      change — no Z model needed (the playlist state machine in
+      docs/music-playlist.tex is unaffected; do not touch it).
+    - Determinism: inject the timestamp for naming so tests use a fixed clock.
+    - Do not change the user-facing panel CX or the style tag.
+    - Keep the vibe tag EMPTY rather than emit junk if a mood normalizes to
+      nothing usable — empty is valid; prose is not.
+
+    ## Deliverable
+
+    Branch fix/vox-5aom-music-metadata-normalization, commits: (1) failing tests,
+    (2) vox-5aom normalization, (3) vox-g58t naming guarantee. make check green
+    from commit 2 on, OO baseline refreshed, tests run against the installed +
+    restarted daemon. Leader handles CHANGELOG, PR, review.

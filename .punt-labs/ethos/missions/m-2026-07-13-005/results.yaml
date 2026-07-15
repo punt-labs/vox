@@ -1,0 +1,112 @@
+results:
+    - mission: m-2026-07-13-005
+      round: 1
+      created_at: "2026-07-13T02:42:38Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/vibe_nudge.py
+          added: 76
+          removed: 0
+        - path: tests/test_vibe_nudge.py
+          added: 51
+          removed: 0
+        - path: hooks/vibe-nudge.sh
+          added: 5
+          removed: 3
+        - path: hooks/hooks.json
+          added: 4
+          removed: 9
+        - path: src/punt_vox/hooks.py
+          added: 51
+          removed: 72
+        - path: src/punt_vox/hook_payload.py
+          added: 1
+          removed: 35
+        - path: src/punt_vox/config.py
+          added: 24
+          removed: 4
+        - path: src/punt_vox/vibe.py
+          added: 7
+          removed: 8
+        - path: src/punt_vox/server.py
+          added: 9
+          removed: 23
+        - path: src/punt_vox/__main__.py
+          added: 10
+          removed: 12
+        - path: src/punt_vox/vibe_window.py
+          added: 0
+          removed: 112
+        - path: src/punt_vox/vibe_mood.py
+          added: 0
+          removed: 99
+        - path: docs/vibe-exit-code.tex
+          added: 0
+          removed: 471
+        - path: docs/vibe-exit-code-design.md
+          added: 0
+          removed: 186
+        - path: tests/test_hooks.py
+          added: 97
+          removed: 256
+        - path: tests/test_config.py
+          added: 23
+          removed: 17
+        - path: tests/test_server.py
+          added: 10
+          removed: 15
+        - path: tests/test_vibe.py
+          added: 6
+          removed: 5
+        - path: tests/test_hook_payload.py
+          added: 1
+          removed: 58
+        - path: tests/test_hook_scripts.py
+          added: 23
+          removed: 1
+        - path: tests/test_cli.py
+          added: 8
+          removed: 3
+        - path: tests/test_vibe_window.py
+          added: 0
+          removed: 174
+        - path: tests/test_vibe_mood.py
+          added: 0
+          removed: 110
+      evidence:
+        - name: make check (pytest 2394 passed, check-oo/coupling/suppressions all pass)
+          status: pass
+        - name: delete-set grep across src/ tests/ hooks/ commands/ returns ZERO hits
+          status: pass
+        - name: deleted files confirmed gone (vibe_window, vibe_mood, signal.sh, both docs)
+          status: pass
+        - name: 'vulture on touched modules: no new dead code'
+          status: pass
+        - name: 'functional CLI flight: nudge fires on Nth auto prompt, silent below/manual/off, malformed stdin silent exit 0'
+          status: pass
+        - name: nudge hook is config-only (never touches voxd); voxd-down does not break it
+          status: pass
+      open_questions:
+        - 'docs/architecture.tex still names the post-bash hook / vibe_signals / signal.sh (lines 1013, 1046, 1336): a leader-owned live architecture doc outside my write-set, needs updating to the agent-driven nudge. Historical archives (docs/oo-refactor/*, docs/z-spec/*, architecture-review-v1.4.md, design/design-config-split.md) left as-is.'
+      prose: |
+        Three green commits on feat/vibe-exit-code (be2ba42, f0199b6, e00a657).
+
+        VIBE_NUDGE_REMINDER lives in vibe_nudge.py beside VibeNudge, not in quips.py
+        as the design suggested: it is silent injected context, not speech, so
+        co-locating it (PY-OO-7) is more cohesive and kept quips.py module_size flat
+        (the quips placement regressed the ratchet with no offset). quips.py ended
+        unchanged.
+
+        handle_stop drops the dead vibe_signals gate and _persist_auto_vibe_tags and
+        fires on notify!=n & speak!=n & not stop_hook_active; the decision-block
+        mechanism is preserved and it writes nothing. The vibe_signals field became
+        vibe_nudge_turns: int with a VoxConfig.coerce_turns validator; VibeChange
+        resets it on any mode change and both the CLI and MCP paths route through it.
+
+        Four scoped, justified ratchet relaxes recorded in the audit (config.py
+        module_size / class_to_func_ratio for the int-coercion feature; server.py
+        method_ratio / avg_params for the deleted property; __main__.py coupling for
+        the shared VibeChange import, 12 < the CLI limit of 15). Did not touch
+        DESIGN.md / README.md / CHANGELOG.md / commands/vibe.md. No PR opened.
