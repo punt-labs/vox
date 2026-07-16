@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self, final
 
-from punt_vox.types_programs.mode import Mode
+from punt_vox.types_programs.mode import PlaybackStatus
 from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicHint"]
@@ -33,14 +33,14 @@ class MusicHint:
     def for_status(
         cls, status: ProgramStatus, mood: str | None, style: str | None
     ) -> Self | None:
-        """Return a hint when *status* is playing, else ``None`` (music off = no hint).
+        """Return a hint only when *status* is genuinely audible, else ``None``.
 
-        ``None`` is the documented contract for "music is off, nothing to re-pool"
-        (PY-TS-14): the ``vibe`` tool omits the hint entirely in that case. A mood
-        of ``None`` (a cleared mood on ``/vibe auto`` or ``off``) still yields a
-        hint while a Program plays, phrased against the current session mood.
+        A hint fires solely for the two playing modes. Off, generating, retrying,
+        and failed are NOT playing -- a re-pool directive would be a lie there, so
+        they return ``None`` (the documented "nothing to re-pool" contract). A
+        cleared mood (``/vibe auto``/``off``) still hints while a Program plays.
         """
-        if status.mode is Mode.OFF:
+        if status.mode.status is not PlaybackStatus.PLAYING:
             return None
         return cls(_mood=mood or _UNKNOWN_MOOD, _style=style)
 

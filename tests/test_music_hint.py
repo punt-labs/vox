@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import pytest
+
 from punt_vox.music_hint import MusicHint
+from punt_vox.types_programs.format import Format
+from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.types_programs.status_views import GenerationStatus
+
+
+def _status(mode: Mode) -> ProgramStatus:
+    """Return a status in *mode* with an idle generation surface."""
+    return ProgramStatus(
+        format=Format.PLAYLIST,
+        mode=mode,
+        generation=GenerationStatus(filling=False, attempts=0),
+    )
 
 
 def _playing() -> ProgramStatus:
-    """Return a status whose Program is playing (mode != off)."""
+    """Return a status whose Program is genuinely playing."""
     return ProgramStatus.radio(None, None)
 
 
@@ -21,6 +35,19 @@ class TestMusicHint:
 
     def test_no_hint_when_music_off(self) -> None:
         assert MusicHint.for_status(_off(), "relaxing", "flamenco") is None
+
+    @pytest.mark.parametrize(
+        "mode",
+        [Mode.OFF, Mode.GENERATING_FIRST, Mode.RETRYING, Mode.FAILED],
+    )
+    def test_no_hint_when_not_audible(self, mode: Mode) -> None:
+        # A FAILED/RETRYING/generating Program is not "playing" -- a re-pool
+        # directive would be false, so no hint fires.
+        assert MusicHint.for_status(_status(mode), "relaxing", "flamenco") is None
+
+    @pytest.mark.parametrize("mode", [Mode.PLAYING_FILLING, Mode.PLAYING_ROTATING])
+    def test_hint_when_audible(self, mode: Mode) -> None:
+        assert MusicHint.for_status(_status(mode), "relaxing", "flamenco") is not None
 
     def test_hint_when_playing_names_style_and_mood(self) -> None:
         hint = MusicHint.for_status(_playing(), "relaxing", "flamenco")

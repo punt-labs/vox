@@ -20,7 +20,6 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.music_hint import MusicHint
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.vibe import VibeChange
 
@@ -114,7 +113,8 @@ class VibeCommand:
         if hint is not None:
             payload["music"] = hint.music_state()
             payload["music_hint"] = hint.directive
-        playing = status is not None and status.mode is not Mode.OFF
+        # music_playing mirrors the audible gate: a hint fires iff genuinely playing.
+        playing = hint is not None
         logger.info(
             "%s vibe set mood=%s mode=%s music_playing=%s style=%s hint=%s",
             _TRACE,

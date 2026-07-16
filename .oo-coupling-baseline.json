@@ -497,7 +497,7 @@
     "avg_lcom": 1.0
   },
   "src/punt_vox/vibe_command.py": {
-    "efferent_coupling": 7.0,
+    "efferent_coupling": 6.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.333,
