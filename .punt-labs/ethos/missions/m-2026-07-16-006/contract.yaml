@@ -1,0 +1,80 @@
+mission_id: m-2026-07-16-006
+status: open
+type: implement
+created_at: "2026-07-16T01:52:05Z"
+updated_at: "2026-07-16T01:52:05Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-16T01:52:05Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-q1z4
+    files:
+        - src/punt_vox/server.py
+        - src/punt_vox/hooks.py
+        - src/punt_vox/vibe_nudge.py
+        - src/punt_vox/config.py
+        - commands/vibe.md
+        - commands/music.md
+        - tests/test_server.py
+        - tests/test_hooks.py
+write_set:
+    - src/punt_vox/server.py
+    - src/punt_vox/hooks.py
+    - commands/vibe.md
+    - commands/music.md
+    - tests/test_server.py
+    - tests/test_hooks.py
+success_criteria:
+    - 'DESIGN (hint-based, do NOT re-litigate — DES-045 finalized by leader): vibe() stays a PURE voice-mood tool. It does NOT drive music, gains NO music params, and NO re-pool logic. Its RETURN is enriched, READ-ONLY: it reads the current music Program status and, when a Program is playing (mode != off), includes both the music state (playing, style) AND an IMPERATIVE directive string telling the agent to act — e.g. `music_hint`: ''Music is playing (style=flamenco). Author 12 rich flamenco x <mood> prompts and call the music tool: music(mode=on, style=flamenco, base_prompt=..., variations=[12]). Do it now.'' When music is OFF, no hint (music_hint absent/null). vibe() reading status is read-only observation, not control — keep the layering clean (the vibe tool never posts a music/switch signal).'
+    - 'The music RE-POOL itself is UNCHANGED: the existing music tool (music on style ...) already re-pools via SwitchProgram -> turn_on. Do NOT modify the daemon/state machine. The agent, prompted by the vibe() return hint, calls the existing music tool. This is orchestration, not a new transition (no z-spec).'
+    - 'commands/vibe.md (the /vibe skill): add the author-then-call-music step — after calling vibe(), if the return''s music_hint is present, author 12 rich genre-accurate prompts for (new mood x current style) — the mood COLORS the genre (relaxing flamenco = slow soleá/guajira; intense flamenco = fast bulerías) — and call the music tool with base_prompt + variations. If no hint (music off), do nothing music-wise. Mirror the /music prompt-authoring rules. This same instruction must apply on the AUTO-vibe path (whenever the agent sets the vibe from its own read of the mood), not just manual /vibe.'
+    - 'OBSERVABILITY IS A CORE DELIVERABLE (operator: ''make that part of the core design goal''). Emit structured, greppable log events (a stable prefix, e.g. `[vibe-trace]`, via logger — voxd/server/hooks log to stderr, never print) at each link so a human can PROVE each feature works or catch it silently failing: (a) AUTO-VIBE: hooks.py handle_vibe_nudge logs each nudge fire with turn/counter/mode (''[vibe-trace] nudge fired counter=5->0 mode=auto''); (b) VIBE SET: server.py vibe() logs mood/tags/mode/music_playing/style/hint_emitted (''[vibe-trace] vibe set mood=relaxing mode=auto music_playing=true style=flamenco hint=emitted''); (c) MUSIC RE-POOL: server.py music() logs the re-pool with style/vibe and existing-rotate vs new-generate (''[vibe-trace] music repool style=flamenco vibe=relaxing pool=new->generate''). The three together let you grep and PROVE: auto-vibe = nudge-fire followed by a vibe-set (mode=auto); a nudge with NO following vibe-set = auto-vibe NOT working. vibe->music = a vibe-set with music_playing=true followed by a music repool; a playing vibe-set with NO repool = the agent dropped the follow-up. Document the exact grep commands (grep ''[vibe-trace]'' <voxd log path>) in commands/vibe.md or a short note so the operator can run the proof.'
+    - 'Also surface current state through the API, not only logs (per ''client-observable, not logs''): the status tool should reflect the current vibe + current music program so a client can query state; the [vibe-trace] LOG is the event-trail proof-over-time, the status is the point-in-time client-observable state. Keep this bounded — do not build a telemetry system.'
+    - Reconcile commands/music.md + the /music skill wording to the actual behavior (a vibe/style change re-pools ONLY while music is playing; music-off vibe change is a no-op; no confirmation/guard). Use the exact wording from the design note (.tmp/missions/results/vox-q1z4-design-note.md docs section) as the starting point, adjusted for the hint-based flow.
+    - 'Tests: (server) vibe() returns music_hint + imperative directive when status.mode != off; returns NO hint when off; the hint names the current style; vibe() posts NO music/switch signal (layering). (hooks) the nudge logs the [vibe-trace] event with the counter. Assert the [vibe-trace] log lines are emitted at each link (caplog). Do NOT test the LLM''s follow-up (that''s the soft path, live-verified) — test that vibe() EMITS the hint and the logs fire.'
+    - 'make check exits 0 (read FULL output; no tail/head/grep). make install + vox daemon restart + make test against the installed artifact. OO ratchet: no regression on touched files, improve at least one metric (server.py/hooks.py have paydown opportunity); make update-oo + stage baselines. No suppressions. Follow python-*.md.'
+    - 'Commit incrementally — one commit per logical step (vibe() hint+logging; music() logging; hooks nudge logging; vibe.md/music.md docs; tests). Each commit passes make check. Do NOT touch DESIGN.md (leader owns DES-045) or open a PR. Branch: feat/vox-q1z4 from main.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Goal
+
+    Make a mood change re-pool the music when music is playing — via a clean,
+    hint-based design (NOT by coupling the vibe tool to playback). vibe() enriches
+    its RETURN with a read-only music-status hint + an imperative directive; the
+    agent (/vibe skill and the auto-vibe path) reads the hint, authors rich
+    (mood x style) prompts, and calls the EXISTING music tool, which re-pools. No
+    daemon or state-machine change. Music off -> no hint -> no-op.
+
+    This rests on soft prompt-reliability (the agent must follow the hint), so the
+    operator made OBSERVABILITY a core goal: structured [vibe-trace] logs must let
+    a human PROVE the chain fires, and equally PROVE whether AUTO-VIBE is working
+    (nudge fires + agent responds). A silent gap must be greppable.
+
+    ## Why hint-based (settled)
+
+    vibe() is voice-direction; driving playback from it is a layering violation.
+    The return-hint keeps concerns separate: vibe = mood, music = music, agent =
+    orchestration. The imperative directive in the return is the STOP_NARRATION-
+    style device that makes the soft path reliable.
+
+    ## Invariants / constraints
+
+    - vibe() never posts a music/switch signal — read-only status observation only.
+    - No daemon/state-machine change; the music tool's re-pool is unchanged.
+    - voxd/server/hooks log to stderr via logger, never print().
+    - No migration/compat/shim; delete the old no-coupling comment in vibe() if it
+      misleads, but vibe() still does NOTHING to music directly.
+    - The [vibe-trace] prefix must be stable and documented so `grep` is the proof.
+
+    ## Deliverable
+
+    feat/vox-q1z4: vibe() return hint + [vibe-trace] logging across nudge/vibe/
+    music, /vibe skill author-then-call-music step, docs reconciled, tests for the
+    hint + logs, status reflects current vibe+music. make check green, daemon-
+    tested. Leader finalizes DES-045 and owns the PR + live verification.

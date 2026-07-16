@@ -1,0 +1,36 @@
+results:
+    - mission: m-2026-07-16-003
+      round: 1
+      created_at: "2026-07-16T01:10:02Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/audio-programs.tex
+          added: 82
+          removed: 7
+        - path: DESIGN.md
+          added: 39
+          removed: 0
+      evidence:
+        - name: fuzz -t docs/audio-programs.tex exits 0; VibeForwardedWhileOff + total VibeSet type-check
+          status: pass
+        - name: Re-pool branch = TurnOn pool-shape classification; pool<=12, one fill, playing in pool, no immediate repeat, generation only below full preserved
+          status: pass
+        - name: DES-045 ADR added (decision, rejected no-coupling alternative with server.py comment cited, consequences, alternatives table)
+          status: pass
+        - name: Finding recorded for underspecified transitions (generatingFirst/empty-retrying, failed recovery, Radio replay)
+          status: pass
+        - name: 'Design note: client-layer write-set, 9-test plan naming each property, doc reconciliation for music.md + vibe.md'
+          status: pass
+      open_questions:
+        - 'PROMPT AUTHORING (escalate to operator before implementation): a new (vibe,style) pool needs 12 authored prompts. Recommend Option A -- the agent''s /vibe flow authors them (flavorful, agent-coupled), reusing the authoring it already does for /music on style; daemon bare fallback stays only as a safety net. Rejected Option B (daemon flavorless fallback as the path) because it regresses genre fidelity on the very feature meant to make mood-driven music good, violating the ''agent authors, vox is a pipe'' invariant (DES-039). Model and write-set are agnostic to the choice.'
+        - Verify during implementation that the re-pool honors 'finish the current track, then switch' (settled behavior) rather than interrupting mid-track -- SwitchProgram.interrupts is True, so confirm the track-boundary handoff lives on the playback path as with the existing /music style-change. If it interrupts, that is an impl-time defect, not a model change.
+      prose: |
+        DESIGN phase for vox-q1z4 / DES-045 complete on branch design/vox-q1z4
+        (commit 894f893). The reversal is client-layer: the daemon already realizes
+        VibeStyleChange via SwitchProgram->turn_on (the /music on style path), so the
+        model extension pins the new gate (VibeSet total over mode) and the ADR records
+        the reversal of server.py's no-coupling decision. fuzz -t passes; the PDF is
+        not tracked so no regen. The one open decision for the leader to escalate is
+        prompt authoring for a new pool (recommendation: agent /vibe flow authors).
