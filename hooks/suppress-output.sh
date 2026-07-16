@@ -141,7 +141,18 @@ if [[ "$TOOL_NAME" == "vibe" ]]; then
   else
     MSG="♪ vibe updated"
   fi
-  emit "$MSG" "$STOP_NARRATION"
+  # When a Program plays, the vibe reply carries an imperative music_hint: an
+  # instruction to author 12 fresh prompts and re-pool the music to the new mood.
+  # That directive IS a terminal action, so hand it to the agent as
+  # additionalContext in place of the stop-narration directive -- otherwise the
+  # STOP_NARRATION silent-set membership swallows it and the re-pool never fires.
+  # Music off: no hint, so the vibe change stays silent.
+  MUSIC_HINT=$(printf '%s' "$RESULT" | jq -r '.music_hint // empty' 2>/dev/null)
+  if [[ -n "$MUSIC_HINT" ]]; then
+    emit "$MSG" "$MUSIC_HINT"
+  else
+    emit "$MSG" "$STOP_NARRATION"
+  fi
   exit 0
 fi
 

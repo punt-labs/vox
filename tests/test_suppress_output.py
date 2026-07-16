@@ -91,12 +91,52 @@ class TestSilentToolsStopNarration:
     """
 
     def test_vibe_context_is_the_directive_not_json(self) -> None:
+        # Music off (no music_hint): the vibe change is silent.
         out = _run_hook("vibe", {"vibe": {"vibe": "focused", "vibe_tags": "[calm]"}})
         assert _STOP_MARK in out["additionalContext"]
         # The raw result must NOT leak — no data for the agent to narrate.
         assert "vibe_tags" not in out["additionalContext"]
         assert "focused" not in out["additionalContext"]
         # The panel line is untouched.
+        assert out["updatedMCPToolOutput"] == "♪ vibe shifted to [calm]"
+
+
+class TestVibeMusicHint:
+    """A vibe change while music plays must deliver the re-pool directive.
+
+    vox-q1z4 makes ``vibe`` return a ``music_hint`` — an imperative "author 12
+    prompts and call music(...)" instruction — whenever a Program is playing.
+    ``vibe`` is in the STOP_NARRATION silent set, so without this branch the
+    directive is swallowed and the whole re-pool feature does nothing through
+    the hook. When a hint is present it REPLACES the stop directive; when music
+    is off (no hint) the vibe change stays silent.
+    """
+
+    def test_music_hint_replaces_stop_narration(self) -> None:
+        hint = (
+            "Music is playing (style=trance). Author 12 rich trance x focused "
+            'prompts and call music(mode="on", style="trance", base_prompt=..., '
+            "variations=[<12 genre-mood prompts>]). Do it now."
+        )
+        out = _run_hook(
+            "vibe",
+            {
+                "vibe": {"vibe": "focused", "vibe_tags": "[calm]"},
+                "music": {"playing": True, "style": "trance"},
+                "music_hint": hint,
+            },
+        )
+        # The imperative directive reaches the agent verbatim…
+        assert out["additionalContext"] == hint
+        # …and the stop-narration directive is gone — the hint is the action.
+        assert _STOP_MARK not in out["additionalContext"]
+        # The panel line is the vibe phrase, unchanged.
+        assert out["updatedMCPToolOutput"] == "♪ vibe shifted to [calm]"
+
+    def test_no_music_hint_keeps_stop_narration(self) -> None:
+        # Music off: the reply has no music_hint, so the vibe change is silent.
+        out = _run_hook("vibe", {"vibe": {"vibe": "focused", "vibe_tags": "[calm]"}})
+        assert _STOP_MARK in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ vibe shifted to [calm]"
 
     def test_music_on_panel_is_the_message(self) -> None:
