@@ -11,8 +11,16 @@ track as soon as it is ready and then, with no further commands, generates the
 rest of the `(vibe, style)` pool (up to 12 distinct tracks) in the background
 and **auto-advances** to a different track as each one ends. Once the pool has
 12, generation stops and playback **rotates** the pool (shuffled, never the
-just-played track) at zero credits. A vibe/style change finishes the current
-song, then switches to that vibe's pool (filling it if it has fewer than 12).
+just-played track) at zero credits.
+
+While music is playing, a vibe or style change re-pools the music: the current
+song finishes, then playback switches to that mood's pool — rotating it in for
+free if those tracks already exist, or generating them if the pool is new. When
+music is **off**, a vibe change updates the session mood only; it does not start
+or generate music. There is no confirmation and no credit prompt — the re-pool
+is the intended effect of the mood change. (The `/vibe` skill drives this: a
+vibe change while music plays returns a `music_hint`, and the agent authors the
+new pool and calls this tool.)
 
 **You author the prompts.** vox is a pipe to ElevenLabs; it never decides what a
 genre sounds like. When you turn music on (and on any style/vibe change) YOU --

@@ -1,7 +1,7 @@
 ---
 description: "Set session mood for TTS voice"
 argument-hint: "<mood> | auto | off"
-allowed-tools: ["mcp__plugin_vox_mic__vibe", "mcp__plugin_vox_mic__status"]
+allowed-tools: ["mcp__plugin_vox_mic__vibe", "mcp__plugin_vox_mic__status", "mcp__plugin_vox_mic__music"]
 ---
 
 # /vibe command
@@ -60,6 +60,17 @@ When the auto reminder fires, read the mood the same way and pick tags:
 [sighs]` when stuck, `[relieved]` just after a fix, `[weary]` on a long
 grind. Skip the update when the mood hasn't changed.
 
+## Effect on music
+
+If background music is *playing*, changing the vibe re-pools the music to the
+new mood — but the `vibe` tool does not drive playback. Instead its reply
+carries a `music_hint`: an instruction telling you to author the new pool and
+call the `music` tool yourself. The mood *colors* the genre; the genre never
+changes.
+
+When music is *off*, the `vibe` reply has no `music_hint` and you do nothing
+music-wise — a vibe change then only sets the speaking mood.
+
 ## Implementation
 
 Use the `vibe` MCP tool for all writes. Use the `status` MCP tool for
@@ -72,4 +83,44 @@ status queries.
 - **`/vibe` (no argument)**: Call the `status` MCP tool and report current
   `vibe_mode`, `vibe`, and `vibe_tags`
 
-No text output after changes — the panel confirms with the vibe shift.
+**After every `vibe()` write, inspect the reply for a `music_hint`.** When it is
+present the reply also carries `music.style` (the genre now playing). Do the
+following — on the manual `/vibe` path *and* whenever the auto reminder makes
+you set the vibe:
+
+1. Read `music.style` from the reply.
+2. Author exactly 12 genre-accurate `variations` plus a `base_prompt` for
+   `(new mood × that style)` — the mood shades the genre, it never replaces it
+   (relaxing flamenco = slow *soleá*/*guajira*; intense flamenco = fast
+   *bulerías*). Follow the authoring rules in `/music`.
+3. Call `music(mode="on", style="<that style>", base_prompt="…",
+   variations=[… 12 …])`. The daemon rotates the pool for free if it already
+   exists, or generates it if it is new.
+
+No `music_hint` (music off) → do nothing music-wise. No text output after
+changes — the panel confirms with the vibe shift.
+
+## Proving the chain (observability)
+
+The subsystem emits stable `[vibe-trace]` events to the `mic` server and hook
+stderr (captured by Claude Code's MCP/hook logs). Grep them to *prove* each
+link fired, or to catch a silent gap:
+
+```bash
+grep '\[vibe-trace\]' <mic-server-or-hook-stderr>
+```
+
+Three event shapes, and what a matching pair proves:
+
+- `[vibe-trace] nudge fired counter=5->0 mode=auto` — the auto-vibe reminder
+  fired (from the UserPromptSubmit hook).
+- `[vibe-trace] vibe set mood=relaxing mode=auto music_playing=true style=flamenco hint=emitted`
+  — the vibe was set. `hint=emitted` means a `music_hint` was returned.
+- `[vibe-trace] music on style=flamenco vibe=relaxing prompts=authored` — the
+  `music` tool re-pooled.
+
+- **Auto-vibe works** when a `nudge fired` is followed by a `vibe set … mode=auto`.
+  A `nudge fired` with no following `vibe set` = the agent ignored the nudge.
+- **Vibe → music works** when a `vibe set … music_playing=true` is followed by a
+  `music on`. A playing `vibe set` with no following `music on` = the agent
+  dropped the hint.
