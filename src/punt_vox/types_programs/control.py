@@ -56,8 +56,8 @@ class SelectionRequest:
         tool's ``style`` arg, which is absent on an id/name/vibe replay. A match
         spanning more than one genre (or no match at all) has no single style to
         name: ``None``, so the caller clears the register instead of naming a wrong
-        genre. An explicit ``style`` is that genre outright; an ``id`` is a direct
-        single-album lookup that ignores the tag axes.
+        genre. An explicit ``style`` is returned outright only when no ``id`` is
+        present; an ``id`` takes precedence, resolving the genre from the catalog.
         """
         if self.style is not None and self.id is None:
             return self.style
