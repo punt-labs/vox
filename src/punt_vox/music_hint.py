@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Self, final
 
@@ -59,13 +60,12 @@ class MusicHint:
     def directive(self) -> str:
         """Return the imperative re-pool instruction, naming the current style."""
         mood = self._mood or _UNKNOWN_MOOD
-        call = (
-            f'music(mode="on", style="{self._style}", base_prompt=..., '
-            "variations=[<12 genre-mood prompts>])"
-        )
+        # json.dumps escapes the style into a valid literal the example can't break.
         return (
             f"Music is playing (style={self._style}). Author 12 rich "
-            f"{self._style} x {mood} prompts and call {call}. Do it now."
+            f"{self._style} x {mood} prompts and call "
+            f'music(mode="on", style={json.dumps(self._style)}, base_prompt=..., '
+            "variations=[<12 genre-mood prompts>]). Do it now."
         )
 
     def music_state(self) -> dict[str, object]:

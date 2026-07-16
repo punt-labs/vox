@@ -67,6 +67,23 @@ class TestMusicHint:
         assert "variations=[<12 genre-mood prompts>]" in styled.directive
         assert 'style="flamenco"' in styled.directive
 
+    def test_directive_escapes_double_quote_in_style(self) -> None:
+        # A style carrying a double quote must render as an escaped literal, so
+        # the argument cannot close early and leave a syntactically ambiguous
+        # example the agent would copy verbatim.
+        hint = MusicHint.for_status(_playing(), "relaxing", 'jazz"fusion')
+        assert hint is not None
+        assert r'style="jazz\"fusion"' in hint.directive
+        assert 'style="jazz"fusion"' not in hint.directive
+
+    def test_directive_escapes_backslash_in_style(self) -> None:
+        # A backslash must be doubled so the rendered literal is valid Python and
+        # introduces no stray escape sequence in the example call.
+        hint = MusicHint.for_status(_playing(), "relaxing", "prog\\rock")
+        assert hint is not None
+        assert r'style="prog\\rock"' in hint.directive
+        assert r'style="prog\rock"' not in hint.directive
+
     def test_music_state_is_observable(self) -> None:
         hint = MusicHint.for_status(_playing(), "relaxing", "flamenco")
         assert hint is not None
