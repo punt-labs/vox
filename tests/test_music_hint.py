@@ -52,8 +52,8 @@ class TestMusicHint:
     def test_hint_when_playing_names_style_and_mood(self) -> None:
         hint = MusicHint.for_status(_playing(), "relaxing", "flamenco")
         assert hint is not None
-        assert "style=flamenco" in hint.directive
-        assert "flamenco x relaxing" in hint.directive
+        assert 'style="flamenco"' in hint.directive
+        assert '"flamenco" x "relaxing"' in hint.directive
         assert hint.directive.endswith("Do it now.")
 
     def test_directive_example_is_unambiguous_and_executable(self) -> None:
@@ -68,13 +68,15 @@ class TestMusicHint:
         assert 'style="flamenco"' in styled.directive
 
     def test_directive_escapes_double_quote_in_style(self) -> None:
-        # A style carrying a double quote must render as an escaped literal, so
-        # the argument cannot close early and leave a syntactically ambiguous
-        # example the agent would copy verbatim.
+        # A style carrying a double quote must render as an escaped literal in
+        # EVERY part of the directive -- the "Music is playing (style=...)" prose,
+        # the "style x mood" line, and the example call -- so no raw unescaped
+        # occurrence can leave a syntactically ambiguous example, wherever it sits.
         hint = MusicHint.for_status(_playing(), "relaxing", 'jazz"fusion')
         assert hint is not None
         assert r'style="jazz\"fusion"' in hint.directive
         assert 'style="jazz"fusion"' not in hint.directive
+        assert 'jazz"fusion' not in hint.directive
 
     def test_directive_escapes_backslash_in_style(self) -> None:
         # A backslash must be doubled so the rendered literal is valid Python and

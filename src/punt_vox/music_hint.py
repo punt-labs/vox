@@ -58,12 +58,12 @@ class MusicHint:
     @property
     def directive(self) -> str:
         """Return the imperative re-pool instruction, naming the current style."""
-        mood = self._mood or _UNKNOWN_MOOD
-        # json.dumps escapes the style into a valid literal the example can't break.
+        # json.dumps escapes every value so no raw quote breaks the prose or the call.
+        style = json.dumps(self._style)
+        mood = json.dumps(self._mood or _UNKNOWN_MOOD)
         return (
-            f"Music is playing (style={self._style}). Author 12 rich "
-            f"{self._style} x {mood} prompts and call "
-            f'music(mode="on", style={json.dumps(self._style)}, base_prompt=..., '
+            f"Music is playing (style={style}). Author 12 rich {style} x {mood} "
+            f'prompts and call music(mode="on", style={style}, base_prompt=..., '
             "variations=[<12 genre-mood prompts>]). Do it now."
         )
 
