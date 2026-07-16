@@ -316,8 +316,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.03,
     "max_complexity": 9.0,
-    "avg_complexity": 2.61,
-    "module_size": 415.0,
+    "avg_complexity": 2.52,
+    "module_size": 396.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.032,
     "init_violations": 0.0,
@@ -376,6 +376,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/music_hint.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.75,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.75,
+    "module_size": 55.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/music_phrases.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -398,6 +411,19 @@
     "module_size": 656.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/nudge_hook.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.33,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.33,
+    "module_size": 66.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -623,6 +649,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/recording.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.25,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 43.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/resolve.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
@@ -637,12 +676,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/server.py": {
-    "method_ratio": 0.568,
+    "method_ratio": 0.59,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.51,
+    "avg_params": 1.46,
     "max_complexity": 9.0,
-    "avg_complexity": 2.85,
-    "module_size": 754.0,
+    "avg_complexity": 2.68,
+    "module_size": 750.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.059,
     "init_violations": 0.0,
@@ -996,6 +1035,19 @@
     "module_size": 39.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/vibe_command.py": {
+    "method_ratio": 0.889,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 1.89,
+    "module_size": 112.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

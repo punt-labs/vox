@@ -39,6 +39,7 @@ from punt_vox.hook_payload import (
     NotificationPayload,
     StopPayload,
 )
+from punt_vox.nudge_hook import NudgeHook
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
     FAREWELL_PHRASES,
@@ -50,7 +51,6 @@ from punt_vox.quips import (
     SUBAGENT_STOP_PHRASES,
 )
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.vibe_nudge import VibeNudge
 
 logger = logging.getLogger(__name__)
 
@@ -243,30 +243,11 @@ def handle_stop(
 def handle_vibe_nudge(config: VoxConfig, config_dir: Path) -> dict[str, object] | None:
     """Return a UserPromptSubmit additionalContext envelope, or None to stay silent.
 
-    In ``auto`` mode the cadence counter advances every prompt and the reminder
-    fires (resetting the counter) every Nth prompt; outside ``auto`` nothing
-    happens. Non-blocking always — this never emits a decision. The reminder is
-    coupled to the reset: a failed persist stays silent (see the write below).
+    Thin adapter over :class:`NudgeHook`, which owns the cadence advance, the
+    persist, and the ``[vibe-trace]`` nudge event. Non-blocking always -- this
+    never emits a decision.
     """
-    decision = VibeNudge().advance(mode=config.vibe_mode, turns=config.vibe_nudge_turns)
-    if config.vibe_mode == "auto":
-        try:
-            ConfigStore(config_dir).write_field(
-                "vibe_nudge_turns", str(decision.next_turns)
-            )
-        except OSError as exc:
-            logger.warning(
-                "vibe-nudge: cannot persist cadence in %s: %s", config_dir, exc
-            )
-            return None  # reset didn't land — stay silent, don't re-fire it
-    if decision.reminder is None:
-        return None
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": decision.reminder,
-        }
-    }
+    return NudgeHook(config_dir).run(config)
 
 
 # Notification — permission/idle prompt audio alerts

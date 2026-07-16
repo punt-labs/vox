@@ -7,7 +7,6 @@ via VoxClient.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import random
@@ -26,12 +25,14 @@ from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.program_gateway import ProgramGateway
+from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
+from punt_vox.vibe_command import VibeCommand
 from punt_vox.voices import VOICE_BLURBS
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class SessionConfig:
     _vibe_mode: str = "off"
     _vibe: str | None = None
     _vibe_tags: str | None = None
+    _style: str | None = None
     _speak_explicit: bool = False
 
     # -- Properties (read access) ------------------------------------------
@@ -135,6 +137,20 @@ class SessionConfig:
     def vibe_tags(self) -> str | None:
         """Return the current ElevenLabs expressive tags."""
         return self._vibe_tags
+
+    @property
+    def style(self) -> str | None:
+        """Return the last authored music style, or ``None`` when unset.
+
+        In-memory session state -- the genre the agent last turned music on with.
+        It lets the vibe tool name the current style in its re-pool hint without
+        the daemon status carrying subject data (which it deliberately omits).
+        """
+        return self._style
+
+    @style.setter
+    def style(self, value: str | None) -> None:
+        self._style = value
 
     @property
     def speak_explicit(self) -> bool:
@@ -486,36 +502,17 @@ def record(
     if output_path and len(segments) > 1:
         return _error("output_path only supported for single-segment calls")
 
-    # Resolve output directory.
+    # A single-segment call may pin an explicit path; otherwise the sink names
+    # each file by content hash under the output directory.
     dir_path = Path(output_dir) if output_dir else _default_output_dir()
-    dir_path.mkdir(parents=True, exist_ok=True)
-
+    single_path = Path(output_path) if output_path and len(segments) == 1 else None
+    sink = RecordingSink(dir_path, single_path)
     effective_provider = _session.provider
     client = _voxd_client()
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
         mp3_bytes = client.record(seg_text, seg_spec)
-
-        # Determine output file path.
-        if output_path and len(segments) == 1:
-            file_path = Path(output_path)
-        else:
-            text_hash = hashlib.md5(
-                seg_text.encode(),
-                usedforsecurity=False,
-            ).hexdigest()[:10]
-            file_path = dir_path / f"{text_hash}.mp3"
-
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(mp3_bytes)
-
-        return {
-            "path": str(file_path),
-            "text": seg_text,
-            "voice": seg_spec.voice,
-            "provider": effective_provider,
-            "bytes": len(mp3_bytes),
-        }
+        return sink.entry(seg_text, seg_spec.voice, effective_provider, mp3_bytes)
 
     defaults = SynthesisSpec(
         voice=voice or _session.voice,
@@ -556,28 +553,14 @@ def vibe(
             set here.
 
     Returns:
-        JSON string with the updated vibe state.
+        JSON string with the updated vibe state. When a Program is playing, the
+        reply also carries the music state and a ``music_hint`` directive telling
+        you to re-pool the music to the new mood (see the ``/vibe`` skill).
     """
     _session.refresh_from_config()
-    try:
-        updates = _session.change_vibe(VibeChange(mood=mood, tags=tags, mode=mode))
-    except ValueError:
-        return _error(f"Invalid mode '{mode}'. Use auto/manual/off.")
-
-    if not updates:
-        return _error("Provide at least one of: mood, tags, mode.")
-
-    # Persist to disk so hooks (which read config independently) see the change.
-    # The session vibe is NOT pushed to the Program here: a stale session vibe
-    # must not be replayed as an authoritative music transition. The vibe is
-    # display/record state; a Program retune is a
-    # deliberate music command, never a side effect of setting the session mood.
-    try:
-        ConfigStore(_find_config_dir()).write_fields(updates)
-    except ValueError as exc:  # mood/tags carrying a newline or double-quote
-        return _error(str(exc))
-
-    return json.dumps({"vibe": updates})
+    return VibeCommand(_session, _program_tools, _find_config_dir()).apply(
+        mood, tags, mode
+    )
 
 
 @mcp.tool()
@@ -613,6 +596,14 @@ def music(
     try:
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
+            if style is not None:
+                _session.style = style  # remember the genre for the vibe re-pool hint
+            logger.info(
+                "[vibe-trace] music on style=%s vibe=%s prompts=%s",
+                style or "-",
+                _session.vibe or "-",
+                "authored" if variations else "fallback",
+            )
             outcome = _program_tools.start(
                 StartRequest(
                     style=style, vibe=_session.vibe, name=name, prompts=prompts
@@ -861,6 +852,7 @@ def status() -> str:
         "vibe_mode": _session.vibe_mode,
         "vibe": _session.vibe,
         "vibe_tags": _session.vibe_tags,
+        "style": _session.style,
     }
     try:
         program_status = _program_tools.status()
