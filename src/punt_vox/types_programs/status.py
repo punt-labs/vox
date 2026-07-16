@@ -22,7 +22,7 @@ from typing import Self, final
 
 from punt_vox.types_programs.format import Format
 from punt_vox.types_programs.identifiers import ProgramName
-from punt_vox.types_programs.mode import Mode
+from punt_vox.types_programs.mode import Mode, PlaybackStatus
 from punt_vox.types_programs.playback_fault import PlaybackFault
 from punt_vox.types_programs.status_views import (
     FailedPartView,
@@ -92,6 +92,11 @@ class ProgramStatus:
     def is_idle(self) -> bool:
         """Return whether no Program is active (the daemon holds nothing)."""
         return self.name is None
+
+    @property
+    def is_playing(self) -> bool:
+        """Return whether a Part is audibly playing (the single audible gate)."""
+        return self.mode.status is PlaybackStatus.PLAYING
 
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form -- the wire shape every client reads.

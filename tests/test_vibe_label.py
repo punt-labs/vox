@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.programs.vibe_label import VibeLabel
+from punt_vox.types_programs.vibe_label import VibeLabel
 
 _PATHOLOGICAL_MOOD = (
     "a long brutal grind that shipped: 6 review rounds — 4.12.0 out the "
