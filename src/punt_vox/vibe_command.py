@@ -94,7 +94,7 @@ class MusicPreference:
         logger.info(
             "%s music on style=%s vibe=%s prompts=%s",
             _TRACE,
-            style or "-",
+            self._style or "-",  # effective style: persisted when the arg was omitted
             vibe or "-",
             "authored" if authored else "fallback",
         )

@@ -12,6 +12,7 @@ from _program_fakes import FakeProgramGateway
 
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.server import SessionConfig
+from punt_vox.types_programs.control import CommandOutcome
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.vibe_command import MusicPreference, VibeCommand
 
@@ -54,6 +55,38 @@ class TestMusicPreference:
         pref.stopped()
         assert pref.style is None
 
+    def test_confirm_started_trace_names_persisted_style_when_omitted(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # music(on) may omit style so the daemon keeps the playing genre. The
+        # trace must name that EFFECTIVE, persisted style -- never "-" -- or the
+        # re-pool proof would claim no genre is in effect when one plainly is.
+        pref = MusicPreference("flamenco")
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            pref.confirm_started(CommandOutcome.ok(""), None, "relaxing", authored=True)
+
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any("music on style=flamenco" in m for m in traces)
+        assert all("style=-" not in m for m in traces)
+
+    def test_confirm_started_trace_names_explicit_style(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pref = MusicPreference("flamenco")
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            pref.confirm_started(
+                CommandOutcome.ok(""), "techno", "wired", authored=False
+            )
+
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any("music on style=techno" in m for m in traces)
+
 
 class TestVibeCommand:
     """apply() persists the vibe and hints at music only while a Program plays."""
@@ -65,7 +98,7 @@ class TestVibeCommand:
         command = VibeCommand(SessionConfig(), gateway, tmp_path, pref)
         result = json.loads(command.apply("relaxing", "[calm]", "manual"))
 
-        assert result["music_hint"].startswith("Music is playing (style=flamenco)")
+        assert result["music_hint"].startswith('Music is playing (style="flamenco")')
         assert result["music"] == {"playing": True, "style": "flamenco"}
         assert result["vibe"]["vibe"] == "relaxing"
 
