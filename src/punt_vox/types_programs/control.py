@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Self, final
 
 from punt_vox.types_programs.prompts import PromptSet
+from punt_vox.types_programs.vibe_label import VibeLabel
 
 __all__ = ["CommandOutcome", "ProgramSummary", "SelectionRequest", "StartRequest"]
 
@@ -65,20 +66,19 @@ class SelectionRequest:
     def _selects(self, summary: ProgramSummary) -> bool:
         """Return whether *summary* is this replay's target: id lookup, else tags.
 
-        An ``id`` is a direct single-album lookup that ignores the tag axes; with
-        no id, each absent tag is a wildcard.
+        An ``id`` ignores the tag axes; with no id each absent tag is a wildcard and
+        the vibe is bounded through ``VibeLabel`` to match the stored canonical tag.
         """
         if self.id is not None:
             return summary.id == self.id
-        return (self.vibe is None or summary.vibe == self.vibe) and (
+        return (self.vibe is None or summary.vibe == VibeLabel(self.vibe).value) and (
             self.name is None or summary.name == self.name
         )
 
     @staticmethod
     def _single_style(matches: Iterable[ProgramSummary]) -> str | None:
         """Return the one distinct style among *matches*, else ``None``."""
-        styles = {summary.style for summary in matches}
-        return next(iter(styles)) if len(styles) == 1 else None
+        return next(iter(s)) if len(s := {m.style for m in matches}) == 1 else None
 
 
 @final
