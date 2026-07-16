@@ -114,8 +114,8 @@ Three event shapes, and what a matching pair proves:
 
 - `[vibe-trace] nudge fired counter=5->0 mode=auto` — the auto-vibe reminder
   fired (from the UserPromptSubmit hook).
-- `[vibe-trace] vibe set mood=relaxing mode=auto music_playing=true style=flamenco hint=emitted`
-  — the vibe was set. `hint=emitted` means a `music_hint` was returned.
+- `[vibe-trace] vibe set mood=relaxing mode=auto music_playing=true hint_emitted=true style=flamenco`
+  — the vibe was set. `hint_emitted=true` means a `music_hint` was returned.
 - `[vibe-trace] music on style=flamenco vibe=relaxing prompts=authored` — the
   `music` tool re-pooled.
 
