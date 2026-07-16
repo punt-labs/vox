@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Self, final
+
+from punt_vox.types import generate_filename
 
 __all__ = ["RecordingSink"]
 
@@ -14,8 +15,8 @@ class RecordingSink:
     """Writes synthesized audio to disk and describes the result record.
 
     An explicit path pins a single-segment write; otherwise each segment lands at
-    ``<dir>/<md5(text)[:10]>.mp3``. The sink owns the directory and creates the
-    parent on every write, so callers never touch the filesystem layout.
+    the canonical ``generate_filename`` name every other MP3 shares. The sink owns
+    the directory and creates the parent on every write.
     """
 
     __slots__ = ("_dir", "_explicit")
@@ -50,6 +51,5 @@ class RecordingSink:
         return path
 
     def _hashed_path(self, text: str) -> Path:
-        """Return the content-addressed path ``<dir>/<md5(text)[:10]>.mp3``."""
-        digest = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:10]
-        return self._dir / f"{digest}.mp3"
+        """Return the canonical content-addressed path for *text*."""
+        return self._dir / generate_filename(text)
