@@ -18,56 +18,54 @@ _UNKNOWN_MOOD = "the current session mood"
 class MusicHint:
     """An imperative directive telling the agent to re-pool music to a new mood.
 
-    The ``vibe`` tool returns this (read-only) whenever a Program is playing so the
-    agent authors fresh ``(mood x style)`` prompts and calls the ``music`` tool
-    itself. The ``vibe`` tool never drives playback -- the hint is the whole
-    coupling, and it is soft: the directive is phrased imperatively so the agent
-    reliably acts on it, the same device the Stop hook uses to make a soft path
-    reliable.
+    The ``vibe`` tool returns this (read-only) whenever a Program is playing *and*
+    its genre is known, so the agent authors fresh ``(mood x style)`` prompts and
+    calls the ``music`` tool itself. The ``vibe`` tool never drives playback -- the
+    hint is the whole coupling, and it is soft: the directive is phrased
+    imperatively so the agent reliably acts on it, the same device the Stop hook
+    uses to make a soft path reliable. A re-pool changes the mood but *preserves
+    the genre*, so an unknown style yields no hint (see :meth:`for_status`).
     """
 
-    _mood: str
-    _style: str | None
+    # A cleared session mood (/vibe auto|off) has no value -- absence is the
+    # documented state, so directive substitutes a neutral placeholder (PY-TS-14).
+    _mood: str | None
+    _style: str
 
     @classmethod
     def for_status(
         cls, status: ProgramStatus, mood: str | None, style: str | None
     ) -> Self | None:
-        """Return a hint only when *status* is genuinely audible, else ``None``.
+        """Return a hint only when *status* is audible and *style* is known.
 
-        A hint fires solely for the two playing modes. Off, generating, retrying,
-        and failed are NOT playing -- a re-pool directive would be a lie there, so
-        they return ``None`` (the documented "nothing to re-pool" contract). A
-        cleared mood (``/vibe auto``/``off``) still hints while a Program plays.
+        A hint fires solely for the two playing modes with a known genre. Off,
+        generating, retrying, and failed are NOT playing -- a re-pool directive
+        would be a lie there. An unknown *style* (``None``) also returns ``None``:
+        with no genre to name, a re-pool cannot preserve it, and following the
+        hint would silently switch to the default genre. Both are the documented
+        "nothing to re-pool" contract. A cleared mood (``/vibe auto``/``off``)
+        still hints while a Program plays with a known style.
         """
-        if status.mode.status is not PlaybackStatus.PLAYING:
+        if status.mode.status is not PlaybackStatus.PLAYING or style is None:
             return None
-        return cls(_mood=mood or _UNKNOWN_MOOD, _style=style)
+        return cls(_mood=mood, _style=style)
 
     @property
-    def style(self) -> str | None:
-        """Return the style being re-pooled, or ``None`` when it is unknown."""
+    def style(self) -> str:
+        """Return the known style being re-pooled."""
         return self._style
 
     @property
     def directive(self) -> str:
         """Return the imperative re-pool instruction, naming the current style."""
-        if self._style is None:
-            call = (
-                'music(mode="on", base_prompt=..., '
-                "variations=[<12 genre-mood prompts>])"
-            )
-            return (
-                f"Music is playing. Author 12 rich prompts for {self._mood} in the "
-                f"current genre and call {call}. Do it now."
-            )
+        mood = self._mood or _UNKNOWN_MOOD
         call = (
             f'music(mode="on", style="{self._style}", base_prompt=..., '
             "variations=[<12 genre-mood prompts>])"
         )
         return (
             f"Music is playing (style={self._style}). Author 12 rich "
-            f"{self._style} x {self._mood} prompts and call {call}. Do it now."
+            f"{self._style} x {mood} prompts and call {call}. Do it now."
         )
 
     def music_state(self) -> dict[str, object]:

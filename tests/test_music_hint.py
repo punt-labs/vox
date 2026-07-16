@@ -61,12 +61,10 @@ class TestMusicHint:
         # mode is a quoted string and variations reads as 12 authored prompts,
         # never a one-element list holding the integer 12.
         styled = MusicHint.for_status(_playing(), "relaxing", "flamenco")
-        unstyled = MusicHint.for_status(_playing(), "relaxing", None)
-        assert styled is not None and unstyled is not None
-        for directive in (styled.directive, unstyled.directive):
-            assert 'mode="on"' in directive
-            assert "variations=[12]" not in directive
-            assert "variations=[<12 genre-mood prompts>]" in directive
+        assert styled is not None
+        assert 'mode="on"' in styled.directive
+        assert "variations=[12]" not in styled.directive
+        assert "variations=[<12 genre-mood prompts>]" in styled.directive
         assert 'style="flamenco"' in styled.directive
 
     def test_music_state_is_observable(self) -> None:
@@ -84,9 +82,8 @@ class TestMusicHint:
         assert hint is not None
         assert "the current session mood" in hint.directive
 
-    def test_unknown_style_directive_names_current_genre(self) -> None:
-        hint = MusicHint.for_status(_playing(), "relaxing", None)
-        assert hint is not None
-        assert "current genre" in hint.directive
-        assert "style=" not in hint.directive
-        assert hint.music_state()["style"] is None
+    def test_no_hint_when_style_unknown(self) -> None:
+        # A known genre is what a re-pool preserves. With no style to name, a
+        # directive would let the daemon default to ambient and silently switch
+        # genres -- so no hint fires. The mood still updates; music keeps playing.
+        assert MusicHint.for_status(_playing(), "relaxing", None) is None
