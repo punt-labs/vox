@@ -1249,6 +1249,16 @@ def _install_fake(monkeypatch: pytest.MonkeyPatch, fake: FakeProgramGateway) -> 
     monkeypatch.setattr(srv, "_program_tools", fake)
 
 
+def _music_traces(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the captured success ``[vibe-trace] music`` lines, failures excluded."""
+    return [
+        message
+        for record in caplog.records
+        if "[vibe-trace] music" in (message := record.getMessage())
+        and "failed" not in message
+    ]
+
+
 class TestMusicTool:
     """The music tool routes on/off through the gateway with an F7 result."""
 
@@ -1283,7 +1293,7 @@ class TestMusicTool:
 
         _install_fake(monkeypatch, FakeProgramGateway())
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.server"):
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
             music(mode="on", style="jazz")
 
         assert srv._music_pref.style == "jazz"
@@ -1291,6 +1301,43 @@ class TestMusicTool:
             r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
         ]
         assert any("music on" in m and "style=jazz" in m for m in traces)
+
+    def test_rejected_on_leaves_style_and_omits_trace(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A rejected start must not adopt the genre nor log a success trace."""
+        import logging
+
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway(applied=False))
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            music(mode="on", style="jazz")
+
+        assert srv._music_pref.style == "flamenco"  # register untouched
+        assert not _music_traces(caplog)
+
+    def test_daemon_error_on_leaves_style_and_omits_trace(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A start that raises leaves the register and logs no success trace."""
+        import logging
+
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        fake = MagicMock()
+        fake.start.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            result = json.loads(music(mode="on", style="jazz"))
+
+        assert "error" in result
+        assert srv._music_pref.style == "flamenco"  # register untouched
+        assert not _music_traces(caplog)
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_style_is_no_tag_and_no_style_pool(
@@ -1353,6 +1400,23 @@ class TestMusicTool:
         music(mode="off")
 
         assert srv._music_pref.style is None
+
+    def test_rejected_off_keeps_style_and_omits_trace(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A rejected stop must not clear the style nor log a success trace."""
+        import logging
+
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway(applied=False))
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            music(mode="off")
+
+        assert srv._music_pref.style == "flamenco"  # register untouched
+        assert not _music_traces(caplog)
 
     def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake(monkeypatch, FakeProgramGateway())
@@ -1437,6 +1501,23 @@ class TestMusicPlayTool:
         music_play(name="deep cuts")
 
         assert srv._music_pref.style is None
+
+    def test_rejected_play_leaves_style_and_omits_trace(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A rejected replay must not adopt the style nor log a success trace."""
+        import logging
+
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway(applied=False))
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            music_play(style="techno")
+
+        assert srv._music_pref.style == "flamenco"  # register untouched
+        assert not _music_traces(caplog)
 
     def test_play_by_name_uses_named_pool(
         self, monkeypatch: pytest.MonkeyPatch

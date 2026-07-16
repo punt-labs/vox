@@ -24,6 +24,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.music_hint import MusicHint
 from punt_vox.program_gateway import ProgramGateway
+from punt_vox.types_programs.control import CommandOutcome
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.vibe import VibeChange
 
@@ -72,6 +73,57 @@ class MusicPreference:
     def stopped(self) -> None:
         """Record a ``music off``: no style is playing."""
         self._style = None
+
+    def confirm_started(
+        self,
+        outcome: CommandOutcome,
+        style: str | None,
+        vibe: str | None,
+        *,
+        authored: bool,
+    ) -> None:
+        """Adopt *style* and log the proof only when the daemon applied the start.
+
+        The register and its trace turn solely on ``outcome.applied``, so a
+        rejected/lost-race start leaves the genre untouched and never claims a
+        false re-pool -- the one place that decision lives.
+        """
+        if not outcome.applied:
+            return
+        self.started(style)
+        logger.info(
+            "%s music on style=%s vibe=%s prompts=%s",
+            _TRACE,
+            style or "-",
+            vibe or "-",
+            "authored" if authored else "fallback",
+        )
+
+    def confirm_selected(
+        self,
+        outcome: CommandOutcome,
+        style: str | None,
+        vibe: str | None,
+        name: str | None,
+    ) -> None:
+        """Adopt the replay's style and log the proof only on an applied replay."""
+        if not outcome.applied:
+            return
+        self.selected(style)
+        logger.info(
+            "%s music play style=%s vibe=%s name=%s",
+            _TRACE,
+            style or "-",
+            vibe or "-",
+            name or "-",
+        )
+
+    def confirm_stopped(self, outcome: CommandOutcome) -> None:
+        """Clear the style and log the proof only when the daemon applied the stop."""
+        if not outcome.applied:
+            return
+        self.stopped()
+        logger.info("%s music off", _TRACE)
 
 
 class VibeSession(Protocol):

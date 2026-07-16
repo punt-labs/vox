@@ -587,22 +587,20 @@ def music(
     try:
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
-            _music_pref.started(style)  # remember the genre for the vibe re-pool hint
-            logger.info(
-                "[vibe-trace] music on style=%s vibe=%s prompts=%s",
-                style or "-",
-                _session.vibe or "-",
-                "authored" if variations else "fallback",
-            )
             outcome = _program_tools.start(
                 StartRequest(
                     style=style, vibe=_session.vibe, name=name, prompts=prompts
                 )
             )
+            # confirm_* adopts the genre and traces only on an applied outcome, so
+            # a rejected/lost-race start leaves the register untouched.
+            _music_pref.confirm_started(
+                outcome, style, _session.vibe, authored=bool(variations)
+            )
             message = f"\u266a {outcome.display(_marquee.generating(style))}"
         else:
-            _music_pref.stopped()  # music off -> no style is playing
             outcome = _program_tools.stop()
+            _music_pref.confirm_stopped(outcome)
             message = f"\u266a {outcome.display(_marquee.stopped())}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
@@ -634,9 +632,6 @@ def music_play(
     style = SessionConfig.canonical_tag(style)
     vibe = SessionConfig.canonical_tag(vibe)
     name = SessionConfig.canonical_tag(name)
-    # A replay's style tag becomes the current genre; a style-less selection (a
-    # union radio, or a by-name/id replay) clears it so the hint stays generic.
-    _music_pref.selected(style)
     try:
         outcome = _program_tools.select(
             SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
@@ -645,6 +640,10 @@ def music_play(
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
+    # confirm_selected adopts the replay's style (or clears it for a style-less
+    # union/by-name replay) and traces only on an applied outcome, so a rejected
+    # replay leaves the register untouched.
+    _music_pref.confirm_selected(outcome, style, vibe, name)
     message = f"\u266a {outcome.display(_marquee.replay(name))}"
     return json.dumps({"message": message, "applied": outcome.applied})
 
