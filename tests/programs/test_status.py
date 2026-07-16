@@ -49,6 +49,13 @@ def test_off_with_saved_pool_names_the_program() -> None:
     assert status.now_playing is None  # a pool to play, but not playing
 
 
+def test_is_playing_is_the_audible_gate() -> None:
+    """is_playing holds only in a playing mode -- idle and off are not audible."""
+    assert not ProgramStatus.idle().is_playing
+    assert not _restored(1, 2).to_status(ProgramName("saved")).is_playing
+    assert build_rotating(AvoidRepeatPolicy()).to_status(ProgramName("r")).is_playing
+
+
 def test_playing_reports_part_n_of_m() -> None:
     """A rotating Program reports the playing Part's 1-based position and pool size."""
     program = build_rotating(AvoidRepeatPolicy())

@@ -105,7 +105,31 @@ class TestVibeCommand:
             "vibe set" in m
             and "music_playing=true" in m
             and "style=flamenco" in m
-            and "hint=emitted" in m
+            and "hint_emitted=true" in m
+            for m in traces
+        )
+
+    def test_trace_playing_unknown_style_is_playing_without_hint(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Music audibly playing but style unknown: playing=true, hint_emitted=false.
+
+        The trace reports the raw audible gate independent of the known style, so
+        a re-pool that can't fire (no genre to name) never reads as not-playing.
+        """
+        gateway = FakeProgramGateway(status=_playing())
+        pref = MusicPreference()  # no known style
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+                "relaxing", None, "manual"
+            )
+
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any(
+            "vibe set" in m and "music_playing=true" in m and "hint_emitted=false" in m
             for m in traces
         )
 

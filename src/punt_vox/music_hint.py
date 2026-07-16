@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from typing import Self, final
 
-from punt_vox.types_programs.mode import PlaybackStatus
 from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicHint"]
@@ -47,7 +46,7 @@ class MusicHint:
         "nothing to re-pool" contract. A cleared mood (``/vibe auto``/``off``)
         still hints while a Program plays with a known style.
         """
-        if status.mode.status is not PlaybackStatus.PLAYING or style is None:
+        if not status.is_playing or style is None:
             return None
         return cls(_mood=mood, _style=style)
 
