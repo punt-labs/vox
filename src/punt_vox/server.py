@@ -310,6 +310,10 @@ def _voxd_client() -> VoxClientSync:
 # call, so no session or owner travels with a command (design section 4).
 _program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 
+# The daemon-transport faults every tool boundary funnels to a JSON _error; named
+# once so the music/status tools share one contract instead of repeating the tuple.
+_DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
+
 
 def _error(message: str) -> str:
     """Return a JSON error string."""
@@ -604,7 +608,7 @@ def music(
             message = f"\u266a {outcome.display(_marquee.stopped())}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
         return _error(str(exc))
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+    except _DAEMON_ERRORS as exc:
         return _error(str(exc))
     return json.dumps({"message": message, "applied": outcome.applied})
 
@@ -635,21 +639,18 @@ def music_play(
     request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
     try:
         outcome = _program_tools.select(request)
-    except ValueError as exc:  # bad id / no match
+    except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or daemon fault
         return _error(str(exc))
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
-        return _error(str(exc))
-    # The replay has already applied. Naming its genre for the re-pool hint is a
-    # best-effort follow-up: resolve the *actual* genre now playing from the live
-    # catalog, not the possibly-absent style arg, so an id/name replay still names
-    # its genre. A style-spanning union resolves to None and clears it. A catalog
-    # lookup that fails here must not turn a successful replay into a reported
-    # error -- fall back to an unknown style, which the style-unknown gate renders
-    # correctly by omitting the re-pool hint.
-    try:
-        resolved_style = request.resolved_style(_program_tools.catalog())
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
-        resolved_style = None
+    # Name the re-pool genre from the live catalog (not the possibly-absent style
+    # arg); an id/name replay still names its genre, a union resolves to None. A
+    # rejected replay ignores it in confirm_selected, so skip the catalog round-trip;
+    # on the applied path a catalog fault falls back to None, never failing the replay.
+    resolved_style: str | None = None
+    if outcome.applied:
+        try:
+            resolved_style = request.resolved_style(_program_tools.catalog())
+        except _DAEMON_ERRORS:
+            resolved_style = None
     # confirm_selected traces and adopts only on an applied outcome, so a rejected
     # replay leaves the register untouched.
     _music_pref.confirm_selected(outcome, resolved_style, vibe, name)
@@ -667,7 +668,7 @@ def music_list() -> str:
     _session.refresh_from_config()
     try:
         summaries = _program_tools.catalog()
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+    except _DAEMON_ERRORS as exc:
         return _error(str(exc))
     if not summaries:
         message = "\u266a No saved albums."
@@ -700,7 +701,7 @@ def music_next() -> str:
     _session.refresh_from_config()
     try:
         outcome = _program_tools.advance()
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+    except _DAEMON_ERRORS as exc:
         return _error(str(exc))
     message = f"♪ {outcome.display(_marquee.skip())}"
     return json.dumps({"message": message, "applied": outcome.applied})
@@ -858,7 +859,7 @@ def status() -> str:
     }
     try:
         program_status = _program_tools.status()
-    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
+    except _DAEMON_ERRORS as exc:
         payload["program"] = {"error": str(exc)}
         payload["music_mode"] = "off"
     else:

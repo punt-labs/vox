@@ -1561,6 +1561,36 @@ class TestMusicPlayTool:
         assert srv._music_pref.style == "flamenco"  # register untouched
         assert not _music_traces(caplog)
 
+    def test_rejected_play_skips_the_catalog_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rejected replay drops the style, so it spares the catalog round-trip."""
+        fake = FakeProgramGateway(applied=False)
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music_play(style="techno"))
+
+        assert result["applied"] is False
+        assert "catalog" not in fake.verbs()
+
+    def test_applied_play_resolves_via_the_catalog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An applied replay consults the catalog to name the genre now playing."""
+        fake = FakeProgramGateway(
+            catalog=(
+                ProgramSummary(
+                    id="a3f1c9", style="trance", vibe="calm", format="music", ready=5
+                ),
+            )
+        )
+        _install_fake(monkeypatch, fake)
+
+        result = json.loads(music_play(album_id="a3f1c9"))
+
+        assert result["applied"] is True
+        assert "catalog" in fake.verbs()
+
     def test_play_by_name_uses_named_pool(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
