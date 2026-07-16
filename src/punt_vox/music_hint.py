@@ -53,12 +53,18 @@ class MusicHint:
     def directive(self) -> str:
         """Return the imperative re-pool instruction, naming the current style."""
         if self._style is None:
-            call = "music(mode=on, base_prompt=..., variations=[12])"
+            call = (
+                'music(mode="on", base_prompt=..., '
+                "variations=[<12 genre-mood prompts>])"
+            )
             return (
                 f"Music is playing. Author 12 rich prompts for {self._mood} in the "
                 f"current genre and call {call}. Do it now."
             )
-        call = f"music(mode=on, style={self._style}, base_prompt=..., variations=[12])"
+        call = (
+            f'music(mode="on", style="{self._style}", base_prompt=..., '
+            "variations=[<12 genre-mood prompts>])"
+        )
         return (
             f"Music is playing (style={self._style}). Author 12 rich "
             f"{self._style} x {self._mood} prompts and call {call}. Do it now."

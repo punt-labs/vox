@@ -56,6 +56,19 @@ class TestMusicHint:
         assert "flamenco x relaxing" in hint.directive
         assert hint.directive.endswith("Do it now.")
 
+    def test_directive_example_is_unambiguous_and_executable(self) -> None:
+        # The agent executes the rendered call, so the example must be accurate:
+        # mode is a quoted string and variations reads as 12 authored prompts,
+        # never a one-element list holding the integer 12.
+        styled = MusicHint.for_status(_playing(), "relaxing", "flamenco")
+        unstyled = MusicHint.for_status(_playing(), "relaxing", None)
+        assert styled is not None and unstyled is not None
+        for directive in (styled.directive, unstyled.directive):
+            assert 'mode="on"' in directive
+            assert "variations=[12]" not in directive
+            assert "variations=[<12 genre-mood prompts>]" in directive
+        assert 'style="flamenco"' in styled.directive
+
     def test_music_state_is_observable(self) -> None:
         hint = MusicHint.for_status(_playing(), "relaxing", "flamenco")
         assert hint is not None
