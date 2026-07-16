@@ -184,6 +184,27 @@ class TestVibeCommand:
         assert result["vibe"]["vibe"] == "calm"
         assert "music_hint" not in result
 
+    def test_daemon_down_warning_carries_exception_detail(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The status-unavailable warning names the underlying failure.
+
+        A bare "status unavailable" line masks a daemon connectivity/protocol
+        fault; carrying the exception text keeps the failure diagnosable.
+        """
+        gateway = MagicMock()
+        gateway.status.side_effect = VoxdConnectionError("connection refused")
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_command"):
+            VibeCommand(
+                SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
+            ).apply("calm", None, "manual")
+
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any("connection refused" in m for m in warnings)
+
     def test_invalid_mode_reports_error(self, tmp_path: Path) -> None:
         command = VibeCommand(
             SessionConfig(), FakeProgramGateway(), tmp_path, MusicPreference()

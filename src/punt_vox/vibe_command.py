@@ -228,8 +228,8 @@ class VibeCommand:
         """Return the daemon's Program status, or ``None`` when it is unreachable."""
         try:
             return self._gateway.status()
-        except _DAEMON_ERRORS:
-            logger.warning("%s vibe set: status unavailable, no hint", _TRACE)
+        except _DAEMON_ERRORS as exc:
+            logger.warning("%s vibe set: status unavailable, no hint: %s", _TRACE, exc)
             return None
 
 
