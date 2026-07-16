@@ -632,18 +632,20 @@ def music_play(
     style = SessionConfig.canonical_tag(style)
     vibe = SessionConfig.canonical_tag(vibe)
     name = SessionConfig.canonical_tag(name)
+    request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
     try:
-        outcome = _program_tools.select(
-            SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
-        )
+        outcome = _program_tools.select(request)
+        # Resolve the *actual* genre now playing from the live catalog, not the
+        # possibly-absent style arg, so an id/name replay still names its genre for
+        # the re-pool hint. A style-spanning union resolves to None and clears it.
+        resolved_style = request.resolved_style(_program_tools.catalog())
     except ValueError as exc:  # bad id / no match
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
-    # confirm_selected adopts the replay's style (or clears it for a style-less
-    # union/by-name replay) and traces only on an applied outcome, so a rejected
+    # confirm_selected traces and adopts only on an applied outcome, so a rejected
     # replay leaves the register untouched.
-    _music_pref.confirm_selected(outcome, style, vibe, name)
+    _music_pref.confirm_selected(outcome, resolved_style, vibe, name)
     message = f"\u266a {outcome.display(_marquee.replay(name))}"
     return json.dumps({"message": message, "applied": outcome.applied})
 

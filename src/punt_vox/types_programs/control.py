@@ -7,6 +7,7 @@ catalogue entry -- plain value objects with no I/O, shared by CLI, MCP, and fake
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Self, final
 
@@ -46,6 +47,38 @@ class SelectionRequest:
     vibe: str | None = None
     name: str | None = None
     id: str | None = None  # direct album-id lookup, never a tag axis
+
+    def resolved_style(self, catalog: Iterable[ProgramSummary]) -> str | None:
+        """Return the single genre this replay selects, else ``None`` for a union.
+
+        Names the *actual* album's style -- what is now playing -- rather than the
+        tool's ``style`` arg, which is absent on an id/name/vibe replay. A match
+        spanning more than one genre (or no match at all) has no single style to
+        name: ``None``, so the caller clears the register instead of naming a wrong
+        genre. An explicit ``style`` is that genre outright; an ``id`` is a direct
+        single-album lookup that ignores the tag axes.
+        """
+        if self.style is not None and self.id is None:
+            return self.style
+        return self._single_style(s for s in catalog if self._selects(s))
+
+    def _selects(self, summary: ProgramSummary) -> bool:
+        """Return whether *summary* is this replay's target: id lookup, else tags.
+
+        An ``id`` is a direct single-album lookup that ignores the tag axes; with
+        no id, each absent tag is a wildcard.
+        """
+        if self.id is not None:
+            return summary.id == self.id
+        return (self.vibe is None or summary.vibe == self.vibe) and (
+            self.name is None or summary.name == self.name
+        )
+
+    @staticmethod
+    def _single_style(matches: Iterable[ProgramSummary]) -> str | None:
+        """Return the one distinct style among *matches*, else ``None``."""
+        styles = {summary.style for summary in matches}
+        return next(iter(styles)) if len(styles) == 1 else None
 
 
 @final

@@ -1492,13 +1492,55 @@ class TestMusicPlayTool:
     def test_play_without_style_clears_the_style(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A by-name replay (a possibly multi-style pool) clears the style."""
+        """A by-name replay absent from the catalog clears the style (no genre)."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway())
 
         music_play(name="deep cuts")
+
+        assert srv._music_pref.style is None
+
+    def test_play_by_id_adopts_the_albums_actual_style(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An id replay adopts the resolved album's genre, so the hint fires."""
+        import punt_vox.server as srv
+
+        srv._music_pref.stopped()
+        catalog = (
+            ProgramSummary(
+                id="a3f1c9", style="trance", vibe="calm", format="music", ready=5
+            ),
+            ProgramSummary(
+                id="7b2e04", style="lofi", vibe="focus", format="music", ready=1
+            ),
+        )
+        _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
+
+        music_play(album_id="a3f1c9")
+
+        assert srv._music_pref.style == "trance"
+
+    def test_play_union_across_genres_clears_the_style(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genre-spanning union replay has no single style, so the register clears."""
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        catalog = (
+            ProgramSummary(
+                id="a3f1c9", style="trance", vibe="calm", format="music", ready=5
+            ),
+            ProgramSummary(
+                id="7b2e04", style="lofi", vibe="calm", format="music", ready=1
+            ),
+        )
+        _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
+
+        music_play()  # all-None replays every album, across genres
 
         assert srv._music_pref.style is None
 
