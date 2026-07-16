@@ -1,0 +1,75 @@
+mission_id: m-2026-07-16-003
+status: closed
+type: implement
+created_at: "2026-07-16T01:02:19Z"
+updated_at: "2026-07-16T01:52:47Z"
+closed_at: "2026-07-16T01:52:47Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-16T01:02:19Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs:
+    ticket: vox-q1z4
+    files:
+        - src/punt_vox/server.py
+        - src/punt_vox/voxd/programs/
+        - docs/audio-programs.tex
+        - commands/music.md
+        - commands/vibe.md
+        - src/punt_vox/config.py
+write_set:
+    - docs/audio-programs.tex
+    - DESIGN.md
+success_criteria:
+    - 'DESIGN ONLY — do NOT implement. Produce the design of record for vox-q1z4: coupling a mood change to a music re-pool when music is already playing.'
+    - 'SETTLED BEHAVIOR (operator, do not relitigate): on a vibe/mood change (manual /vibe or auto-vibe) WHILE a music Program is playing, finish the current track and switch to the (new_vibe, style) pool. Existing (new_vibe,style) pool -> rotate in, zero credits. New pool -> generate. NO confirmation, NO credit guard. If NO Program is playing, the vibe change only updates mood/tags — music no-op. This REVERSES the current deliberate no-coupling decision in server.py''s vibe tool (the comment at ~server.py:560 must be updated/removed as part of the design''s write-set).'
+    - 'Z MODEL (required, fuzz-clean): extend docs/audio-programs.tex — the VibeChange transition already exists; specify that it now fires from the vibe-set path, GATED on ''a Program is playing'' (mode != off), preserving the invariants (pool <= 12, at most one fill active, playing in pool, no immediate repeat, generation only below full). Model the existing-pool (rotate) vs new-pool (generate) branch. `fuzz -t` must exit 0; note any transition the formalization reveals as underspecified.'
+    - 'DES ADR in DESIGN.md (next DES number): document the decision (mood change re-pools when playing; no-op otherwise; no confirmation), the rejected alternative (the current ''vibe is display/record state only'' no-coupling design — cite the server.py comment), and the consequences.'
+    - 'RESOLVE the one open implementation detail and recommend an approach: prompt authoring for a NEW (vibe,style) pool. voxd never invents a genre, so a generate needs 12 authored prompts. Recommend where they come from — the agent''s /vibe flow authoring them (existing pool needs none), vs a daemon fallback bare prompt. State the trade-off (flavorful+agent-coupled vs automatic+flavorless) and pick one, with reasoning. This is the key thing the leader will review.'
+    - Propose the WRITE-SET (which modules change) and a TEST PLAN asserting the modeled properties by name (re-pool fires only when playing; no-op when off; existing pool rotates free; new pool generates; invariants hold). Do NOT write the implementation.
+    - 'Reconcile the docs: commands/music.md and the /music skill currently claim a vibe/style change switches the pool — after this feature that becomes TRUE for the playing case; note the exact wording the implementation must make accurate (including the music-off no-op).'
+    - 'Deliverables committed on a design branch (design/vox-q1z4): the extended docs/audio-programs.tex (+ regenerated PDF if the repo tracks it), the DES ADR, and a short design note (.tmp or docs) with the write-set + test plan + the prompt-authoring recommendation. make check need not run (no code), but fuzz -t on the model MUST pass.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Goal (design phase)
+
+    The operator wants a mood change to re-pool the music when music is already
+    playing. Today server.py's vibe tool deliberately does NOT do this (it treats
+    the session vibe as display/record state and reserves music retunes for
+    explicit /music commands). The operator has decided to reverse that: a mood
+    change should switch the music — but ONLY when a Program is already playing,
+    and with NO confirmation/credit guard (the re-pool is intended).
+
+    This is a stateful subsystem change (the music playlist state machine), so it
+    needs a Z-model extension and a DES ADR BEFORE any implementation. You are
+    producing the design, not the code.
+
+    ## The crux for leader review
+
+    The one genuinely open question is prompt authoring on a NEW-pool generate:
+    voxd never invents a genre, so a generate needs 12 authored (vibe,style)
+    prompts. Recommend the routing (agent /vibe flow authors them, vs daemon
+    fallback), with the trade-off. The leader will review your recommendation and
+    escalate to the operator before implementation dispatches.
+
+    ## Constraints / invariants
+
+    - Coupling gated on 'Program playing' — a mood change with music off is a
+      music no-op (only mood/tags update).
+    - No confirmation, no credit guard.
+    - Preserve the playlist invariants (pool <= 12, at most one fill, playing in
+      pool, no immediate repeat, generation only below full).
+    - voxd logs to stderr; daemon owns playback; the client/agent authors prompts.
+    - No migration/compat/shim code — reverse the old no-coupling path outright.
+
+    ## Deliverable
+
+    design/vox-q1z4 branch with: extended fuzz-clean audio-programs Z model, a DES
+    ADR, and a write-set + test-plan + prompt-authoring recommendation note. The
+    leader reviews, escalates the prompt-authoring decision to the operator, and
+    only then dispatches implementation.

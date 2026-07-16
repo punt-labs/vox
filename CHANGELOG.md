@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.2] - 2026-07-16
+
 ### Changed
 
 - **A mood change now re-pools the music while it's playing (vox-1jke → vox-q1z4)**: setting the session vibe — via `/vibe <mood>` or the agent's own auto-vibe assessment — now switches the background music to match the mood, *when music is already playing*. The current track finishes, then playback switches to the `(new_mood, style)` pool: an existing pool rotates in for free, a new one is generated from rich, mood-colored genre prompts (e.g. `flamenco` + `relaxing` → slow soleá/guajira; `flamenco` + `intense` → fast bulerías). When music is **off**, a vibe change updates the speaking mood only — a music no-op. There is no confirmation and no credit prompt; the re-pool is the intended effect. Design: **`vibe()` stays a pure voice-mood tool** — it does not drive playback. It reads music status read-only and returns an imperative `music_hint` directive that steers the agent to author the prompts and call the existing `music` tool, which performs the re-pool (clean layering — vibe = mood, music = music, agent = orchestration). The hint fires only on genuinely-audible playback (never on a failed/retrying pool), and the playing style is tracked so the hint always names the genre actually playing (correct across `music_play` and `music off`). Because the mechanism is soft (it relies on the agent following the hint), a stable `[vibe-trace]` event log at each link (nudge → vibe-set → re-pool) makes it *provable* — `grep '[vibe-trace]'` shows whether the chain fired, and equally whether auto-vibe is working. Design: DES-045, DES-046. Closes vox-q1z4.
