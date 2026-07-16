@@ -13,7 +13,7 @@ from _program_fakes import FakeProgramGateway
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.server import SessionConfig
 from punt_vox.types_programs.status import ProgramStatus
-from punt_vox.vibe_command import VibeCommand
+from punt_vox.vibe_command import MusicPreference, VibeCommand
 
 if TYPE_CHECKING:
     import pytest
@@ -23,15 +23,46 @@ def _playing() -> ProgramStatus:
     return ProgramStatus.radio(None, None)
 
 
+class TestMusicPreference:
+    """The style register the music tools keep current for the re-pool hint."""
+
+    def test_defaults_to_no_style(self) -> None:
+        assert MusicPreference().style is None
+
+    def test_started_adopts_named_style(self) -> None:
+        pref = MusicPreference()
+        pref.started("flamenco")
+        assert pref.style == "flamenco"
+
+    def test_started_without_style_keeps_current(self) -> None:
+        pref = MusicPreference("flamenco")
+        pref.started(None)
+        assert pref.style == "flamenco"
+
+    def test_selected_adopts_style(self) -> None:
+        pref = MusicPreference("flamenco")
+        pref.selected("techno")
+        assert pref.style == "techno"
+
+    def test_selected_without_style_clears(self) -> None:
+        pref = MusicPreference("flamenco")
+        pref.selected(None)
+        assert pref.style is None
+
+    def test_stopped_clears(self) -> None:
+        pref = MusicPreference("flamenco")
+        pref.stopped()
+        assert pref.style is None
+
+
 class TestVibeCommand:
     """apply() persists the vibe and hints at music only while a Program plays."""
 
     def test_hint_when_playing_names_style(self, tmp_path: Path) -> None:
-        session = SessionConfig()
-        session.style = "flamenco"
         gateway = FakeProgramGateway(status=_playing())
+        pref = MusicPreference("flamenco")
 
-        command = VibeCommand(session, gateway, tmp_path)
+        command = VibeCommand(SessionConfig(), gateway, tmp_path, pref)
         result = json.loads(command.apply("relaxing", "[calm]", "manual"))
 
         assert result["music_hint"].startswith("Music is playing (style=flamenco)")
@@ -41,7 +72,7 @@ class TestVibeCommand:
     def test_no_hint_when_music_off(self, tmp_path: Path) -> None:
         gateway = FakeProgramGateway(status=ProgramStatus.idle())
 
-        command = VibeCommand(SessionConfig(), gateway, tmp_path)
+        command = VibeCommand(SessionConfig(), gateway, tmp_path, MusicPreference())
         result = json.loads(command.apply("relaxing", None, None))
 
         assert "music_hint" not in result
@@ -49,23 +80,23 @@ class TestVibeCommand:
 
     def test_never_posts_a_switch_signal(self, tmp_path: Path) -> None:
         """Layering: the vibe path reads status only -- it never drives the Program."""
-        session = SessionConfig()
-        session.style = "techno"
         gateway = FakeProgramGateway(status=_playing())
 
-        VibeCommand(session, gateway, tmp_path).apply("wired", None, None)
+        pref = MusicPreference("techno")
+        VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply("wired", None, None)
 
         assert gateway.verbs() == ["status"]
 
     def test_emits_vibe_set_trace(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        session = SessionConfig()
-        session.style = "flamenco"
         gateway = FakeProgramGateway(status=_playing())
+        pref = MusicPreference("flamenco")
 
         with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            VibeCommand(session, gateway, tmp_path).apply("relaxing", None, "manual")
+            VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+                "relaxing", None, "manual"
+            )
 
         traces = [
             r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
@@ -84,28 +115,26 @@ class TestVibeCommand:
         """A status read that raises fails safe: mood persists, no hint, no crash."""
         gateway = MagicMock()
         gateway.status.side_effect = VoxdConnectionError("not running")
-        session = SessionConfig()
+        pref = MusicPreference("flamenco")
 
         with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_command"):
             result = json.loads(
-                VibeCommand(session, gateway, tmp_path).apply("calm", None, "manual")
+                VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+                    "calm", None, "manual"
+                )
             )
 
         assert result["vibe"]["vibe"] == "calm"
         assert "music_hint" not in result
 
     def test_invalid_mode_reports_error(self, tmp_path: Path) -> None:
-        result = json.loads(
-            VibeCommand(SessionConfig(), FakeProgramGateway(), tmp_path).apply(
-                None, None, "sideways"
-            )
+        command = VibeCommand(
+            SessionConfig(), FakeProgramGateway(), tmp_path, MusicPreference()
         )
-        assert "error" in result
+        assert "error" in json.loads(command.apply(None, None, "sideways"))
 
     def test_empty_change_reports_error(self, tmp_path: Path) -> None:
-        result = json.loads(
-            VibeCommand(SessionConfig(), FakeProgramGateway(), tmp_path).apply(
-                None, None, None
-            )
+        command = VibeCommand(
+            SessionConfig(), FakeProgramGateway(), tmp_path, MusicPreference()
         )
-        assert "error" in result
+        assert "error" in json.loads(command.apply(None, None, None))

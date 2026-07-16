@@ -5,6 +5,10 @@ mutates the session, persists the change to config, and -- reading the daemon's
 Program status *read-only* -- enriches the reply with a :class:`MusicHint` when a
 Program is playing. It never posts a music or switch signal: the hint is the
 whole coupling, so the vibe/music layering stays clean (PL-MD-1).
+
+The style the hint names comes from :class:`MusicPreference`, a session register
+the music tools keep current on every playback change so a stale style never
+names the wrong genre.
 """
 
 from __future__ import annotations
@@ -23,12 +27,51 @@ from punt_vox.program_gateway import ProgramGateway
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.vibe import VibeChange
 
-__all__ = ["VibeCommand", "VibeSession"]
+__all__ = ["MusicPreference", "VibeCommand", "VibeSession"]
 
 logger = logging.getLogger(__name__)
 
 _TRACE = "[vibe-trace]"
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
+
+
+@final
+class MusicPreference:
+    """The genre the agent last set music to -- the style the re-pool hint names.
+
+    A session register held apart from the vibe cluster so a stale style never
+    names the wrong genre: every playback change updates it. A start adopts a
+    named style (or keeps the current one, matching the daemon's style-persist);
+    a replay adopts the selection's style (or clears for a style-less union
+    radio); a stop clears it.
+    """
+
+    __slots__ = ("_style",)
+
+    _style: str | None
+
+    def __new__(cls, style: str | None = None) -> Self:
+        self = super().__new__(cls)
+        self._style = style
+        return self
+
+    @property
+    def style(self) -> str | None:
+        """Return the current music style, or ``None`` when off or style-less."""
+        return self._style
+
+    def started(self, style: str | None) -> None:
+        """Record a ``music on``: adopt *style*, or keep the current one if omitted."""
+        if style is not None:
+            self._style = style
+
+    def selected(self, style: str | None) -> None:
+        """Record a ``music play``: adopt the selection's style, else clear it."""
+        self._style = style
+
+    def stopped(self) -> None:
+        """Record a ``music off``: no style is playing."""
+        self._style = None
 
 
 class VibeSession(Protocol):
@@ -49,11 +92,6 @@ class VibeSession(Protocol):
         """Return the vibe detection mode ('auto', 'manual', or 'off')."""
         ...
 
-    @property
-    def style(self) -> str | None:
-        """Return the last authored music style, or ``None`` when unset."""
-        ...
-
     def change_vibe(self, change: VibeChange) -> dict[str, str]:
         """Apply *change*, mutate the session, and return the persisted updates."""
         ...
@@ -63,19 +101,25 @@ class VibeSession(Protocol):
 class VibeCommand:
     """Apply a vibe change to the session and enrich the reply with a music hint."""
 
-    __slots__ = ("_config_dir", "_gateway", "_session")
+    __slots__ = ("_config_dir", "_gateway", "_pref", "_session")
 
     _session: VibeSession
     _gateway: ProgramGateway
     _config_dir: Path | None
+    _pref: MusicPreference
 
     def __new__(
-        cls, session: VibeSession, gateway: ProgramGateway, config_dir: Path | None
+        cls,
+        session: VibeSession,
+        gateway: ProgramGateway,
+        config_dir: Path | None,
+        pref: MusicPreference,
     ) -> Self:
         self = super().__new__(cls)
         self._session = session
         self._gateway = gateway
         self._config_dir = config_dir
+        self._pref = pref
         return self
 
     def apply(self, mood: str | None, tags: str | None, mode: str | None) -> str:
@@ -105,10 +149,11 @@ class VibeCommand:
         a Program retune is never a side effect of setting the session mood.
         """
         status = self._read_status()
+        style = self._pref.style
         hint = (
             None
             if status is None
-            else MusicHint.for_status(status, self._session.vibe, self._session.style)
+            else MusicHint.for_status(status, self._session.vibe, style)
         )
         if hint is not None:
             payload["music"] = hint.music_state()
@@ -121,7 +166,7 @@ class VibeCommand:
             self._session.vibe or "-",
             self._session.vibe_mode,
             str(playing).lower(),
-            self._session.style or "-",
+            style or "-",
             "emitted" if hint is not None else "none",
         )
 

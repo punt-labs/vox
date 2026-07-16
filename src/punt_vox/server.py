@@ -32,7 +32,7 @@ from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
-from punt_vox.vibe_command import VibeCommand
+from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.voices import VOICE_BLURBS
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ class SessionConfig:
     _vibe_mode: str = "off"
     _vibe: str | None = None
     _vibe_tags: str | None = None
-    _style: str | None = None
     _speak_explicit: bool = False
 
     # -- Properties (read access) ------------------------------------------
@@ -137,20 +136,6 @@ class SessionConfig:
     def vibe_tags(self) -> str | None:
         """Return the current ElevenLabs expressive tags."""
         return self._vibe_tags
-
-    @property
-    def style(self) -> str | None:
-        """Return the last authored music style, or ``None`` when unset.
-
-        In-memory session state -- the genre the agent last turned music on with.
-        It lets the vibe tool name the current style in its re-pool hint without
-        the daemon status carrying subject data (which it deliberately omits).
-        """
-        return self._style
-
-    @style.setter
-    def style(self, value: str | None) -> None:
-        self._style = value
 
     @property
     def speak_explicit(self) -> bool:
@@ -282,6 +267,12 @@ _session: SessionConfig = SessionConfig()
 # Authors the DJ-booth panel line for each music action. A module-level value so
 # it adds no procedural surface; tests replace it with a deterministic chooser.
 _marquee: MusicMarquee = MusicMarquee()
+
+# The genre the agent last set music to. The music tools keep it current on every
+# playback change so the vibe re-pool hint never names a stale style (the daemon
+# status deliberately omits subject data). Session-scoped, held apart from the
+# vibe cluster so SessionConfig stays cohesive.
+_music_pref: MusicPreference = MusicPreference()
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +549,7 @@ def vibe(
         you to re-pool the music to the new mood (see the ``/vibe`` skill).
     """
     _session.refresh_from_config()
-    return VibeCommand(_session, _program_tools, _find_config_dir()).apply(
+    return VibeCommand(_session, _program_tools, _find_config_dir(), _music_pref).apply(
         mood, tags, mode
     )
 
@@ -596,8 +587,7 @@ def music(
     try:
         if mode == "on":
             prompts = PromptSet.from_tool_args(base_prompt, variations)
-            if style is not None:
-                _session.style = style  # remember the genre for the vibe re-pool hint
+            _music_pref.started(style)  # remember the genre for the vibe re-pool hint
             logger.info(
                 "[vibe-trace] music on style=%s vibe=%s prompts=%s",
                 style or "-",
@@ -611,6 +601,7 @@ def music(
             )
             message = f"\u266a {outcome.display(_marquee.generating(style))}"
         else:
+            _music_pref.stopped()  # music off -> no style is playing
             outcome = _program_tools.stop()
             message = f"\u266a {outcome.display(_marquee.stopped())}"
     except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
@@ -643,6 +634,9 @@ def music_play(
     style = SessionConfig.canonical_tag(style)
     vibe = SessionConfig.canonical_tag(vibe)
     name = SessionConfig.canonical_tag(name)
+    # A replay's style tag becomes the current genre; a style-less selection (a
+    # union radio, or a by-name/id replay) clears it so the hint stays generic.
+    _music_pref.selected(style)
     try:
         outcome = _program_tools.select(
             SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
@@ -852,7 +846,7 @@ def status() -> str:
         "vibe_mode": _session.vibe_mode,
         "vibe": _session.vibe,
         "vibe_tags": _session.vibe_tags,
-        "style": _session.style,
+        "style": _music_pref.style,
     }
     try:
         program_status = _program_tools.status()

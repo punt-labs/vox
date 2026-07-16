@@ -115,8 +115,10 @@ def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
     the _refresh_config fixture.
     """
     import punt_vox.server as srv
+    from punt_vox.vibe_command import MusicPreference
 
     monkeypatch.setattr(srv, "_session", SessionConfig())
+    monkeypatch.setattr(srv, "_music_pref", MusicPreference())
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
 
@@ -817,7 +819,7 @@ class TestVibeToolMusicHint:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session.style = "flamenco"
+        srv._music_pref.started("flamenco")
         _install_fake(
             monkeypatch, FakeProgramGateway(status=ProgramStatus.radio(None, None))
         )
@@ -837,7 +839,7 @@ class TestVibeToolMusicHint:
     ) -> None:
         import punt_vox.server as srv
 
-        srv._session.style = "techno"
+        srv._music_pref.started("techno")
         fake = FakeProgramGateway(status=ProgramStatus.radio(None, None))
         _install_fake(monkeypatch, fake)
 
@@ -1123,10 +1125,10 @@ class TestStatusTool:
         }
 
     def test_reflects_current_music_style(self) -> None:
-        """status surfaces the session's music style for a client to observe."""
+        """status surfaces the current music style for a client to observe."""
         import punt_vox.server as srv
 
-        srv._session.style = "flamenco"
+        srv._music_pref.started("flamenco")
         result = json.loads(status())
         assert result["style"] == "flamenco"
 
@@ -1284,7 +1286,7 @@ class TestMusicTool:
         with caplog.at_level(logging.INFO, logger="punt_vox.server"):
             music(mode="on", style="jazz")
 
-        assert srv._session.style == "jazz"
+        assert srv._music_pref.style == "jazz"
         traces = [
             r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
         ]
@@ -1340,6 +1342,17 @@ class TestMusicTool:
         assert result["applied"] is True
         assert result["message"] in {f"♪ {p}" for p in STOPPED}
         assert fake.verbs() == ["stop"]
+
+    def test_off_clears_the_style(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """music off clears the style so a later vibe change gets no stale hint."""
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway())
+
+        music(mode="off")
+
+        assert srv._music_pref.style is None
 
     def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake(monkeypatch, FakeProgramGateway())
@@ -1398,6 +1411,32 @@ class TestMusicPlayTool:
         assert fake.calls[0].verb == "select"
         assert fake.calls[0].selection is not None
         assert fake.calls[0].selection.style == "trance"
+
+    def test_play_with_style_updates_the_style(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A styled replay makes that style the current genre for the hint."""
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway())
+
+        music_play(style="techno")
+
+        assert srv._music_pref.style == "techno"
+
+    def test_play_without_style_clears_the_style(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A by-name replay (a possibly multi-style pool) clears the style."""
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        _install_fake(monkeypatch, FakeProgramGateway())
+
+        music_play(name="deep cuts")
+
+        assert srv._music_pref.style is None
 
     def test_play_by_name_uses_named_pool(
         self, monkeypatch: pytest.MonkeyPatch
