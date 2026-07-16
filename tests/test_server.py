@@ -805,6 +805,47 @@ class TestVibeTool:
         assert srv._session._vibe_mode == "off"
 
 
+class TestVibeToolMusicHint:
+    """The vibe tool enriches its reply with a re-pool hint only while playing."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, _patch_config: Path) -> Path:
+        return _patch_config
+
+    def test_hint_present_when_program_playing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.style = "flamenco"
+        _install_fake(
+            monkeypatch, FakeProgramGateway(status=ProgramStatus.radio(None, None))
+        )
+
+        result = json.loads(vibe(mood="relaxing", mode="manual"))
+
+        assert "flamenco" in result["music_hint"]
+        assert result["music"] == {"playing": True, "style": "flamenco"}
+
+    def test_no_hint_when_music_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_fake(monkeypatch, FakeProgramGateway(status=ProgramStatus.idle()))
+        result = json.loads(vibe(mood="relaxing", mode="manual"))
+        assert "music_hint" not in result
+
+    def test_vibe_never_switches_the_program(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.style = "techno"
+        fake = FakeProgramGateway(status=ProgramStatus.radio(None, None))
+        _install_fake(monkeypatch, fake)
+
+        vibe(mood="wired", mode="manual")
+
+        assert fake.verbs() == ["status"]
+
+
 # ---------------------------------------------------------------------------
 # who tool tests
 # ---------------------------------------------------------------------------
@@ -1081,6 +1122,14 @@ class TestStatusTool:
             "vibe_tags",
         }
 
+    def test_reflects_current_music_style(self) -> None:
+        """status surfaces the session's music style for a client to observe."""
+        import punt_vox.server as srv
+
+        srv._session.style = "flamenco"
+        result = json.loads(status())
+        assert result["style"] == "flamenco"
+
     def test_defaults_when_no_state_set(self) -> None:
         """A bare ``status`` reads the hermetic idle default, never the live daemon.
 
@@ -1221,6 +1270,25 @@ class TestMusicTool:
         assert fake.verbs() == ["start"]
         request = fake.calls[0].request
         assert request is not None and request.style == "techno"
+
+    def test_on_remembers_style_and_traces(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """music on records the style for the vibe hint and emits a [vibe-trace]."""
+        import logging
+
+        import punt_vox.server as srv
+
+        _install_fake(monkeypatch, FakeProgramGateway())
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.server"):
+            music(mode="on", style="jazz")
+
+        assert srv._session.style == "jazz"
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any("music on" in m and "style=jazz" in m for m in traces)
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_style_is_no_tag_and_no_style_pool(
