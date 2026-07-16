@@ -210,16 +210,16 @@ class VibeCommand:
         if hint is not None:
             payload["music"] = hint.music_state()
             payload["music_hint"] = hint.directive
-        # music_playing is the raw audible gate (a Part is sounding); hint_emitted
-        # additionally requires a known style to name in the re-pool directive, so
-        # "playing but style unknown" reads as playing=true, hint=false -- not a lie.
-        playing = status is not None and status.is_playing
+        # music_playing is a truthful tri-state: "unknown" when the status read
+        # failed (never a false "false" masking a daemon outage as music-off), else
+        # the audible gate; hint_emitted stays false unless a known style is playing.
+        music_playing = "unknown" if status is None else str(status.is_playing).lower()
         logger.info(
             "%s vibe set mood=%s mode=%s music_playing=%s hint_emitted=%s style=%s",
             _TRACE,
             self._session.vibe or "-",
             self._session.vibe_mode,
-            str(playing).lower(),
+            music_playing,
             str(hint is not None).lower(),
             style or "-",
         )

@@ -166,6 +166,51 @@ class TestVibeCommand:
             for m in traces
         )
 
+    def test_trace_not_playing_reports_music_playing_false(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Status available and idle: the trace reads the audible gate as false."""
+        gateway = FakeProgramGateway(status=ProgramStatus.idle())
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            VibeCommand(SessionConfig(), gateway, tmp_path, MusicPreference()).apply(
+                "relaxing", None, "manual"
+            )
+
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any(
+            "vibe set" in m and "music_playing=false" in m and "hint_emitted=false" in m
+            for m in traces
+        )
+
+    def test_trace_status_unavailable_reports_music_playing_unknown(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed status read is UNKNOWN, not off: the trace must not claim false.
+
+        Reporting music_playing=false when the daemon is unreachable would mask an
+        outage as "music is off" in the grep proof -- the true state is unknown.
+        """
+        gateway = MagicMock()
+        gateway.status.side_effect = VoxdConnectionError("not running")
+
+        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
+            VibeCommand(
+                SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
+            ).apply("relaxing", None, "manual")
+
+        traces = [
+            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
+        ]
+        assert any(
+            "vibe set" in m
+            and "music_playing=unknown" in m
+            and "hint_emitted=false" in m
+            for m in traces
+        )
+
     def test_daemon_down_still_persists_no_hint(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

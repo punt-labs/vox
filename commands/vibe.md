@@ -116,6 +116,9 @@ Three event shapes, and what a matching pair proves:
   fired (from the UserPromptSubmit hook).
 - `[vibe-trace] vibe set mood=relaxing mode=auto music_playing=true hint_emitted=true style=flamenco`
   — the vibe was set. `hint_emitted=true` means a `music_hint` was returned.
+  `music_playing` is a tri-state: `true`/`false` from the daemon's playback
+  status, or `unknown` when the status read failed (daemon down/protocol error)
+  — an outage never reads as a false `false`.
 - `[vibe-trace] music on style=flamenco vibe=relaxing prompts=authored` — the
   `music` tool re-pooled.
 
