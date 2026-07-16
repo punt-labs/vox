@@ -2020,3 +2020,72 @@ vox-lf6b's review discovered the hook's DJ pools were unreachable dead code: `mu
 | Curate phrases per genre | The panel line is an *action* confirmation, not genre-specific; genre variety belongs in music *generation*, not the panel. |
 
 Closes vox-1jke.
+
+## DES-045: A Mood Change Re-Pools the Music — Hint-Based, Not Coupled
+
+**Date:** 2026-07-16
+**Status:** SETTLED
+**Topic:** How a vibe/mood change drives a music re-pool
+
+### Decision
+
+When the vibe-set tool is called (via `/vibe` **or** the agent's own auto-vibe assessment — no distinction) **and a music Program is playing**, the music re-pools to the `(new_vibe, style)` pool: an existing pool rotates in for free, a new pool generates. When music is **off**, the vibe change updates the speaking mood only — a music no-op. No confirmation, no credit guard.
+
+Crucially, **`vibe()` does not drive playback.** It stays a pure voice-mood tool. It reads music status **read-only** and enriches its *return* with a `music` state object plus an imperative `music_hint` directive — e.g. *"Music is playing (style=flamenco). Author 12 rich flamenco×`<mood>` prompts and call `music(mode=on, style=flamenco, …)`. Do it now."* The **agent** acts on that hint: it authors the 12 rich `(mood × style)` prompts (the mood *colors* the genre) and calls the existing `music` tool, which performs the re-pool via the unchanged `VibeStyleChange` transition. The hint fires only on genuinely-audible modes (`PLAYING_FILLING`/`PLAYING_ROTATING`), never on `FAILED`/`RETRYING`/`OFF`.
+
+### Why
+
+Separation of concerns. `vibe()` is voice direction; driving playback from it couples a mood tool to the music state machine — a layering violation. The return-hint keeps the concerns clean: **vibe = mood, music = music, agent = orchestration.** The imperative directive in the return is the STOP_NARRATION-style device that makes the soft, agent-orchestrated path reliable, and it reuses authoring the agent already does on `/music on style`. Applying it uniformly to manual and auto vibe (rather than gating auto to free rotations) was the operator's call — simpler, and the credit spend is intended.
+
+### Consequences
+
+- `vibe()` gains a read-only music hint in its return and **never posts a switch/music signal** (asserted by test). The `music` tool's re-pool is unchanged — no daemon or state-machine change, so **no Z-model change** (the re-pool is the existing `VibeStyleChange`, still triggered only by the `music` tool).
+- The authored style is tracked in a cohesive `MusicPreference` session register, maintained on **every** playback-changing path (`music on` adopts, `music_play` adopts or clears for a union radio, `music off` clears) so the hint always names the genre actually playing.
+- Reliability is **soft** (prompt-level — the agent must follow the hint). Mitigated by the imperative directive and made *provable* by the `[vibe-trace]` observability (DES-046).
+- Reverses the prior "the session vibe is display/record state; a Program retune is a deliberate music command, never a side effect" decision (the `vibe()` comment), which is struck.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| Couple the re-pool inside `vibe()` | Layering violation — a voice-mood tool driving playback internals. The hint keeps concerns separate. |
+| Credit guard / confirmation before generating | Operator overrode — the re-pool is the intended effect of a mood change; a confirmation is friction. |
+| Flavorless daemon fallback prompt for a new pool | `"<style> music, <mood>. loopable"` is the homogenized tail `/music` forbids; routing the *mood-driven music* feature through it regresses genre fidelity precisely where the feature should shine. |
+| Gate the coupling to manual `/vibe` only (auto stays a music no-op) | Operator: no distinction, simpler. Auto and manual both call the vibe tool; both re-pool. |
+
+Closes vox-q1z4.
+
+## DES-046: Prove Soft, Agent-Driven Mechanisms With a Structured Trace
+
+**Date:** 2026-07-16
+**Status:** SETTLED
+**Topic:** How to verify a prompt-reliant (soft) mechanism actually fires
+
+### Decision
+
+Any **soft, agent-orchestrated** mechanism — one whose correctness depends on the LLM following a hint or nudge rather than a hard code path — MUST emit a stable, greppable structured trace (`[vibe-trace]`) at **each link** of the chain, so a human can *prove* the chain fired or catch a silent gap. For the two current soft mechanisms:
+
+- **auto-vibe (DES-043):** nudge fired → a following vibe-set with `mode=auto`. A nudge with **no** following vibe-set = auto-vibe silently not firing.
+- **vibe→music (DES-045):** a vibe-set with `music_playing=true` → a following `music` re-pool. A playing vibe-set with **no** re-pool = the agent dropped the follow-up.
+
+Observability is a first-class deliverable of any such feature, not an afterthought.
+
+### Why
+
+Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through is out-of-band from the code. The only way to know they work *in production* is an observable event trail. This generalizes the recurring lesson of this line of work (the `/music` narration that a markdown line failed to enforce; auto-vibe): soft agent behaviors are invisible — and therefore unfalsifiable — until you can `grep` for them.
+
+### Consequences
+
+- `[vibe-trace]` events at the nudge (`NudgeHook`), vibe-set (`VibeCommand`), and music (`server.music`) links, via `logger.info` (never `print`), pinned at a level that always reaches the log.
+- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace lands in the MCP-server / hook **stderr** (captured by Claude Code's logs), not voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe is documented in `commands/vibe.md` and targets those logs.
+- Current state (the session vibe and the playing music style) is *also* surfaced through the `status` tool — the trace is the event-trail *proof over time*; `status` is the point-in-time *client-observable state*. Both, per "client-observable, not logs."
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| No observability | The mechanism is unprovable — the operator made "prove whether it works" a core goal for both this feature and auto-vibe. |
+| Log only in voxd | The vibe/music orchestration is client-side, not in the daemon; a daemon log would never see it. |
+| `status`-only | A point-in-time query cannot prove a *sequence* of events fired across a session — only the trace can show "nudge → vibe-set → re-pool." |
+
+Closes vox-q1z4.
