@@ -44,7 +44,7 @@ from punt_vox.server import (
 )
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
-from punt_vox.types_programs.control import ProgramSummary
+from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -1608,6 +1608,30 @@ class TestMusicPlayTool:
         result = json.loads(music_play(style="trance"))
 
         assert "error" in result
+
+    def test_play_survives_a_catalog_fault_after_an_applied_select(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A catalog fault after an applied select still reports success.
+
+        Naming the genre for the re-pool hint is a best-effort follow-up to a
+        replay that has already applied; a daemon fault resolving it must not
+        turn that success into a reported error. The style is left unknown (the
+        hint is simply omitted), and no exception escapes.
+        """
+        import punt_vox.server as srv
+
+        srv._music_pref.started("flamenco")
+        fake = MagicMock()
+        fake.select.return_value = CommandOutcome.ok("")
+        fake.catalog.side_effect = VoxdConnectionError("not running")
+        monkeypatch.setattr(srv, "_program_tools", fake)
+
+        result = json.loads(music_play(name="deep cuts"))
+
+        assert "error" not in result
+        assert result["applied"] is True
+        assert srv._music_pref.style is None
 
 
 class TestMusicListTool:

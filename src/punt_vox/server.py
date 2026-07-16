@@ -635,14 +635,21 @@ def music_play(
     request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
     try:
         outcome = _program_tools.select(request)
-        # Resolve the *actual* genre now playing from the live catalog, not the
-        # possibly-absent style arg, so an id/name replay still names its genre for
-        # the re-pool hint. A style-spanning union resolves to None and clears it.
-        resolved_style = request.resolved_style(_program_tools.catalog())
     except ValueError as exc:  # bad id / no match
         return _error(str(exc))
     except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError) as exc:
         return _error(str(exc))
+    # The replay has already applied. Naming its genre for the re-pool hint is a
+    # best-effort follow-up: resolve the *actual* genre now playing from the live
+    # catalog, not the possibly-absent style arg, so an id/name replay still names
+    # its genre. A style-spanning union resolves to None and clears it. A catalog
+    # lookup that fails here must not turn a successful replay into a reported
+    # error -- fall back to an unknown style, which the style-unknown gate renders
+    # correctly by omitting the re-pool hint.
+    try:
+        resolved_style = request.resolved_style(_program_tools.catalog())
+    except (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError):
+        resolved_style = None
     # confirm_selected traces and adopts only on an applied outcome, so a rejected
     # replay leaves the register untouched.
     _music_pref.confirm_selected(outcome, resolved_style, vibe, name)
