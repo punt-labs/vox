@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`[vibe-trace]` observability now writes to a durable log file (vox-9po7)**: the vibe→music and auto-vibe proof trace previously went to the mic-server/hook stderr, which the Claude Code host discards — so `grep '[vibe-trace]'` found nothing and the DES-046 proof was unreachable at runtime. Traces now append to a persistent, greppable file at `~/.punt-labs/vox/logs/vibe-trace.log` (multi-process-safe atomic appends); the stderr path is removed. The trace sink's health is queryable through `mic:status`. Proof recipe: `commands/vibe.md`.
+
 ## [4.12.2] - 2026-07-16
 
 ### Changed

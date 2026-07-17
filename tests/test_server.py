@@ -1117,12 +1117,40 @@ class TestStatusTool:
         assert result["speak"] == "y"
         assert result["vibe_mode"] == "auto"
         assert result["vibe_tags"] == "[excited]"
-        # The status surfaces exactly the live vibe cluster — no dead accumulator.
+        # The status surfaces exactly the live vibe cluster plus the trace-sink
+        # health block — no dead accumulator.
         assert {k for k in result if k.startswith("vibe")} == {
             "vibe_mode",
             "vibe",
             "vibe_tags",
+            "vibe_trace",
         }
+
+    def test_reports_vibe_trace_path_and_writable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """status makes the trace-sink health client-observable: path + writable."""
+        monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
+
+        health = json.loads(status())["vibe_trace"]
+
+        assert health["path"] == str(tmp_path / "vibe-trace.log")
+        assert health["writable"] is True
+
+    def test_reports_vibe_trace_unwritable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A read-only log dir surfaces writable=false through the status API."""
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: locked)
+        locked.chmod(0o500)
+        try:
+            health = json.loads(status())["vibe_trace"]
+        finally:
+            locked.chmod(0o700)
+
+        assert health["writable"] is False
 
     def test_reflects_current_music_style(self) -> None:
         """status surfaces the current music style for a client to observe."""
