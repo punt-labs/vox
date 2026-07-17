@@ -298,16 +298,15 @@ class TestHandleVibeNudge:
         assert handle_vibe_nudge(config, tmp_path) is None
 
     def test_firing_prompt_emits_vibe_trace(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The nudge fire is greppable: [vibe-trace] proves the auto-vibe link.
+        # The nudge fire is greppable: the default sink writes [vibe-trace] to
+        # <state>/logs/vibe-trace.log, which proves the auto-vibe link fired.
+        monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
         config = self._seed(tmp_path, mode="auto", turns=DEFAULT_THRESHOLD - 1)
-        with caplog.at_level(logging.INFO, logger="punt_vox.nudge_hook"):
-            handle_vibe_nudge(config, tmp_path)
-        assert any(
-            "[vibe-trace]" in r.getMessage() and "nudge fired" in r.getMessage()
-            for r in caplog.records
-        )
+        handle_vibe_nudge(config, tmp_path)
+        lines = (tmp_path / "vibe-trace.log").read_text(encoding="utf-8").splitlines()
+        assert any(line.startswith("[vibe-trace] nudge fired") for line in lines)
 
     def test_persist_failure_still_stays_silent(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

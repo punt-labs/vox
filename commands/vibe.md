@@ -102,12 +102,14 @@ changes — the panel confirms with the vibe shift.
 
 ## Proving the chain (observability)
 
-The subsystem emits stable `[vibe-trace]` events to the `mic` server and hook
-stderr (captured by Claude Code's MCP/hook logs). Grep them to *prove* each
-link fired, or to catch a silent gap:
+The subsystem appends stable `[vibe-trace]` events to a durable, greppable log
+file at `~/.punt-labs/vox/logs/vibe-trace.log`. Both emitters — the `mic` server
+(vibe set / music) and the UserPromptSubmit hook (nudge fired) — are separate
+processes that append to this one file with atomic `O_APPEND` writes, so lines
+never interleave. Grep it to *prove* each link fired, or to catch a silent gap:
 
 ```bash
-grep '\[vibe-trace\]' <mic-server-or-hook-stderr>
+grep '\[vibe-trace\]' ~/.punt-labs/vox/logs/vibe-trace.log
 ```
 
 Three event shapes, and what a matching pair proves:

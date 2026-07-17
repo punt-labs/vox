@@ -197,3 +197,4 @@
 {"ts":"2026-07-16T15:41:38Z","commit":"055bb89","source":null,"files_scored":150,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-07-16T15:58:27Z","commit":"9700931","source":null,"files_scored":150,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-07-16T16:02:41Z","commit":"9700931","source":null,"files_scored":150,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/vibe_command.py":{"avg_complexity":[2.06,2.0]}}}
+{"ts":"2026-07-17T01:05:22Z","commit":"eeab76b","source":null,"files_scored":151,"files_improved":2,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/nudge_hook.py":{"module_size":[66.0,64.0]},"src/punt_vox/vibe_command.py":{"module_size":[197.0,191.0]}}}

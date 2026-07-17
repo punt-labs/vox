@@ -1284,23 +1284,23 @@ class TestMusicTool:
         assert request is not None and request.style == "techno"
 
     def test_on_remembers_style_and_traces(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """music on records the style for the vibe hint and emits a [vibe-trace]."""
-        import logging
-
         import punt_vox.server as srv
+        from punt_vox.vibe_command import MusicPreference
 
         _install_fake(monkeypatch, FakeProgramGateway())
+        # Redirect the durable sink, then rebuild the session's pref so its
+        # default() resolves to the temp log the test greps.
+        monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
+        monkeypatch.setattr(srv, "_music_pref", MusicPreference())
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            music(mode="on", style="jazz")
+        music(mode="on", style="jazz")
 
         assert srv._music_pref.style == "jazz"
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
-        assert any("music on" in m and "style=jazz" in m for m in traces)
+        lines = (tmp_path / "vibe-trace.log").read_text(encoding="utf-8").splitlines()
+        assert any("music on" in line and "style=jazz" in line for line in lines)
 
     def test_rejected_on_leaves_style_and_omits_trace(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
