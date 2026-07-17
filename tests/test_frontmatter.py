@@ -77,6 +77,24 @@ class TestWrite:
         assert fm.read_field("voice") == "roger"
         assert fm.read_field("notify") == "y"
 
+    def test_mood_text_is_logged_by_length_not_content(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``vibe``/``vibe_tags`` log their length; the mood text never lands.
+
+        The value is expressive, agent-authored content -- persisting it verbatim
+        in a durable log leaks it. Other keys still log their value for
+        operability.
+        """
+        fm = Frontmatter(tmp_path / "vox.md")
+        fm.write_fields({"voice": "fin"})  # create the file so the next write logs
+        with caplog.at_level(logging.INFO, logger="punt_vox.frontmatter"):
+            fm.write_fields({"vibe": "[frustrated] [weary]", "voice": "roger"})
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("vibe = <20 chars>" in m for m in messages)
+        assert not any("frustrated" in m for m in messages)
+        assert any("voice = 'roger'" in m for m in messages)  # non-mood key unchanged
+
     def test_malformed_file_rewritten_with_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
