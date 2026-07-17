@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Self, TypedDict, final
 
 from punt_vox.paths import log_dir
+from punt_vox.private_state import PrivateState
 
 __all__ = ["TraceHealth", "VibeTraceLog"]
 
@@ -46,8 +47,6 @@ class TraceHealth(TypedDict):
 
 _PREFIX = "[vibe-trace]"
 _LOG_NAME = "vibe-trace.log"
-_FILE_MODE = 0o600  # per-user private state, matching the rest of <state>
-_DIR_MODE = 0o700  # private parent dir, matching configure_logging / ensure_user_dirs
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
 
 # Escape every C0 control char (and DEL) so an MCP-controlled style/name -- which
@@ -55,22 +54,32 @@ _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
 # line via an embedded newline nor corrupt a terminal via a raw control byte on
 # ``cat``. Escaping, not stripping, keeps the smuggled bytes visible in the trail.
 _CONTROL_ESCAPES = {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
+
+# The C0/C1 code points ``str.splitlines()`` treats as line breaks beyond ``\n``:
+# NEL (U+0085), LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029). The file
+# holds a single ``\n``, but a tool that splits on Unicode boundaries would render
+# a smuggled one of these as a second visual record. Escape them too, using a
+# 4-hex ``\uXXXX`` form so the two astral-plane separators round-trip.
+_UNICODE_LINE_SEPARATORS = (0x85, 0x2028, 0x2029)
 _SANITIZE_TABLE = {
     cp: _CONTROL_ESCAPES.get(cp, f"\\x{cp:02x}") for cp in (*range(0x20), 0x7F)
 }
+_SANITIZE_TABLE.update({cp: f"\\u{cp:04x}" for cp in _UNICODE_LINE_SEPARATORS})
 
 
 @final
 class VibeTraceLog:
     """An append-only sink for the subsystem's ``[vibe-trace]`` proof lines."""
 
-    __slots__ = ("_path",)
+    __slots__ = ("_guard", "_path")
 
     _path: Path
+    _guard: PrivateState
 
     def __new__(cls, path: Path) -> Self:
         self = super().__new__(cls)
         self._path = path
+        self._guard = PrivateState(path)
         return self
 
     @classmethod
@@ -121,7 +130,7 @@ class VibeTraceLog:
         """
         if self._path.exists():
             return self._path.is_file() and os.access(self._path, os.W_OK)
-        anchor = self._nearest_existing_ancestor()
+        anchor = self._guard.nearest_existing_ancestor()
         return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
 
     def record(self, event: str) -> None:
@@ -137,8 +146,8 @@ class VibeTraceLog:
         safe = event.translate(_SANITIZE_TABLE)
         line = f"{_PREFIX} {safe}\n".encode()
         try:
-            self._ensure_private_dir()
-            fd = os.open(self._path, _OPEN_FLAGS, _FILE_MODE)
+            self._guard.ensure_private_tree()
+            fd = self._guard.open_private(_OPEN_FLAGS)
             try:
                 # One atomic O_APPEND write no concurrent writer can tear. A short
                 # count -- only ENOSPC in practice, since Python auto-retries
@@ -153,36 +162,3 @@ class VibeTraceLog:
                 os.close(fd)
         except OSError as exc:
             logger.warning("vibe-trace: cannot append to %s: %s", self._path, exc)
-
-    def _ensure_private_dir(self) -> None:
-        """Create the log's parent dir, then best-effort tighten it to 0o700.
-
-        ``mkdir(mode=...)`` is masked by the process umask, so whichever process
-        creates ``logs/`` first -- the ``mic`` server or the hook -- could leave
-        it group/other-readable. :meth:`_harden_dir` forces 0o700 so the proof
-        trail others must not read stays private no matter who wins the race,
-        while never blocking the append it precedes.
-        """
-        parent = self._path.parent
-        parent.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
-        self._harden_dir()
-
-    def _harden_dir(self) -> None:
-        """Best-effort tighten the parent dir to 0o700; never block the write.
-
-        The tighten is defense-in-depth, not a precondition for writing: a dir
-        we can append to but not ``chmod`` -- owned by another user in a shared
-        setup -- must still accept the trace, so its ``PermissionError`` is
-        swallowed here instead of aborting ``record``'s append. This keeps the
-        write consistent with :meth:`is_writable`, which probes access; the
-        0o700 hardening still applies whenever we own the dir.
-        """
-        parent = self._path.parent
-        try:
-            parent.chmod(_DIR_MODE)
-        except OSError as exc:
-            logger.debug("vibe-trace: cannot tighten %s to 0o700: %s", parent, exc)
-
-    def _nearest_existing_ancestor(self) -> Path:
-        """Return the closest existing directory above the (absent) log file."""
-        return next(p for p in self._path.parents if p.exists())

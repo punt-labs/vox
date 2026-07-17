@@ -16,14 +16,17 @@ if TYPE_CHECKING:
 
 
 def _redirect_trace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point the default sink at a temp file and return its path.
+    """Point the default sink at a temp ``logs`` dir and return its file.
 
-    ``NudgeHook`` resolves ``VibeTraceLog.default()`` -- the durable
-    ``<state>/logs/vibe-trace.log`` -- so the test reads exactly what a human
-    greps at runtime instead of a log record the host would discard.
+    ``NudgeHook`` resolves ``VibeTraceLog.default()`` -- ``log_dir() /
+    "vibe-trace.log"`` -- and production ``log_dir()`` is ``<state>/logs``, so
+    the redirect targets ``tmp/logs`` to mirror the real on-disk path a human
+    greps, matching the autouse ``hermetic_vibe_trace`` fixture. ``record``
+    creates the ``logs`` dir itself, so this need not pre-make it.
     """
-    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
-    return tmp_path / "vibe-trace.log"
+    logs = tmp_path / "logs"
+    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: logs)
+    return logs / "vibe-trace.log"
 
 
 def _config(*, mode: str, turns: int) -> VoxConfig:

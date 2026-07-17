@@ -24,14 +24,18 @@ def _playing() -> ProgramStatus:
 
 
 def _redirect_trace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point ``VibeTraceLog.default()`` at a temp file and return its path.
+    """Point ``VibeTraceLog.default()`` at a temp ``logs`` dir and return its file.
 
-    Both emitters resolve the durable ``<state>/logs/vibe-trace.log`` at
-    construction, so the test reads exactly what a human greps at runtime.
-    Patch before constructing the command whose ``__new__`` resolves the sink.
+    ``default()`` resolves ``log_dir() / "vibe-trace.log"``, and production
+    ``log_dir()`` is ``<state>/logs`` -- so the redirect targets ``tmp/logs`` to
+    mirror the real on-disk path a human greps, matching the autouse
+    ``hermetic_vibe_trace`` fixture. ``record`` creates the ``logs`` dir itself,
+    so this need not pre-make it. Patch before constructing the command whose
+    ``__new__`` resolves the sink.
     """
-    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
-    return tmp_path / "vibe-trace.log"
+    logs = tmp_path / "logs"
+    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: logs)
+    return logs / "vibe-trace.log"
 
 
 def _lines(log: Path) -> list[str]:

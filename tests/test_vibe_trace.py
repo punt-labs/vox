@@ -10,6 +10,7 @@ from collections.abc import Buffer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from punt_vox import paths
 from punt_vox.vibe_trace import VibeTraceLog
 
 if TYPE_CHECKING:
@@ -155,6 +156,79 @@ class TestVibeTraceLog:
         assert trace.path.read_text(encoding="utf-8") == (
             "[vibe-trace] music on style=jazz\\n[vibe-trace] forged\\rX\\x07\n"
         )
+
+    def test_record_escapes_unicode_line_separators(self, tmp_path: Path) -> None:
+        """NEL / LINE / PARAGRAPH separators can't forge a second visual record.
+
+        ``str.splitlines()`` breaks on U+0085, U+2028, and U+2029 even though the
+        file holds a single ``\\n``. A smuggled separator in an MCP-controlled
+        style would render a second ``[vibe-trace]`` line in a Unicode-aware tool.
+        ``record`` escapes them, so the file is one physical line whose
+        ``splitlines()`` yields one element and no raw separator byte on disk.
+        """
+        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
+        trace.record("style=a\u2028forged\u2029b\u0085c")
+
+        text = trace.path.read_text(encoding="utf-8")
+        assert text.splitlines() == [
+            "[vibe-trace] style=a\\u2028forged\\u2029b\\u0085c"
+        ]
+        raw = trace.path.read_bytes()
+        assert "\u2028".encode() not in raw
+        assert "\u2029".encode() not in raw
+        assert "\u0085".encode() not in raw
+
+    def test_record_hardens_created_state_ancestors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On a fresh install every ancestor ``record`` creates lands 0o700.
+
+        ``default()`` resolves ``<state>/logs/vibe-trace.log``. A bare
+        ``mkdir(parents=True)`` would create the state root and vox dir at the
+        umask default (~0o755), leaving per-user state world-traversable. The
+        first ``record`` must leave state root, vox dir, and logs all private.
+        """
+        state_root = tmp_path / ".punt-labs" / "vox"
+        monkeypatch.setattr("punt_vox.paths.user_state_dir", lambda: state_root)
+        monkeypatch.setattr("punt_vox.vibe_trace.log_dir", paths.log_dir)
+
+        VibeTraceLog.default().record("music off")
+
+        created = (tmp_path / ".punt-labs", state_root, state_root / "logs")
+        assert all((d.stat().st_mode & 0o077) == 0 for d in created)
+
+    def test_record_tightens_loose_existing_file(self, tmp_path: Path) -> None:
+        """A pre-existing group/other-readable log is re-tightened on append.
+
+        ``os.open(mode=0o600)`` applies the mode only when it creates the file,
+        so a log left 0o644 by a permissive umask or a prior run would keep
+        appending readable. ``record`` fchmods the open fd to force 0o600.
+        """
+        log = tmp_path / "vibe-trace.log"
+        log.touch()
+        log.chmod(0o644)
+        VibeTraceLog(log).record("music off")
+        assert (log.stat().st_mode & 0o077) == 0
+
+    def test_record_appends_when_file_chmod_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file we can't ``fchmod`` still gets its line -- privacy is best-effort.
+
+        The fchmod tighten is defense-in-depth, not a precondition for the write:
+        an ``os.fchmod`` that raises must be swallowed so the trace is never
+        dropped, exactly as the directory hardening is.
+        """
+
+        def deny_fchmod(_fd: int, _mode: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr("punt_vox.private_state.os.fchmod", deny_fchmod)
+        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
+
+        trace.record("music off")
+
+        assert trace.path.read_text(encoding="utf-8") == "[vibe-trace] music off\n"
 
     def test_is_writable_true_for_writable_dir(self, tmp_path: Path) -> None:
         """An absent log under a writable ancestor reports writable."""
