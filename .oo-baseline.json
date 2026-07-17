@@ -1081,10 +1081,10 @@
   "src/punt_vox/vibe_trace.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.22,
+    "avg_params": 0.2,
     "max_complexity": 4.0,
-    "avg_complexity": 1.89,
-    "module_size": 141.0,
+    "avg_complexity": 1.9,
+    "module_size": 155.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

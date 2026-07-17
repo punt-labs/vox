@@ -82,6 +82,32 @@ class TestVibeTraceLog:
         VibeTraceLog(logs / "vibe-trace.log").record("music off")
         assert (logs.stat().st_mode & 0o077) == 0
 
+    def test_record_appends_when_dir_chmod_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A writable dir we can't ``chmod`` still accepts the trace -- no silent drop.
+
+        The 0o700 tighten is best-effort hardening, not a precondition for the
+        append. In a shared or wrong-ownership setup we can append to ``logs/``
+        but not ``chmod`` it; if the tighten were in the write path, its
+        ``PermissionError`` would drop the trace while ``is_writable`` (which
+        probes access, not chmod) still reported healthy -- status diverging
+        from reality. The append must succeed and match ``is_writable``.
+        """
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        trace = VibeTraceLog(logs / "vibe-trace.log")
+
+        def deny_chmod(_self: object, _mode: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr("punt_vox.vibe_trace.Path.chmod", deny_chmod)
+
+        trace.record("music off")
+
+        assert trace.is_writable() is True  # status reports healthy...
+        assert trace.path.read_text(encoding="utf-8") == "[vibe-trace] music off\n"
+
     def test_record_surfaces_short_write_as_error(
         self,
         tmp_path: Path,

@@ -155,17 +155,33 @@ class VibeTraceLog:
             logger.warning("vibe-trace: cannot append to %s: %s", self._path, exc)
 
     def _ensure_private_dir(self) -> None:
-        """Create the log's parent dir private (0o700), tightening a loose one.
+        """Create the log's parent dir, then best-effort tighten it to 0o700.
 
         ``mkdir(mode=...)`` is masked by the process umask, so whichever process
         creates ``logs/`` first -- the ``mic`` server or the hook -- could leave
-        it group/other-readable under a permissive umask. The explicit ``chmod``
-        forces 0o700 regardless, so the proof trail others must not read stays
-        private no matter who wins the create race.
+        it group/other-readable. :meth:`_harden_dir` forces 0o700 so the proof
+        trail others must not read stays private no matter who wins the race,
+        while never blocking the append it precedes.
         """
         parent = self._path.parent
         parent.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
-        parent.chmod(_DIR_MODE)
+        self._harden_dir()
+
+    def _harden_dir(self) -> None:
+        """Best-effort tighten the parent dir to 0o700; never block the write.
+
+        The tighten is defense-in-depth, not a precondition for writing: a dir
+        we can append to but not ``chmod`` -- owned by another user in a shared
+        setup -- must still accept the trace, so its ``PermissionError`` is
+        swallowed here instead of aborting ``record``'s append. This keeps the
+        write consistent with :meth:`is_writable`, which probes access; the
+        0o700 hardening still applies whenever we own the dir.
+        """
+        parent = self._path.parent
+        try:
+            parent.chmod(_DIR_MODE)
+        except OSError as exc:
+            logger.debug("vibe-trace: cannot tighten %s to 0o700: %s", parent, exc)
 
     def _nearest_existing_ancestor(self) -> Path:
         """Return the closest existing directory above the (absent) log file."""
