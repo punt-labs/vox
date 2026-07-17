@@ -258,7 +258,7 @@ class DaemonConfig:
                 },
                 "handlers": {
                     "file": {
-                        "class": "logging.handlers.RotatingFileHandler",
+                        "class": "punt_vox.log_handlers.PrivateRotatingFileHandler",
                         "filename": str(log_file),
                         "maxBytes": _LOG_MAX_BYTES,
                         "backupCount": _LOG_BACKUP_COUNT,

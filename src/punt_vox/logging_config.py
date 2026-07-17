@@ -17,11 +17,6 @@ _MAX_BYTES = 5_242_880  # 5 MB
 _BACKUP_COUNT = 5
 
 
-def _log_level_key(name: str) -> int:
-    """Map level name to numeric value for comparison."""
-    return getattr(logging, name, logging.WARNING)
-
-
 def configure_logging(*, stderr_level: str = "WARNING") -> None:
     """Configure logging with rotating file and stderr handlers.
 
@@ -29,6 +24,8 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
     Stderr handler level is controlled by the caller.
     """
     _LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    levels = logging.getLevelNamesMapping()
+    root_level = min(stderr_level, "INFO", key=levels.__getitem__)
 
     logging.config.dictConfig(
         {
@@ -42,7 +39,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
             },
             "handlers": {
                 "file": {
-                    "class": "logging.handlers.RotatingFileHandler",
+                    "class": "punt_vox.log_handlers.PrivateRotatingFileHandler",
                     "filename": str(_LOG_FILE),
                     "maxBytes": _MAX_BYTES,
                     "backupCount": _BACKUP_COUNT,
@@ -58,7 +55,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
                 },
             },
             "root": {
-                "level": min(stderr_level, "INFO", key=_log_level_key),
+                "level": root_level,
                 "handlers": ["file", "stderr"],
             },
             "loggers": {
