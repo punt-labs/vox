@@ -109,6 +109,38 @@ class TestVibeTraceLog:
             "writable": True,
         }
 
+    def test_is_writable_false_when_probe_raises_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A traversal/permission failure is fail-safe: report False, never raise.
+
+        ``Path.exists``/``is_file`` swallow a missing path but re-raise a
+        ``PermissionError`` from an unreadable ancestor. A health check must not
+        be able to crash on that, so an ``OSError`` from the probe means False.
+        """
+        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
+
+        def deny(_path: object, _mode: int) -> bool:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr("punt_vox.vibe_trace.os.access", deny)
+        assert trace.is_writable() is False
+
+    def test_health_survives_probe_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``health`` -- the status-API surface -- never propagates a probe error."""
+        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
+
+        def blow_up(_self: object) -> bool:
+            raise OSError(5, "I/O error")
+
+        monkeypatch.setattr("punt_vox.vibe_trace.VibeTraceLog._probe_writable", blow_up)
+        assert trace.health() == {
+            "path": str(tmp_path / "vibe-trace.log"),
+            "writable": False,
+        }
+
     def test_record_swallows_io_failure(self, tmp_path: Path) -> None:
         # A directory where the file should be makes os.open raise; the sink must
         # log-and-swallow so a trace never crashes the path it observes.

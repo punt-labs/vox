@@ -83,6 +83,22 @@ class VibeTraceLog:
     def is_writable(self) -> bool:
         """Return whether a trace could be appended to the log right now.
 
+        Never raises. A health check must not be able to crash the surface
+        that reports it -- ``mic:status`` calls this unguarded -- so any
+        :class:`OSError` from probing the real filesystem is fail-safe: when a
+        traversal-permission failure on an intermediate ancestor (or any other
+        stat error) makes writability impossible to confirm, report ``False``.
+        ``Path.exists``/``Path.is_file`` already swallow a missing path, but
+        not an unreadable ancestor directory; this guard closes that gap.
+        """
+        try:
+            return self._probe_writable()
+        except OSError:
+            return False
+
+    def _probe_writable(self) -> bool:
+        """Return real-filesystem writability; :meth:`is_writable` guards this.
+
         Health is a property of the *path*, not of any one process's last
         write: two separate processes -- the ``mic`` server and the hook --
         append here, so trusting a single writer's success would report a
