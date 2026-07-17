@@ -240,7 +240,12 @@ class DaemonConfig:
         logger.info("Removed port file")
 
     def configure_logging(self) -> None:
-        """Configure logging with rotating file and stderr handlers.
+        """Configure logging with a single private rotating-file handler.
+
+        The daemon logs *once*, to the 0600 ``voxd.log`` -- no stderr handler.
+        A parallel ``StreamHandler`` would have the service manager (launchd's
+        ``StandardErrorPath``, systemd's journal) capture a second, unprotected
+        copy of the same records, defeating the file's private permissions.
 
         The log directory is expected to already exist at mode 0700.
         """
@@ -266,16 +271,10 @@ class DaemonConfig:
                         "formatter": "standard",
                         "level": "INFO",
                     },
-                    "stderr": {
-                        "class": "logging.StreamHandler",
-                        "stream": "ext://sys.stderr",
-                        "formatter": "standard",
-                        "level": "INFO",
-                    },
                 },
                 "root": {
                     "level": "INFO",
-                    "handlers": ["file", "stderr"],
+                    "handlers": ["file"],
                 },
                 "loggers": {
                     "boto3": {"level": "WARNING"},

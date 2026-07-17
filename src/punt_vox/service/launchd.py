@@ -10,7 +10,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.launchctl import LaunchctlAgent
 
 if TYPE_CHECKING:
@@ -73,9 +72,6 @@ class LaunchdBackend:
         program_args = "\n".join(
             f"        <string>{html.escape(a)}</string>" for a in args
         )
-        log_dir = _paths_log_dir()
-        stdout_log = html.escape(str(log_dir / "voxd-stdout.log"))
-        stderr_log = html.escape(str(log_dir / "voxd-stderr.log"))
         path_value = html.escape(
             os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         )
@@ -107,10 +103,6 @@ class LaunchdBackend:
                 <true/>
                 <key>KeepAlive</key>
                 <true/>
-                <key>StandardOutPath</key>
-                <string>{stdout_log}</string>
-                <key>StandardErrorPath</key>
-                <string>{stderr_log}</string>
             </dict>
             </plist>
         """)

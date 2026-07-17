@@ -64,30 +64,18 @@ def test_launchd_plist_contains_args(backend: LaunchdBackend) -> None:
     assert str(DEFAULT_PORT) in content
 
 
-def test_launchd_plist_contains_log_paths(backend: LaunchdBackend) -> None:
+def test_launchd_plist_has_no_file_log_redirect(backend: LaunchdBackend) -> None:
+    """The plist must not tee daemon output to a second, unprotected log file.
+
+    voxd logs once to the 0600 ``voxd.log`` via its private file handler.
+    ``StandardErrorPath`` would have launchd capture a duplicate, world-readable
+    copy of the same records, defeating that file's private permissions.
+    """
     content = backend.plist_content()
-    assert "voxd-stdout.log" in content
-    assert "voxd-stderr.log" in content
-
-
-def test_launchd_plist_log_paths_use_current_user_home(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Log paths in the plist come from the invoking user's ``$HOME``."""
-    fake_home = tmp_path / "Users" / "deploy"
-    fake_home.mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(fake_home))
-
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
-    content = be.plist_content()
-    expected_stdout = str(fake_home / ".punt-labs" / "vox" / "logs" / "voxd-stdout.log")
-    expected_stderr = str(fake_home / ".punt-labs" / "vox" / "logs" / "voxd-stderr.log")
-    assert expected_stdout in content
-    assert expected_stderr in content
+    assert "StandardOutPath" not in content
+    assert "StandardErrorPath" not in content
+    assert "voxd-stdout.log" not in content
+    assert "voxd-stderr.log" not in content
 
 
 def test_launchd_plist_keepalive(backend: LaunchdBackend) -> None:
