@@ -61,7 +61,7 @@ class PrivateState:
         """
         parent = self._path.parent
         for directory in self._missing_ancestors(parent):
-            directory.mkdir(mode=_DIR_MODE)
+            directory.mkdir(mode=_DIR_MODE, exist_ok=True)
             self._tighten_dir(directory)
         self._tighten_dir(parent)
 

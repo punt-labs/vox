@@ -37,6 +37,41 @@ class TestEnsurePrivateTree:
         PrivateState(parent / "state.log").ensure_private_tree()
         assert _mode(parent) == 0
 
+    def test_survives_peer_creating_ancestor_mid_walk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A peer winning the race between ``exists()`` and ``mkdir`` is absorbed.
+
+        ``_missing_ancestors`` is computed up front, so a directory it plans to
+        create can be created by a peer before this process's own ``mkdir``
+        runs. Without ``exist_ok=True`` that ``mkdir`` raises
+        ``FileExistsError``, which ``record()`` swallows as ``OSError`` --
+        silently dropping the trace even though the directory now exists and the
+        append would succeed. ``exist_ok=True`` absorbs the loss; the following
+        chmod still lands the peer-created dir at 0o700.
+        """
+        target = tmp_path / "a" / "b" / "state.log"
+        real_mkdir = Path.mkdir
+
+        def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+            if not self.exists():  # a peer wins the race, with loose perms
+                real_mkdir(self)
+            real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("punt_vox.private_state.Path.mkdir", racing_mkdir)
+        PrivateState(target).ensure_private_tree()  # no FileExistsError
+        for directory in (tmp_path / "a", target.parent):
+            assert directory.is_dir()
+            assert _mode(directory) == 0  # peer's loose dir was still tightened
+
+    def test_second_ensure_is_a_noop(self, tmp_path: Path) -> None:
+        """Calling ensure_private_tree twice must not raise on the second pass."""
+        target = tmp_path / "a" / "b" / "state.log"
+        guard = PrivateState(target)
+        guard.ensure_private_tree()
+        guard.ensure_private_tree()  # every ancestor now exists -- must not raise
+        assert _mode(target.parent) == 0
+
     def test_swallows_chmod_denial(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
