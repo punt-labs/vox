@@ -23,9 +23,15 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
     File handler is always active at INFO level.
     Stderr handler level is controlled by the caller.
     """
-    _LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     levels = logging.getLevelNamesMapping()
-    root_level = min(stderr_level, "INFO", key=levels.__getitem__)
+    normalized_level = stderr_level.upper()
+    if normalized_level not in levels:
+        valid = ", ".join(sorted(levels))
+        msg = f"unknown stderr_level {stderr_level!r}; valid levels: {valid}"
+        raise ValueError(msg)
+    root_level = min(normalized_level, "INFO", key=levels.__getitem__)
+
+    _LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     logging.config.dictConfig(
         {
@@ -51,7 +57,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
                     "class": "logging.StreamHandler",
                     "stream": "ext://sys.stderr",
                     "formatter": "standard",
-                    "level": stderr_level,
+                    "level": normalized_level,
                 },
             },
             "root": {
