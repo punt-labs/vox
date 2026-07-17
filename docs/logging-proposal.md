@@ -1,6 +1,6 @@
 # Vox Logging Audit & Proposal
 
-Status: PROPOSAL (awaiting operator decision — no code changed yet)
+Status: The **P1 security items are IMPLEMENTED** (vox-q637, PR #337) and the **standard revision is drafted** (punt-kit #225). The **P2/P3 structural + observability items remain a proposal** (tracked as vox-fdmm). This document is the durable audit + the agreed plan, not a pending decision.
 Date: 2026-07-17
 Audits: rmh (config/rotation/multi-process/gaps/noise/readability), djb (security), verified on the running v4.12.3 by grepping `~/.punt-labs/vox/logs/` — not inferred from code.
 
