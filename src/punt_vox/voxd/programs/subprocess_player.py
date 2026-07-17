@@ -13,6 +13,8 @@ import logging
 import platform
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.log_sanitize import SANITIZER
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -65,7 +67,11 @@ class SubprocessHandle:
         stderr_text = ""
         if self._proc.stderr is not None:
             stderr_bytes = await self._proc.stderr.read()
-            stderr_text = stderr_bytes.decode(errors="replace").strip()
+            # The player's stderr is free-form external text: a stray newline
+            # would forge a second log record, a raw control byte would corrupt
+            # a terminal on ``cat``. Escape it to a single auditable line.
+            decoded = stderr_bytes.decode(errors="replace").strip()
+            stderr_text = SANITIZER.escape(decoded)
         logger.warning("player exited with rc=%s: %s", rc, stderr_text)
 
 

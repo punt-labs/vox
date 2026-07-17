@@ -295,7 +295,7 @@ class SynthesisPipeline:
             cached = cache_get(key)
             if cached is not None:
                 logger.info(
-                    "cache HIT: id=%s provider=%s voice=%s file=%s chars_in=%d",
+                    "cache HIT: id=%r provider=%r voice=%r file=%s chars_in=%d",
                     request_id,
                     provider_name,
                     resolved_voice,
@@ -351,7 +351,7 @@ class SynthesisPipeline:
                 cached_path = cache_put(key, output_path) if api_key is None else None
                 location = f"file={cached_path}" if cached_path else "not cached"
                 logger.info(
-                    "cache MISS: id=%s provider=%s voice=%s size=%d chars_in=%d %s",
+                    "cache MISS: id=%r provider=%r voice=%r size=%d chars_in=%d %s",
                     request_id,
                     provider_name,
                     resolved_voice,

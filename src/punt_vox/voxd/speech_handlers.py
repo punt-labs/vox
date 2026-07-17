@@ -127,7 +127,7 @@ class SynthesizeHandler(MessageHandler):
             return
 
         logger.info(
-            "Synthesize: id=%s provider=%s voice=%s chars=%d",
+            "Synthesize: id=%r provider=%r voice=%r chars=%d",
             req.request_id,
             req.spec.provider or "",
             req.spec.voice or "",
@@ -202,7 +202,7 @@ class SynthesizeHandler(MessageHandler):
             )
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
-            logger.exception("Synthesis failed for id=%s", req.request_id)
+            logger.exception("Synthesis failed for id=%r", req.request_id)
             await req.error(str(exc))
             return
 
@@ -257,7 +257,7 @@ class RecordHandler(MessageHandler):
             return
 
         logger.info(
-            "Record: id=%s provider=%s voice=%s chars=%d",
+            "Record: id=%r provider=%r voice=%r chars=%d",
             req.request_id,
             req.spec.provider or "",
             req.spec.voice or "",
@@ -269,7 +269,7 @@ class RecordHandler(MessageHandler):
                 req.text, req.spec, request_id=req.request_id
             )
         except Exception as exc:
-            logger.exception("Record synthesis failed for id=%s", req.request_id)
+            logger.exception("Record synthesis failed for id=%r", req.request_id)
             await req.error(str(exc))
             return
 
