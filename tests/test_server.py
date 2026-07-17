@@ -1277,13 +1277,23 @@ def _install_fake(monkeypatch: pytest.MonkeyPatch, fake: FakeProgramGateway) -> 
     monkeypatch.setattr(srv, "_program_tools", fake)
 
 
-def _music_traces(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the captured success ``[vibe-trace] music`` lines, failures excluded."""
+def _music_trace_lines(logs: Path) -> list[str]:
+    """Return the success ``[vibe-trace] music`` lines in the durable trace FILE.
+
+    Reads the file the sink actually writes -- the hermetic ``hermetic_vibe_trace``
+    log -- never ``caplog``: a ``[vibe-trace]`` line goes only to the file, not
+    the logging module, so a caplog assertion would pass vacuously and stop
+    guarding "a rejected outcome emits no success re-pool trace." The autouse
+    ``_fresh_session`` rebuilds ``_music_pref`` after that redirect, so its sink
+    already resolves to this file.
+    """
+    log = logs / "vibe-trace.log"
+    if not log.exists():
+        return []
     return [
-        message
-        for record in caplog.records
-        if "[vibe-trace] music" in (message := record.getMessage())
-        and "failed" not in message
+        line
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if "[vibe-trace] music" in line
     ]
 
 
@@ -1331,28 +1341,41 @@ class TestMusicTool:
         assert any("music on" in line and "style=jazz" in line for line in lines)
 
     def test_rejected_on_leaves_style_and_omits_trace(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
     ) -> None:
-        """A rejected start must not adopt the genre nor log a success trace."""
-        import logging
-
+        """A rejected start must not adopt the genre nor write a success trace."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            music(mode="on", style="jazz")
+        music(mode="on", style="jazz")
 
         assert srv._music_pref.style == "flamenco"  # register untouched
-        assert not _music_traces(caplog)
+        assert not _music_trace_lines(hermetic_vibe_trace)
+
+    def test_applied_on_writes_music_trace(
+        self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
+    ) -> None:
+        """Positive control: an applied start DOES write a success music trace.
+
+        Proves the rejected-path ``omits_trace`` assertions are non-vacuous -- the
+        server's pref writes to this same hermetic file, so a trace erroneously
+        emitted on a rejected outcome would be seen and would fail those tests.
+        """
+        _install_fake(monkeypatch, FakeProgramGateway())  # applied=True default
+
+        music(mode="on", style="jazz")
+
+        assert any(
+            "music on" in line and "style=jazz" in line
+            for line in _music_trace_lines(hermetic_vibe_trace)
+        )
 
     def test_daemon_error_on_leaves_style_and_omits_trace(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
     ) -> None:
-        """A start that raises leaves the register and logs no success trace."""
-        import logging
-
+        """A start that raises leaves the register and writes no success trace."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
@@ -1360,12 +1383,11 @@ class TestMusicTool:
         fake.start.side_effect = VoxdConnectionError("not running")
         monkeypatch.setattr(srv, "_program_tools", fake)
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            result = json.loads(music(mode="on", style="jazz"))
+        result = json.loads(music(mode="on", style="jazz"))
 
         assert "error" in result
         assert srv._music_pref.style == "flamenco"  # register untouched
-        assert not _music_traces(caplog)
+        assert not _music_trace_lines(hermetic_vibe_trace)
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_style_is_no_tag_and_no_style_pool(
@@ -1430,21 +1452,18 @@ class TestMusicTool:
         assert srv._music_pref.style is None
 
     def test_rejected_off_keeps_style_and_omits_trace(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
     ) -> None:
-        """A rejected stop must not clear the style nor log a success trace."""
-        import logging
-
+        """A rejected stop must not clear the style nor write a success trace."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            music(mode="off")
+        music(mode="off")
 
         assert srv._music_pref.style == "flamenco"  # register untouched
-        assert not _music_traces(caplog)
+        assert not _music_trace_lines(hermetic_vibe_trace)
 
     def test_invalid_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake(monkeypatch, FakeProgramGateway())
@@ -1573,21 +1592,18 @@ class TestMusicPlayTool:
         assert srv._music_pref.style is None
 
     def test_rejected_play_leaves_style_and_omits_trace(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
     ) -> None:
-        """A rejected replay must not adopt the style nor log a success trace."""
-        import logging
-
+        """A rejected replay must not adopt the style nor write a success trace."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            music_play(style="techno")
+        music_play(style="techno")
 
         assert srv._music_pref.style == "flamenco"  # register untouched
-        assert not _music_traces(caplog)
+        assert not _music_trace_lines(hermetic_vibe_trace)
 
     def test_rejected_play_skips_the_catalog_lookup(
         self, monkeypatch: pytest.MonkeyPatch
