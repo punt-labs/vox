@@ -93,6 +93,28 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     return config_dir
 
 
+@pytest.fixture(autouse=True)
+def hermetic_vibe_trace(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the durable vibe-trace log into a per-test tmp dir.
+
+    ``VibeTraceLog.default()`` resolves ``log_dir() / "vibe-trace.log"`` to the
+    real ``~/.punt-labs/vox/logs/vibe-trace.log``.  Every test that drives
+    ``music`` / ``VibeCommand.apply`` / the nudge hook builds a *default* sink,
+    so without this each such test would append into that live proof trail --
+    contaminating the exact record the subsystem exists to make trustworthy
+    (the recurring test-config-pollution burn).  Patch the sink's bound
+    ``log_dir`` so every default resolution lands under a tmp ``logs`` dir; no
+    test can touch the real file.  The tmp dir keeps the ``logs`` basename so
+    the default-path assertions still see the production layout.
+    """
+    logs = tmp_path_factory.mktemp("vibe-trace-state") / "logs"
+    logs.mkdir()
+    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: logs)
+    return logs
+
+
 def _repo_free_base() -> Path:
     """Return a temp base directory with no ``.punt-labs/vox`` ancestor.
 

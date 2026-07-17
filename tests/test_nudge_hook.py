@@ -15,6 +15,20 @@ if TYPE_CHECKING:
     import pytest
 
 
+def _redirect_trace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the default sink at a temp ``logs`` dir and return its file.
+
+    ``NudgeHook`` resolves ``VibeTraceLog.default()`` -- ``log_dir() /
+    "vibe-trace.log"`` -- and production ``log_dir()`` is ``<state>/logs``, so
+    the redirect targets ``tmp/logs`` to mirror the real on-disk path a human
+    greps, matching the autouse ``hermetic_vibe_trace`` fixture. ``record``
+    creates the ``logs`` dir itself, so this need not pre-make it.
+    """
+    logs = tmp_path / "logs"
+    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: logs)
+    return logs / "vibe-trace.log"
+
+
 def _config(*, mode: str, turns: int) -> VoxConfig:
     return VoxConfig(
         notify="y",
@@ -33,28 +47,29 @@ class TestNudgeHook:
     """The nudge fires on the Nth auto prompt and emits the [vibe-trace] event."""
 
     def test_fires_and_traces_on_threshold(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        log = _redirect_trace(monkeypatch, tmp_path)
         config = _config(mode="auto", turns=DEFAULT_THRESHOLD - 1)
-        with caplog.at_level(logging.INFO, logger="punt_vox.nudge_hook"):
-            result = NudgeHook(tmp_path).run(config)
+        result = NudgeHook(tmp_path).run(config)
         assert result is not None
         envelope = result["hookSpecificOutput"]
         assert isinstance(envelope, dict)
         assert envelope["additionalContext"] == VIBE_NUDGE_REMINDER
         assert ConfigStore(tmp_path).read().vibe_nudge_turns == 0
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
-        assert any("nudge fired" in m and "mode=auto" in m for m in traces)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        assert any(
+            line.startswith("[vibe-trace] nudge fired") and "mode=auto" in line
+            for line in lines
+        )
 
     def test_silent_below_threshold_emits_no_trace(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        log = _redirect_trace(monkeypatch, tmp_path)
         config = _config(mode="auto", turns=0)
-        with caplog.at_level(logging.INFO, logger="punt_vox.nudge_hook"):
-            assert NudgeHook(tmp_path).run(config) is None
-        assert not any("nudge fired" in r.getMessage() for r in caplog.records)
+        assert NudgeHook(tmp_path).run(config) is None
+        assert not log.exists()
         assert ConfigStore(tmp_path).read().vibe_nudge_turns == 1
 
     def test_manual_mode_stays_silent(self, tmp_path: Path) -> None:

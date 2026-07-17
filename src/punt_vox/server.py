@@ -13,6 +13,7 @@ import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -24,16 +25,19 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.logging_config import configure_logging
 from punt_vox.music_phrases import MusicMarquee
-from punt_vox.program_gateway import ProgramGateway
 from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.vibe import VibeChange
 from punt_vox.vibe_command import MusicPreference, VibeCommand
+from punt_vox.vibe_trace import VibeTraceLog
 from punt_vox.voices import VOICE_BLURBS
+
+if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
+    from punt_vox.program_gateway import ProgramGateway
+    from punt_vox.vibe import VibeChange
 
 logger = logging.getLogger(__name__)
 
@@ -606,9 +610,7 @@ def music(
             outcome = _program_tools.stop()
             _music_pref.confirm_stopped(outcome)
             message = f"\u266a {outcome.display(_marquee.stopped())}"
-    except ValueError as exc:  # malformed prompt shape, surfaced at the boundary
-        return _error(str(exc))
-    except _DAEMON_ERRORS as exc:
+    except (ValueError, *_DAEMON_ERRORS) as exc:  # malformed prompt or daemon fault
         return _error(str(exc))
     return json.dumps({"message": message, "applied": outcome.applied})
 
@@ -737,14 +739,12 @@ def who() -> str:
         for (prov, name), blurb in VOICE_BLURBS.items()
         if prov == provider_name and name in all_voices
     ]
-    random.shuffle(featured)
-    featured = featured[:6]
 
     return json.dumps(
         {
             "provider": provider_name,
             "current": _session.voice,
-            "featured": featured,
+            "featured": random.sample(featured, min(6, len(featured))),
             "all": all_voices,
         }
     )
@@ -856,6 +856,7 @@ def status() -> str:
         "vibe": _session.vibe,
         "vibe_tags": _session.vibe_tags,
         "style": _music_pref.style,
+        "vibe_trace": VibeTraceLog.default().health(),
     }
     try:
         program_status = _program_tools.status()
@@ -885,11 +886,10 @@ def run_server() -> None:
     _session = SessionConfig.from_config(config_dir)
 
     # Mark speak as explicitly set if the config file had it.
-    speak_was_set = (
+    if (
         config_dir is not None
         and ConfigStore(config_dir).read_field("speak") is not None
-    )
-    if speak_was_set:
+    ):
         _session.set_speak(_session.speak)
 
     logger.info(

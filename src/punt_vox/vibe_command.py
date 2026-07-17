@@ -14,9 +14,8 @@ names the wrong genre.
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
-from typing import Protocol, Self, final
+from typing import TYPE_CHECKING, Protocol, Self, final
 
 from websockets.exceptions import WebSocketException
 
@@ -24,15 +23,16 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.music_hint import MusicHint
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.control import CommandOutcome
-from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.vibe import VibeChange
+from punt_vox.vibe_trace import VibeTraceLog
+
+if TYPE_CHECKING:
+    # Annotation-only: the daemon Program types are named in signatures but never
+    # constructed or type-tested here, so they carry no runtime dependency.
+    from punt_vox.types_programs import CommandOutcome, ProgramStatus
 
 __all__ = ["MusicPreference", "VibeCommand", "VibeSession"]
 
-logger = logging.getLogger(__name__)
-
-_TRACE = "[vibe-trace]"
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
 
 
@@ -47,13 +47,15 @@ class MusicPreference:
     radio); a stop clears it.
     """
 
-    __slots__ = ("_style",)
+    __slots__ = ("_style", "_trace")
 
     _style: str | None
+    _trace: VibeTraceLog
 
     def __new__(cls, style: str | None = None) -> Self:
         self = super().__new__(cls)
         self._style = style
+        self._trace = VibeTraceLog.default()
         return self
 
     @property
@@ -91,12 +93,10 @@ class MusicPreference:
         if not outcome.applied:
             return
         self.started(style)
-        logger.info(
-            "%s music on style=%s vibe=%s prompts=%s",
-            _TRACE,
-            self._style or "-",  # effective style: persisted when the arg was omitted
-            vibe or "-",
-            "authored" if authored else "fallback",
+        # Name the EFFECTIVE style: persisted when the arg was omitted.
+        self._trace.record(
+            f"music on style={self._style or '-'} vibe={vibe or '-'} "
+            f"prompts={'authored' if authored else 'fallback'}"
         )
 
     def confirm_selected(
@@ -110,12 +110,8 @@ class MusicPreference:
         if not outcome.applied:
             return
         self.selected(style)
-        logger.info(
-            "%s music play style=%s vibe=%s name=%s",
-            _TRACE,
-            style or "-",
-            vibe or "-",
-            name or "-",
+        self._trace.record(
+            f"music play style={style or '-'} vibe={vibe or '-'} name={name or '-'}"
         )
 
     def confirm_stopped(self, outcome: CommandOutcome) -> None:
@@ -123,7 +119,7 @@ class MusicPreference:
         if not outcome.applied:
             return
         self.stopped()
-        logger.info("%s music off", _TRACE)
+        self._trace.record("music off")
 
 
 class VibeSession(Protocol):
@@ -153,12 +149,13 @@ class VibeSession(Protocol):
 class VibeCommand:
     """Apply a vibe change to the session and enrich the reply with a music hint."""
 
-    __slots__ = ("_config_dir", "_gateway", "_pref", "_session")
+    __slots__ = ("_config_dir", "_gateway", "_pref", "_session", "_trace")
 
     _session: VibeSession
     _gateway: ProgramGateway
     _config_dir: Path | None
     _pref: MusicPreference
+    _trace: VibeTraceLog
 
     def __new__(
         cls,
@@ -172,6 +169,7 @@ class VibeCommand:
         self._gateway = gateway
         self._config_dir = config_dir
         self._pref = pref
+        self._trace = VibeTraceLog.default()
         return self
 
     def apply(self, mood: str | None, tags: str | None, mode: str | None) -> str:
@@ -214,14 +212,10 @@ class VibeCommand:
         # failed (never a false "false" masking a daemon outage as music-off), else
         # the audible gate; hint_emitted stays false unless a known style is playing.
         music_playing = "unknown" if status is None else str(status.is_playing).lower()
-        logger.info(
-            "%s vibe set mood=%s mode=%s music_playing=%s hint_emitted=%s style=%s",
-            _TRACE,
-            self._session.vibe or "-",
-            self._session.vibe_mode,
-            music_playing,
-            str(hint is not None).lower(),
-            style or "-",
+        self._trace.record(
+            f"vibe set mood={self._session.vibe or '-'} "
+            f"mode={self._session.vibe_mode} music_playing={music_playing} "
+            f"hint_emitted={str(hint is not None).lower()} style={style or '-'}"
         )
 
     def _read_status(self) -> ProgramStatus | None:
@@ -229,7 +223,7 @@ class VibeCommand:
         try:
             return self._gateway.status()
         except _DAEMON_ERRORS as exc:
-            logger.warning("%s vibe set: status unavailable, no hint: %s", _TRACE, exc)
+            self._trace.record(f"vibe set: status unavailable, no hint: {exc}")
             return None
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -22,6 +21,28 @@ if TYPE_CHECKING:
 
 def _playing() -> ProgramStatus:
     return ProgramStatus.radio(None, None)
+
+
+def _redirect_trace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point ``VibeTraceLog.default()`` at a temp ``logs`` dir and return its file.
+
+    ``default()`` resolves ``log_dir() / "vibe-trace.log"``, and production
+    ``log_dir()`` is ``<state>/logs`` -- so the redirect targets ``tmp/logs`` to
+    mirror the real on-disk path a human greps, matching the autouse
+    ``hermetic_vibe_trace`` fixture. ``record`` creates the ``logs`` dir itself,
+    so this need not pre-make it. Patch before constructing the command whose
+    ``__new__`` resolves the sink.
+    """
+    logs = tmp_path / "logs"
+    monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: logs)
+    return logs / "vibe-trace.log"
+
+
+def _lines(log: Path) -> list[str]:
+    """Return the recorded ``[vibe-trace]`` lines, or [] when nothing was written."""
+    if not log.exists():
+        return []
+    return log.read_text(encoding="utf-8").splitlines()
 
 
 class TestMusicPreference:
@@ -56,36 +77,29 @@ class TestMusicPreference:
         assert pref.style is None
 
     def test_confirm_started_trace_names_persisted_style_when_omitted(
-        self, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # music(on) may omit style so the daemon keeps the playing genre. The
         # trace must name that EFFECTIVE, persisted style -- never "-" -- or the
         # re-pool proof would claim no genre is in effect when one plainly is.
+        log = _redirect_trace(monkeypatch, tmp_path)
         pref = MusicPreference("flamenco")
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            pref.confirm_started(CommandOutcome.ok(""), None, "relaxing", authored=True)
+        pref.confirm_started(CommandOutcome.ok(""), None, "relaxing", authored=True)
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
-        assert any("music on style=flamenco" in m for m in traces)
-        assert all("style=-" not in m for m in traces)
+        lines = _lines(log)
+        assert any("music on style=flamenco" in line for line in lines)
+        assert all("style=-" not in line for line in lines)
 
     def test_confirm_started_trace_names_explicit_style(
-        self, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        log = _redirect_trace(monkeypatch, tmp_path)
         pref = MusicPreference("flamenco")
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            pref.confirm_started(
-                CommandOutcome.ok(""), "techno", "wired", authored=False
-            )
+        pref.confirm_started(CommandOutcome.ok(""), "techno", "wired", authored=False)
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
-        assert any("music on style=techno" in m for m in traces)
+        assert any("music on style=techno" in line for line in _lines(log))
 
 
 class TestVibeCommand:
@@ -121,134 +135,124 @@ class TestVibeCommand:
         assert gateway.verbs() == ["status"]
 
     def test_emits_vibe_set_trace(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        log = _redirect_trace(monkeypatch, tmp_path)
         gateway = FakeProgramGateway(status=_playing())
         pref = MusicPreference("flamenco")
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
-                "relaxing", None, "manual"
-            )
+        VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+            "relaxing", None, "manual"
+        )
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
         assert any(
-            "vibe set" in m
-            and "music_playing=true" in m
-            and "style=flamenco" in m
-            and "hint_emitted=true" in m
-            for m in traces
+            line.startswith("[vibe-trace] vibe set")
+            and "music_playing=true" in line
+            and "style=flamenco" in line
+            and "hint_emitted=true" in line
+            for line in _lines(log)
         )
 
     def test_trace_playing_unknown_style_is_playing_without_hint(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Music audibly playing but style unknown: playing=true, hint_emitted=false.
 
         The trace reports the raw audible gate independent of the known style, so
         a re-pool that can't fire (no genre to name) never reads as not-playing.
         """
+        log = _redirect_trace(monkeypatch, tmp_path)
         gateway = FakeProgramGateway(status=_playing())
         pref = MusicPreference()  # no known style
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
-                "relaxing", None, "manual"
-            )
+        VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+            "relaxing", None, "manual"
+        )
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
         assert any(
-            "vibe set" in m and "music_playing=true" in m and "hint_emitted=false" in m
-            for m in traces
+            "vibe set" in line
+            and "music_playing=true" in line
+            and "hint_emitted=false" in line
+            for line in _lines(log)
         )
 
     def test_trace_not_playing_reports_music_playing_false(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Status available and idle: the trace reads the audible gate as false."""
+        log = _redirect_trace(monkeypatch, tmp_path)
         gateway = FakeProgramGateway(status=ProgramStatus.idle())
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            VibeCommand(SessionConfig(), gateway, tmp_path, MusicPreference()).apply(
-                "relaxing", None, "manual"
-            )
+        VibeCommand(SessionConfig(), gateway, tmp_path, MusicPreference()).apply(
+            "relaxing", None, "manual"
+        )
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
         assert any(
-            "vibe set" in m and "music_playing=false" in m and "hint_emitted=false" in m
-            for m in traces
+            "vibe set" in line
+            and "music_playing=false" in line
+            and "hint_emitted=false" in line
+            for line in _lines(log)
         )
 
     def test_trace_status_unavailable_reports_music_playing_unknown(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A failed status read is UNKNOWN, not off: the trace must not claim false.
 
         Reporting music_playing=false when the daemon is unreachable would mask an
         outage as "music is off" in the grep proof -- the true state is unknown.
         """
+        log = _redirect_trace(monkeypatch, tmp_path)
         gateway = MagicMock()
         gateway.status.side_effect = VoxdConnectionError("not running")
 
-        with caplog.at_level(logging.INFO, logger="punt_vox.vibe_command"):
-            VibeCommand(
-                SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
-            ).apply("relaxing", None, "manual")
+        VibeCommand(
+            SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
+        ).apply("relaxing", None, "manual")
 
-        traces = [
-            r.getMessage() for r in caplog.records if "[vibe-trace]" in r.getMessage()
-        ]
         assert any(
-            "vibe set" in m
-            and "music_playing=unknown" in m
-            and "hint_emitted=false" in m
-            for m in traces
+            "vibe set" in line
+            and "music_playing=unknown" in line
+            and "hint_emitted=false" in line
+            for line in _lines(log)
         )
 
-    def test_daemon_down_still_persists_no_hint(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_daemon_down_still_persists_no_hint(self, tmp_path: Path) -> None:
         """A status read that raises fails safe: mood persists, no hint, no crash."""
         gateway = MagicMock()
         gateway.status.side_effect = VoxdConnectionError("not running")
         pref = MusicPreference("flamenco")
 
-        with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_command"):
-            result = json.loads(
-                VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
-                    "calm", None, "manual"
-                )
+        result = json.loads(
+            VibeCommand(SessionConfig(), gateway, tmp_path, pref).apply(
+                "calm", None, "manual"
             )
+        )
 
         assert result["vibe"]["vibe"] == "calm"
         assert "music_hint" not in result
 
-    def test_daemon_down_warning_carries_exception_detail(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_daemon_down_trace_carries_exception_detail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The status-unavailable warning names the underlying failure.
+        """The status-unavailable trace names the underlying failure.
 
         A bare "status unavailable" line masks a daemon connectivity/protocol
-        fault; carrying the exception text keeps the failure diagnosable.
+        fault; carrying the exception text keeps the failure diagnosable in the
+        durable log a human greps.
         """
+        log = _redirect_trace(monkeypatch, tmp_path)
         gateway = MagicMock()
         gateway.status.side_effect = VoxdConnectionError("connection refused")
 
-        with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_command"):
-            VibeCommand(
-                SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
-            ).apply("calm", None, "manual")
+        VibeCommand(
+            SessionConfig(), gateway, tmp_path, MusicPreference("flamenco")
+        ).apply("calm", None, "manual")
 
-        warnings = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert any("connection refused" in m for m in warnings)
+        assert any(
+            "status unavailable" in line and "connection refused" in line
+            for line in _lines(log)
+        )
 
     def test_invalid_mode_reports_error(self, tmp_path: Path) -> None:
         command = VibeCommand(
