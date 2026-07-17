@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import os
 import re
@@ -62,30 +63,52 @@ class TestVibeTraceLog:
         trace.record("music off")
         assert (trace.path.stat().st_mode & 0o077) == 0
 
-    def test_record_completes_line_despite_short_write(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A short ``os.write`` still lands the whole line -- the drain loop re-issues.
+    def test_record_creates_private_parent_dir(self, tmp_path: Path) -> None:
+        """A parent dir the sink creates is private -- no group/other access."""
+        logs = tmp_path / "logs"
+        VibeTraceLog(logs / "vibe-trace.log").record("music off")
+        assert (logs.stat().st_mode & 0o077) == 0
 
-        ``os.write`` may write fewer bytes than requested without raising (an
-        ``ENOSPC`` short write). Writing a fragment and stopping would leave a
-        newline-less tear; the loop must re-issue the remainder.
+    def test_record_tightens_loose_parent_dir(self, tmp_path: Path) -> None:
+        """A pre-created group/other-readable dir is tightened to 0o700 on append.
+
+        The hook may create ``logs/`` first under a permissive umask, landing it
+        at ~0o755 while the file is forced 0o600. ``record`` must ``chmod`` the
+        dir private regardless of who created it, or the proof trail is listable.
+        """
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        logs.chmod(0o755)  # simulate a loose create by the peer process
+        VibeTraceLog(logs / "vibe-trace.log").record("music off")
+        assert (logs.stat().st_mode & 0o077) == 0
+
+    def test_record_surfaces_short_write_as_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A short ``os.write`` is surfaced (logged), not looped into a torn append.
+
+        Atomicity beats completeness here: re-issuing the remainder would be a
+        second ``O_APPEND`` a concurrent writer could split. So a short count --
+        only ``ENOSPC`` in practice -- is raised, routed to ``record``'s error
+        handler, and logged. The write is attempted exactly once, never looped.
         """
         real_write = os.write
         calls = {"n": 0}
 
-        def short_once(fd: int, data: Buffer) -> int:
+        def always_short(fd: int, data: Buffer) -> int:
             calls["n"] += 1
-            if calls["n"] == 1:
-                return real_write(fd, bytes(data)[:5])  # only the first 5 bytes
-            return real_write(fd, data)
+            return real_write(fd, bytes(data)[:5])  # every write is short
 
-        monkeypatch.setattr("punt_vox.vibe_trace.os.write", short_once)
+        monkeypatch.setattr("punt_vox.vibe_trace.os.write", always_short)
         trace = VibeTraceLog(tmp_path / "vibe-trace.log")
-        trace.record("music off")
+        with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_trace"):
+            trace.record("music off")
 
-        assert calls["n"] >= 2  # the first write was short, so the loop re-issued
-        assert trace.path.read_text(encoding="utf-8") == "[vibe-trace] music off\n"
+        assert calls["n"] == 1  # one atomic append -- no remainder loop
+        assert "cannot append" in caplog.text  # surfaced, not silent
 
     def test_record_sanitizes_control_chars_to_one_line(self, tmp_path: Path) -> None:
         """A style/name smuggling ``\\n``/``\\r``/a control char stays one line.
