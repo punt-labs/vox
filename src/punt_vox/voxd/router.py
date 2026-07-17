@@ -60,6 +60,8 @@ class WebSocketRouter:
     async def handle_connection(self, websocket: WebSocket) -> None:
         """Main WebSocket route at /ws."""
         if not self._check_auth(websocket):
+            # Client metadata only -- never the token, supplied or expected.
+            logger.warning("Auth rejected: connection from %s", websocket.client)
             await websocket.close(code=1008)
             return
 
@@ -69,10 +71,8 @@ class WebSocketRouter:
 
         try:
             while True:
-                # Preempt Starlette's RuntimeError on a peer-closed socket.
-                # After the vox-ehf fix in 4.3.0, chime/unmute clients return
-                # on the "playing" ack and close the WebSocket while this
-                # loop is still awaiting the next receive_text(). See vox-ewh.
+                # Preempt Starlette's RuntimeError: a client can close the socket
+                # after its "playing" ack while this loop awaits receive_text().
                 if websocket.application_state != WebSocketState.CONNECTED:
                     break
                 raw = await websocket.receive_text()

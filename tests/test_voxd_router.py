@@ -161,6 +161,44 @@ class TestWsRoutePeerClose:
         assert router.client_count == 0
 
 
+class TestWsRouteAuth:
+    """A rejected connection is closed and logged without leaking the token."""
+
+    @pytest.mark.asyncio
+    async def test_rejected_connection_logs_peer_not_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bad-token connect: closed 1008, WARNING carries the peer, never a token."""
+        expected = "expected-server-token"
+        supplied = "attacker-supplied-token"
+        router = _make_router(auth_token=expected)
+
+        closed: list[int] = []
+
+        async def _close(code: int = 1000) -> None:
+            closed.append(code)
+
+        fake_ws = MagicMock()
+        fake_ws.query_params = {"token": supplied}
+        fake_ws.client = ("198.51.100.7", 4242)
+        fake_ws.close = _close
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await router.handle_connection(cast("object", fake_ws))  # type: ignore[arg-type]
+
+        assert closed == [1008]
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "Auth rejected" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert "198.51.100.7" in warnings[0].getMessage()
+        blob = " ".join(r.getMessage() for r in caplog.records)
+        assert expected not in blob
+        assert supplied not in blob
+
+
 class TestHandlerRegistration:
     """All handlers are registered in the router."""
 
