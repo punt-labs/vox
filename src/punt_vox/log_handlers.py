@@ -6,6 +6,7 @@ import contextlib
 import io
 import logging.handlers
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import final
 
@@ -21,9 +22,8 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
     ``RotatingFileHandler`` sets no mode, so a file created under a permissive
     umask -- or one pre-existing at 0644 -- stays group/other-readable, and every
     rotated backup inherits those bits. This tightens the active file on every
-    open (construction and post-rollover reopen) and every backup as it is
-    renamed during rollover -- so a pre-existing 0644 backup is tightened the
-    moment it shifts.
+    open (construction and post-rollover reopen) and, on every rollover, forces
+    the active file *and every backup slot* to 0600.
 
     Tightening is best-effort: a ``chmod`` we cannot perform must never block the
     log write it protects. The failure is swallowed *silently* -- logging it here
@@ -39,8 +39,24 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
             os.fchmod(stream.fileno(), _FILE_MODE)
         return stream
 
-    def rotate(self, source: str, dest: str) -> None:
-        """Rename per the rotation policy, then tighten the new backup to 0600."""
-        super().rotate(source, dest)
-        with contextlib.suppress(OSError):
-            Path(dest).chmod(_FILE_MODE)
+    def doRollover(self) -> None:
+        """Roll over, then force the active file and every backup slot to 0600.
+
+        ``RotatingFileHandler.doRollover`` runs :meth:`rotate` only for the
+        ``base -> base.1`` shift; the ``base.1 -> base.2 -> ...`` shifts use a
+        bare ``os.rename`` that preserves each source's mode. A backup left at
+        0644 by a laxer earlier run would keep those bits as it moves outward.
+        Overriding here -- not ``rotate`` -- lets one pass tighten the whole
+        chain so the 0600 guarantee holds for every slot, not just ``.1``.
+        """
+        super().doRollover()
+        for path in self._backup_paths():
+            with contextlib.suppress(OSError):
+                path.chmod(_FILE_MODE)
+
+    def _backup_paths(self) -> Iterator[Path]:
+        """Yield the active file and every possible rotated-backup path."""
+        base = Path(self.baseFilename)
+        yield base
+        for n in range(1, self.backupCount + 1):
+            yield base.with_name(f"{base.name}.{n}")

@@ -384,7 +384,6 @@ class SynthesisPipeline:
         voice = spec.voice
         provider_name = spec.provider or ""
         model = spec.model
-        api_key = spec.api_key
 
         # apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
         # on the body itself (after splitting leading bracket tags off, which
@@ -410,29 +409,11 @@ class SynthesisPipeline:
 
         start = time.monotonic()
         try:
-            # _playback_mutex serializes audible output across all paths --
-            # the queue consumer holds it too. Without this, two hooks firing
-            # at once would overlap because direct-play bypasses the queue.
-            if api_key and provider_name in _PROVIDER_API_KEY_VAR:
-                async with self._env_lock, self._playback_mutex:
-                    rc = await asyncio.to_thread(
-                        _run_play_directly_sync,
-                        provider_name,
-                        api_key,
-                        _factory,
-                        request,
-                    )
-            else:
-                async with self._playback_mutex:
-                    rc = await asyncio.to_thread(
-                        _run_play_directly_sync,
-                        provider_name,
-                        None,
-                        _factory,
-                        request,
-                    )
+            rc = await self._run_direct_play(spec, _factory, request)
         except Exception as exc:
-            logger.exception("Direct-play raised for provider=%s", provider_name)
+            # provider_name is a raw client field -- %r so an embedded newline
+            # cannot forge a second log line at this sink.
+            logger.exception("Direct-play raised for provider=%r", provider_name)
             return exc
 
         if rc is None:
@@ -447,7 +428,7 @@ class SynthesisPipeline:
         )
         if rc == 0:
             logger.info(
-                "Direct-play ok: provider=%s voice=%s elapsed=%.3fs chars=%d",
+                "Direct-play ok: provider=%r voice=%r elapsed=%.3fs chars=%d",
                 provider_name,
                 voice or "",
                 elapsed,
@@ -455,10 +436,36 @@ class SynthesisPipeline:
             )
         else:
             logger.error(
-                "Direct-play FAILED: provider=%s voice=%s elapsed=%.3fs rc=%d",
+                "Direct-play FAILED: provider=%r voice=%r elapsed=%.3fs rc=%d",
                 provider_name,
                 voice or "",
                 elapsed,
                 rc,
             )
         return rc
+
+    async def _run_direct_play(
+        self,
+        spec: SynthesisSpec,
+        factory: Callable[[], TTSProvider],
+        request: AudioRequest,
+    ) -> int | None:
+        """Run ``play_directly`` under the playback mutex.
+
+        The ``_env_lock`` is added only when an API key must be injected into the
+        environment; local providers take the fast, single-mutex path. The
+        ``_playback_mutex`` serializes audible output across every path -- the
+        queue consumer holds it too -- so two hooks firing at once cannot overlap
+        even though direct play bypasses the queue.
+        """
+        provider_name = spec.provider or ""
+        api_key = spec.api_key
+        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
+            async with self._env_lock, self._playback_mutex:
+                return await asyncio.to_thread(
+                    _run_play_directly_sync, provider_name, api_key, factory, request
+                )
+        async with self._playback_mutex:
+            return await asyncio.to_thread(
+                _run_play_directly_sync, provider_name, None, factory, request
+            )

@@ -9,13 +9,14 @@ __all__ = ["SANITIZER", "LogSanitizer"]
 
 @final
 class LogSanitizer:
-    r"""Map C0/C1 control chars and Unicode line separators to visible escapes.
+    r"""Map every C0/C1 control char and Unicode line separator to a visible escape.
 
     Untrusted text -- a wire field, a subprocess's stderr, a provider error body
     -- can forge a second log record via an embedded newline or corrupt a
     terminal via a raw control byte on ``cat``. :meth:`escape` translates every
-    such code point to a visible ``\xXX`` / ``\uXXXX`` (or ``\n`` / ``\t``)
-    escape, so the smuggled bytes stay auditable and the record stays one line.
+    such code point (all of C0, DEL, and all of C1 -- C1 includes CSI U+009B,
+    which starts an ANSI escape sequence) to a visible ``\xXX`` / ``\uXXXX`` (or
+    ``\n`` / ``\t``) escape, so smuggled bytes stay auditable and stay one line.
     """
 
     __slots__ = ("_table",)
@@ -38,7 +39,8 @@ class LogSanitizer:
         # breaks -- become \uXXXX so a Unicode-aware viewer cannot render a
         # smuggled one of them as a second visual record.
         short = {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
-        table = {cp: short.get(cp, f"\\x{cp:02x}") for cp in (*range(0x20), 0x7F)}
+        controls = (*range(0x20), *range(0x7F, 0xA0))  # C0, DEL, and all of C1
+        table = {cp: short.get(cp, f"\\x{cp:02x}") for cp in controls}
         table.update({cp: f"\\u{cp:04x}" for cp in (0x85, 0x2028, 0x2029)})
         return table
 

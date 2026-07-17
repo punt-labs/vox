@@ -34,23 +34,34 @@ def test_open_tightens_preexisting_0644_file(tmp_path: Path) -> None:
     assert _mode(log) == 0o600
 
 
-def test_rollover_tightens_active_and_all_backups(tmp_path: Path) -> None:
-    """After rollovers, the active file and every rotated backup are 0600."""
+def test_rollover_tightens_a_stale_backup_that_shifts_outward(tmp_path: Path) -> None:
+    """A pre-existing 0644 backup at slot >=2 is 0600 after it shifts to slot 3.
+
+    ``doRollover`` shifts ``.2 -> .3`` with a bare ``os.rename`` (only the
+    ``base -> .1`` shift runs through ``rotate``), so a backup that predates the
+    0600 contract keeps its group/other-readable bits through that rename. The
+    ``.2`` slot (within ``backupCount=3``) survives one rollover as ``.3``, so
+    the assertion observes the very gap a ``rotate``-only override left open.
+    """
     log = tmp_path / "tts.log"
     log.write_text("x" * 200)
     log.chmod(0o644)
-    # A pre-existing backup left at 0644 by an earlier run must also be tightened.
-    backup1 = tmp_path / "tts.log.1"
-    backup1.write_text("old backup")
-    backup1.chmod(0o644)
+    # Stale 0644 backup at slot 2 -- the rename .2 -> .3 never runs through
+    # rotate(), so only a doRollover() override tightens it. Slot 3 is the last
+    # kept slot at backupCount=3, so it is NOT deleted before the assertion.
+    stale = tmp_path / "tts.log.2"
+    stale.write_text("old backup")
+    stale.chmod(0o644)
 
     handler = PrivateRotatingFileHandler(str(log), maxBytes=100, backupCount=3)
     try:
-        for i in range(5):
-            handler.emit(_record("y" * 80 + str(i)))
+        handler.emit(_record("fresh"))  # one write over maxBytes -> one rollover
     finally:
         handler.close()
 
+    shifted = tmp_path / "tts.log.3"
+    assert shifted.exists(), "the stale backup must survive the rollover to slot 3"
+    assert _mode(shifted) == 0o600, "the shifted-outward backup must be tightened"
     assert _mode(log) == 0o600
     for backup in tmp_path.glob("tts.log.*"):
         assert _mode(backup) == 0o600, backup

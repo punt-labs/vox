@@ -32,6 +32,7 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
     _log_dir,
     _run_dir,
 )
+from punt_vox.voxd.crash_logging import CrashLogger
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
@@ -105,6 +106,9 @@ class VoxDaemon:
 
     async def run(self, host: str, port: int) -> None:
         """Start uvicorn and serve until shutdown."""
+        # Route fire-and-forget task exceptions to voxd.log -- with no stderr
+        # handler, the loop's default printer would otherwise write to nowhere.
+        CrashLogger(logger).install_loop_handler(asyncio.get_running_loop())
         app = self.build_app()
 
         if host not in ("127.0.0.1", "::1", "localhost"):
@@ -338,6 +342,9 @@ def main(
     )
 
     daemon_cfg.configure_logging()
+    # Install the sync last-resort hook before any startup step can raise, so a
+    # crash during wiring lands in voxd.log rather than vanishing (no stderr).
+    CrashLogger(logger).install_excepthook()
     daemon_cfg.log_environment()
 
     loaded_keys = daemon_cfg.load_keys()

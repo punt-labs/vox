@@ -32,6 +32,14 @@ class TestLogSanitizer:
         # bell, truncate C strings, and move the cursor. They must stay visible.
         assert SANITIZER.escape("x\x07\x00\x7fy") == "x\\x07\\x00\\x7fy"
 
+    def test_c1_control_bytes_are_escaped(self) -> None:
+        # C1 (U+0080--U+009F) includes CSI (U+009B), which starts an ANSI escape
+        # sequence on a terminal -- raw, it can hijack the cursor and colours.
+        # The whole C1 range must render as visible \xXX, not pass through.
+        assert SANITIZER.escape(f"a{chr(0x9B)}b{chr(0x80)}c{chr(0x9F)}d") == (
+            "a\\x9bb\\x80c\\x9fd"
+        )
+
     def test_unicode_line_separators_become_visible_escapes(self) -> None:
         # NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR -- str.splitlines treats each
         # as a break, so a Unicode-aware viewer could render a smuggled one as a

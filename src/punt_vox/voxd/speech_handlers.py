@@ -154,7 +154,7 @@ class SynthesizeHandler(MessageHandler):
         if hit is None:
             return True
         logger.info(
-            "Dedup hit: id=%s text=%d chars original=%.3f ttl_remaining=%.1fs",
+            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
             req.request_id,
             len(req.text),
             hit.original_played_at,
