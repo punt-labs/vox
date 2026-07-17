@@ -2077,7 +2077,7 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 ### Consequences
 
 - `[vibe-trace]` events at the nudge (`NudgeHook`), vibe-set (`VibeCommand`), and music (`server.music`) links, via `logger.info` (never `print`), pinned at a level that always reaches the log.
-- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace lands in the MCP-server / hook **stderr** (captured by Claude Code's logs), not voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe is documented in `commands/vibe.md` and targets those logs.
+- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory — shared by the MCP server and the hook subprocesses via multi-process-safe atomic appends — **not** voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe in `commands/vibe.md` targets that file. **(Amended 2026-07-16 — see below. The original decision routed the trace to stderr; that was wrong.)**
 - Current state (the session vibe and the playing music style) is *also* surfaced through the `status` tool — the trace is the event-trail *proof over time*; `status` is the point-in-time *client-observable state*. Both, per "client-observable, not logs."
 
 ### Alternatives Considered
@@ -2087,5 +2087,12 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 | No observability | The mechanism is unprovable — the operator made "prove whether it works" a core goal for both this feature and auto-vibe. |
 | Log only in voxd | The vibe/music orchestration is client-side, not in the daemon; a daemon log would never see it. |
 | `status`-only | A point-in-time query cannot prove a *sequence* of events fired across a session — only the trace can show "nudge → vibe-set → re-pool." |
+| **Trace to stderr** (originally chosen) | **Wrong — reverted (vox-9po7).** The MCP host discards MCP-server and hook stderr; it is not persisted to any greppable file. A live smoke test on 4.12.2 confirmed `grep '[vibe-trace]'` finds nothing anywhere. "Log to stderr" was functionally "do not log." |
 
-Closes vox-q1z4.
+### Amendment — 2026-07-16 (vox-9po7): stderr sink was a mistake; trace goes to a persistent log file
+
+The original Consequences routed `[vibe-trace]` to the MCP-server / hook **stderr**, assuming Claude Code captured it to a greppable log. It does not: the CLI's per-server MCP log holds only client-side "Calling MCP tool" wrapper lines, and the server/hook stderr is discarded. The 4.12.2 live smoke test found the feature itself works end-to-end (the `music_hint` round-trips through the API and the agent re-pools), but the DES-046 proof — a **core** operator goal — was unreachable: no `[vibe-trace]` line existed in any runtime file.
+
+**Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
+
+Closes vox-q1z4. Observability sink corrected under vox-9po7.
