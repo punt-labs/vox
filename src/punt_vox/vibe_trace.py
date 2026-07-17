@@ -47,6 +47,15 @@ _LOG_NAME = "vibe-trace.log"
 _FILE_MODE = 0o600  # per-user private state, matching the rest of <state>
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
 
+# Escape every C0 control char (and DEL) so an MCP-controlled style/name -- which
+# ``canonical_tag`` only end-trims -- can neither forge a second ``[vibe-trace]``
+# line via an embedded newline nor corrupt a terminal via a raw control byte on
+# ``cat``. Escaping, not stripping, keeps the smuggled bytes visible in the trail.
+_CONTROL_ESCAPES = {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
+_SANITIZE_TABLE = {
+    cp: _CONTROL_ESCAPES.get(cp, f"\\x{cp:02x}") for cp in (*range(0x20), 0x7F)
+}
+
 
 @final
 class VibeTraceLog:
@@ -103,25 +112,27 @@ class VibeTraceLog:
         write: two separate processes -- the ``mic`` server and the hook --
         append here, so trusting a single writer's success would report a
         peer's state. This probes the real filesystem instead. An existing
-        log must be a writable regular file; a not-yet-created log is writable
-        when its nearest existing ancestor is a writable directory that
-        ``mkdir(parents=True)`` could extend.
+        log must be a writable regular file; a not-yet-created log needs its
+        nearest existing ancestor to grant both write and search (``W_OK |
+        X_OK``) -- creating a file needs the search bit, so ``--w-------`` fails.
         """
         if self._path.exists():
             return self._path.is_file() and os.access(self._path, os.W_OK)
         anchor = self._nearest_existing_ancestor()
-        return anchor.is_dir() and os.access(anchor, os.W_OK)
+        return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
 
     def record(self, event: str) -> None:
-        """Append one ``[vibe-trace] {event}`` line atomically; never raise.
+        """Append one sanitized ``[vibe-trace] {event}`` line; never raise.
 
-        The whole ``O_APPEND`` line is drained to the fd before it closes, so
-        a short write can never leave a newline-less fragment that the next
-        append glues onto -- the tear ``O_APPEND`` alone does not prevent. An
-        I/O failure is logged and swallowed so a trace can never crash the
-        vibe/nudge path it merely observes.
+        *event* is escaped (see :data:`_SANITIZE_TABLE`) so the record is exactly
+        one physical line no control byte can forge or corrupt. The whole
+        ``O_APPEND`` line is then drained to the fd before it closes, so a short
+        write can never leave a newline-less fragment that the next append glues
+        onto -- the tear ``O_APPEND`` alone does not prevent. An I/O failure is
+        logged and swallowed so a trace never crashes the path it observes.
         """
-        buf = memoryview(f"{_PREFIX} {event}\n".encode())
+        safe = event.translate(_SANITIZE_TABLE)
+        buf = memoryview(f"{_PREFIX} {safe}\n".encode())
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(self._path, _OPEN_FLAGS, _FILE_MODE)

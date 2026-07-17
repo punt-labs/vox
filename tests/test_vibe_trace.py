@@ -87,9 +87,44 @@ class TestVibeTraceLog:
         assert calls["n"] >= 2  # the first write was short, so the loop re-issued
         assert trace.path.read_text(encoding="utf-8") == "[vibe-trace] music off\n"
 
+    def test_record_sanitizes_control_chars_to_one_line(self, tmp_path: Path) -> None:
+        """A style/name smuggling ``\\n``/``\\r``/a control char stays one line.
+
+        ``canonical_tag`` only trims the ends, so an MCP-controlled value can
+        carry an embedded newline (which would forge a second ``[vibe-trace]``
+        line) or a raw control byte (which would corrupt a terminal on ``cat``).
+        ``record`` escapes them, so the appended record is exactly one physical
+        line with no C0 control byte on disk.
+        """
+        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
+        trace.record("music on style=jazz\n[vibe-trace] forged\rX\x07")
+
+        raw = trace.path.read_bytes()
+        assert raw.count(b"\n") == 1  # only the record terminator -- no forged line
+        assert raw.endswith(b"\n")
+        assert not any(b < 0x20 or b == 0x7F for b in raw[:-1])  # no raw control byte
+        assert trace.path.read_text(encoding="utf-8") == (
+            "[vibe-trace] music on style=jazz\\n[vibe-trace] forged\\rX\\x07\n"
+        )
+
     def test_is_writable_true_for_writable_dir(self, tmp_path: Path) -> None:
         """An absent log under a writable ancestor reports writable."""
         assert VibeTraceLog(tmp_path / "vibe-trace.log").is_writable() is True
+
+    def test_is_writable_false_when_dir_lacks_execute(self, tmp_path: Path) -> None:
+        """A write-only ancestor (0o200, no search bit) can't hold a new file.
+
+        Creating a file in a directory needs the execute/search bit as well as
+        write, so ``--w-------`` must report not-writable even though ``W_OK``
+        alone would pass.
+        """
+        writeonly = tmp_path / "writeonly"
+        writeonly.mkdir()
+        writeonly.chmod(0o200)
+        try:
+            assert VibeTraceLog(writeonly / "vibe-trace.log").is_writable() is False
+        finally:
+            writeonly.chmod(0o700)
 
     def test_is_writable_false_when_dir_unwritable(self, tmp_path: Path) -> None:
         """A read-only ancestor -- one the log could never be created in -- is not."""
