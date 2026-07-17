@@ -52,6 +52,22 @@ class TestSubprocessHandle:
         handle = SubprocessHandle(await _spawn("sh", "-c", "echo boom >&2; exit 3"))
         assert await handle.wait() == 3  # the _log_exit error branch runs
 
+    async def test_exit_stderr_is_escaped_to_one_line(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A player's stderr is untrusted external text: an embedded newline would
+        # forge a second log record and a raw control byte would corrupt a
+        # terminal on ``cat``. The sink escapes it, so the logged message is one
+        # physical line carrying no C0 control byte.
+        cmd = r"printf 'crash\nFATAL forged\rX\a' >&2; exit 3"
+        handle = SubprocessHandle(await _spawn("sh", "-c", cmd))
+        with caplog.at_level("WARNING"):
+            assert await handle.wait() == 3
+        message = caplog.records[-1].getMessage()
+        assert "crash\\nFATAL forged\\rX\\x07" in message
+        assert message.splitlines() == [message]  # exactly one physical line
+        assert not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in message)
+
     async def test_kill_stops_a_running_player(self) -> None:
         handle = SubprocessHandle(await _spawn("sleep", "5"))
         await handle.kill()

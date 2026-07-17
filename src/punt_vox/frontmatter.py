@@ -14,6 +14,9 @@ __all__ = ["Frontmatter"]
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 _CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
 
+# Expressive mood text: log its length, never the content (PY-CS-11 privacy).
+_REDACTED_KEYS = frozenset({"vibe", "vibe_tags"})
+
 
 @final
 class Frontmatter:
@@ -112,7 +115,8 @@ class Frontmatter:
 
         self._path.write_text(text, encoding="utf-8")
         for key, value in updates.items():
-            logger.info("Config: set %s = %r in %s", key, value, self._path)
+            shown = f"<{len(value)} chars>" if key in _REDACTED_KEYS else repr(value)
+            logger.info("Config: set %s = %s in %s", key, shown, self._path)
 
     def _read_text(self) -> str | None:
         """Return the file's text, or ``None`` when missing or unreadable.

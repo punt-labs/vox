@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 from typing import Self, TypedDict, final
 
+from punt_vox.log_sanitize import SANITIZER
 from punt_vox.paths import log_dir
 from punt_vox.private_state import PrivateState
 
@@ -48,23 +49,6 @@ class TraceHealth(TypedDict):
 _PREFIX = "[vibe-trace]"
 _LOG_NAME = "vibe-trace.log"
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-
-# Escape every C0 control char (and DEL) so an MCP-controlled style/name -- which
-# ``canonical_tag`` only end-trims -- can neither forge a second ``[vibe-trace]``
-# line via an embedded newline nor corrupt a terminal via a raw control byte on
-# ``cat``. Escaping, not stripping, keeps the smuggled bytes visible in the trail.
-_CONTROL_ESCAPES = {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
-
-# The C0/C1 code points ``str.splitlines()`` treats as line breaks beyond ``\n``:
-# NEL (U+0085), LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029). The file
-# holds a single ``\n``, but a tool that splits on Unicode boundaries would render
-# a smuggled one of these as a second visual record. Escape them too, using a
-# 4-hex ``\uXXXX`` form so the two astral-plane separators round-trip.
-_UNICODE_LINE_SEPARATORS = (0x85, 0x2028, 0x2029)
-_SANITIZE_TABLE = {
-    cp: _CONTROL_ESCAPES.get(cp, f"\\x{cp:02x}") for cp in (*range(0x20), 0x7F)
-}
-_SANITIZE_TABLE.update({cp: f"\\u{cp:04x}" for cp in _UNICODE_LINE_SEPARATORS})
 
 
 @final
@@ -136,14 +120,14 @@ class VibeTraceLog:
     def record(self, event: str) -> None:
         """Append one sanitized ``[vibe-trace] {event}`` line; never raise.
 
-        *event* is escaped (see :data:`_SANITIZE_TABLE`) so the record is exactly
+        *event* is escaped by the shared :data:`SANITIZER` so the record is exactly
         one physical line no control byte can forge or corrupt. The line is
         appended in a single ``O_APPEND`` ``os.write`` so concurrent writers
         never interleave. A short write is not looped -- that would tear the
         line under concurrency; the partial count is raised as an ``OSError``,
         logged, and swallowed, so a trace never crashes the path it observes.
         """
-        safe = event.translate(_SANITIZE_TABLE)
+        safe = SANITIZER.escape(event)
         line = f"{_PREFIX} {safe}\n".encode()
         try:
             self._guard.ensure_private_tree()

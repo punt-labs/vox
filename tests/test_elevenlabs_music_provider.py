@@ -354,20 +354,45 @@ class TestLogging:
         assert "120000" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_logs_full_prompt_and_path(
+    async def test_info_logs_prompt_digest_not_text(
         self,
         music_provider: ElevenLabsMusicProvider,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The exact prompt sent to ElevenLabs must be visible in voxd.log."""
+        """INFO carries the prompt's length and hash, never its agent-authored text."""
+        import hashlib
+
         out = tmp_path / "logged_prompt.mp3"
         prompt = "Klezmer, clarinet lead. freylekh at 120 BPM in D freygish"
         with caplog.at_level(logging.INFO):
             await music_provider.generate_track(prompt, 120_000, out)
 
-        assert prompt in caplog.text
-        assert "logged_prompt.mp3" in caplog.text
+        info = "\n".join(
+            r.getMessage() for r in caplog.records if r.levelno == logging.INFO
+        )
+        assert prompt not in info
+        assert f"prompt_len={len(prompt)}" in info
+        assert hashlib.sha256(prompt.encode()).hexdigest()[:12] in info
+        assert "logged_prompt.mp3" in info
+
+    @pytest.mark.asyncio
+    async def test_debug_logs_full_prompt(
+        self,
+        music_provider: ElevenLabsMusicProvider,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The full prompt stays at DEBUG -- below the INFO durable-file threshold."""
+        out = tmp_path / "debug_prompt.mp3"
+        prompt = "Ambient drone, evolving pads, no percussion"
+        with caplog.at_level(logging.DEBUG):
+            await music_provider.generate_track(prompt, 120_000, out)
+
+        debug = "\n".join(
+            r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG
+        )
+        assert prompt in debug
 
     @pytest.mark.asyncio
     async def test_logs_completion(

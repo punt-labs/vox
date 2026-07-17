@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -237,3 +238,46 @@ class TestHandleSynthesizeCachedSignal:
         playing = [m for m in sent if m.get("type") == "playing"]
         assert len(playing) == 1
         assert playing[0]["cached"] is False
+
+
+class TestDedupHitLogIsInjectionSafe:
+    """The dedup-hit sink escapes the raw client id so it cannot forge a line."""
+
+    @pytest.mark.asyncio
+    async def test_newline_in_id_cannot_forge_a_log_line(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A newline in the client ``id`` renders as ``\\n`` at the dedup sink.
+
+        ``request_id`` is a raw wire field; logged with ``%r`` an embedded
+        newline stays inside quotes, so the "Dedup hit" record is a single
+        physical line and cannot smuggle a forged second entry.
+        """
+        handler, _ = TestHandleSynthesizeOnceFlag._make_stubbed_handler(monkeypatch)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        first: dict[str, object] = {
+            "type": "synthesize",
+            "id": "a",
+            "text": "hi",
+            "once": 600,
+        }
+        forged: dict[str, object] = {
+            "type": "synthesize",
+            "id": "b\nFATAL forged entry",
+            "text": "hi",
+            "once": 600,
+        }
+        await handler(first, ws)
+        with caplog.at_level(logging.INFO, logger="punt_vox.voxd"):
+            await handler(forged, ws)
+
+        hits = [r for r in caplog.records if "Dedup hit" in r.getMessage()]
+        assert len(hits) == 1
+        message = hits[0].getMessage()
+        assert "\n" not in message, "the id newline must be escaped, not raw"
+        assert "\\n" in message  # rendered visibly by %r
+        assert message.splitlines() == [message]  # exactly one physical line

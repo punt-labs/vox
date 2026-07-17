@@ -149,6 +149,39 @@ class TestTryDirectPlay:
         assert "unknown provider" in str(result)
         assert "Direct-play raised" in caplog.text
 
+    def test_newline_in_provider_cannot_forge_a_log_line(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A newline in the raw provider field is escaped at the raised sink.
+
+        ``provider`` is a client-controlled wire value; logged with ``%r`` an
+        embedded newline renders as ``\\n`` inside quotes, so the record stays a
+        single physical line and cannot smuggle a forged second entry.
+        """
+        pipeline = _make_pipeline()
+        results: list[dict[str, object]] = []
+        spec = _default_spec(provider="espeak\nFATAL forged entry")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="punt_vox.voxd"),
+            patch(
+                "punt_vox.voxd.synthesis.get_provider",
+                side_effect=ValueError("boom"),
+            ),
+        ):
+            asyncio.run(
+                pipeline.try_direct_play(
+                    "hello", spec, record_result=_record_result(results)
+                )
+            )
+
+        raised = [r for r in caplog.records if "Direct-play raised" in r.getMessage()]
+        assert len(raised) == 1
+        message = raised[0].getMessage()
+        assert "\n" not in message, "the provider newline must be escaped, not raw"
+        assert "\\n" in message  # rendered visibly by %r
+        assert message.splitlines() == [message]  # exactly one physical line
+
     def test_no_api_key_skips_env_lock(self) -> None:
         """Local providers without an API key must not block on _env_lock."""
         pipeline = _make_pipeline()

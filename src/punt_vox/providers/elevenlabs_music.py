@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import tempfile
@@ -60,13 +61,19 @@ class ElevenLabsMusicProvider(MusicProvider):
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # The prompt is agent-authored content sent to ElevenLabs: never at INFO
+        # (the durable file). INFO gets length + a short hash; full text at DEBUG.
+        prompt_sha = hashlib.sha256(prompt.encode()).hexdigest()[:12]
         logger.info(
-            "Generating music track: path=%s, duration_ms=%d, format=%s, prompt=%r",
+            "Generating music track: path=%s, duration_ms=%d, format=%s, "
+            "prompt_len=%d, prompt_sha=%s",
             output_path,
             duration_ms,
             self._output_format,
-            prompt,
+            len(prompt),
+            prompt_sha,
         )
+        logger.debug("music prompt (sha %s): %r", prompt_sha, prompt)
 
         try:
             response: Any = self._client.music.stream(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -80,10 +87,7 @@ class ElevenLabsMusicProvider(MusicProvider):
             raise
 
         # Stream to a temp file alongside the target, rename on success.
-        fd, tmp_name = tempfile.mkstemp(
-            dir=output_path.parent,
-            suffix=".tmp",
-        )
+        fd, tmp_name = tempfile.mkstemp(dir=output_path.parent, suffix=".tmp")
         tmp_path = Path(tmp_name)
         bytes_written = 0
 
@@ -104,11 +108,7 @@ class ElevenLabsMusicProvider(MusicProvider):
             tmp_path.unlink(missing_ok=True)
             raise
 
-        logger.info(
-            "Wrote music track: %s (%d bytes)",
-            output_path,
-            bytes_written,
-        )
+        logger.info("Wrote music track: %s (%d bytes)", output_path, bytes_written)
         return output_path
 
     async def generate_track(

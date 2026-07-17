@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd.config import (
     DaemonConfig,
@@ -254,3 +256,37 @@ class TestVoxdPathHelpersArePure:
 
         assert result == expected
         assert not expected.exists()
+
+
+class TestConfigureLogging:
+    """configure_logging installs one private file handler and no stderr sink.
+
+    The daemon's private ``voxd.log`` is only private if nothing tees the same
+    records to stderr -- a stray ``StreamHandler`` would have launchd's
+    ``StandardErrorPath`` or the systemd journal capture an unprotected copy.
+    """
+
+    def test_single_private_file_handler_no_stderr(self, tmp_path: Path) -> None:
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        cfg = DaemonConfig(run_dir=tmp_path, config_dir=tmp_path, log_dir=tmp_path)
+        try:
+            cfg.configure_logging()
+
+            assert len(root.handlers) == 1
+            assert isinstance(root.handlers[0], PrivateRotatingFileHandler)
+            # A FileHandler *is* a StreamHandler subclass, so guard specifically
+            # against a bare stderr/stdout StreamHandler that is not file-backed.
+            bare_stream_handlers = [
+                h
+                for h in root.handlers
+                if isinstance(h, logging.StreamHandler)
+                and not isinstance(h, logging.FileHandler)
+            ]
+            assert bare_stream_handlers == []
+        finally:
+            for handler in root.handlers[:]:
+                handler.close()
+            root.handlers[:] = saved_handlers
+            root.setLevel(saved_level)

@@ -59,7 +59,7 @@ class ChimeHandler(MessageHandler):
         signal = str(msg.get("signal", "done"))
         path = self._chimes.resolve(signal)
         if path is None:
-            logger.warning("Unknown chime signal: %s", signal)
+            logger.warning("Unknown chime signal: %r", signal)
             await websocket.send_json(
                 {"type": "error", "id": "", "message": f"unknown chime: {signal}"}
             )
@@ -101,7 +101,7 @@ class VoicesHandler(MessageHandler):
             provider = get_provider(provider_name, config_dir=None)
             voice_list = await asyncio.to_thread(provider.list_voices)
         except Exception as exc:
-            logger.exception("Voice listing failed for provider=%s", provider_name)
+            logger.exception("Voice listing failed for provider=%r", provider_name)
             await websocket.send_json(
                 {
                     "type": "error",
