@@ -1090,11 +1090,15 @@ class TestSpeakCommand:
 class TestLogCommand:
     """`vox log debug|info` writes the log_level config key (D5 humble setter)."""
 
-    def test_log_debug_persists(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_log_debug_persists_to_global(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        """`vox log` writes the GLOBAL setting so a service-started daemon reads it."""
         import punt_vox.config as cfg
 
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            cfg.ConfigStore, "global_dir", classmethod(lambda _cls: tmp_path)
+        )
 
         result = CliRunner().invoke(app, ["log", "debug"])
         assert result.exit_code == 0
@@ -1106,8 +1110,9 @@ class TestLogCommand:
     ) -> None:
         import punt_vox.config as cfg
 
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            cfg.ConfigStore, "global_dir", classmethod(lambda _cls: tmp_path)
+        )
 
         result = CliRunner().invoke(app, ["log", "loud"])
         assert result.exit_code == 1

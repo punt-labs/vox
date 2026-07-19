@@ -1162,9 +1162,15 @@ class TestStatusTool:
     def test_reports_log_level(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """status surfaces the current log_level so /vox log is discoverable (D5)."""
+        """status surfaces the effective (repo-override) log_level (D5)."""
         (tmp_path / "vox.local.md").write_text('---\nlog_level: "debug"\n---\n')
-        monkeypatch.setattr("punt_vox.server._find_config_dir", lambda: tmp_path)
+
+        def _repo(start: Path | None = None) -> Path:
+            _ = start
+            return tmp_path
+
+        # A repo override raises just this repo's clients; resolve_log_level reads it.
+        monkeypatch.setattr("punt_vox.config.find_config_dir", _repo)
 
         assert json.loads(status())["log_level"] == "debug"
 

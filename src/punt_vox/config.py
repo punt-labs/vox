@@ -16,6 +16,7 @@ from typing import Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.frontmatter import Frontmatter
+from punt_vox.paths import config_dir as _global_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,33 @@ class ConfigStore:
         if field in EPHEMERAL_KEYS:
             return self._ephemeral.read_field(field)
         return self._durable.read_field(field)
+
+    @classmethod
+    def global_dir(cls) -> Path:
+        """Return the per-user global config dir (``~/.punt-labs/vox``).
+
+        This is the one location a service-started ``voxd`` -- which never runs
+        from a repo -- can read, so ``vox log`` writes ``log_level`` here.
+        """
+        return _global_config_dir()
+
+    @classmethod
+    def resolve_log_level(cls) -> str:
+        """Return the effective ``log_level``: repo override, else global, else info.
+
+        ``vox log`` writes the global setting so the daemon (which never runs
+        from a repo) reads a value the setter actually wrote; a repo may still
+        pin ``log_level`` in its own ``vox.local.md`` to raise only its clients.
+        """
+        repo = find_config_dir()
+        if repo is not None and (level := cls(repo).read_field("log_level")):
+            return cls._normalize_level(level)
+        return cls._normalize_level(cls(cls.global_dir()).read_field("log_level"))
+
+    @staticmethod
+    def _normalize_level(raw: str | None) -> str:
+        """Return ``debug`` only when explicitly set, else the quiet ``info``."""
+        return "debug" if (raw or "").strip().lower() == "debug" else "info"
 
     def write_field(self, key: str, value: str) -> None:
         """Write a single config field to the correct file."""

@@ -22,7 +22,7 @@ import logging
 import logging.config
 from pathlib import Path
 
-from punt_vox.config import ConfigStore, find_config_dir
+from punt_vox.config import ConfigStore
 from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.log_wire import LOG_DATE_FORMAT, LOG_FORMAT, Role
 from punt_vox.paths import log_dir as _paths_log_dir
@@ -138,13 +138,14 @@ def _resolve_level(*, verbose: bool) -> str:
 
 
 def _config_level() -> str:
-    """Read ``log_level`` from config; DEBUG only when explicitly set, else INFO.
+    """Return the effective log level for the handler: DEBUG or INFO.
 
-    An absent or unrecognised value is the quiet default. Reading config needs no
-    logging configured, so this is safe to call before the handlers exist.
+    Delegates to the shared resolver -- a repo-local override, else the global
+    ``vox log`` setting, else INFO -- so a service-started daemon (which never
+    runs from a repo) reads the same value ``vox log`` wrote. Reading config
+    needs no logging configured, so this is safe to call before the handlers exist.
     """
-    raw = ConfigStore(find_config_dir()).read_field("log_level")
-    return "DEBUG" if (raw or "").strip().lower() == "debug" else "INFO"
+    return ConfigStore.resolve_log_level().upper()
 
 
 def _ensure_tree(anchor: Path, *, best_effort: bool) -> None:

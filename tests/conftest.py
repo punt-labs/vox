@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -129,6 +130,12 @@ def _repo_free_base() -> Path:
     while (found := find_config_dir(base)) is not None:
         # found is ``<repo>/.punt-labs/vox``; step above <repo>.
         base = found.parent.parent.parent
+    if not os.access(base, os.W_OK):
+        # A global ``~/.punt-labs/vox`` (present on a real dev box) forces the
+        # climb all the way up to an unwritable root like ``/Users``. Fall back
+        # to the system temp root, which is writable and has no vox-config
+        # ancestor -- so ``mkdtemp`` succeeds and the search still resolves none.
+        base = Path("/tmp").resolve()  # config-free writable base
     return base
 
 

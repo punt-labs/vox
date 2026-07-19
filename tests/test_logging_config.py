@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from punt_vox import logging_config
+from punt_vox.config import ConfigStore
 from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.log_ship import DaemonLogHandler
 
@@ -25,8 +26,8 @@ def _redirect_log_tree(
     monkeypatch.setattr(logging_config, "_LOG_DIR", log_dir)
     monkeypatch.setattr(logging_config, "_LOG_FILE", log_dir / "vox.log")
     monkeypatch.setattr(logging_config, "_FALLBACK_FILE", log_dir / "vox-fallback.log")
-    # Default: no repo config -> level resolves to INFO. Individual tests override.
-    monkeypatch.setattr(logging_config, "find_config_dir", _no_config_dir)
+    # Default: level resolves to the quiet INFO. Individual tests override.
+    _pin_level(monkeypatch, "info")
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
@@ -37,10 +38,9 @@ def _redirect_log_tree(
     root.setLevel(saved_level)
 
 
-def _no_config_dir(cwd: Path | None = None) -> Path | None:
-    """Stand in for ``find_config_dir`` -- always "no repo config here"."""
-    _ = cwd
-    return None
+def _pin_level(monkeypatch: pytest.MonkeyPatch, level: str) -> None:
+    """Pin the resolved log level so a test's env/config can't leak in."""
+    monkeypatch.setattr(ConfigStore, "resolve_log_level", lambda: level)
 
 
 def _file_handler(root: logging.Logger) -> PrivateRotatingFileHandler:
@@ -122,18 +122,10 @@ class TestConfigureClientLogging:
         assert logging.getLogger().level == logging.INFO
 
     def test_config_log_level_debug_applies(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``log_level: debug`` in the repo config raises the client to DEBUG."""
-        cfg_dir = tmp_path / "cfg"
-        cfg_dir.mkdir()
-        (cfg_dir / "vox.local.md").write_text('---\nlog_level: "debug"\n---\n')
-
-        def _fixed(cwd: Path | None = None) -> Path | None:
-            _ = cwd
-            return cfg_dir
-
-        monkeypatch.setattr(logging_config, "find_config_dir", _fixed)
+        """A resolved ``debug`` level raises the client root to DEBUG."""
+        _pin_level(monkeypatch, "debug")
         logging_config.configure_client_logging(role="mcp")
         assert logging.getLogger().level == logging.DEBUG
 
