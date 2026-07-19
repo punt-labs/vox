@@ -50,9 +50,14 @@ class FillRecorder:
         return self
 
     def ready(self, store: PartStore, index: int, written: Path) -> None:
-        """Record a ready Part and post it to join the pool."""
+        """Record a ready Part and post it to join the pool.
+
+        Logs a symmetric success INFO -- the counterpart to the failure paths'
+        WARNING -- so a generated track is visible, not only a failed one.
+        """
         entry = PartEntry(index=index, file=written.name, status=PartStatus.READY)
         store.record(entry)
+        logger.info("music: generated part %d", index)
         self._post(Produced(Part(written.name, index)))
 
     def permanent(
@@ -69,8 +74,14 @@ class FillRecorder:
         self._failed(store, index, target, Reason(f"unexpected: {exc}"))
 
     def transient(self, exc: Exception) -> None:
-        """Post a transient failure -- nothing recorded, so backoff-retry is intact."""
-        self._post(TransientFailure(self._reason(exc, "transient")))
+        """Post a transient failure -- nothing recorded, so backoff-retry is intact.
+
+        DEBUG, not WARNING: a transient failure is retried and not yet
+        user-actionable, so it stays out of the default log.
+        """
+        reason = self._reason(exc, "transient")
+        logger.debug("music: part transient failure, backing off: %s", reason.text)
+        self._post(TransientFailure(reason))
 
     def _failed(
         self, store: PartStore, index: int, target: Path, reason: Reason
@@ -84,6 +95,7 @@ class FillRecorder:
                 reason=reason.text,
             )
         )
+        logger.warning("music: part %d failed permanently: %s", index, reason.text)
         self._post(PermanentFailure(Part(target.name, index), reason))
 
     def _post(self, outcome: ControlSignal) -> None:

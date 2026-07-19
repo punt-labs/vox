@@ -22,10 +22,11 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
+from punt_vox.logging_config import configure_daemon_logging
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.chimes import ChimeResolver
-from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
+from punt_vox.voxd.config import (
     DaemonConfig,
     _config_dir,
     _install_token_redact_filter,
@@ -35,6 +36,7 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 from punt_vox.voxd.crash_logging import CrashLogger
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.log_sink import LogHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -45,6 +47,11 @@ from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHan
 from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
+
+# Inbound WebSocket frame cap (uvicorn defaults to 16 MiB). 256 KiB comfortably
+# fits the largest legitimate client->daemon frame (a music request) while
+# denying multi-MB frames that would burden the daemon's event loop.
+_WS_MAX_FRAME_BYTES = 256 * 1024
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
@@ -106,7 +113,7 @@ class VoxDaemon:
 
     async def run(self, host: str, port: int) -> None:
         """Start uvicorn and serve until shutdown."""
-        # Route fire-and-forget task exceptions to voxd.log -- with no stderr
+        # Route fire-and-forget task exceptions to vox.log -- with no stderr
         # handler, the loop's default printer would otherwise write to nowhere.
         CrashLogger(logger).install_loop_handler(asyncio.get_running_loop())
         app = self.build_app()
@@ -125,6 +132,11 @@ class VoxDaemon:
             log_config=None,
             log_level="warning",
             access_log=True,
+            # Cap inbound WS frames well below uvicorn's 16 MiB default: the
+            # largest legitimate client->daemon frame is a music request (a base
+            # prompt + 12 variations, ~tens of KiB). A tighter bound stops a
+            # token-bearing client from streaming multi-MB frames at the event loop.
+            ws_max_size=_WS_MAX_FRAME_BYTES,
         )
         _install_token_redact_filter()
         server = uvicorn.Server(config)
@@ -277,6 +289,7 @@ class VoxDaemon:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=health),
+            "log": LogHandler(),
             **programs.handlers(),
         }
 
@@ -335,16 +348,24 @@ def main(
     ),
 ) -> None:
     """Start the voxd audio server daemon."""
+    crash = CrashLogger(logger)
+    # FIRST, before anything can raise and before the file handler exists: an
+    # emergency sink that writes with raw os syscalls, so a crash in
+    # ``ensure_user_dirs`` or ``configure_daemon_logging`` itself lands in
+    # ``vox-boot.log`` instead of vanishing (the daemon has no stderr).
+    crash.install_bootstrap_excepthook(_log_dir() / "vox-boot.log")
+
     ensure_user_dirs()
 
     daemon_cfg = DaemonConfig(
         run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir()
     )
 
-    daemon_cfg.configure_logging()
-    # Install the sync last-resort hook before any startup step can raise, so a
-    # crash during wiring lands in voxd.log rather than vanishing (no stderr).
-    CrashLogger(logger).install_excepthook()
+    configure_daemon_logging()
+    # The file handler is now live: upgrade from the bootstrap sink to the
+    # file-backed logger so the rest of startup and ``asyncio.run`` crashes land
+    # in ``vox.log`` beside everything else.
+    crash.install_excepthook()
     daemon_cfg.log_environment()
 
     loaded_keys = daemon_cfg.load_keys()

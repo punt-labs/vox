@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.guard import GuardViolationError
+from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
@@ -112,8 +113,15 @@ class ControlChannel:
                 logger.exception("control writer: unexpected error applying a command")
 
     async def apply_next(self) -> None:
-        """Apply exactly one queued command, serializing all mutation."""
+        """Apply exactly one queued command, serializing all mutation.
+
+        The one choke point for observing Program mode transitions: every mutation
+        -- user command, automatic advance, or fill outcome -- funnels through
+        here, so reading the mode before and after and logging only on change
+        captures every transition uniformly, at INFO, without scattering loggers.
+        """
         signal = await self._queue.get()
+        before = self._mode_label()
         try:
             self._apply_one(signal)
         finally:
@@ -124,6 +132,27 @@ class ControlChannel:
                 # The wake is unconditional: even a raising reconcile must not
                 # leave the playback loop blocked on ``changed``.
                 self._mark_applied(signal)
+        self._log_mode_change(before)
+
+    def _mode_label(self) -> str | None:
+        """Return the active Program's fine-grained mode, or None for a radio.
+
+        A :class:`SelectionPlayback` (replay radio) has no lifecycle mode, so it
+        contributes no transition line -- only the generate-mode Program does.
+        """
+        source = self._source
+        return source.mode.value if isinstance(source, Program) else None
+
+    def _log_mode_change(self, before: str | None) -> None:
+        """Log one INFO line only when one Program mode changed to another.
+
+        Both sides must be real Program modes: a radio has no mode (``None``), so
+        a radio<->Program switch would otherwise read ``music: None -> playing``,
+        which is not a mode transition -- suppress it.
+        """
+        after = self._mode_label()
+        if before is not None and after is not None and before != after:
+            logger.info("music: %s → %s", before, after)
 
     def _apply_one(self, signal: ControlSignal) -> None:
         """Apply one command, swallowing only a benign lost-race guard."""

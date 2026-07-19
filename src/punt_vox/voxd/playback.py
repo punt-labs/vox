@@ -247,7 +247,7 @@ class PlaybackQueue:
 
         timeout = await self._compute_timeout(path)
 
-        logger.info(
+        logger.debug(
             "Playback spawn: cmd=%s size=%d audio_env=%s timeout=%.1fs",
             cmd,
             size,
@@ -411,7 +411,7 @@ class PlaybackQueue:
             return
 
         if stderr_text:
-            logger.info(
+            logger.debug(
                 "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
                 elapsed,
                 path.name,
@@ -419,7 +419,7 @@ class PlaybackQueue:
                 stderr_text,
             )
         else:
-            logger.info(
+            logger.debug(
                 "Playback ok: elapsed=%.3fs file=%s size=%d",
                 elapsed,
                 path.name,
@@ -435,10 +435,10 @@ class PlaybackQueue:
         """
         while True:
             item = await self._queue.get()
-            logger.info("Playback start: %s", item.path.name)
+            logger.debug("Playback start: %s", item.path.name)
             async with self._mutex:
                 await self.play_audio(item.path)
-            logger.info("Playback done: %s", item.path.name)
+            logger.debug("Playback done: %s", item.path.name)
             item.notify.set()
             self._queue.task_done()
 

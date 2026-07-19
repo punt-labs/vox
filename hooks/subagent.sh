@@ -14,10 +14,9 @@ fi
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 [[ -f "${_cwd}/.punt-labs/vox/vox.md" ]] || [[ -f "${_cwd}/.punt-labs/vox/vox.local.md" ]] || exit 0
 
-_err_log="${HOME}/.punt-labs/vox/logs/hook-errors.log"
-mkdir -p "${HOME}/.punt-labs/vox/logs" 2>/dev/null
+# Warnings ship to vox.log via the daemon; hook stderr is discarded by Claude Code.
 case "${_event}" in
-  SubagentStop)  printf '%s' "$_stdin" | vox hook subagent-stop 2>>"${_err_log}" || true ;;
-  SubagentStart) printf '%s' "$_stdin" | vox hook subagent-start 2>>"${_err_log}" || true ;;
+  SubagentStop)  printf '%s' "$_stdin" | vox hook subagent-stop 2>/dev/null || true ;;
+  SubagentStart) printf '%s' "$_stdin" | vox hook subagent-start 2>/dev/null || true ;;
   *) ;;  # unknown event — do nothing
 esac

@@ -7,13 +7,14 @@ via VoxClient.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, final
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -23,7 +24,11 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
-from punt_vox.logging_config import configure_logging
+from punt_vox.log_flush import PeriodicFlusher
+from punt_vox.logging_config import (
+    configure_client_logging,
+    reapply_client_log_level,
+)
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
@@ -36,12 +41,44 @@ from punt_vox.vibe_trace import VibeTraceLog
 from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
+    from collections.abc import Sequence
+
+    from mcp.types import ContentBlock
+
     from punt_vox.program_gateway import ProgramGateway
     from punt_vox.vibe import VibeChange
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP(
+
+@final
+class _LoggingFastMCP(FastMCP):
+    """A ``FastMCP`` that logs one vox-owned ``mic:<tool>`` INFO line per call.
+
+    ``call_tool`` is the one method every tool invocation flows through, so
+    overriding it names each call in vox.log -- replacing the suppressed ``mcp``
+    framework's tool-name-less "Processing request" noise. Unlike a per-function
+    decorator (which FastMCP unwraps via ``__wrapped__`` and bypasses), the
+    override is always on the invocation path, and it never touches a tool's
+    signature or schema. It is also where the long-lived server picks up a
+    ``vox log`` change: re-applying the level here means a change takes hold
+    within a tool call or two, so DEBUG records ship and ``mic:status`` is honest.
+    """
+
+    async def call_tool(
+        self,
+        name: str,
+        # ``dict[str, Any]`` mirrors the third-party ``FastMCP.call_tool`` exactly;
+        # narrowing it would make this an invalid (contravariance-breaking) override.
+        arguments: dict[str, Any],
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        """Re-apply the effective log level, name the tool, then delegate."""
+        reapply_client_log_level()
+        logger.info("mic:%s", name)
+        return await super().call_tool(name, arguments)
+
+
+mcp = _LoggingFastMCP(
     "mic",
     instructions=(
         "Vox is a text-to-speech engine. Use these tools to speak text aloud "
@@ -199,6 +236,20 @@ class SessionConfig:
         """
         return (value or "").strip() or None
 
+    def summary_sentence(self) -> str:
+        """Return the startup state as a plain sentence, not a developer dump.
+
+        Translates the internal ``notify``/``speak`` codes into words -- e.g.
+        ``ready -- voice roger, chimes only, auto vibe`` -- so the one startup
+        INFO reads like intent rather than ``notify=c speak=n voice=roger ...``.
+        """
+        voice = f"voice {self._voice}" if self._voice else "default voice"
+        if self._notify == "n":
+            delivery = "notifications off"
+        else:
+            delivery = "chimes only" if self._speak == "n" else "spoken"
+        return f"ready -- {voice}, {delivery}, {self._vibe_mode} vibe"
+
     def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
         """Return *spec* with unset voice/provider/model/vibe_tags from session."""
         return replace(
@@ -330,6 +381,10 @@ _program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 # The daemon-transport faults every tool boundary funnels to a JSON _error; named
 # once so the music/status tools share one contract instead of repeating the tuple.
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
+
+# Bound (not a discarded ``PeriodicFlusher().start()``) so ``run_server`` can stop
+# it and register its final drain -- the durable-within-seconds log shipper.
+_log_flusher: PeriodicFlusher = PeriodicFlusher()
 
 
 def _error(message: str) -> str:
@@ -870,6 +925,7 @@ def status() -> str:
         "vibe_tags": _session.vibe_tags,
         "style": _music_pref.style,
         "vibe_trace": VibeTraceLog.default().health(),
+        "log_level": ConfigStore.resolve_log_level(),
     }
     try:
         program_status = _program_tools.status()
@@ -891,7 +947,16 @@ def run_server() -> None:
     """Run the MCP server with stdio transport."""
     global _session
 
-    configure_logging(stderr_level="INFO")
+    configure_client_logging(role="mcp")
+    # The server is long-lived, so drain buffered log records to voxd every few
+    # seconds (not only on the next tool call / atexit). Gated to this role: a
+    # short-lived hook/CLI never spawns a thread it would exit before using. Bind
+    # the instance (a discarded one could never be stopped) and register its
+    # final drain: configure_client_logging already registered the shipper's
+    # fallback drain, and atexit runs LIFO, so this later registration runs first
+    # -- the tail ships to vox.log while voxd is up, only falling back if it is not.
+    _log_flusher.start()
+    atexit.register(_log_flusher.stop)
     logger.info("Starting vox MCP server (mic)")
 
     # Seed session config from per-repo config if it exists.
@@ -905,14 +970,7 @@ def run_server() -> None:
     ):
         _session.set_speak(_session.speak)
 
-    logger.info(
-        "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",
-        _session.notify,
-        _session.speak,
-        _session.voice,
-        _session.provider,
-        _session.vibe_mode,
-    )
+    logger.info("%s", _session.summary_sentence())
 
     mcp.run(transport="stdio")
 

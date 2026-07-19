@@ -10,6 +10,5 @@ fi
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 [[ -f "${_cwd}/.punt-labs/vox/vox.md" ]] || [[ -f "${_cwd}/.punt-labs/vox/vox.local.md" ]] || exit 0
 
-_err_log="${HOME}/.punt-labs/vox/logs/hook-errors.log"
-mkdir -p "${HOME}/.punt-labs/vox/logs" 2>/dev/null
-printf '%s' "$_stdin" | vox hook session-end 2>>"${_err_log}" || true
+# Warnings ship to vox.log via the daemon; hook stderr is discarded by Claude Code.
+printf '%s' "$_stdin" | vox hook session-end 2>/dev/null || true

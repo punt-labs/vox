@@ -83,17 +83,21 @@ class TestWrite:
         """``vibe``/``vibe_tags`` log their length; the mood text never lands.
 
         The value is expressive, agent-authored content -- persisting it verbatim
-        in a durable log leaks it. Other keys still log their value for
-        operability.
+        in a durable log leaks it. The per-field detail is DEBUG now (one INFO
+        summary per write); the mood text must never appear at any level.
         """
         fm = Frontmatter(tmp_path / "vox.md")
         fm.write_fields({"voice": "fin"})  # create the file so the next write logs
-        with caplog.at_level(logging.INFO, logger="punt_vox.frontmatter"):
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.frontmatter"):
             fm.write_fields({"vibe": "[frustrated] [weary]", "voice": "roger"})
         messages = [r.getMessage() for r in caplog.records]
         assert any("vibe = <20 chars>" in m for m in messages)
-        assert not any("frustrated" in m for m in messages)
+        assert not any("frustrated" in m for m in messages)  # content never logged
         assert any("voice = 'roger'" in m for m in messages)  # non-mood key unchanged
+        # Exactly one INFO summary; the per-field lines are DEBUG.
+        infos = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(infos) == 1
+        assert "updated 2 field(s)" in infos[0].getMessage()
 
     def test_malformed_file_rewritten_with_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

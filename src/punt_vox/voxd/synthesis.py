@@ -264,8 +264,6 @@ class SynthesisPipeline:
         self,
         text: str,
         spec: SynthesisSpec,
-        *,
-        request_id: str = "",
     ) -> SynthesisOutcome:
         """Run TTS synthesis and return the output path plus cache status.
 
@@ -294,13 +292,12 @@ class SynthesisPipeline:
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
+                # "served from cache", not "synthesized" -- no synthesis work ran,
+                # so an operator can tell cache reuse from real synthesis.
                 logger.info(
-                    "cache HIT: id=%r provider=%r voice=%r file=%s chars_in=%d",
-                    request_id,
-                    provider_name,
-                    resolved_voice,
-                    cached,
+                    "served %d chars from cache (%s)",
                     len(text),
+                    provider_name or "system",
                 )
                 return SynthesisOutcome(path=cached, cached=True)
         # Per-call api_key scopes skip the lookup; the MISS log below records
@@ -349,15 +346,11 @@ class SynthesisPipeline:
                 # CACHE_DIR snapshot and never file= when the bytes weren't cached
                 # (per-call api_key scopes and refused writes both yield None).
                 cached_path = cache_put(key, output_path) if api_key is None else None
-                location = f"file={cached_path}" if cached_path else "not cached"
                 logger.info(
-                    "cache MISS: id=%r provider=%r voice=%r size=%d chars_in=%d %s",
-                    request_id,
-                    provider_name,
-                    resolved_voice,
-                    synth_size,
+                    "synthesized %d chars with %s%s",
                     len(text),
-                    location,
+                    provider_name or "system",
+                    ", cached" if cached_path else "",
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
 
@@ -428,11 +421,10 @@ class SynthesisPipeline:
         )
         if rc == 0:
             logger.info(
-                "Direct-play ok: provider=%r voice=%r elapsed=%.3fs chars=%d",
-                provider_name,
-                voice or "",
-                elapsed,
+                "spoke %d chars with %s (%.1fs)",
                 len(text),
+                provider_name or "system",
+                elapsed,
             )
         else:
             logger.error(

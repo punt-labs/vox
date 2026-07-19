@@ -1,4 +1,6 @@
 """Typer CLI for punt-vox."""
+# pyright: reportUnusedFunction=false
+# Every @app.command function is referenced by typer at registration, not by name.
 
 from __future__ import annotations
 
@@ -533,6 +535,37 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
+# log — set the local log verbosity (a low-key debugging aid)
+# ---------------------------------------------------------------------------
+
+
+@app.command("log")
+def log_cmd(
+    level: Annotated[
+        str,
+        typer.Argument(help="Log verbosity: info (quiet default) or debug."),
+    ],
+) -> None:
+    """Set log verbosity globally. Client processes apply it immediately; the
+    daemon picks it up on `vox daemon restart`."""
+    normalized = level.lower()
+    if normalized not in ("info", "debug"):
+        typer.echo("Error: level must be info or debug.", err=True)
+        raise typer.Exit(code=1)
+
+    # Write the GLOBAL setting: a service-started voxd never runs from a repo, so
+    # a repo-local value would leave the daemon at INFO after a restart. A repo
+    # may still pin log_level in its own vox.local.md to raise only its clients.
+    ConfigStore(ConfigStore.global_dir()).write_field("log_level", normalized)
+    label = (
+        "Debug logging on — restart the daemon to raise its level too."
+        if normalized == "debug"
+        else "Log level back to info."
+    )
+    _formatter.emit({"log_level": normalized}, label)
+
+
+# ---------------------------------------------------------------------------
 # voice — set session voice
 # ---------------------------------------------------------------------------
 
@@ -642,6 +675,9 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         "vibe_mode": cfg.vibe_mode,
         "vibe": cfg.vibe,
         "vibe_tags": cfg.vibe_tags,
+        # The effective level (global vox log setting, or a repo override), not
+        # this dir's raw field -- so status reflects what the daemon/clients use.
+        "log_level": ConfigStore.resolve_log_level(),
     }
 
     text_lines = [
@@ -651,6 +687,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         f"Notify:    {info['notify']}",
         f"Speak:     {info['speak']}",
         f"Vibe mode: {info['vibe_mode']}",
+        f"Log level: {info['log_level']}",
     ]
     if cfg.vibe:
         text_lines.append(f"Vibe:      {cfg.vibe}")

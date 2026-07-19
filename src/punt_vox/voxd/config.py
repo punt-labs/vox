@@ -1,11 +1,10 @@
-"""Daemon configuration: paths, keys, logging, auth tokens, port files."""
+"""Daemon configuration: paths, keys, auth tokens, port files (logging is elsewhere)."""
 # pyright: reportUnusedFunction=false
 # All functions here are re-exported via __init__.py and used by _monolith.py.
 
 from __future__ import annotations
 
 import logging
-import logging.config
 import os
 import re
 import secrets
@@ -15,9 +14,9 @@ from pathlib import Path
 from typing import Self, cast
 
 from punt_vox.keys import PROVIDER_KEY_NAMES
-from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.paths import (
     config_dir as _user_config_dir,
+    installed_version,
     log_dir as _user_log_dir,
     run_dir as _user_run_dir,
 )
@@ -46,7 +45,7 @@ def _config_dir() -> Path:
 
 
 def _log_dir() -> Path:
-    """Return directory holding ``voxd.log`` and rotated logs.
+    """Return directory holding ``vox.log`` and rotated logs.
 
     Pure path resolution -- see :func:`_config_dir`.
     """
@@ -62,16 +61,8 @@ def _run_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Logging constants and helpers
+# Uvicorn access-log token redaction (logging is owned by ``logging_config``)
 # ---------------------------------------------------------------------------
-
-_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_LOG_MAX_BYTES = 5_242_880  # 5 MB
-_LOG_BACKUP_COUNT = 5
-
-# dictConfig "()" factory that re-tightens pre-existing 0644 files at startup.
-_LOG_HANDLER_FACTORY = "punt_vox.log_handlers.PrivateRotatingFileHandler.from_config"
 
 _STARTUP_ENV_KEYS: tuple[str, ...] = (
     "PATH",
@@ -243,62 +234,15 @@ class DaemonConfig:
             logger.warning("Could not remove %s", port_file)
         logger.info("Removed port file")
 
-    def configure_logging(self) -> None:
-        """Configure logging with a single private rotating-file handler.
-
-        The daemon logs *once*, to the 0600 ``voxd.log`` -- no stderr handler.
-        A parallel ``StreamHandler`` would have the service manager (launchd's
-        ``StandardErrorPath``, systemd's journal) capture a second, unprotected
-        copy of the same records, defeating the file's private permissions.
-
-        The log directory is expected to already exist at mode 0700.
-        """
-        log_file = self._log_dir / "voxd.log"
-
-        logging.config.dictConfig(
-            {
-                "version": 1,
-                "disable_existing_loggers": False,
-                "formatters": {
-                    "standard": {
-                        "format": _LOG_FORMAT,
-                        "datefmt": _LOG_DATE_FORMAT,
-                    },
-                },
-                "handlers": {
-                    "file": {
-                        "()": _LOG_HANDLER_FACTORY,
-                        "filename": str(log_file),
-                        "maxBytes": _LOG_MAX_BYTES,
-                        "backupCount": _LOG_BACKUP_COUNT,
-                        "encoding": "utf-8",
-                        "formatter": "standard",
-                        "level": "INFO",
-                    },
-                },
-                "root": {
-                    "level": "INFO",
-                    "handlers": ["file"],
-                },
-                "loggers": {
-                    "boto3": {"level": "WARNING"},
-                    "botocore": {"level": "WARNING"},
-                    "urllib3": {"level": "WARNING"},
-                    "s3transfer": {"level": "WARNING"},
-                    "httpx": {"level": "WARNING"},
-                },
-            }
-        )
-        PrivateRotatingFileHandler.warn_untightened(logger)
-
     def log_environment(self) -> None:
-        """Log voxd's process identity and audio env vars at startup."""
+        """Log a short startup INFO; the full process/env dump goes to DEBUG."""
+        logger.info("voxd starting (pid %d, v%s)", os.getpid(), installed_version())
         env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
         getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
         getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
         uid: int | str = getuid() if getuid is not None else "<n/a>"
         gid: int | str = getgid() if getgid is not None else "<n/a>"
-        logger.info(
+        logger.debug(
             "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
             "voxd_binary=%s voxd_module=%s env=%s",
             os.getpid(),

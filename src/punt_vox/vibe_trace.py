@@ -3,40 +3,28 @@
 The vibe subsystem spans separate processes -- the ``mic`` MCP server and the
 short-lived ``UserPromptSubmit`` hook -- that each need to prove a link fired
 (nudge -> vibe set -> music re-pool). Claude Code discards MCP-server and hook
-stderr, so a stderr trace is unreachable at runtime. This sink writes each
-trace as one line to ``<state>/logs/vibe-trace.log`` -- a path both processes
-resolve identically and a human can ``grep``.
+stderr, so a stderr trace is unreachable at runtime. This sink writes each trace
+as one line to ``<state>/logs/vibe-trace.log`` -- a path both processes resolve
+identically and a human can ``grep``.
 
-Concurrency: every :meth:`VibeTraceLog.record` opens the file with
-``O_APPEND | O_CREAT`` and appends the whole line in a *single* ``os.write``.
-POSIX guarantees an ``O_APPEND`` write seeks to end and appends atomically, and
-a trace line is far shorter than the platform's atomic-append size, so lines
-from concurrent processes never interleave -- no lock, no long-lived shared
-handle. Atomicity is chosen over completeness: for this two-writer proof log a
-torn (interleaved) line is worse than a lost one. A short write -- in practice
-only ``ENOSPC``, since Python auto-retries ``EINTR`` -- is therefore *not*
-re-issued: looping to append the remainder would be a second, separate atomic
-append that another writer's line could land between, tearing the very line
-``O_APPEND`` protects. Instead a short count is surfaced as the ``OSError``
-:meth:`record` already routes to the log, so a full disk is a diagnosable
-failure in ``tts.log`` rather than a silently torn append.
+:class:`VibeTraceLog` composes :class:`AtomicAppendLog`, the shared multi-writer
+sink: it inherits the single-``os.write`` ``O_APPEND`` atomicity (concurrent
+writers never interleave), the 0600 private-file guarantee, the SANITIZER escape,
+and size-capped rotation. This module adds only the ``[vibe-trace]`` prefix and
+the :meth:`~VibeTraceLog.health` view ``mic:status`` reads.
 """
 
 from __future__ import annotations
 
-import errno
-import logging
-import os
-from pathlib import Path
-from typing import Self, TypedDict, final
+from typing import TYPE_CHECKING, Self, TypedDict, final
 
-from punt_vox.log_sanitize import SANITIZER
+from punt_vox.append_log import AtomicAppendLog
 from punt_vox.paths import log_dir
-from punt_vox.private_state import PrivateState
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = ["TraceHealth", "VibeTraceLog"]
-
-logger = logging.getLogger(__name__)
 
 
 class TraceHealth(TypedDict):
@@ -48,22 +36,19 @@ class TraceHealth(TypedDict):
 
 _PREFIX = "[vibe-trace]"
 _LOG_NAME = "vibe-trace.log"
-_OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
 
 
 @final
 class VibeTraceLog:
     """An append-only sink for the subsystem's ``[vibe-trace]`` proof lines."""
 
-    __slots__ = ("_guard", "_path")
+    __slots__ = ("_sink",)
 
-    _path: Path
-    _guard: PrivateState
+    _sink: AtomicAppendLog
 
     def __new__(cls, path: Path) -> Self:
         self = super().__new__(cls)
-        self._path = path
-        self._guard = PrivateState(path)
+        self._sink = AtomicAppendLog(path)
         return self
 
     @classmethod
@@ -74,7 +59,7 @@ class VibeTraceLog:
     @property
     def path(self) -> Path:
         """Return the file path clients ``grep`` for ``[vibe-trace]`` lines."""
-        return self._path
+        return self._sink.path
 
     def health(self) -> TraceHealth:
         """Return the sink's path and live writability for the status API.
@@ -83,66 +68,19 @@ class VibeTraceLog:
         working?" -- surfaced through ``mic:status`` so a broken sink is
         queryable, never buried in a second daemon log.
         """
-        return {"path": str(self._path), "writable": self.is_writable()}
+        return {"path": str(self._sink.path), "writable": self._sink.is_writable()}
 
     def is_writable(self) -> bool:
-        """Return whether a trace could be appended to the log right now.
-
-        Never raises. A health check must not be able to crash the surface
-        that reports it -- ``mic:status`` calls this unguarded -- so any
-        :class:`OSError` from probing the real filesystem is fail-safe: when a
-        traversal-permission failure on an intermediate ancestor (or any other
-        stat error) makes writability impossible to confirm, report ``False``.
-        ``Path.exists``/``Path.is_file`` already swallow a missing path, but
-        not an unreadable ancestor directory; this guard closes that gap.
-        """
-        try:
-            return self._probe_writable()
-        except OSError:
-            return False
-
-    def _probe_writable(self) -> bool:
-        """Return real-filesystem writability; :meth:`is_writable` guards this.
-
-        Health is a property of the *path*, not of any one process's last
-        write: two separate processes -- the ``mic`` server and the hook --
-        append here, so trusting a single writer's success would report a
-        peer's state. This probes the real filesystem instead. An existing
-        log must be a writable regular file; a not-yet-created log needs its
-        nearest existing ancestor to grant both write and search (``W_OK |
-        X_OK``) -- creating a file needs the search bit, so ``--w-------`` fails.
-        """
-        if self._path.exists():
-            return self._path.is_file() and os.access(self._path, os.W_OK)
-        anchor = self._guard.nearest_existing_ancestor()
-        return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
+        """Return whether a trace could be appended to the log right now."""
+        return self._sink.is_writable()
 
     def record(self, event: str) -> None:
         """Append one sanitized ``[vibe-trace] {event}`` line; never raise.
 
-        *event* is escaped by the shared :data:`SANITIZER` so the record is exactly
-        one physical line no control byte can forge or corrupt. The line is
-        appended in a single ``O_APPEND`` ``os.write`` so concurrent writers
-        never interleave. A short write is not looped -- that would tear the
-        line under concurrency; the partial count is raised as an ``OSError``,
-        logged, and swallowed, so a trace never crashes the path it observes.
+        The shared sink escapes *event* and appends it in a single ``O_APPEND``
+        write, so concurrent writers never interleave and no control byte can
+        forge a second line. A write failure swallows to ``sys.__stderr__`` inside
+        the sink -- never through ``logging`` -- so a trace never crashes the path
+        it observes.
         """
-        safe = SANITIZER.escape(event)
-        line = f"{_PREFIX} {safe}\n".encode()
-        try:
-            self._guard.ensure_private_tree()
-            fd = self._guard.open_private(_OPEN_FLAGS)
-            try:
-                # One atomic O_APPEND write no concurrent writer can tear. A short
-                # count -- only ENOSPC in practice, since Python auto-retries
-                # EINTR -- is raised, not looped: re-issuing the remainder would be
-                # a second append another writer's line could split. Raising routes
-                # it to the OSError handler, so a full disk is a diagnosable
-                # tts.log failure rather than a silently torn line.
-                if (written := os.write(fd, line)) != len(line):
-                    msg = f"short append: {written} of {len(line)} bytes (disk full?)"
-                    raise OSError(errno.ENOSPC, msg, str(self._path))
-            finally:
-                os.close(fd)
-        except OSError as exc:
-            logger.warning("vibe-trace: cannot append to %s: %s", self._path, exc)
+        self._sink.append(f"{_PREFIX} {event}")

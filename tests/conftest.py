@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -115,6 +116,30 @@ def hermetic_vibe_trace(  # pyright: ignore[reportUnusedFunction]
     return logs
 
 
+@pytest.fixture(autouse=True)
+def hermetic_log_fallback(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Redirect the client-log fallback file into a per-test tmp ``logs`` dir.
+
+    The consolidated logging ships client records to ``voxd`` and, when it is
+    unreachable, drains them to ``log_dir() / "vox-fallback.log"`` -- resolving to
+    the real ``~/.punt-labs/vox/logs``.  A CLI/hook test that buffers a record and
+    ``atexit``-drains it would otherwise write the developer's live fallback file.
+    Redirect both the ``log_ship`` resolver (used at handler-install time) and the
+    import-time ``logging_config`` paths so no test can touch the real logs dir.
+    """
+    logs = tmp_path_factory.mktemp("client-log-state") / "logs"
+    logs.mkdir()
+    monkeypatch.setattr("punt_vox.log_ship.log_dir", lambda: logs)
+    monkeypatch.setattr("punt_vox.logging_config._LOG_DIR", logs)
+    monkeypatch.setattr("punt_vox.logging_config._LOG_FILE", logs / "vox.log")
+    monkeypatch.setattr(
+        "punt_vox.logging_config._FALLBACK_FILE", logs / "vox-fallback.log"
+    )
+    return logs
+
+
 def _repo_free_base() -> Path:
     """Return a temp base directory with no ``.punt-labs/vox`` ancestor.
 
@@ -129,6 +154,12 @@ def _repo_free_base() -> Path:
     while (found := find_config_dir(base)) is not None:
         # found is ``<repo>/.punt-labs/vox``; step above <repo>.
         base = found.parent.parent.parent
+    if not os.access(base, os.W_OK):
+        # A global ``~/.punt-labs/vox`` (present on a real dev box) forces the
+        # climb all the way up to an unwritable root like ``/Users``. Fall back
+        # to the system temp root, which is writable and has no vox-config
+        # ancestor -- so ``mkdtemp`` succeeds and the search still resolves none.
+        base = Path("/tmp").resolve()  # config-free writable base
     return base
 
 

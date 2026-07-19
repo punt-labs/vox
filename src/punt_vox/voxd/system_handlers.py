@@ -66,11 +66,11 @@ class ChimeHandler(MessageHandler):
             return
 
         if not self._chime_dedup.should_play(signal):
-            logger.info("Dedup: skipping duplicate chime %s", signal)
+            logger.debug("Dedup: skipping duplicate chime %s", signal)
             await websocket.send_json({"type": "done", "id": ""})
             return
 
-        logger.info("Chime: %s", signal)
+        logger.info("played chime: %s", signal)
         done_event = asyncio.Event()
         await self._playback.enqueue(
             PlaybackItem(path=path, request_id=f"chime:{signal}", notify=done_event)

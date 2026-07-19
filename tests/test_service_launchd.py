@@ -67,7 +67,7 @@ def test_launchd_plist_contains_args(backend: LaunchdBackend) -> None:
 def test_launchd_plist_has_no_file_log_redirect(backend: LaunchdBackend) -> None:
     """The plist must not tee daemon output to a second, unprotected log file.
 
-    voxd logs once to the 0600 ``voxd.log`` via its private file handler.
+    voxd logs once to the 0600 ``vox.log`` via its private file handler.
     ``StandardErrorPath`` would have launchd capture a duplicate, world-readable
     copy of the same records, defeating that file's private permissions.
     """

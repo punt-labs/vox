@@ -103,9 +103,9 @@ def enqueue(path: Path) -> None:
 
 
 if __name__ == "__main__":
-    from punt_vox.logging_config import configure_logging
+    from punt_vox.logging_config import configure_client_logging
 
-    configure_logging(stderr_level="WARNING")
+    configure_client_logging(role="playback")
 
     if len(sys.argv) < 2:
         logger.error("Usage: python -m punt_vox.playback <audio_file>")

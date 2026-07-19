@@ -3,12 +3,9 @@
 
 from __future__ import annotations
 
-import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd.config import (
     DaemonConfig,
@@ -259,66 +256,5 @@ class TestVoxdPathHelpersArePure:
         assert not expected.exists()
 
 
-class TestConfigureLogging:
-    """configure_logging installs one private file handler and no stderr sink.
-
-    The daemon's private ``voxd.log`` is only private if nothing tees the same
-    records to stderr -- a stray ``StreamHandler`` would have launchd's
-    ``StandardErrorPath`` or the systemd journal capture an unprotected copy.
-    """
-
-    def test_single_private_file_handler_no_stderr(self, tmp_path: Path) -> None:
-        root = logging.getLogger()
-        saved_handlers = root.handlers[:]
-        saved_level = root.level
-        cfg = DaemonConfig(run_dir=tmp_path, config_dir=tmp_path, log_dir=tmp_path)
-        try:
-            cfg.configure_logging()
-
-            assert len(root.handlers) == 1
-            assert isinstance(root.handlers[0], PrivateRotatingFileHandler)
-            # A FileHandler *is* a StreamHandler subclass, so guard specifically
-            # against a bare stderr/stdout StreamHandler that is not file-backed.
-            bare_stream_handlers = [
-                h
-                for h in root.handlers
-                if isinstance(h, logging.StreamHandler)
-                and not isinstance(h, logging.FileHandler)
-            ]
-            assert bare_stream_handlers == []
-        finally:
-            for handler in root.handlers[:]:
-                handler.close()
-            root.handlers[:] = saved_handlers
-            root.setLevel(saved_level)
-
-    def test_untightenable_log_is_warned_in_voxd_log(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A file the daemon cannot chmod surfaces as a WARNING in voxd.log.
-
-        The daemon has no stderr sink, so an un-tightenable log that vanished
-        silently would leave nothing to grep. The post-configure warning lands
-        in the now-live ``voxd.log`` itself, naming the still-loose path.
-        """
-        (tmp_path / "voxd.log").write_text("existing\n")
-
-        def _deny_fchmod(fd: int, mode: int) -> None:
-            raise PermissionError("cannot fchmod")
-
-        monkeypatch.setattr(os, "fchmod", _deny_fchmod)
-        root = logging.getLogger()
-        saved_handlers = root.handlers[:]
-        saved_level = root.level
-        cfg = DaemonConfig(run_dir=tmp_path, config_dir=tmp_path, log_dir=tmp_path)
-        try:
-            cfg.configure_logging()
-
-            contents = (tmp_path / "voxd.log").read_text()
-            assert "could not enforce 0600 on log file(s)" in contents
-            assert "voxd.log" in contents
-        finally:
-            for handler in root.handlers[:]:
-                handler.close()
-            root.handlers[:] = saved_handlers
-            root.setLevel(saved_level)
+# Logging is owned by ``logging_config`` (see test_logging_config.py); the daemon
+# config no longer configures logging.

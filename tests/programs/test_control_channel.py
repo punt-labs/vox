@@ -115,6 +115,62 @@ class TestSingleWriter:
         assert {p.index for p in _prog(channel).pool} == {20, 21}
 
 
+class TestModeTransitionLogging:
+    """apply_next logs a Program mode transition once, on change only."""
+
+    async def test_mode_transition_logged_once(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel.post(TurnOn())
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            await channel.apply_next()
+        lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert lines == ["music: off → generating_first"]
+
+    async def test_same_mode_advance_logs_nothing(
+        self,
+        make_rotating: RotatingFactory,
+        policy: PlaybackPolicy,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A rotate within playing_rotating changes no mode -> no transition line."""
+        channel = ControlChannel(make_rotating(policy))
+        channel.post(Rotate())
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            await channel.apply_next()
+        transitions = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.INFO and "music:" in r.getMessage()
+        ]
+        assert transitions == []
+
+    async def test_radio_to_program_switch_logs_no_none_transition(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A radio->Program switch (before is None) must not log 'music: None -> ...'.
+
+        A radio has no lifecycle mode, so the prior label is None; the line is
+        suppressed unless BOTH sides are real Program modes.
+        """
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            channel._log_mode_change(before=None)  # prior source was a radio
+        transitions = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.INFO and "music:" in r.getMessage()
+        ]
+        assert transitions == []
+
+
 class TestO2Concurrency:
     """Concurrent next + vibe never interleave: the result is one of the two
     valid sequential outcomes, and the Program is always a legal state."""

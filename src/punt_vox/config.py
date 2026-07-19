@@ -16,6 +16,7 @@ from typing import Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.frontmatter import Frontmatter
+from punt_vox.paths import config_dir as _global_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,13 @@ DURABLE_KEYS: frozenset[str] = frozenset(
 # vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
 # "manual" mode while the gitignored mood lingered. Mode, mood, tags,
 # and the nudge cadence counter now live together in the ephemeral vox.local.md.
+#
+# ``log_level`` is ephemeral for the same reason: a debug toggle a user flips
+# "when needed" belongs in the gitignored vox.local.md, never committed to vox.md
+# where a checkout could resurrect a stale verbose setting.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
+        "log_level",
         "vibe",
         "vibe_mode",
         "vibe_nudge_turns",
@@ -72,6 +78,7 @@ class VoxConfig:
     model: str | None
     vibe: str | None
     vibe_tags: str | None
+    log_level: str = "info"  # "info" | "debug" -- the quiet default is info
     vibe_nudge_turns: int = 0
     repo_name: str | None = None
 
@@ -106,6 +113,12 @@ class VoxConfig:
             )
             vibe_mode = "auto"
 
+        # An absent or unrecognised log_level is the quiet default; only "debug"
+        # raises verbosity, so a garbled value never accidentally silences INFO.
+        log_level = fields.get("log_level", "info").lower()
+        if log_level not in ("info", "debug"):
+            log_level = "info"
+
         return cls(
             notify=notify,
             speak=speak,
@@ -115,6 +128,7 @@ class VoxConfig:
             model=fields.get("model"),
             vibe=fields.get("vibe"),
             vibe_tags=fields.get("vibe_tags"),
+            log_level=log_level,
             vibe_nudge_turns=cls._parse_int(fields.get("vibe_nudge_turns")),
             repo_name=repo_name,
         )
@@ -196,6 +210,33 @@ class ConfigStore:
         if field in EPHEMERAL_KEYS:
             return self._ephemeral.read_field(field)
         return self._durable.read_field(field)
+
+    @classmethod
+    def global_dir(cls) -> Path:
+        """Return the per-user global config dir (``~/.punt-labs/vox``).
+
+        This is the one location a service-started ``voxd`` -- which never runs
+        from a repo -- can read, so ``vox log`` writes ``log_level`` here.
+        """
+        return _global_config_dir()
+
+    @classmethod
+    def resolve_log_level(cls) -> str:
+        """Return the effective ``log_level``: repo override, else global, else info.
+
+        ``vox log`` writes the global setting so the daemon (which never runs
+        from a repo) reads a value the setter actually wrote; a repo may still
+        pin ``log_level`` in its own ``vox.local.md`` to raise only its clients.
+        """
+        repo = find_config_dir()
+        if repo is not None and (level := cls(repo).read_field("log_level")):
+            return cls._normalize_level(level)
+        return cls._normalize_level(cls(cls.global_dir()).read_field("log_level"))
+
+    @staticmethod
+    def _normalize_level(raw: str | None) -> str:
+        """Return ``debug`` only when explicitly set, else the quiet ``info``."""
+        return "debug" if (raw or "").strip().lower() == "debug" else "info"
 
     def write_field(self, key: str, value: str) -> None:
         """Write a single config field to the correct file."""

@@ -1159,6 +1159,21 @@ class TestStatusTool:
         assert health["path"] == str(tmp_path / "vibe-trace.log")
         assert health["writable"] is True
 
+    def test_reports_log_level(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """status surfaces the effective (repo-override) log_level (D5)."""
+        (tmp_path / "vox.local.md").write_text('---\nlog_level: "debug"\n---\n')
+
+        def _repo(start: Path | None = None) -> Path:
+            _ = start
+            return tmp_path
+
+        # A repo override raises just this repo's clients; resolve_log_level reads it.
+        monkeypatch.setattr("punt_vox.config.find_config_dir", _repo)
+
+        assert json.loads(status())["log_level"] == "debug"
+
     def test_reports_vibe_trace_unwritable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -2113,3 +2128,59 @@ class TestRefreshIntegrationWithTools:
 
         spec = mock_client.synthesize.call_args.args[1]
         assert spec.provider == "openai"
+
+
+class TestPerToolLogging:
+    """The FastMCP subclass logs one ``mic:<tool>`` line per invocation."""
+
+    @pytest.mark.asyncio
+    async def test_call_tool_logs_named_line_and_preserves_schema(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A tool call logs ``mic:<name>`` and the tool schema is unchanged.
+
+        Goes through ``call_tool`` -- the native FastMCP choke point -- so this
+        would catch a decorator that FastMCP unwraps and bypasses.
+        """
+        import logging
+
+        import punt_vox.server as srv
+
+        tools = await srv.mcp.list_tools()
+        assert len(tools) == 11  # schema intact, no tool lost to wrapping
+        with caplog.at_level(logging.INFO, logger="punt_vox.server"):
+            await srv.mcp.call_tool("status", {})
+        named = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "punt_vox.server" and r.getMessage().startswith("mic:")
+        ]
+        assert named == ["mic:status"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_reapplies_log_level(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every tool call re-applies the effective level, so vox log takes hold."""
+        import punt_vox.server as srv
+
+        calls: list[bool] = []
+        monkeypatch.setattr(srv, "reapply_client_log_level", lambda: calls.append(True))
+        await srv.mcp.call_tool("status", {})
+        assert calls == [True]
+
+
+class TestLogFlusherWiring:
+    """The D2 flusher is a bound instance the server can stop (M1)."""
+
+    def test_flusher_instance_is_bound(self) -> None:
+        """A discarded ``PeriodicFlusher().start()`` could never be stopped.
+
+        The module holds the instance, so ``run_server`` can register its final
+        drain -- the tail ships to vox.log on clean shutdown instead of always
+        falling back.
+        """
+        import punt_vox.server as srv
+        from punt_vox.log_flush import PeriodicFlusher
+
+        assert isinstance(srv._log_flusher, PeriodicFlusher)

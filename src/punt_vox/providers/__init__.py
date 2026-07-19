@@ -59,13 +59,18 @@ logger = logging.getLogger(__name__)
 class ProviderRegistry:
     """Provider registration, auto-detection, and resolution."""
 
-    __slots__ = ("_factories",)
+    __slots__ = ("_factories", "_last_logged")
 
     _factories: dict[str, Callable[..., TTSProvider]]
+    # The full outcome last logged -- (provider, reason, detected) -- so a real
+    # state change with the SAME provider (the none->polly WARNING then a later
+    # auto-detected-polly INFO) still emits, while a true repeat stays silent.
+    _last_logged: tuple[str, str, bool] | None
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._factories = {}
+        self._last_logged = None
         return self
 
     def register(self, name: str, factory: Callable[..., TTSProvider]) -> None:
@@ -118,34 +123,56 @@ class ProviderRegistry:
         return factory(**kwargs)
 
     def auto_detect(self) -> str:
-        """Detect the provider from environment.
+        """Detect the provider from environment, logging the decision once.
 
         Checks TTS_PROVIDER env var first, then probes for API keys:
         ElevenLabs > OpenAI > Polly (if AWS credentials valid) >
-        system fallback (say on macOS, espeak on Linux).
+        system fallback (say on macOS, espeak on Linux). The INFO decision line
+        is deduplicated -- a stable choice logs once per process, not per call.
+        """
+        choice, reason, detected = self._resolve_choice()
+        # Dedup on the FULL outcome (provider, reason, detected): emit only when it
+        # changes, so a long-lived daemon logs ~1 line per distinct outcome, yet a
+        # genuine transition with the same provider (none->polly WARNING, then a
+        # later auto-detected-polly INFO) still surfaces the second line.
+        outcome = (choice, reason, detected)
+        if outcome != self._last_logged:
+            if detected:
+                logger.info("provider: auto-detected %s (%s)", choice, reason)
+            else:
+                logger.warning("provider: none detected, falling back to %s", choice)
+            self._last_logged = outcome
+        return choice
+
+    def _resolve_choice(self) -> tuple[str, str, bool]:
+        """Return the provider name, the reason chosen, and whether one was detected.
+
+        The ``detected`` flag distinguishes a real detection (INFO) from the
+        no-provider fallback (WARNING) without either branch logging directly --
+        so the caller can deduplicate both the same way.
         """
         env = os.environ.get("TTS_PROVIDER")
         if env:
-            return env.lower()
+            return env.lower(), "TTS_PROVIDER env var", True
         if os.environ.get("ELEVENLABS_API_KEY"):
-            return "elevenlabs"
+            return "elevenlabs", "ELEVENLABS_API_KEY set", True
         if os.environ.get("OPENAI_API_KEY"):
-            return "openai"
+            return "openai", "OPENAI_API_KEY set", True
         if self._has_aws_credentials():
-            return "polly"
+            return "polly", "AWS credentials valid", True
         if platform.system() == "Darwin" and shutil.which("say"):
-            return "say"
+            return "say", "system fallback (macOS)", True
         if platform.system() == "Linux" and (
             shutil.which("espeak-ng") or shutil.which("espeak")
         ):
-            return "espeak"
-        logger.warning("No TTS provider detected; falling back to polly")
-        return "polly"
+            return "espeak", "system fallback (Linux)", True
+        return "polly", "no provider detected", False
 
     @staticmethod
     def _has_aws_credentials() -> bool:
-        """Check whether AWS credentials are configured."""
+        """Check whether AWS credentials are configured; DEBUG why Polly is skipped."""
         if not shutil.which("aws"):
+            logger.debug("provider: polly not chosen (aws cli absent)")
             return False
         try:
             result = subprocess.run(
@@ -153,8 +180,11 @@ class ProviderRegistry:
                 capture_output=True,
                 timeout=5,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            logger.debug("provider: polly not chosen (aws probe error: %s)", exc)
             return False
+        if result.returncode != 0:
+            logger.debug("provider: polly not chosen (aws probe: nonzero exit)")
         return result.returncode == 0
 
 
