@@ -8,7 +8,8 @@ This module serves the **anonymous** cache only — calls that use the
 ambient provider credential from ``keys.env``. Per-call provider
 credential overrides (single-user multi-key billing isolation)
 bypass this module entirely at the voxd call site: see the cache
-guards in ``_synthesize_to_file`` in ``src/punt_vox/voxd.py``. That
+guards in ``SynthesisPipeline.synthesize_to_file`` in
+``src/punt_vox/voxd/synthesis.py``. That
 design keeps all sensitive credential material out of any digest this
 module computes. CodeQL's ``py/weak-sensitive-data-hashing`` rule
 (correctly) flags any regular cryptographic hash — MD5, SHA-1,
@@ -18,11 +19,10 @@ input, and the only lint-clean alternatives are password KDFs
 per-call cost is unacceptable for a cache filename computation.
 
 The bypass also closes a correctness hazard: a per-call billing scope
-that accepts cached bytes from another scope violates the whole point
-of the isolation. Scripts
-that want cache hits for repeated quips should use ``keys.env`` (the
-anonymous path); scripts that want billing attribution should accept
-that every call re-synthesizes.
+that accepts cached bytes from another scope violates the whole point of
+the isolation. Scripts that want cache hits for repeated quips should use
+``keys.env`` (the anonymous path); scripts that want billing attribution
+should accept that every call re-synthesizes.
 
 No dependencies on other vox modules — this is a standalone cache layer.
 """
