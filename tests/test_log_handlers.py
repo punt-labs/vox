@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import stat
 from pathlib import Path
 
@@ -17,6 +18,53 @@ def _mode(path: Path) -> int:
 def _record(message: str) -> logging.LogRecord:
     """Return an INFO record whose formatted line carries *message*."""
     return logging.LogRecord("t", logging.INFO, __file__, 1, message, None, None)
+
+
+def test_new_file_is_created_0600_atomically(tmp_path: Path) -> None:
+    """A brand-new log is 0600 the moment it exists -- no umask-default window.
+
+    The handler pre-creates the file with ``os.open`` + ``O_CREAT`` and mode
+    0600, so even under a permissive umask the file never appears group/other
+    readable. Force umask 0 (the worst case: a plain ``open`` would yield 0666)
+    to prove the mode comes from the create call, not the ambient umask.
+    """
+    log = tmp_path / "tts.log"
+    old_umask = os.umask(0)
+    try:
+        handler = PrivateRotatingFileHandler(str(log), maxBytes=10_000, backupCount=3)
+        try:
+            handler.emit(_record("first line"))
+        finally:
+            handler.close()
+    finally:
+        os.umask(old_umask)
+
+    assert log.exists()
+    assert _mode(log) == 0o600
+
+
+def test_from_config_tightens_preexisting_backup_at_startup(tmp_path: Path) -> None:
+    """The dictConfig factory re-tightens a stale 0644 backup on construction.
+
+    A backup slot left 0644 by an earlier, laxer run that never rotates would
+    stay loose forever under plain construction (``doRollover`` only fires on
+    rotation). ``from_config`` sweeps the whole chain at startup, so the legacy
+    backup is fixed the first time the handler runs, without any rotation.
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+    log.chmod(0o644)
+    stale_backup = tmp_path / "tts.log.2"
+    stale_backup.write_text("old backup\n")
+    stale_backup.chmod(0o644)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5, encoding="utf-8"
+    )
+    handler.close()
+
+    assert _mode(log) == 0o600, "active file tightened at startup"
+    assert _mode(stale_backup) == 0o600, "legacy backup tightened at startup"
 
 
 def test_open_tightens_preexisting_0644_file(tmp_path: Path) -> None:
