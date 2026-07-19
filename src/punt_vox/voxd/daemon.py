@@ -338,6 +338,13 @@ def main(
     ),
 ) -> None:
     """Start the voxd audio server daemon."""
+    crash = CrashLogger(logger)
+    # FIRST, before anything can raise and before the file handler exists: an
+    # emergency sink that writes with raw os syscalls, so a crash in
+    # ``ensure_user_dirs`` or ``configure_daemon_logging`` itself lands in
+    # ``vox-boot.log`` instead of vanishing (the daemon has no stderr).
+    crash.install_bootstrap_excepthook(_log_dir() / "vox-boot.log")
+
     ensure_user_dirs()
 
     daemon_cfg = DaemonConfig(
@@ -345,9 +352,10 @@ def main(
     )
 
     configure_daemon_logging()
-    # Install the sync last-resort hook before any startup step can raise, so a
-    # crash during wiring lands in vox.log rather than vanishing (no stderr).
-    CrashLogger(logger).install_excepthook()
+    # The file handler is now live: upgrade from the bootstrap sink to the
+    # file-backed logger so the rest of startup and ``asyncio.run`` crashes land
+    # in ``vox.log`` beside everything else.
+    crash.install_excepthook()
     daemon_cfg.log_environment()
 
     loaded_keys = daemon_cfg.load_keys()

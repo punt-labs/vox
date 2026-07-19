@@ -73,6 +73,44 @@ class TestExcepthook:
         assert "voxd is crashing" not in log_file.read_text()
 
 
+class TestBootstrapExcepthook:
+    """The bootstrap hook captures a crash before any logging is configured."""
+
+    def test_bootstrap_hook_lands_without_dictconfig(self, tmp_path: Path) -> None:
+        """A crash before ``dictConfig`` runs still lands in vox-boot.log.
+
+        The emergency sink writes with raw ``os`` syscalls, so no file handler and
+        no logger need exist -- the exact case (logging construction itself
+        raising) the daemon's boot sequence must survive.
+        """
+        boot = tmp_path / "vox-boot.log"
+        crash = CrashLogger(logging.getLogger("punt_vox.test.boot.unused"))
+        original = sys.excepthook
+        crash.install_bootstrap_excepthook(boot)
+        try:
+            exc_type, exc = _raise_and_capture()
+            sys.excepthook(exc_type, exc, exc.__traceback__)
+        finally:
+            sys.excepthook = original
+
+        text = boot.read_text(encoding="utf-8")
+        assert "boom-uncaught-marker" in text
+        assert "ValueError" in text
+        assert (boot.stat().st_mode & 0o077) == 0  # 0600 emergency file
+
+    def test_bootstrap_keyboard_interrupt_defers(self, tmp_path: Path) -> None:
+        boot = tmp_path / "vox-boot.log"
+        crash = CrashLogger(logging.getLogger("punt_vox.test.boot.ki"))
+        original = sys.excepthook
+        crash.install_bootstrap_excepthook(boot)
+        try:
+            exc = KeyboardInterrupt()
+            sys.excepthook(KeyboardInterrupt, exc, exc.__traceback__)
+        finally:
+            sys.excepthook = original
+        assert not boot.exists()  # nothing written for a quiet Ctrl-C
+
+
 class TestLoopExceptionHandler:
     """The event-loop hook records a fire-and-forget task exception to the file."""
 
