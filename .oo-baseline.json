@@ -340,10 +340,10 @@
   "src/punt_vox/log_handlers.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.0,
+    "avg_params": 0.8,
     "max_complexity": 2.0,
-    "avg_complexity": 1.67,
-    "module_size": 49.0,
+    "avg_complexity": 1.4,
+    "module_size": 91.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
