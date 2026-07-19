@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import stat
 from pathlib import Path
+
+import pytest
 
 from punt_vox.log_handlers import PrivateRotatingFileHandler
 
@@ -17,6 +20,53 @@ def _mode(path: Path) -> int:
 def _record(message: str) -> logging.LogRecord:
     """Return an INFO record whose formatted line carries *message*."""
     return logging.LogRecord("t", logging.INFO, __file__, 1, message, None, None)
+
+
+def test_new_file_is_created_0600_atomically(tmp_path: Path) -> None:
+    """A brand-new log is 0600 the moment it exists -- no umask-default window.
+
+    The handler pre-creates the file with ``os.open`` + ``O_CREAT`` and mode
+    0600, so even under a permissive umask the file never appears group/other
+    readable. Force umask 0 (the worst case: a plain ``open`` would yield 0666)
+    to prove the mode comes from the create call, not the ambient umask.
+    """
+    log = tmp_path / "tts.log"
+    old_umask = os.umask(0)
+    try:
+        handler = PrivateRotatingFileHandler(str(log), maxBytes=10_000, backupCount=3)
+        try:
+            handler.emit(_record("first line"))
+        finally:
+            handler.close()
+    finally:
+        os.umask(old_umask)
+
+    assert log.exists()
+    assert _mode(log) == 0o600
+
+
+def test_from_config_tightens_preexisting_backup_at_startup(tmp_path: Path) -> None:
+    """The dictConfig factory re-tightens a stale 0644 backup on construction.
+
+    A backup slot left 0644 by an earlier, laxer run that never rotates would
+    stay loose forever under plain construction (``doRollover`` only fires on
+    rotation). ``from_config`` sweeps the whole chain at startup, so the legacy
+    backup is fixed the first time the handler runs, without any rotation.
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+    log.chmod(0o644)
+    stale_backup = tmp_path / "tts.log.2"
+    stale_backup.write_text("old backup\n")
+    stale_backup.chmod(0o644)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5, encoding="utf-8"
+    )
+    handler.close()
+
+    assert _mode(log) == 0o600, "active file tightened at startup"
+    assert _mode(stale_backup) == 0o600, "legacy backup tightened at startup"
 
 
 def test_open_tightens_preexisting_0644_file(tmp_path: Path) -> None:
@@ -65,3 +115,105 @@ def test_rollover_tightens_a_stale_backup_that_shifts_outward(tmp_path: Path) ->
     assert _mode(log) == 0o600
     for backup in tmp_path.glob("tts.log.*"):
         assert _mode(backup) == 0o600, backup
+
+
+def test_open_refuses_to_follow_a_symlink(tmp_path: Path) -> None:
+    """A symlink planted at the log path makes ``_open`` raise, not write through.
+
+    ``O_NOFOLLOW`` in the pre-create refuses a symlink at ``baseFilename`` -- a
+    symlink there is never legitimate and could redirect the log into an
+    attacker-chosen file. Construction opens the stream, so the refusal surfaces
+    as an ``OSError`` at construction rather than silently following the link.
+    """
+    target = tmp_path / "target.txt"
+    target.write_text("do not write here\n")
+    link = tmp_path / "tts.log"
+    link.symlink_to(target)
+
+    with pytest.raises(OSError):
+        PrivateRotatingFileHandler(str(link), maxBytes=10_000, backupCount=1)
+
+    assert target.read_text() == "do not write here\n", "the link target is untouched"
+
+
+def test_tighten_failure_is_recorded_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``fchmod`` that fails lands in ``tighten_failures`` instead of vanishing.
+
+    A pre-existing log the current uid cannot re-chmod (owner changed, a
+    root-run leftover) must not silently stay loose. ``tighten_existing``
+    collects the un-tightenable path so the caller can surface it; the handler
+    still opens and logs (fail-open), it just reports what it could not secure.
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+
+    real_fchmod = os.fchmod
+
+    def _deny_fchmod(fd: int, mode: int) -> None:
+        raise PermissionError("cannot fchmod")
+
+    monkeypatch.setattr(os, "fchmod", _deny_fchmod)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    monkeypatch.setattr(os, "fchmod", real_fchmod)  # restore before teardown close
+    handler.close()
+
+    assert Path(str(log)) in handler.tighten_failures
+
+
+def test_symlinked_backup_slot_is_recorded_not_chmodded_through(tmp_path: Path) -> None:
+    """A ``*.log.N`` symlink is reported as a failure, and its target is untouched.
+
+    A path-based ``chmod`` would follow the link and set the victim to 0600 under
+    the handler's authority. The ``O_NOFOLLOW`` open refuses the link (``ELOOP``),
+    so the slot is recorded as un-tightenable and the target keeps its own mode.
+    """
+    log = tmp_path / "tts.log"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("someone else's file\n")
+    victim.chmod(0o644)
+    link = tmp_path / "tts.log.1"
+    link.symlink_to(victim)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert link in handler.tighten_failures, "the symlinked slot is a failure"
+    assert _mode(victim) == 0o644, "the link target was not chmod'd through"
+
+
+def test_vanished_backup_slot_is_skipped_not_recorded(tmp_path: Path) -> None:
+    """A slot that does not exist (ENOENT) is skipped -- no false failure.
+
+    Under multi-writer rollover a slot can vanish between listing and acting; a
+    gone file is not left readable, so it must not appear in ``tighten_failures``
+    (which would emit a false "could not enforce 0600" WARNING for a dead path).
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+    # No tts.log.N files exist -- every backup slot is a vanished/absent slot.
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert handler.tighten_failures == ()
+
+
+def test_tighten_failures_empty_when_all_succeed(tmp_path: Path) -> None:
+    """A clean sweep leaves ``tighten_failures`` empty -- no false positives."""
+    log = tmp_path / "tts.log"
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert handler.tighten_failures == ()

@@ -146,10 +146,11 @@ ignore = [
 max-complexity = 10
 
 [tool.ruff.lint.pep8-naming]
-# Stdlib override methods whose mixedCase names are fixed by the base class API
-# (e.g. logging.handlers.RotatingFileHandler.doRollover). Naming them anything
-# else would fail to override -- N802 does not apply.
-extend-ignore-names = ["doRollover"]
+# Stdlib names fixed by the base-class API: the RotatingFileHandler override
+# method ``doRollover`` (renaming it would fail to override -- N802) and the
+# ``maxBytes``/``backupCount`` keyword arguments that dictConfig forwards by
+# name to a factory (renaming them would break the "()" call -- N803).
+extend-ignore-names = ["doRollover", "maxBytes", "backupCount"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["punt_vox"]
