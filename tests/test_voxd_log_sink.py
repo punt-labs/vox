@@ -107,6 +107,8 @@ class TestSanitizedFileWrite:
             SanitizingFormatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
         )
         client = logging.getLogger("client")
+        saved_level = client.level
+        saved_propagate = client.propagate
         client.addHandler(handler)
         client.setLevel(logging.DEBUG)
         client.propagate = False
@@ -122,7 +124,9 @@ class TestSanitizedFileWrite:
             )
         finally:
             client.removeHandler(handler)
-            client.propagate = True
+            # Restore BOTH mutated attributes so DEBUG doesn't leak into later tests.
+            client.setLevel(saved_level)
+            client.propagate = saved_propagate
         out = stream.getvalue()
         assert out.count("\n") == 1  # only the record terminator
         body = out[:-1]  # drop the terminator

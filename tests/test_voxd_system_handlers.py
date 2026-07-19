@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -62,6 +63,10 @@ class TestChimeInfoBudget:
                 )
         finally:
             consumer.cancel()
+            # Await the cancellation so the loop reaps the task -- no leaked
+            # "Task was destroyed but it is pending" warning.
+            with contextlib.suppress(asyncio.CancelledError):
+                await consumer
 
         infos = [
             r

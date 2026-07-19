@@ -71,6 +71,9 @@ class TestLogRecordWire:
             {"created": float("nan")},  # L2: nan created
             {"created": -1.0},  # L2: below the sane epoch window
             {"created": 9e18},  # L2: above the sane epoch window
+            {"message": "x" * 8193},  # MED2: message over the 8 KiB cap
+            {"name": "x" * 257},  # MED2: metadata over the 256-char cap
+            {"role": "x" * 257},  # MED2: oversized role
         ],
     )
     def test_from_wire_raises_on_malformed(self, override: dict[str, object]) -> None:
@@ -97,6 +100,44 @@ class TestLogRecordWire:
                 "message": "m",
             }
             assert LogRecordWire.from_wire(frame).role == role
+
+    def test_oversized_field_error_is_metadata_only(self) -> None:
+        """An oversized field is refused by length -- never echoing its content."""
+        secret = "leak-me-" + "z" * 9000
+        frame: dict[str, object] = {
+            "role": "hook",
+            "name": "n",
+            "level": "INFO",
+            "created": 1.0,
+            "message": secret,
+        }
+        with pytest.raises(ValueError, match="too long") as exc_info:
+            LogRecordWire.from_wire(frame)
+        assert "leak-me" not in str(exc_info.value)  # content never in the error
+
+    def test_invalid_role_error_is_metadata_only(self) -> None:
+        """A forged/unknown role is refused by length -- the raw value never echoed."""
+        frame: dict[str, object] = {
+            "role": "evil-role-\nFORGED",
+            "name": "n",
+            "level": "INFO",
+            "created": 1.0,
+            "message": "m",
+        }
+        with pytest.raises(ValueError, match="not a known role") as exc_info:
+            LogRecordWire.from_wire(frame)
+        assert "FORGED" not in str(exc_info.value)  # never the raw role
+
+    def test_within_cap_message_is_accepted(self) -> None:
+        """A message at the cap boundary is valid -- the bound is inclusive."""
+        frame: dict[str, object] = {
+            "role": "hook",
+            "name": "n",
+            "level": "INFO",
+            "created": 1.0,
+            "message": "x" * 8192,
+        }
+        assert len(LogRecordWire.from_wire(frame).message) == 8192
 
     def test_message_carries_raw_newline_for_the_sink_to_escape(self) -> None:
         """The wire holds the raw rendered text; escaping is each sink's job."""

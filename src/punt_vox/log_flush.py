@@ -47,9 +47,15 @@ class PeriodicFlusher:
         return self
 
     def start(self) -> None:
-        """Spawn the flush thread once; a second call is a no-op."""
+        """Spawn the flush thread once; a second call is a no-op.
+
+        Clear the stop flag first: a ``stop()`` before ``start()`` (or a
+        stop/restart) leaves it set, and a fresh thread would then exit its very
+        first ``_stop.wait`` immediately, never flushing.
+        """
         if self._thread is not None:
             return
+        self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, name="vox-log-flusher", daemon=True
         )

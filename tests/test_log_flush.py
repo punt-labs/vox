@@ -65,3 +65,26 @@ class TestPeriodicFlusher:
         flusher.start()
         time.sleep(0.1)
         flusher.stop()  # no shipper -> no connection attempt, no crash
+
+    def test_start_after_stop_flushes_periodically(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """start() after stop() must clear _stop so the thread keeps flushing.
+
+        Without the clear, the fresh thread exits its first _stop.wait and a
+        record enqueued after start() is never drained by the periodic loop.
+        """
+        shipper = LogShipper(AtomicAppendLog(tmp_path / "fallback.log"))
+        monkeypatch.setattr(LogShipper, "_instance", shipper)
+        monkeypatch.setattr("punt_vox.log_flush.VoxClient", _DownClient)
+
+        flusher = PeriodicFlusher(interval=0.05)
+        flusher.stop()  # arm _stop before any start (stop-before-start / restart)
+        flusher.start()
+        time.sleep(0.15)  # let the loop take a cycle
+        shipper.enqueue(_wire("enqueued after restart"))
+        time.sleep(0.15)  # the periodic loop must drain it (only if _stop cleared)
+        drained_by_loop = not shipper.has_pending
+        flusher.stop()
+
+        assert drained_by_loop  # the thread kept running, not exited immediately

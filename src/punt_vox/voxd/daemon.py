@@ -48,6 +48,11 @@ from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
 
+# Inbound WebSocket frame cap (uvicorn defaults to 16 MiB). 256 KiB comfortably
+# fits the largest legitimate client->daemon frame (a music request) while
+# denying multi-MB frames that would burden the daemon's event loop.
+_WS_MAX_FRAME_BYTES = 256 * 1024
+
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
 
@@ -127,6 +132,11 @@ class VoxDaemon:
             log_config=None,
             log_level="warning",
             access_log=True,
+            # Cap inbound WS frames well below uvicorn's 16 MiB default: the
+            # largest legitimate client->daemon frame is a music request (a base
+            # prompt + 12 variations, ~tens of KiB). A tighter bound stops a
+            # token-bearing client from streaming multi-MB frames at the event loop.
+            ws_max_size=_WS_MAX_FRAME_BYTES,
         )
         _install_token_redact_filter()
         server = uvicorn.Server(config)

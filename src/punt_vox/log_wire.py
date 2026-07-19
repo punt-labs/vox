@@ -44,7 +44,18 @@ Role = Literal["hook", "mcp", "cli", "playback"]
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-_STRING_FIELDS = ("role", "name", "level", "message")
+# Per-field length caps bound the daemon's ingestion path: a token-bearing client
+# (reachable via ``voxd --host``) must not be able to make the daemon decode,
+# format, and synchronously write a multi-MB record on its event loop, starving
+# synthesis and playback. Metadata fields stay short; only the message is roomy.
+_MAX_META_CHARS = 256
+_MAX_MESSAGE_CHARS = 8192
+_STRING_FIELD_CAPS: tuple[tuple[str, int], ...] = (
+    ("role", _MAX_META_CHARS),
+    ("name", _MAX_META_CHARS),
+    ("level", _MAX_META_CHARS),
+    ("message", _MAX_MESSAGE_CHARS),
+)
 _VALID_ROLES: frozenset[str] = frozenset(get_args(Role))
 # Bound ``created`` to a sane epoch window: an out-of-range or non-finite value
 # makes the daemon's ``time.localtime`` raise, silently dropping the record.
@@ -86,15 +97,23 @@ class LogRecordWire:
         than writing a half-formed record.
         """
         values: dict[str, str] = {}
-        for field in _STRING_FIELDS:
+        for field, cap in _STRING_FIELD_CAPS:
             value = raw.get(field)
             if not isinstance(value, str):
                 got = type(value).__name__
                 msg = f"log frame field {field!r} must be a string, got {got}"
                 raise ValueError(msg)
+            if len(value) > cap:
+                # Length only, never the value -- an oversized field is an
+                # attack, and echoing it would leak attacker content into vox.log.
+                msg = f"log frame field {field!r} too long: {len(value)} > {cap} chars"
+                raise ValueError(msg)
             values[field] = value
         if values["role"] not in _VALID_ROLES:
-            msg = f"log frame field 'role' is not a known role: {values['role']!r}"
+            # Report the length, never the raw role -- echoing an invalid,
+            # attacker-controlled value would defeat the metadata-only rejection.
+            role_len = len(values["role"])
+            msg = f"log frame field 'role' is not a known role ({role_len} chars)"
             raise ValueError(msg)
         created = raw.get("created")
         if isinstance(created, bool) or not isinstance(created, int | float):
