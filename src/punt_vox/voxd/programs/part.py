@@ -2,7 +2,7 @@
 
 Realises the Z ``[PART]`` basic type together with the ``PartStatus`` free type
 and the ``failedParts : PART \\pfun REASON`` finite map. The resolved surface
-reference behind ``playlist:2`` (finding #7) lives in ``identifiers`` as
+reference behind ``playlist:2`` lives in ``identifiers`` as
 :class:`PartRef`.
 """
 
@@ -20,10 +20,10 @@ __all__ = ["FrozenParts", "Part", "PartStatus"]
 class PartStatus(StrEnum):
     """The lifecycle status of a stored Part (Z free type ``PartStatus``).
 
-    Phase 1 ever writes only ``READY`` and ``FAILED`` (finding #9: atomic
-    delivery hides ``PENDING``/``GENERATING``); the two in-flight statuses are
-    declared now so the spoken formats promote them to stored per-Part state
-    without a signature change.
+    Only ``READY`` and ``FAILED`` are ever written -- atomic delivery hides
+    ``PENDING``/``GENERATING``; the two in-flight statuses are declared now so
+    the spoken formats promote them to stored per-Part state without a
+    signature change.
     """
 
     PENDING = "pending"
@@ -37,7 +37,7 @@ class Part:
 
     ``identity`` is the opaque content-addressed identifier (the saved-audio
     file token); ``index`` is the 1-based manifest position assigned once at
-    record time and never reused (MAJOR-1) -- the stable basis for ``playlist:2``
+    record time and never reused -- the stable basis for ``playlist:2``
     addressing across daemon restarts and across processes. Identity is the
     ``identity`` alone: two Parts naming the same audio are equal, so a pool
     modelled as a ``frozenset[Part]`` dedups by audio, faithful to the Z ``pool``.

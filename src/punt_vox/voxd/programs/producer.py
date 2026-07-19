@@ -5,7 +5,7 @@ the format-specific generation call (ElevenLabs music, later dialogue and
 narration). It raises one of two error types so the fill loop routes cleanly to
 the right Program transition: a permanent error (bad prompt / ToS / missing key)
 becomes ``ProducerBadInputError``; a transient one (429 / quota / 5xx / timeout)
-becomes ``ProducerTransientError`` (findings #4/#5).
+becomes ``ProducerTransientError``.
 """
 
 from __future__ import annotations

@@ -342,7 +342,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
     # individual readers (``_read_api_key_file``, ``_read_api_key_stdin``)
     # still reject their own empty content with their own BadParameter
     # messages, so there is no silent fall-through for paths where
-    # emptiness is actually a user error. Cursor Bugbot on PR #175.
+    # emptiness is actually a user error.
     if api_key == "":
         api_key = None
 

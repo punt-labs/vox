@@ -87,7 +87,7 @@ def _read_hook_input() -> dict[str, object]:
     """Read JSON hook payload from stdin (non-blocking).
 
     Uses ``select`` + ``os.read`` to avoid blocking forever when
-    Claude Code does not close the stdin pipe.  See biff DES-027.
+    Claude Code does not close the stdin pipe.
     """
     try:
         fd = sys.stdin.fileno()
