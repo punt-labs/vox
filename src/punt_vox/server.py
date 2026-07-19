@@ -14,7 +14,7 @@ import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, final
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -38,12 +38,41 @@ from punt_vox.vibe_trace import VibeTraceLog
 from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
+    from collections.abc import Sequence
+
+    from mcp.types import ContentBlock
+
     from punt_vox.program_gateway import ProgramGateway
     from punt_vox.vibe import VibeChange
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP(
+
+@final
+class _LoggingFastMCP(FastMCP):
+    """A ``FastMCP`` that logs one vox-owned ``mic:<tool>`` INFO line per call.
+
+    ``call_tool`` is the one method every tool invocation flows through, so
+    overriding it names each call in vox.log -- replacing the suppressed ``mcp``
+    framework's tool-name-less "Processing request" noise. Unlike a per-function
+    decorator (which FastMCP unwraps via ``__wrapped__`` and bypasses), the
+    override is always on the invocation path, and it never touches a tool's
+    signature or schema.
+    """
+
+    async def call_tool(
+        self,
+        name: str,
+        # ``dict[str, Any]`` mirrors the third-party ``FastMCP.call_tool`` exactly;
+        # narrowing it would make this an invalid (contravariance-breaking) override.
+        arguments: dict[str, Any],
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        """Log the tool name, then delegate to the framework's dispatch."""
+        logger.info("mic:%s", name)
+        return await super().call_tool(name, arguments)
+
+
+mcp = _LoggingFastMCP(
     "mic",
     instructions=(
         "Vox is a text-to-speech engine. Use these tools to speak text aloud "

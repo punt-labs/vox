@@ -2102,6 +2102,34 @@ class TestRefreshIntegrationWithTools:
         assert spec.provider == "openai"
 
 
+class TestPerToolLogging:
+    """The FastMCP subclass logs one ``mic:<tool>`` line per invocation."""
+
+    @pytest.mark.asyncio
+    async def test_call_tool_logs_named_line_and_preserves_schema(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A tool call logs ``mic:<name>`` and the tool schema is unchanged.
+
+        Goes through ``call_tool`` -- the native FastMCP choke point -- so this
+        would catch a decorator that FastMCP unwraps and bypasses.
+        """
+        import logging
+
+        import punt_vox.server as srv
+
+        tools = await srv.mcp.list_tools()
+        assert len(tools) == 11  # schema intact, no tool lost to wrapping
+        with caplog.at_level(logging.INFO, logger="punt_vox.server"):
+            await srv.mcp.call_tool("status", {})
+        named = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "punt_vox.server" and r.getMessage().startswith("mic:")
+        ]
+        assert named == ["mic:status"]
+
+
 class TestLogFlusherWiring:
     """The D2 flusher is a bound instance the server can stop (M1)."""
 
