@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.log_ship import LogShipper
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -173,19 +174,38 @@ class _VoxdTransport:
         return uri
 
     async def connect(self) -> None:
-        """Connect to voxd WebSocket. Call once before sending messages."""
+        """Connect to voxd WebSocket. Call once before sending messages.
+
+        Buffered client log records are flushed here, right after the handshake
+        and *before* any request frame, so the daemon writes them first and the
+        real RPC's response stream never carries a stray log frame.
+        """
         uri = self._build_uri()
         try:
             self._ws = await websockets.asyncio.client.connect(uri)
         except OSError as exc:
             msg = f"Cannot connect to voxd at {uri.split('?')[0]}: {exc}"
             raise VoxdConnectionError(msg) from exc
+        await self._flush_logs()
 
     async def close(self) -> None:
-        """Close the WebSocket connection."""
+        """Flush any tail of buffered logs, then close the WebSocket connection."""
         if self._ws is not None:
+            await self._flush_logs()
             await self._ws.close()
             self._ws = None
+
+    async def _flush_logs(self) -> None:
+        """Drain buffered client log records over the live socket, if any are shipping.
+
+        A no-op when this process installed no client log handler (a bare
+        ``VoxClient`` in a test) -- there is simply nothing to ship. Never raises:
+        a send failure inside :meth:`LogShipper.flush` falls back to the local
+        file, so log shipping can never break the real request that follows.
+        """
+        shipper = LogShipper.active()
+        if shipper is not None and self._ws is not None:
+            await shipper.flush(self._ws)
 
     async def _ensure_connected(self) -> websockets.asyncio.client.ClientConnection:
         """Return the active connection, reconnecting if needed.

@@ -45,8 +45,13 @@ DURABLE_KEYS: frozenset[str] = frozenset(
 # vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
 # "manual" mode while the gitignored mood lingered (vox-73m5). Mode, mood, tags,
 # and the nudge cadence counter now live together in the ephemeral vox.local.md.
+#
+# ``log_level`` is ephemeral for the same reason: a debug toggle a user flips
+# "when needed" belongs in the gitignored vox.local.md, never committed to vox.md
+# where a checkout could resurrect a stale verbose setting.
 EPHEMERAL_KEYS: frozenset[str] = frozenset(
     {
+        "log_level",
         "vibe",
         "vibe_mode",
         "vibe_nudge_turns",

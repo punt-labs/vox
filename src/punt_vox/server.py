@@ -23,7 +23,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
-from punt_vox.logging_config import configure_logging
+from punt_vox.logging_config import configure_client_logging
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
@@ -878,7 +878,7 @@ def run_server() -> None:
     """Run the MCP server with stdio transport."""
     global _session
 
-    configure_logging(stderr_level="INFO")
+    configure_client_logging(role="mcp")
     logger.info("Starting vox MCP server (mic)")
 
     # Seed session config from per-repo config if it exists.

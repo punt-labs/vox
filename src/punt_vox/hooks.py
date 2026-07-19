@@ -64,9 +64,9 @@ hook_app = typer.Typer(
 def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedFunction]
     """Initialize logging for all hook subcommands."""
     if ctx.invoked_subcommand is not None:
-        from punt_vox.logging_config import configure_logging
+        from punt_vox.logging_config import configure_client_logging
 
-        configure_logging(stderr_level="WARNING")
+        configure_client_logging(role="hook")
 
 
 # Shared helpers

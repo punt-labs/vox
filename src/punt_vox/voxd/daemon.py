@@ -22,6 +22,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
+from punt_vox.logging_config import configure_daemon_logging
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.chimes import ChimeResolver
@@ -35,6 +36,7 @@ from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
 from punt_vox.voxd.crash_logging import CrashLogger
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.log_sink import LogHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -277,6 +279,7 @@ class VoxDaemon:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=health),
+            "log": LogHandler(),
             **programs.handlers(),
         }
 
@@ -341,9 +344,9 @@ def main(
         run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir()
     )
 
-    daemon_cfg.configure_logging()
+    configure_daemon_logging()
     # Install the sync last-resort hook before any startup step can raise, so a
-    # crash during wiring lands in voxd.log rather than vanishing (no stderr).
+    # crash during wiring lands in vox.log rather than vanishing (no stderr).
     CrashLogger(logger).install_excepthook()
     daemon_cfg.log_environment()
 

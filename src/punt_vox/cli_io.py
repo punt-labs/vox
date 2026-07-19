@@ -9,7 +9,7 @@ from typing import Self
 
 import typer
 
-from punt_vox.logging_config import configure_logging
+from punt_vox.logging_config import configure_client_logging
 from punt_vox.output_formatter import OutputFormatter
 
 __all__ = ["OutputFlags", "TextInput"]
@@ -60,7 +60,7 @@ class OutputFlags:
             self._formatter.set_json(value=True)
         if quiet:
             self._formatter.set_quiet(value=True)
-        configure_logging(stderr_level="DEBUG" if self._verbose_seen else "WARNING")
+        configure_client_logging(role="cli", verbose=self._verbose_seen)
 
 
 class TextInput:
