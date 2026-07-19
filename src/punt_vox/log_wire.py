@@ -50,6 +50,9 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # synthesis and playback. Metadata fields stay short; only the message is roomy.
 _MAX_META_CHARS = 256
 _MAX_MESSAGE_CHARS = 8192
+# Room reserved within each cap for the "…[+N chars]" truncation marker, so a
+# clamped value plus its marker always fits the cap the daemon rejects above.
+_TRUNCATION_RESERVE = 32
 _STRING_FIELD_CAPS: tuple[tuple[str, int], ...] = (
     ("role", _MAX_META_CHARS),
     ("name", _MAX_META_CHARS),
@@ -78,15 +81,30 @@ class LogRecordWire:
         """Capture *record* as a wire frame stamped with the shipping *role*.
 
         ``getMessage`` performs the ``%`` interpolation now, on the client, so the
-        frame carries the final text and the daemon writes it verbatim.
+        frame carries the final text and the daemon writes it verbatim. ``message``
+        and ``name`` are clamped to their caps *here* so a genuinely long log line
+        (e.g. a shipped traceback) is preserved-truncated and always lands, rather
+        than being rejected whole by the daemon's length check and silently lost.
         """
         return cls(
             role=role,
-            name=record.name,
+            name=cls._clamp(record.name, _MAX_META_CHARS),
             level=record.levelname,
             created=record.created,
-            message=record.getMessage(),
+            message=cls._clamp(record.getMessage(), _MAX_MESSAGE_CHARS),
         )
+
+    @staticmethod
+    def _clamp(value: str, cap: int) -> str:
+        """Return *value* unchanged, or truncated to *cap* with a ``…[+N chars]`` tag.
+
+        The kept head plus the marker fit within *cap*, so the shipped frame passes
+        the daemon's defense-in-depth length check instead of being rejected.
+        """
+        if len(value) <= cap:
+            return value
+        head = value[: cap - _TRUNCATION_RESERVE]
+        return f"{head}…[+{len(value) - len(head)} chars]"
 
     @classmethod
     def from_wire(cls, raw: Mapping[str, object]) -> Self:

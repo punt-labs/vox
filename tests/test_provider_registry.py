@@ -62,3 +62,41 @@ class TestAutoDetectLogging:
             r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
         ]
         assert warnings == ["provider: none detected, falling back to polly"]
+
+    def test_same_provider_state_change_still_emits(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The none->polly WARNING then a later auto-detected-polly INFO both emit.
+
+        Dedup keys on the full (provider, reason, detected) outcome, not just the
+        provider string, so a real state change with the same provider surfaces.
+        """
+        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
+            monkeypatch.delenv(key, raising=False)
+
+        def _no_binary(_name: str, *_a: object, **_k: object) -> str | None:
+            return None
+
+        monkeypatch.setattr("punt_vox.providers.shutil.which", _no_binary)
+        aws_valid = {"ready": False}
+
+        def _has_aws(_self: ProviderRegistry) -> bool:
+            return aws_valid["ready"]
+
+        monkeypatch.setattr(ProviderRegistry, "_has_aws_credentials", _has_aws)
+        registry = ProviderRegistry()
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.providers"):
+            assert registry.auto_detect() == "polly"  # none detected -> WARNING
+            aws_valid["ready"] = True  # AWS creds now appear
+            assert registry.auto_detect() == "polly"  # same provider, new reason
+            assert registry.auto_detect() == "polly"  # true repeat -> silent
+
+        decisions = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("provider:")
+        ]
+        assert decisions == [
+            "provider: none detected, falling back to polly",
+            "provider: auto-detected polly (AWS credentials valid)",
+        ]

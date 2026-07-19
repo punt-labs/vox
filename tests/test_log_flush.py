@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,22 @@ from punt_vox.log_wire import LogRecordWire
 
 if TYPE_CHECKING:
     import pytest
+
+
+class _StuckThread(threading.Thread):
+    """A thread stand-in that is always alive and whose join never returns.
+
+    Simulates a ``stop()`` whose bounded join times out on a still-running thread.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+
+    def is_alive(self) -> bool:
+        return True
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
 
 
 def _wire(message: str) -> LogRecordWire:
@@ -127,3 +144,22 @@ class TestPeriodicFlusher:
         text = fallback.read_text(encoding="utf-8")
         assert "cycle one" in text  # the error cycle still salvaged its batch
         assert "cycle two" in text  # the thread survived to flush again
+
+    def test_timed_out_stop_does_not_spawn_a_duplicate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stop() whose join times out keeps the live thread; start() no-ops.
+
+        Clearing the handle after a timed-out join would let the next start()
+        spawn a SECOND thread against the same buffer.
+        """
+        monkeypatch.setattr(LogShipper, "_instance", None)  # final drain is a no-op
+        flusher = PeriodicFlusher(interval=0.05)
+        stuck = _StuckThread()
+        flusher._thread = stuck  # simulate a thread that outlives the join timeout
+
+        flusher.stop()  # join times out (still alive) -> handle must be kept
+        assert flusher._thread is stuck  # not cleared
+
+        flusher.start()  # sees an alive thread -> no-op, no duplicate spawned
+        assert flusher._thread is stuck

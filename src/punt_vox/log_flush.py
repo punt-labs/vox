@@ -55,7 +55,10 @@ class PeriodicFlusher:
         stop/restart) leaves it set, and a fresh thread would then exit its very
         first ``_stop.wait`` immediately, never flushing.
         """
-        if self._thread is not None:
+        # No-op only while a thread is actually alive; a dead handle (a prior
+        # thread that exited, or a stop() whose join timed out then finished) is
+        # replaced rather than left to block every future start().
+        if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(
@@ -64,12 +67,18 @@ class PeriodicFlusher:
         self._thread.start()
 
     def stop(self) -> None:
-        """Signal the thread to exit, join it, and do one final drain."""
+        """Signal the thread to exit, join it, and do one final drain.
+
+        Clear the handle only if the join actually finished. A timed-out join
+        leaves a still-alive thread, and clearing the handle then would let a
+        later start() spawn a duplicate; keeping it lets start() no-op instead.
+        """
         self._stop.set()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=self._interval + 1.0)
-            self._thread = None
+            if not thread.is_alive():  # cleared only on a completed join
+                self._thread = None
         self._flush_once()
 
     def _run(self) -> None:

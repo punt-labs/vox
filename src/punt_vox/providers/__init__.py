@@ -62,7 +62,10 @@ class ProviderRegistry:
     __slots__ = ("_factories", "_last_logged")
 
     _factories: dict[str, Callable[..., TTSProvider]]
-    _last_logged: str | None
+    # The full outcome last logged -- (provider, reason, detected) -- so a real
+    # state change with the SAME provider (the none->polly WARNING then a later
+    # auto-detected-polly INFO) still emits, while a true repeat stays silent.
+    _last_logged: tuple[str, str, bool] | None
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
@@ -128,15 +131,17 @@ class ProviderRegistry:
         is deduplicated -- a stable choice logs once per process, not per call.
         """
         choice, reason, detected = self._resolve_choice()
-        # Dedup BOTH the INFO decision line and the no-provider WARNING: emit only
-        # when the outcome changes from the last logged one, so a long-lived daemon
-        # logs ~1 line per distinct outcome, not one per call.
-        if choice != self._last_logged:
+        # Dedup on the FULL outcome (provider, reason, detected): emit only when it
+        # changes, so a long-lived daemon logs ~1 line per distinct outcome, yet a
+        # genuine transition with the same provider (none->polly WARNING, then a
+        # later auto-detected-polly INFO) still surfaces the second line.
+        outcome = (choice, reason, detected)
+        if outcome != self._last_logged:
             if detected:
                 logger.info("provider: auto-detected %s (%s)", choice, reason)
             else:
                 logger.warning("provider: none detected, falling back to %s", choice)
-            self._last_logged = choice
+            self._last_logged = outcome
         return choice
 
     def _resolve_choice(self) -> tuple[str, str, bool]:

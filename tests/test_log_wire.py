@@ -6,7 +6,12 @@ import logging
 
 import pytest
 
-from punt_vox.log_wire import LOG_MESSAGE_TYPE, LogRecordWire
+from punt_vox.log_wire import (
+    _MAX_MESSAGE_CHARS,
+    _MAX_META_CHARS,
+    LOG_MESSAGE_TYPE,
+    LogRecordWire,
+)
 
 
 def _record(msg: str, *args: object, level: int = logging.INFO) -> logging.LogRecord:
@@ -42,6 +47,38 @@ class TestLogRecordWire:
         wire = LogRecordWire.from_record(_record("x"), role="cli")
         restored = LogRecordWire.from_wire(wire.to_wire())
         assert restored == wire
+
+    def test_from_record_truncates_a_long_message_so_it_is_never_lost(self) -> None:
+        """A 20 KB log line ships preserved-truncated and the daemon accepts it.
+
+        Without client truncation the daemon's length cap would reject the whole
+        frame and the line would land in neither vox.log nor the fallback.
+        """
+        wire = LogRecordWire.from_record(_record("X" * 20_000), role="hook")
+        assert len(wire.message) <= _MAX_MESSAGE_CHARS  # within the cap
+        assert wire.message.startswith("XXXX")  # head preserved
+        assert wire.message.endswith(" chars]")  # truncation marker appended
+        assert "…[+" in wire.message
+        # The clamped frame passes the daemon's defense-in-depth length check.
+        assert LogRecordWire.from_wire(wire.to_wire()).message == wire.message
+
+    def test_from_record_truncates_a_long_name(self) -> None:
+        record = logging.LogRecord(
+            name="m" * 1000,
+            level=logging.INFO,
+            pathname="f",
+            lineno=1,
+            msg="hi",
+            args=(),
+            exc_info=None,
+        )
+        wire = LogRecordWire.from_record(record, role="hook")
+        assert len(wire.name) <= _MAX_META_CHARS
+        assert wire.name.endswith(" chars]")
+
+    def test_from_record_leaves_short_fields_unchanged(self) -> None:
+        wire = LogRecordWire.from_record(_record("short"), role="hook")
+        assert wire.message == "short"  # no marker on a value within the cap
 
     def test_qualified_name_tags_origin(self) -> None:
         wire = LogRecordWire.from_record(_record("x"), role="hook")
