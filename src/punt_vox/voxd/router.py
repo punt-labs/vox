@@ -59,6 +59,16 @@ class WebSocketRouter:
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         """Main WebSocket route at /ws."""
+        # Browsers always send Origin on a WebSocket handshake; vox's native
+        # Python clients (CLI, hooks, MCP server, remote over VOXD_HOST/SSH) never
+        # do. A present Origin is therefore a scripted cross-site connection
+        # (CSWSH / DNS-rebinding) with no business reaching the audio daemon --
+        # reject before inspecting the token, and log metadata only.
+        if "origin" in websocket.headers:
+            logger.warning("Rejected: unexpected Origin from %s", websocket.client)
+            await websocket.close(code=1008)
+            return
+
         if not self._check_auth(websocket):
             # Client metadata only -- never the token, supplied or expected.
             logger.warning("Auth rejected: connection from %s", websocket.client)
@@ -70,40 +80,7 @@ class WebSocketRouter:
         logger.debug("Client connected (total: %d)", self._client_count)
 
         try:
-            while True:
-                # Preempt Starlette's RuntimeError: a client can close the socket
-                # after its "playing" ack while this loop awaits receive_text().
-                if websocket.application_state != WebSocketState.CONNECTED:
-                    break
-                raw = await websocket.receive_text()
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    await websocket.send_json(
-                        {"type": "error", "id": "", "message": "invalid JSON"}
-                    )
-                    continue
-
-                if not isinstance(msg, dict):
-                    await websocket.send_json(
-                        {"type": "error", "id": "", "message": "expected JSON object"}
-                    )
-                    continue
-
-                msg_type = str(msg.get("type", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                handler = self._handlers.get(msg_type)
-                if handler is None:
-                    msg_id = str(msg.get("id", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "id": msg_id,
-                            "message": f"unknown message type: {msg_type}",
-                        }
-                    )
-                    continue
-
-                await handler(msg, websocket)  # pyright: ignore[reportUnknownArgumentType]
+            await self._serve(websocket)
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -111,6 +88,46 @@ class WebSocketRouter:
         finally:
             self._client_count -= 1
             logger.debug("Client disconnected (total: %d)", self._client_count)
+
+    async def _serve(self, websocket: WebSocket) -> None:
+        """Receive text frames until the peer closes, routing each to a handler."""
+        while websocket.application_state == WebSocketState.CONNECTED:
+            # A client can close the socket after its "playing" ack while this
+            # loop awaits receive_text(); the state guard preempts Starlette's
+            # RuntimeError on the closed socket.
+            raw = await websocket.receive_text()
+            await self._dispatch_frame(websocket, raw)
+
+    async def _dispatch_frame(self, websocket: WebSocket, raw: str) -> None:
+        """Parse one text frame and invoke its handler, replying on any error."""
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            await websocket.send_json(
+                {"type": "error", "id": "", "message": "invalid JSON"}
+            )
+            return
+
+        if not isinstance(msg, dict):
+            await websocket.send_json(
+                {"type": "error", "id": "", "message": "expected JSON object"}
+            )
+            return
+
+        msg_type = str(msg.get("type", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        handler = self._handlers.get(msg_type)
+        if handler is None:
+            msg_id = str(msg.get("id", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "id": msg_id,
+                    "message": f"unknown message type: {msg_type}",
+                }
+            )
+            return
+
+        await handler(msg, websocket)  # pyright: ignore[reportUnknownArgumentType]
 
     # -- Auth ------------------------------------------------------------------
 
