@@ -2100,3 +2100,19 @@ class TestRefreshIntegrationWithTools:
 
         spec = mock_client.synthesize.call_args.args[1]
         assert spec.provider == "openai"
+
+
+class TestLogFlusherWiring:
+    """The D2 flusher is a bound instance the server can stop (M1)."""
+
+    def test_flusher_instance_is_bound(self) -> None:
+        """A discarded ``PeriodicFlusher().start()`` could never be stopped.
+
+        The module holds the instance, so ``run_server`` can register its final
+        drain -- the tail ships to vox.log on clean shutdown instead of always
+        falling back.
+        """
+        import punt_vox.server as srv
+        from punt_vox.log_flush import PeriodicFlusher
+
+        assert isinstance(srv._log_flusher, PeriodicFlusher)
