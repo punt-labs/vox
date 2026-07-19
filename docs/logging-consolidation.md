@@ -487,3 +487,81 @@ outweighs the per-event noise.
 *Recommend: no Z model* (§2.5): a 2-state, per-record, stateless, self-correcting
 I/O selector with no cross-transition invariant, atop an already-Z-modeled
 Program machine. Ratify so implementation proceeds without the ceremony.
+
+---
+
+## 11. Operator rulings & design amendments (2026-07-19)
+
+Leader design review complete; operator ruled on the open decisions. This
+section is authoritative where it differs from §10.
+
+**D1 — RATIFIED: rename `voxd.log` → `vox.log`.** The design already targets
+`vox.log`; this confirms it. Implementation must update every reference to the
+old name — `doctor.py`, tests, `docs/architecture.tex`, any `service.py`/plist
+mention — forward cutover, no alias to the old name. Fallback = `vox-fallback.log`,
+boot = `vox-boot.log`.
+
+**D2 — AMENDED: add a background flush task** (operator overrode "accept
+buffering"). The long-lived MCP server must make its buffered log records durable
+within **seconds**, not only on the next tool call / `atexit`. Add a lightweight
+periodic flusher to `LogShipper` for long-lived clients:
+- A small background flush (e.g. a daemon thread or an asyncio task owned by the
+  MCP server) that drains the deque to the daemon every ~2 s while the process
+  lives. Keep the existing on-`connect()` / on-`close()` flushes.
+- It must never block the hot path and must fall back to `AtomicAppendLog` on a
+  send failure exactly like the synchronous flush. Short-lived clients (hooks,
+  CLI, detached playback) exit fast and do not need it — gate the flusher to the
+  long-lived server role so a hook doesn't spawn a thread it never uses.
+- Clean shutdown: the flusher stops and does a final drain on `close()`/`atexit`.
+
+**D3 — RATIFIED** (provider-selection INFO, deduplicated per distinct decision).
+**D4 — RATIFIED** (best-effort rename-on-oversize rotation for the append sinks).
+**D6 — RATIFIED: no Z model.** Leader concurs with §2.5 — a stateless 2-state
+per-record I/O selector with no cross-transition invariant; the observed Program
+machine is already modeled in `docs/audio-programs.tex`. Adding log-line observers
+does not change that state space. No `/z-spec` ceremony for this unit.
+
+**D5 — AMENDED: a configurable local log level (the "humble option").** Default
+stays quiet; a user raises verbosity only when debugging.
+- Add a `log_level` config key to `config.py` (implementer chooses the
+  `DURABLE_KEYS`/`EPHEMERAL_KEYS` routing and states why; a debug toggle a user
+  flips "when needed" leans ephemeral/`vox.local.md`, but durable is acceptable if
+  it reads more naturally). **Default absent → INFO** (the quiet, plain-sentence
+  level). Accept at least `info` and `debug`.
+- `configure_client_logging` and `configure_daemon_logging` read `log_level` and
+  set the handler/root level accordingly (generalizing the existing `verbose`
+  param — `--verbose` on the CLI is equivalent to a one-shot `debug`). Client
+  processes (hooks, CLI, detached) re-read config each run, so a level change
+  applies to them immediately; the daemon reads it at startup, so a running
+  daemon picks up a change on `vox daemon restart` (document this — do NOT build a
+  live-reload channel; most DEBUG detail the operator wants is client-side
+  anyway: the config-absent hook line, per-call dumps, transport lines).
+- **Config-absent hook line stays DEBUG** (§4 row unchanged): hidden at the
+  default INFO level, visible once the user raises `log_level` to `debug`. This
+  satisfies both halves of the thesis — no line on every hook in every non-vox
+  repo by default, but fully discoverable when needed.
+- Add a **humble setter**: extend the `/vox` command family and the `vox` CLI with
+  a `log` sub-action (e.g. `/vox log debug` / `/vox log info`, and the CLI
+  equivalent). Keep it low-key in help text — a debugging aid, not a headline
+  feature. `mic:status` should report the current `log_level` so it is
+  discoverable.
+
+**Leader review findings — REQUIRED in implementation (not optional):**
+- **Finding A — framing-interleave test.** Log frames now share the `/ws` socket
+  with real RPCs (flushed on connect, before the request frame, and now
+  periodically by D2's flusher). Add a test proving **a real tool/RPC call still
+  receives its correct response when N log frames are buffered and flushed on the
+  same connection** — including a mid-life periodic flush landing between RPCs.
+  The §9 plan proves log properties but never proves the RPC path is unharmed;
+  that is the one place a bug corrupts a real request, not just a log line.
+- **Finding B — connection-lifecycle + vibe_trace health.** Verify the actual
+  `VoxClientSync`/`_VoxdTransport` connection model (per-call vs persistent) and
+  make the flush cadence (on-connect / on-close / periodic) match it; document
+  the real cadence in code. Separately, the `VibeTraceLog` → `AtomicAppendLog`
+  refactor MUST preserve the existing `mic:status` vibe-trace **health**
+  surfacing (`is_writable()`/`health()`); keep a test asserting `mic:status`
+  still reports vibe-trace sink health after the refactor.
+
+**CLAUDE.md is COO-owned** — the implementer must NOT edit `CLAUDE.md` (the stale
+`classify_signal` module-map fix); the leader makes that edit directly before the
+PR. Everything else in the §8 write-set stands.
