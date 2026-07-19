@@ -26,7 +26,7 @@ class _Unset:
     """Sentinel for "carry this field forward" in :meth:`ProgramState.with_updates`.
 
     Distinct from ``None`` because ``None`` is a legal value for the optional
-    fields (it clears them), so it cannot also mean "unchanged" (MAJOR-3).
+    fields (it clears them), so it cannot also mean "unchanged".
     """
 
     __slots__ = ()
@@ -159,7 +159,7 @@ class ProgramState:
 
     @property
     def ordered_pool(self) -> tuple[Part, ...]:
-        """Return the ready Parts sorted by intrinsic index (stable, MAJOR-1)."""
+        """Return the ready Parts sorted by intrinsic index (stable)."""
         return tuple(sorted(self._pool, key=lambda part: part.index))
 
     @property
@@ -204,7 +204,7 @@ class ProgramState:
 
         The shared spine of the six disjunctive transitions. Callers override
         ``filling`` afterwards where the model requires it -- ``StartFromDisk``
-        keeps the fill inactive (finding #2), ``Recover`` forces it on.
+        keeps the fill inactive, ``Recover`` forces it on.
         """
         if not pool:
             return Activation(mode=Mode.GENERATING_FIRST, filling=True, playing=None)
@@ -228,7 +228,7 @@ class ProgramState:
         """Return a re-validated successor with the named fields replaced.
 
         Every parameter carries its field's exact type, so each call site is
-        type-checked (MAJOR-3); ``format`` is never a parameter because it is
+        type-checked; ``format`` is never a parameter because it is
         invariant across all transitions. Unnamed fields carry forward.
         """
         return ProgramState(

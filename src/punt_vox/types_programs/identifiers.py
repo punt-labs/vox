@@ -1,8 +1,8 @@
 """Identity, reference, and diagnostic value objects for the Programs domain.
 
-Holds the Program name, the resolved ``playlist:2`` :class:`PartRef` (finding
-#7), and the Z ``[REASON]`` diagnostic -- the addressing and diagnostic
-vocabulary shared across the domain.
+Holds the Program name, the resolved ``playlist:2`` :class:`PartRef`, and the
+Z ``[REASON]`` diagnostic -- the addressing and diagnostic vocabulary shared
+across the domain.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ class PartRef:
 
     The ``index`` addresses the Program's Parts ordered by intrinsic index;
     resolving it to a ``Part`` -- and reporting an out-of-range index -- is a
-    surface concern the CLI owns before any transition runs (finding #7), not
+    surface concern the CLI owns before any transition runs, not
     modelled state.
     """
 

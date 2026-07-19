@@ -1,10 +1,10 @@
 """The playlist Producer: ElevenLabs music generation with varied track lengths.
 
-``MusicProducer`` is the Phase-1 ``Producer``. It wraps an injected
+``MusicProducer`` is the playlist ``Producer``. It wraps an injected
 ``MusicProvider`` (the existing ``ElevenLabsMusicProvider`` in production, a fake
 in tests) and maps the provider's failures onto the two ``Producer`` error
-types. It folds in vox-y3om: instead of the hard-wired 120s, a ``LengthPolicy``
-samples a realistic, slightly-randomized length per Part.
+types. It also varies track length: instead of the hard-wired 120s, a
+``LengthPolicy`` samples a realistic, slightly-randomized length per Part.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
 
 @final
 class LengthPolicy:
-    """Sample a realistic, slightly-randomized Part length in milliseconds (vox-y3om).
+    """Sample a realistic, slightly-randomized Part length in milliseconds.
 
     Draws a uniform length in the closed range ``[min_ms, max_ms]``; the
     playlist default is 90--210s. Replaces the hard-wired 120s so a pool of

@@ -1,13 +1,13 @@
 """The transient-error backoff sub-machine -- the Z ``retrying``/``failed`` transitions.
 
 :class:`RetryMachine` wraps one :class:`ProgramState` and computes the successor
-for each transient-error transition (the resilience states carried over from
-``vox-ig52``). It never mutates: every method re-validates the successor through
+for each transient-error transition -- the retrying and failed resilience
+states. It never mutates: every method re-validates the successor through
 :meth:`ProgramState.with_updates` and returns it for the single writer to store.
 
 The empty-pool guard on :meth:`retry_exhausted` and the non-empty self-loop of
-:meth:`retry_capped` are what confine hard-failure to the empty-pool case
-(finding #4): a Program with a non-empty pool tolerates transient errors
+:meth:`retry_capped` are what confine hard-failure to the empty-pool case:
+a Program with a non-empty pool tolerates transient errors
 indefinitely, recovering via :meth:`recover` while playback continues.
 """
 
@@ -97,7 +97,7 @@ class RetryMachine:
     def retry_capped(self, reason: Reason) -> ProgramState:
         """Tolerate a transient at the cap on a non-empty pool (Z ``RetryCapped``).
 
-        A non-empty pool never hard-fails (finding #4): at the cap a further
+        A non-empty pool never hard-fails: at the cap a further
         transient error neither exhausts (that needs an empty pool) nor climbs
         (``retry_fails`` guards below the cap), so the retry self-loops with
         ``attempts`` pinned and playback untouched -- it "plays on and keeps

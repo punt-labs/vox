@@ -93,7 +93,7 @@ class DaemonHealth:
         The ``pid`` field is used by ``vox daemon restart`` to confirm the
         daemon has come back up as a fresh process. The ``daemon_version``
         field is used by ``vox doctor`` to warn when the running daemon
-        does not match the wheel installed on disk (vox-nmb). Neither is
+        does not match the wheel installed on disk. Neither is
         exposed on the unauthenticated HTTP ``/health`` route -- version
         info is a fingerprinting aid for targeted exploitation, and the
         minimal payload stays minimal.

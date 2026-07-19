@@ -3,8 +3,8 @@
 The daemon plays exactly one source at a time, and that source is a union: a
 generate-mode :class:`Program` or a consume-only :class:`SelectionPlayback`. Both
 satisfy this narrowed structural interface, so the single-writer channel and the
-playback loop drive either without narrowing on the concrete type (risk R1). The
-protocol carries no ``filling`` and no ``locate`` (findings #1, #2): path
+playback loop drive either without narrowing on the concrete type. The
+protocol carries no ``filling`` and no ``locate``: path
 resolution is the persistence seam's job, and "wants generation" is the one
 generation signal the fill reconciler reads.
 """

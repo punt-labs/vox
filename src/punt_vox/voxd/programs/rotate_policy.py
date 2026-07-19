@@ -1,10 +1,10 @@
-"""The playlist advance strategy -- ``RotatePolicy`` (finding #1).
+"""The playlist advance strategy -- ``RotatePolicy``.
 
-Realises the Phase-1 playlist ``PlaybackPolicy``: shuffle-advance the pool,
+Realises the playlist ``PlaybackPolicy``: shuffle-advance the pool,
 avoiding an immediate repeat when more than one Part is ready, and replaying the
 sole Part when only one is. It is today's ``TrackPool.pick_next`` promoted to a
 strategy. A playlist has no end, so it never returns ``COMPLETE``; a finite
-format (podcast/audiobook) supplies its own sequential policy in a later phase.
+format (podcast/audiobook) supplies its own sequential policy.
 """
 
 from __future__ import annotations

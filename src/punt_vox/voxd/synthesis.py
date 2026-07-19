@@ -273,8 +273,8 @@ class SynthesisPipeline:
         raises on failure. ``cached=True`` marks an on-disk cache hit (no
         TTS call); ``cached=False`` marks fresh audio -- the observability
         signal forwarded to callers. A per-call ``api_key`` bypasses the
-        cache on lookup and store (vox-a3e billing isolation); the
-        anonymous path uses the MD5-keyed cache. See ``punt_vox.cache``.
+        cache on lookup and store (billing isolation); the anonymous path
+        uses the MD5-keyed cache. See ``punt_vox.cache``.
         """
         voice = spec.voice
         provider_name = spec.provider or ""
