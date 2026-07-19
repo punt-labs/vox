@@ -197,9 +197,7 @@ class SynthesizeHandler(MessageHandler):
     ) -> None:
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
         try:
-            outcome = await self._synthesis.synthesize_to_file(
-                req.text, req.spec, request_id=req.request_id
-            )
+            outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
             logger.exception("Synthesis failed for id=%r", req.request_id)
@@ -265,9 +263,7 @@ class RecordHandler(MessageHandler):
         )
 
         try:
-            outcome = await self._synthesis.synthesize_to_file(
-                req.text, req.spec, request_id=req.request_id
-            )
+            outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
         except Exception as exc:
             logger.exception("Record synthesis failed for id=%r", req.request_id)
             await req.error(str(exc))

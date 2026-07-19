@@ -67,7 +67,7 @@ class WebSocketRouter:
 
         await websocket.accept()
         self._client_count += 1
-        logger.info("Client connected (total: %d)", self._client_count)
+        logger.debug("Client connected (total: %d)", self._client_count)
 
         try:
             while True:
@@ -110,7 +110,7 @@ class WebSocketRouter:
             logger.exception("WebSocket error")
         finally:
             self._client_count -= 1
-            logger.info("Client disconnected (total: %d)", self._client_count)
+            logger.debug("Client disconnected (total: %d)", self._client_count)
 
     # -- Auth ------------------------------------------------------------------
 
