@@ -2,9 +2,9 @@
 
 Reads the daemon's live :class:`ProgramStatus` on every call and returns it,
 never a cached copy: a client asking "what is playing?" gets exactly what the
-daemon holds, so no server-side shadow can drift. Reading a
-log is not a strategy for a client -- both failure surfaces (program-level and
-per-Part) cross the wire here.
+daemon holds, so no server-side shadow can drift. Reading a log is not a
+strategy for a client -- both failure surfaces (program-level and per-Part)
+cross the wire here.
 """
 
 from __future__ import annotations

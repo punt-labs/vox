@@ -9,14 +9,14 @@ ambient provider credential from ``keys.env``. Per-call provider
 credential overrides (single-user multi-key billing isolation)
 bypass this module entirely at the voxd call site: see the cache
 guards in ``SynthesisPipeline.synthesize_to_file`` in
-``src/punt_vox/voxd/synthesis.py``. That
-design keeps all sensitive credential material out of any digest this
-module computes. CodeQL's ``py/weak-sensitive-data-hashing`` rule
-(correctly) flags any regular cryptographic hash — MD5, SHA-1,
-SHA-256, and friends — as inappropriate for hashing password-class
-input, and the only lint-clean alternatives are password KDFs
-(Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts) whose
-per-call cost is unacceptable for a cache filename computation.
+``src/punt_vox/voxd/synthesis.py``. That design keeps all sensitive
+credential material out of any digest this module computes. CodeQL's
+``py/weak-sensitive-data-hashing`` rule (correctly) flags any regular
+cryptographic hash — MD5, SHA-1, SHA-256, and friends — as inappropriate
+for hashing password-class input, and the only lint-clean alternatives
+are password KDFs (Argon2, scrypt, bcrypt, PBKDF2 with high iteration
+counts) whose per-call cost is unacceptable for a cache filename
+computation.
 
 The bypass also closes a correctness hazard: a per-call billing scope
 that accepts cached bytes from another scope violates the whole point of
