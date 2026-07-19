@@ -7,7 +7,7 @@ bounded deque owned by the module-singleton :class:`LogShipper`. CPython
 ``deque.append``/``popleft`` are atomic, so ``emit`` needs no drain lock.
 
 Draining is a different matter. The long-lived server has *two* concurrent
-drainers -- the D2 background flusher on its own thread and a tool call's
+drainers -- the background flusher on its own thread and a tool call's
 worker-thread connection -- so every drain (``flush``, ``drain_to_fallback``,
 their shared helpers, and the overflow-marker read/reset) is serialized by one
 ``threading.Lock``. Without it, two threads snapshot ``len(buffer)`` and then

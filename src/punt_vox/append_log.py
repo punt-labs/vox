@@ -12,7 +12,7 @@ fallback for records that could not be shipped through ``logging``, so calling
 ``logger.*`` on an ``OSError`` would recurse back into the client log handler.
 On failure it writes a best-effort note to ``sys.__stderr__`` and returns.
 
-Rotation is best-effort rename-on-oversize (Open Decision D4): before an append
+Rotation is best-effort rename-on-oversize: before an append
 that would cross ``max_bytes`` the chain shifts ``.N-1 -> .N``. A rare
 double-rename race under concurrent writers is bounded and never for these
 low-volume sinks (``vibe-trace.log`` reached 62 KB over the project's life); a

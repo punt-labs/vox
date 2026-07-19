@@ -335,7 +335,7 @@ _program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
 
 # Bound (not a discarded ``PeriodicFlusher().start()``) so ``run_server`` can stop
-# it and register its final drain -- the D2 durable-within-seconds log shipper.
+# it and register its final drain -- the durable-within-seconds log shipper.
 _log_flusher: PeriodicFlusher = PeriodicFlusher()
 
 

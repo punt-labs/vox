@@ -183,7 +183,7 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
     """
     if not wait:
         # Fire-and-forget: spawn a detached process so the hook returns
-        # immediately.  Per hooks.md §4: side-effect hooks must not block.
+        # immediately -- a side-effect hook must not block the event it observes.
         import subprocess as _sp
 
         try:
