@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`mcp` SDK bumped 1.27.1 → 1.28.1, resolving three High Dependabot alerts (vox-uujq)**: the direct `mcp` dependency (`pyproject.toml`) is repinned to `>=1.28.1` and `uv.lock` is re-resolved (`fastmcp` stays at 3.2.0 — its own `mcp` requirement was already satisfied by the new floor). Exposure verified against vox's actual runtime paths, not assumed from the advisory text: (1) **#35** (GHSA-hvrp-rf83-w775, experimental task handlers letting one client read/cancel another's tasks, fixed in 1.27.2) — **not exposed**; nothing in the tree calls `server.experimental.enable_tasks()` (`grep -r enable_tasks` is empty). (2) **#37** (GHSA-vj7q-gjh5-988w, `mcp.server.websocket.websocket_server` accepting WS handshakes with no Host/Origin check, fixed in 1.28.1) — **not exposed**; `voxd`'s `/ws` endpoint (`src/punt_vox/voxd/daemon.py`, `src/punt_vox/voxd/router.py`) is a Starlette `WebSocketRoute` on its own ASGI app, never the SDK's deprecated websocket transport. (3) **#36** (GHSA-jpw9-pfvf-9f58, SSE/Streamable-HTTP session lookup by ID alone, no principal check, fixed in 1.27.2) — **not exposed**; the mic MCP server (`src/punt_vox/server.py`) runs `mcp.run(transport="stdio")` only — no SSE or Streamable HTTP transport is wired up anywhere. The bump is still required: Dependabot flags the dependency regardless of whether the vulnerable code path is reachable, and the pin floor now excludes the vulnerable releases outright. Closes vox-uujq.
+
 ## [4.12.4] - 2026-07-18
 
 ### Security
