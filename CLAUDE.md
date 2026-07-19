@@ -39,7 +39,7 @@ This separation means: daemon bugs are about audio, providers, caching, and syst
 | `voxd.py` | Audio daemon. WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew on macOS, FHS on Linux). |
 | `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync). Lightweight — stdlib + websockets only. |
 | `config.py` | Two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. |
-| `hooks.py` | Hook handlers for Claude Code events. Call `voxd` via `VoxClientSync`. `classify_signal()`, `resolve_tags_from_signals()`. |
+| `hooks.py` | Hook handlers for Claude Code events — per-event dispatch (`handle_stop`, `handle_notification`, `handle_vibe_nudge`, `handle_pre_compact`, `handle_user_prompt_submit`, `handle_subagent_start`/`stop`, `handle_session_end`). Thin client of `voxd` via `VoxClientSync`. |
 | `server.py` | FastMCP server (key: `mic`) — thin client of `voxd`. Session state in memory (`SessionState` dataclass). |
 | `providers/` | Provider registry + ElevenLabs, OpenAI, Polly, macOS `say`, Linux `espeak-ng`. Each provider is the only file importing its SDK. |
 | `cache.py` | MP3 cache for quip phrases. Content-addressed by (text, voice, provider) via MD5. Runs inside `voxd`. |
@@ -156,7 +156,7 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 - **Mock Polly responses need valid MP3 bytes.** pydub hands files to ffmpeg which rejects fake data. Use `AudioSegment.silent(duration=50)` in fixtures — never empty bytes or random data.
 - **Use `side_effect=lambda` instead of `return_value`** for fresh mocks per call. `return_value` shares the same object across calls, causing aliasing bugs in tests that mutate results.
 - **Every provider must test both success and auth failure paths.** A provider that can't authenticate should raise a clear error, not silently fall back.
-- **Hook tests must verify signal classification.** The `classify_signal()` function in `hooks.py` determines what event type a Bash command represents. Misclassification means the wrong audio plays — test the classification logic explicitly.
+- **Hook tests must verify per-event dispatch.** `hooks.py` routes each Claude Code event (stop, notification, vibe-nudge, subagent start/stop, session-end, …) to its handler, which emits the matching chime/speech. A wrong handler, a swallowed malformed payload, or a missed config-absent case means the wrong audio (or none) — test the per-event dispatch and the malformed-payload/config-absent paths explicitly.
 
 ## Formal Modeling (z-spec)
 
