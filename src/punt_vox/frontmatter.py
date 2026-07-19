@@ -114,9 +114,12 @@ class Frontmatter:
                 break
 
         self._path.write_text(text, encoding="utf-8")
+        # One INFO summary per write; the per-field detail drops to DEBUG so a
+        # multi-field change (e.g. a vibe set) is a single line, not one per field.
         for key, value in updates.items():
             shown = f"<{len(value)} chars>" if key in _REDACTED_KEYS else repr(value)
-            logger.info("Config: set %s = %s in %s", key, shown, self._path)
+            logger.debug("Config: set %s = %s in %s", key, shown, self._path)
+        logger.info("config: updated %d field(s) in %s", len(updates), self._path.name)
 
     def _read_text(self) -> str | None:
         """Return the file's text, or ``None`` when missing or unreadable.
