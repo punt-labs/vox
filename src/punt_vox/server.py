@@ -858,6 +858,7 @@ def status() -> str:
         "vibe_tags": _session.vibe_tags,
         "style": _music_pref.style,
         "vibe_trace": VibeTraceLog.default().health(),
+        "log_level": ConfigStore(_find_config_dir()).read().log_level,
     }
     try:
         program_status = _program_tools.status()

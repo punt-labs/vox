@@ -1137,6 +1137,15 @@ class TestStatusTool:
         assert health["path"] == str(tmp_path / "vibe-trace.log")
         assert health["writable"] is True
 
+    def test_reports_log_level(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """status surfaces the current log_level so /vox log is discoverable (D5)."""
+        (tmp_path / "vox.local.md").write_text('---\nlog_level: "debug"\n---\n')
+        monkeypatch.setattr("punt_vox.server._find_config_dir", lambda: tmp_path)
+
+        assert json.loads(status())["log_level"] == "debug"
+
     def test_reports_vibe_trace_unwritable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

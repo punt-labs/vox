@@ -1087,6 +1087,33 @@ class TestSpeakCommand:
         assert "chimes" in result.output.lower()
 
 
+class TestLogCommand:
+    """`vox log debug|info` writes the log_level config key (D5 humble setter)."""
+
+    def test_log_debug_persists(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+        import punt_vox.config as cfg
+
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+
+        result = CliRunner().invoke(app, ["log", "debug"])
+        assert result.exit_code == 0
+        assert "debug logging on" in result.output.lower()
+        assert cfg.ConfigStore(tmp_path).read().log_level == "debug"
+
+    def test_log_rejects_unknown_level(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        import punt_vox.config as cfg
+
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+
+        result = CliRunner().invoke(app, ["log", "loud"])
+        assert result.exit_code == 1
+        assert "info or debug" in result.output.lower()
+
+
 class TestVoiceCommand:
     def test_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg

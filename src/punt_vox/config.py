@@ -77,6 +77,7 @@ class VoxConfig:
     model: str | None
     vibe: str | None
     vibe_tags: str | None
+    log_level: str = "info"  # "info" | "debug" -- the quiet default is info
     vibe_nudge_turns: int = 0
     repo_name: str | None = None
 
@@ -111,6 +112,12 @@ class VoxConfig:
             )
             vibe_mode = "auto"
 
+        # An absent or unrecognised log_level is the quiet default; only "debug"
+        # raises verbosity, so a garbled value never accidentally silences INFO.
+        log_level = fields.get("log_level", "info").lower()
+        if log_level not in ("info", "debug"):
+            log_level = "info"
+
         return cls(
             notify=notify,
             speak=speak,
@@ -120,6 +127,7 @@ class VoxConfig:
             model=fields.get("model"),
             vibe=fields.get("vibe"),
             vibe_tags=fields.get("vibe_tags"),
+            log_level=log_level,
             vibe_nudge_turns=cls._parse_int(fields.get("vibe_nudge_turns")),
             repo_name=repo_name,
         )
