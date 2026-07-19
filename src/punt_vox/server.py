@@ -23,6 +23,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
+from punt_vox.log_flush import PeriodicFlusher
 from punt_vox.logging_config import configure_client_logging
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.recording import RecordingSink
@@ -879,6 +880,10 @@ def run_server() -> None:
     global _session
 
     configure_client_logging(role="mcp")
+    # The server is long-lived, so drain buffered log records to voxd every few
+    # seconds (not only on the next tool call / atexit). Gated to this role: a
+    # short-lived hook/CLI never spawns a thread it would exit before using.
+    PeriodicFlusher().start()
     logger.info("Starting vox MCP server (mic)")
 
     # Seed session config from per-repo config if it exists.

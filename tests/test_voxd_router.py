@@ -3,15 +3,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, cast, final
 from unittest.mock import MagicMock
 
 import pytest
 
+from punt_vox.log_wire import LogRecordWire
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.log_sink import LogHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
@@ -64,6 +67,7 @@ def _make_router(
         ),
         "voices": VoicesHandler(),
         "health": HealthHandler(health=hl),
+        "log": LogHandler(),
         **programs.handlers(),
     }
     return WebSocketRouter(
@@ -210,6 +214,7 @@ class TestHandlerRegistration:
             "record",
             "voices",
             "health",
+            "log",
             "program_on",
             "program_off",
             "program_next",
@@ -218,3 +223,92 @@ class TestHandlerRegistration:
             "program_status",
         }
         assert set(router.handlers.keys()) == expected
+
+
+@final
+class _ScriptedWs:
+    """A WebSocket that replays scripted frames and records every response.
+
+    Drives ``handle_connection`` end to end: it hands the router each frame in
+    order, then raises ``WebSocketDisconnect`` to end the receive loop, capturing
+    exactly which frames produced a response.
+    """
+
+    def __init__(self, frames: list[str]) -> None:
+        self._frames = iter(frames)
+        self.query_params: dict[str, str] = {}
+        self.sent: list[dict[str, object]] = []
+        from starlette.websockets import WebSocketState
+
+        self.application_state = WebSocketState.CONNECTED
+
+    async def accept(self) -> None:
+        return None
+
+    async def close(self, code: int = 1000) -> None:
+        return None
+
+    async def receive_text(self) -> str:
+        from starlette.websockets import WebSocketDisconnect
+
+        try:
+            return next(self._frames)
+        except StopIteration as exc:
+            raise WebSocketDisconnect(1000) from exc
+
+    async def send_json(self, data: dict[str, object]) -> None:
+        self.sent.append(data)
+
+
+class TestLogFrameInterleave:
+    """A shipped log frame shares the socket with real RPCs and must not corrupt them.
+
+    Finding A: log frames are flushed on the same connection (on connect, and by
+    the periodic flusher between calls). These prove a real RPC still gets its own
+    correct response despite preceding/interleaved log frames.
+    """
+
+    def _log_frame(self, message: str) -> str:
+        wire = LogRecordWire(
+            role="mcp",
+            name="punt_vox.server",
+            level="INFO",
+            created=0.0,
+            message=message,
+        )
+        return json.dumps(wire.to_wire())
+
+    def _rpc_frame(self, rid: str) -> str:
+        return json.dumps({"type": "health", "id": rid})
+
+    @pytest.mark.asyncio
+    async def test_rpc_response_unharmed_by_leading_log_frames(self) -> None:
+        """N buffered log frames flushed before a health RPC -> one correct reply."""
+        router = _make_router()
+        frames = [
+            self._log_frame("buffered line one"),
+            self._log_frame("buffered line two"),
+            self._log_frame("buffered line three"),
+            self._rpc_frame("h1"),
+        ]
+        ws = _ScriptedWs(frames)
+        await router.handle_connection(cast("object", ws))  # type: ignore[arg-type]
+
+        assert len(ws.sent) == 1  # only the RPC replied; log frames are send-only
+        assert ws.sent[0]["type"] == "health"
+
+    @pytest.mark.asyncio
+    async def test_periodic_flush_between_rpcs_preserves_both_responses(self) -> None:
+        """A flush landing between two RPCs leaves each reply correct and in order."""
+        router = _make_router()
+        frames = [
+            self._rpc_frame("first"),
+            self._log_frame("periodic flush mid-life"),
+            self._log_frame("another periodic line"),
+            self._rpc_frame("second"),
+        ]
+        ws = _ScriptedWs(frames)
+        await router.handle_connection(cast("object", ws))  # type: ignore[arg-type]
+
+        assert len(ws.sent) == 2  # exactly the two RPCs replied
+        assert [r["type"] for r in ws.sent] == ["health", "health"]
