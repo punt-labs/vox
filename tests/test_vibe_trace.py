@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import multiprocessing
 import os
 import re
@@ -102,7 +101,7 @@ class TestVibeTraceLog:
         def deny_chmod(_self: object, _mode: int) -> None:
             raise PermissionError(1, "Operation not permitted")
 
-        monkeypatch.setattr("punt_vox.vibe_trace.Path.chmod", deny_chmod)
+        monkeypatch.setattr("punt_vox.private_state.Path.chmod", deny_chmod)
 
         trace.record("music off")
 
@@ -113,14 +112,13 @@ class TestVibeTraceLog:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A short ``os.write`` is surfaced (logged), not looped into a torn append.
+        """A short write is attempted exactly once, never looped into a torn append.
 
-        Atomicity beats completeness here: re-issuing the remainder would be a
-        second ``O_APPEND`` a concurrent writer could split. So a short count --
-        only ``ENOSPC`` in practice -- is raised, routed to ``record``'s error
-        handler, and logged. The write is attempted exactly once, never looped.
+        Atomicity beats completeness: re-issuing the remainder would be a second
+        ``O_APPEND`` a concurrent writer could split. The composed sink writes once
+        and swallows the short count to ``sys.__stderr__`` (never through logging,
+        which would recurse into the client log handler).
         """
         real_write = os.write
         calls = {"n": 0}
@@ -129,13 +127,10 @@ class TestVibeTraceLog:
             calls["n"] += 1
             return real_write(fd, bytes(data)[:5])  # every write is short
 
-        monkeypatch.setattr("punt_vox.vibe_trace.os.write", always_short)
-        trace = VibeTraceLog(tmp_path / "vibe-trace.log")
-        with caplog.at_level(logging.WARNING, logger="punt_vox.vibe_trace"):
-            trace.record("music off")
+        monkeypatch.setattr("punt_vox.append_log.os.write", always_short)
+        VibeTraceLog(tmp_path / "vibe-trace.log").record("music off")
 
         assert calls["n"] == 1  # one atomic append -- no remainder loop
-        assert "cannot append" in caplog.text  # surfaced, not silent
 
     def test_record_sanitizes_control_chars_to_one_line(self, tmp_path: Path) -> None:
         """A style/name smuggling ``\\n``/``\\r``/a control char stays one line.
@@ -281,7 +276,7 @@ class TestVibeTraceLog:
         def deny(_path: object, _mode: int) -> bool:
             raise PermissionError(13, "Permission denied")
 
-        monkeypatch.setattr("punt_vox.vibe_trace.os.access", deny)
+        monkeypatch.setattr("punt_vox.append_log.os.access", deny)
         assert trace.is_writable() is False
 
     def test_health_survives_probe_oserror(
@@ -290,10 +285,10 @@ class TestVibeTraceLog:
         """``health`` -- the status-API surface -- never propagates a probe error."""
         trace = VibeTraceLog(tmp_path / "vibe-trace.log")
 
-        def blow_up(_self: object) -> bool:
+        def blow_up(_path: object, _mode: int) -> bool:
             raise OSError(5, "I/O error")
 
-        monkeypatch.setattr("punt_vox.vibe_trace.VibeTraceLog._probe_writable", blow_up)
+        monkeypatch.setattr("punt_vox.append_log.os.access", blow_up)
         assert trace.health() == {
             "path": str(tmp_path / "vibe-trace.log"),
             "writable": False,
