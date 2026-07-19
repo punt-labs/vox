@@ -127,31 +127,41 @@ class ProviderRegistry:
         system fallback (say on macOS, espeak on Linux). The INFO decision line
         is deduplicated -- a stable choice logs once per process, not per call.
         """
-        choice, reason = self._resolve_choice()
+        choice, reason, detected = self._resolve_choice()
+        # Dedup BOTH the INFO decision line and the no-provider WARNING: emit only
+        # when the outcome changes from the last logged one, so a long-lived daemon
+        # logs ~1 line per distinct outcome, not one per call.
         if choice != self._last_logged:
-            logger.info("provider: auto-detected %s (%s)", choice, reason)
+            if detected:
+                logger.info("provider: auto-detected %s (%s)", choice, reason)
+            else:
+                logger.warning("provider: none detected, falling back to %s", choice)
             self._last_logged = choice
         return choice
 
-    def _resolve_choice(self) -> tuple[str, str]:
-        """Return the detected provider name paired with the reason it was chosen."""
+    def _resolve_choice(self) -> tuple[str, str, bool]:
+        """Return the provider name, the reason chosen, and whether one was detected.
+
+        The ``detected`` flag distinguishes a real detection (INFO) from the
+        no-provider fallback (WARNING) without either branch logging directly --
+        so the caller can deduplicate both the same way.
+        """
         env = os.environ.get("TTS_PROVIDER")
         if env:
-            return env.lower(), "TTS_PROVIDER env var"
+            return env.lower(), "TTS_PROVIDER env var", True
         if os.environ.get("ELEVENLABS_API_KEY"):
-            return "elevenlabs", "ELEVENLABS_API_KEY set"
+            return "elevenlabs", "ELEVENLABS_API_KEY set", True
         if os.environ.get("OPENAI_API_KEY"):
-            return "openai", "OPENAI_API_KEY set"
+            return "openai", "OPENAI_API_KEY set", True
         if self._has_aws_credentials():
-            return "polly", "AWS credentials valid"
+            return "polly", "AWS credentials valid", True
         if platform.system() == "Darwin" and shutil.which("say"):
-            return "say", "system fallback (macOS)"
+            return "say", "system fallback (macOS)", True
         if platform.system() == "Linux" and (
             shutil.which("espeak-ng") or shutil.which("espeak")
         ):
-            return "espeak", "system fallback (Linux)"
-        logger.warning("No TTS provider detected; falling back to polly")
-        return "polly", "no provider detected"
+            return "espeak", "system fallback (Linux)", True
+        return "polly", "no provider detected", False
 
     @staticmethod
     def _has_aws_credentials() -> bool:

@@ -1,4 +1,4 @@
-"""Tests for ProviderRegistry auto-detect logging (§4 gap)."""
+"""Tests for ProviderRegistry auto-detect logging (deduplicated decision line)."""
 
 from __future__ import annotations
 
@@ -42,3 +42,23 @@ class TestAutoDetectLogging:
             registry.auto_detect()
         debugs = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
         assert any("aws" in m and "polly not chosen" in m for m in debugs)
+
+    def test_no_provider_warning_is_deduped(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The no-provider fallback WARNING logs once per outcome, not per call."""
+        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
+            monkeypatch.delenv(key, raising=False)
+
+        def _no_binary(_name: str, *_a: object, **_k: object) -> str | None:
+            return None
+
+        monkeypatch.setattr("punt_vox.providers.shutil.which", _no_binary)
+        registry = ProviderRegistry()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.providers"):
+            for _ in range(3):  # a long-lived daemon would repeat this
+                assert registry.auto_detect() == "polly"
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert warnings == ["provider: none detected, falling back to polly"]

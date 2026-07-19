@@ -292,8 +292,10 @@ class SynthesisPipeline:
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
+                # "served from cache", not "synthesized" -- no synthesis work ran,
+                # so an operator can tell cache reuse from real synthesis.
                 logger.info(
-                    "synthesized %d chars with %s (cache hit)",
+                    "served %d chars from cache (%s)",
                     len(text),
                     provider_name or "system",
                 )
