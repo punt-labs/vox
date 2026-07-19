@@ -16,17 +16,28 @@ second *line*.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self, get_args
 
 if TYPE_CHECKING:
     import logging
 
-__all__ = ["LOG_DATE_FORMAT", "LOG_FORMAT", "LOG_MESSAGE_TYPE", "LogRecordWire"]
+__all__ = [
+    "LOG_DATE_FORMAT",
+    "LOG_FORMAT",
+    "LOG_MESSAGE_TYPE",
+    "LogRecordWire",
+    "Role",
+]
 
 LOG_MESSAGE_TYPE = "log"
+
+# Which client process shipped a frame. Defined here (the wire schema) so both the
+# sender's role stamp and the receiver's role validation read one source of truth.
+Role = Literal["hook", "mcp", "cli", "playback"]
 
 # The one line format both the daemon file handler and the client fallback use, so
 # a shipped line and a fallback line grep identically.
@@ -34,6 +45,11 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _STRING_FIELDS = ("role", "name", "level", "message")
+_VALID_ROLES: frozenset[str] = frozenset(get_args(Role))
+# Bound ``created`` to a sane epoch window: an out-of-range or non-finite value
+# makes the daemon's ``time.localtime`` raise, silently dropping the record.
+_MIN_CREATED = 0.0
+_MAX_CREATED = 4_102_444_800.0  # 2100-01-01 UTC
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,16 +93,23 @@ class LogRecordWire:
                 msg = f"log frame field {field!r} must be a string, got {got}"
                 raise ValueError(msg)
             values[field] = value
+        if values["role"] not in _VALID_ROLES:
+            msg = f"log frame field 'role' is not a known role: {values['role']!r}"
+            raise ValueError(msg)
         created = raw.get("created")
         if isinstance(created, bool) or not isinstance(created, int | float):
             got = type(created).__name__
             msg = f"log frame field 'created' must be a number, got {got}"
             raise ValueError(msg)
+        created = float(created)
+        if not math.isfinite(created) or not _MIN_CREATED <= created <= _MAX_CREATED:
+            msg = f"log frame field 'created' out of range: {created!r}"
+            raise ValueError(msg)
         return cls(
             role=values["role"],
             name=values["name"],
             level=values["level"],
-            created=float(created),
+            created=created,
             message=values["message"],
         )
 

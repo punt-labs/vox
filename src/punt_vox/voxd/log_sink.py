@@ -1,17 +1,20 @@
 """Receive a shipped client log frame and re-emit it into the daemon's ``vox.log``.
 
 The single-writer daemon owns the one durable log; every client ships its records
-here over the WebSocket. This handler reconstructs each frame as a role-tagged
-:class:`logging.LogRecord` and hands it to the matching logger, so a client line
-lands in ``vox.log`` beside the daemon's own -- one file, one writer, no
-multi-process rotation race.
+here over the WebSocket. This handler reconstructs each frame as a
+:class:`logging.LogRecord` and hands it to one fixed ``client`` logger, so a
+client line lands in ``vox.log`` beside the daemon's own -- one file, one writer,
+no multi-process rotation race.
 
-Two safety rules hold at this write boundary: the record is emitted with
-``args=None`` so an untrusted value can never be re-interpolated into a second
-record, and the shipped message is :data:`SANITIZER`-escaped before the file
-handler writes it, so a smuggled newline cannot forge a second physical line.
-A frame that fails to parse is refused with a metadata-only WARNING -- the field
-and type that were wrong, never the payload.
+Three safety rules hold at this authenticated write boundary. The record is
+emitted with ``args=None`` so an untrusted value can never be re-interpolated
+into a second record. It always uses the *fixed* ``client`` logger name -- never
+``getLogger(<untrusted-field>)`` -- so a client streaming unique names cannot grow
+the logger cache without bound; the origin (``role.name``) rides in the message
+instead. And the daemon file handler's :class:`SanitizingFormatter` escapes the
+*final* formatted line, so a newline or control byte in any field (the origin or
+the message) stays one physical line. A frame that fails to parse is refused with
+a metadata-only WARNING -- the field and type that were wrong, never the payload.
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.log_sanitize import SANITIZER
 from punt_vox.log_wire import LogRecordWire
 from punt_vox.voxd.types import MessageHandler
 
@@ -31,6 +33,7 @@ __all__ = ["LogHandler"]
 logger = logging.getLogger(__name__)
 
 _LEVELS = logging.getLevelNamesMapping()
+_CLIENT_LOGGER = "client"
 
 
 @final
@@ -55,22 +58,24 @@ class LogHandler(MessageHandler):
             # Metadata only -- the offending field and type, never the payload.
             logger.warning("rejected malformed log frame: %s", exc)
             return
-        logging.getLogger(wire.qualified_name).handle(self._reconstruct(wire))
+        logging.getLogger(_CLIENT_LOGGER).handle(self._reconstruct(wire))
 
     @staticmethod
     def _reconstruct(wire: LogRecordWire) -> logging.LogRecord:
-        """Build a role-tagged record: escaped message, ``args=None``, client time.
+        """Build a record on the fixed ``client`` logger, origin folded into the msg.
 
         ``args=None`` means ``getMessage`` returns the message verbatim (no second
-        interpolation); the escape closes the file-write line-forging gap; the
-        client's ``created`` preserves the original timestamp.
+        interpolation). The origin (``role.name``) rides in the message rather than
+        the logger name, so the logger cache never grows from an untrusted field.
+        The message is raw here; the file handler's :class:`SanitizingFormatter`
+        escapes the whole rendered line. The client's ``created`` is preserved.
         """
         record = logging.LogRecord(
-            name=wire.qualified_name,
+            name=_CLIENT_LOGGER,
             level=_LEVELS.get(wire.level, logging.INFO),
             pathname="",
             lineno=0,
-            msg=SANITIZER.escape(wire.message),
+            msg=f"{wire.role}.{wire.name}: {wire.message}",
             args=None,
             exc_info=None,
         )

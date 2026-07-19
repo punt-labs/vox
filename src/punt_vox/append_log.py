@@ -33,7 +33,9 @@ from punt_vox.private_state import PrivateState
 
 __all__ = ["AtomicAppendLog"]
 
-_OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+# ``O_NOFOLLOW`` refuses a symlink at the log path -- never legitimate, and a
+# redirect-through-symlink vector -- for parity with ``PrivateRotatingFileHandler``.
+_OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
 _MAX_BYTES = 5_242_880  # 5 MB
 _BACKUP_COUNT = 5
 

@@ -21,19 +21,16 @@ from __future__ import annotations
 import logging
 import logging.config
 from pathlib import Path
-from typing import Literal
 
 from punt_vox.config import ConfigStore, find_config_dir
 from punt_vox.log_handlers import PrivateRotatingFileHandler
-from punt_vox.log_wire import LOG_DATE_FORMAT, LOG_FORMAT
+from punt_vox.log_wire import LOG_DATE_FORMAT, LOG_FORMAT, Role
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.private_state import PrivateState
 
 __all__ = ["Role", "configure_client_logging", "configure_daemon_logging"]
 
 logger = logging.getLogger(__name__)
-
-Role = Literal["hook", "mcp", "cli", "playback"]
 
 _LOG_DIR = _paths_log_dir()
 _LOG_FILE = _LOG_DIR / "vox.log"
@@ -44,6 +41,9 @@ _BACKUP_COUNT = 5
 
 _FILE_HANDLER_FACTORY = "punt_vox.log_handlers.PrivateRotatingFileHandler.from_config"
 _SHIP_HANDLER_FACTORY = "punt_vox.log_ship.LogShipper.build_handler"
+# Escape the final formatted line so no field (a client-shipped name, a provider
+# error body) can forge a second physical line in vox.log.
+_FORMATTER_CLASS = "punt_vox.log_sanitize.SanitizingFormatter"
 
 # Third-party and mcp-framework loggers pinned to WARNING so vox owns the INFO
 # surface -- notably the 38x "Processing request of type CallToolRequest" noise.
@@ -75,7 +75,11 @@ def configure_daemon_logging() -> None:
             "version": 1,
             "disable_existing_loggers": False,
             "formatters": {
-                "standard": {"format": LOG_FORMAT, "datefmt": LOG_DATE_FORMAT},
+                "standard": {
+                    "class": _FORMATTER_CLASS,
+                    "format": LOG_FORMAT,
+                    "datefmt": LOG_DATE_FORMAT,
+                },
             },
             "handlers": {
                 "file": {

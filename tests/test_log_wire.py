@@ -65,6 +65,12 @@ class TestLogRecordWire:
             {"role": 3},  # non-string role
             {"created": "no"},  # non-numeric created
             {"created": True},  # bool is not a number
+            {"role": "unknown"},  # L2: not a known role
+            {"role": "hook\nFORGED"},  # L2: a forged newline in role is refused
+            {"created": float("inf")},  # L2: non-finite created
+            {"created": float("nan")},  # L2: nan created
+            {"created": -1.0},  # L2: below the sane epoch window
+            {"created": 9e18},  # L2: above the sane epoch window
         ],
     )
     def test_from_wire_raises_on_malformed(self, override: dict[str, object]) -> None:
@@ -80,6 +86,17 @@ class TestLogRecordWire:
             del raw["created"]
         with pytest.raises(ValueError, match="log frame field"):
             LogRecordWire.from_wire(raw)
+
+    def test_from_wire_accepts_every_known_role(self) -> None:
+        for role in ("hook", "mcp", "cli", "playback"):
+            frame: dict[str, object] = {
+                "role": role,
+                "name": "n",
+                "level": "INFO",
+                "created": 1.0,
+                "message": "m",
+            }
+            assert LogRecordWire.from_wire(frame).role == role
 
     def test_message_carries_raw_newline_for_the_sink_to_escape(self) -> None:
         """The wire holds the raw rendered text; escaping is each sink's job."""

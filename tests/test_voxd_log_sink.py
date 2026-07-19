@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from typing import TYPE_CHECKING
 
-from punt_vox.log_wire import LogRecordWire
+from punt_vox.log_sanitize import SanitizingFormatter
+from punt_vox.log_wire import LOG_DATE_FORMAT, LOG_FORMAT, LogRecordWire
 from punt_vox.voxd.log_sink import LogHandler
 
 if TYPE_CHECKING:
@@ -29,26 +31,45 @@ def _emit(frame: dict[str, object]) -> None:
 
 
 class TestLogHandler:
-    """The sink re-emits shipped frames into vox.log, refusing malformed ones."""
+    """The sink re-emits shipped frames onto the fixed ``client`` logger."""
 
     def test_shipped_message_not_reinterpolated(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A ``%s``/newline message is emitted verbatim (escaped), one physical line."""
-        with caplog.at_level(logging.DEBUG, logger="client.hook.punt_vox.hooks"):
-            _emit(_frame("100%s done\nforged INFO line"))
-        records = [r for r in caplog.records if r.name == "client.hook.punt_vox.hooks"]
+        """A ``%s`` message is emitted verbatim (args dropped), on the client logger."""
+        with caplog.at_level(logging.DEBUG, logger="client"):
+            _emit(_frame("100%s done"))
+        records = [r for r in caplog.records if r.name == "client"]
         assert len(records) == 1
         record = records[0]
         assert record.args is None  # never re-interpolated
-        rendered = record.getMessage()
-        assert rendered == "100%s done\\nforged INFO line"  # escaped, single line
-        assert "\n" not in rendered
+        assert record.getMessage() == "hook.punt_vox.hooks: 100%s done"  # origin folded
+
+    def test_fixed_logger_name_regardless_of_origin(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Every shipped frame lands on the one ``client`` logger, not a per-name one.
+
+        Streaming unique names must not intern a new logger per name (cache DoS):
+        the origin rides in the message, the logger name is fixed.
+        """
+        with caplog.at_level(logging.DEBUG, logger="client"):
+            _emit(_frame("a"))
+            _emit(
+                LogRecordWire(
+                    role="mcp",
+                    name="unique.abc.123",
+                    level="INFO",
+                    created=1.0,
+                    message="b",
+                ).to_wire()
+            )
+        assert {r.name for r in caplog.records} == {"client"}
 
     def test_level_and_timestamp_preserved(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.DEBUG, logger="client.mcp.punt_vox.server"):
+        with caplog.at_level(logging.DEBUG, logger="client"):
             wire = LogRecordWire(
                 role="mcp",
                 name="punt_vox.server",
@@ -57,8 +78,7 @@ class TestLogHandler:
                 message="voxd unreachable",
             )
             _emit(wire.to_wire())
-        name = "client.mcp.punt_vox.server"
-        record = next(r for r in caplog.records if r.name == name)
+        record = next(r for r in caplog.records if r.name == "client")
         assert record.levelname == "WARNING"
         assert record.created == 999.5
 
@@ -72,5 +92,56 @@ class TestLogHandler:
         assert len(warnings) == 1
         assert "created" in warnings[0].getMessage()  # names the missing field
         assert "secret" not in warnings[0].getMessage()  # never the payload
-        emitted = [r for r in caplog.records if r.name.startswith("client.")]
+        emitted = [r for r in caplog.records if r.name == "client"]
         assert emitted == []  # nothing written for a rejected frame
+
+
+class TestSanitizedFileWrite:
+    """The full formatted vox.log line is always one physical line (H2)."""
+
+    def test_newline_and_control_in_name_stay_one_line(self) -> None:
+        """A newline + raw control byte in ``name`` render as one escaped line."""
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(
+            SanitizingFormatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+        )
+        client = logging.getLogger("client")
+        client.addHandler(handler)
+        client.setLevel(logging.DEBUG)
+        client.propagate = False
+        try:
+            _emit(
+                LogRecordWire(
+                    role="hook",
+                    name="mod\nFORGED [ERROR] evil\x07\x1b[31m",
+                    level="INFO",
+                    created=123.0,
+                    message="hi\nalso forged\x00",
+                ).to_wire()
+            )
+        finally:
+            client.removeHandler(handler)
+            client.propagate = True
+        out = stream.getvalue()
+        assert out.count("\n") == 1  # only the record terminator
+        body = out[:-1]  # drop the terminator
+        assert not any(ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0 for c in body)
+        assert "\\n" in body and "\\x07" in body  # escaped, not raw
+
+    def test_role_with_newline_is_rejected_not_written(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A forged newline in ``role`` fails validation -- never reaches the file."""
+        frame: dict[str, object] = {
+            "role": "hook\nFORGED",
+            "name": "n",
+            "level": "INFO",
+            "created": 123.0,
+            "message": "m",
+        }
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.log_sink"):
+            _emit(frame)
+        warnings = [r for r in caplog.records if r.name == "punt_vox.voxd.log_sink"]
+        assert len(warnings) == 1
+        assert "role" in warnings[0].getMessage()
