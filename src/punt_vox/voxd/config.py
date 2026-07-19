@@ -69,6 +69,9 @@ _LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _LOG_MAX_BYTES = 5_242_880  # 5 MB
 _LOG_BACKUP_COUNT = 5
 
+# dictConfig "()" factory that re-tightens pre-existing 0644 files at startup.
+_LOG_HANDLER_FACTORY = "punt_vox.log_handlers.PrivateRotatingFileHandler.from_config"
+
 _STARTUP_ENV_KEYS: tuple[str, ...] = (
     "PATH",
     "XDG_RUNTIME_DIR",
@@ -263,7 +266,7 @@ class DaemonConfig:
                 },
                 "handlers": {
                     "file": {
-                        "class": "punt_vox.log_handlers.PrivateRotatingFileHandler",
+                        "()": _LOG_HANDLER_FACTORY,
                         "filename": str(log_file),
                         "maxBytes": _LOG_MAX_BYTES,
                         "backupCount": _LOG_BACKUP_COUNT,

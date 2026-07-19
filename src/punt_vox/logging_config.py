@@ -16,6 +16,9 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _MAX_BYTES = 5_242_880  # 5 MB
 _BACKUP_COUNT = 5
 
+# dictConfig "()" factory that re-tightens pre-existing 0644 files at startup.
+_HANDLER_FACTORY = "punt_vox.log_handlers.PrivateRotatingFileHandler.from_config"
+
 
 def configure_logging(*, stderr_level: str = "WARNING") -> None:
     """Configure logging with rotating file and stderr handlers.
@@ -45,7 +48,7 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
             },
             "handlers": {
                 "file": {
-                    "class": "punt_vox.log_handlers.PrivateRotatingFileHandler",
+                    "()": _HANDLER_FACTORY,
                     "filename": str(_LOG_FILE),
                     "maxBytes": _MAX_BYTES,
                     "backupCount": _BACKUP_COUNT,
