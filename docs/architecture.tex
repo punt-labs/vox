@@ -222,8 +222,10 @@ Desktop install & \modpath{desktop\_install.py} & \texttt{DesktopInstaller}
              --- registers the \texttt{vox} MCP server in Claude Desktop's
              config \emph{without} embedding provider secrets; the daemon
              reads keys from \texttt{keys.env} at startup \\
-Logging    & \modpath{logging\_config.py} & Rotating file log under
-             \texttt{\~{}/.punt-labs/vox/logs/} \\
+Logging    & \modpath{logging\_config.py} & Unified owner: the daemon is the
+             single writer of \texttt{vox.log}; clients ship records over the
+             \texttt{voxd} WebSocket, falling back to \texttt{vox-fallback.log}
+             when it is unreachable \\
 Watcher    & \modpath{watcher.py}    & \texttt{SessionWatcher}---daemon thread
              tailing Claude session JSONL files for real-time
              signal classification and autonomous chime/speech
@@ -797,7 +799,10 @@ detect synthesis failure after the tool call returns.
 \subsection{Transport}
 
 The MCP server runs on stdio transport (\texttt{stdin}/\texttt{stdout}).
-Logs go to stderr only.  The server is started by Claude Code via
+Its log records are shipped to \texttt{voxd} over the WebSocket it already
+opens and re-emitted into the single \texttt{vox.log}; when \texttt{voxd} is
+unreachable they fall back to a local \texttt{vox-fallback.log}.  The server is
+started by Claude Code via
 \texttt{vox mcp} and communicates using the MCP JSON-RPC protocol.
 The MCP server delegates synthesis and playback to
 \texttt{voxd}, a persistent WebSocket daemon.  Each Claude Code
