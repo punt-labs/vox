@@ -187,6 +187,20 @@ class SessionConfig:
         """
         return (value or "").strip() or None
 
+    def summary_sentence(self) -> str:
+        """Return the startup state as a plain sentence, not a developer dump.
+
+        Translates the internal ``notify``/``speak`` codes into words -- e.g.
+        ``ready -- voice roger, chimes only, auto vibe`` -- so the one startup
+        INFO reads like intent rather than ``notify=c speak=n voice=roger ...``.
+        """
+        voice = f"voice {self._voice}" if self._voice else "default voice"
+        if self._notify == "n":
+            delivery = "notifications off"
+        else:
+            delivery = "chimes only" if self._speak == "n" else "spoken"
+        return f"ready -- {voice}, {delivery}, {self._vibe_mode} vibe"
+
     def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
         """Return *spec* with unset voice/provider/model/vibe_tags from session."""
         return replace(
@@ -898,14 +912,7 @@ def run_server() -> None:
     ):
         _session.set_speak(_session.speak)
 
-    logger.info(
-        "Session config: notify=%s speak=%s voice=%s provider=%s vibe_mode=%s",
-        _session.notify,
-        _session.speak,
-        _session.voice,
-        _session.provider,
-        _session.vibe_mode,
-    )
+    logger.info("%s", _session.summary_sentence())
 
     mcp.run(transport="stdio")
 
