@@ -17,7 +17,7 @@ __all__ = ["CrashLogger"]
 class CrashLogger:
     """Record uncaught exceptions to a file-backed logger from both entry paths.
 
-    The daemon logs only to its private ``voxd.log`` -- no stderr handler -- so an
+    The daemon logs only to its private ``vox.log`` -- no stderr handler -- so an
     uncaught traceback would otherwise vanish: launchd no longer tees stderr and
     the systemd journal receives nothing. This installs two last-resort hooks
     that route a crash to the given logger (and thus the log file):

@@ -44,7 +44,7 @@ def _config_dir() -> Path:
 
 
 def _log_dir() -> Path:
-    """Return directory holding ``voxd.log`` and rotated logs.
+    """Return directory holding ``vox.log`` and rotated logs.
 
     Pure path resolution -- see :func:`_config_dir`.
     """

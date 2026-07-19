@@ -108,7 +108,7 @@ class VoxDaemon:
 
     async def run(self, host: str, port: int) -> None:
         """Start uvicorn and serve until shutdown."""
-        # Route fire-and-forget task exceptions to voxd.log -- with no stderr
+        # Route fire-and-forget task exceptions to vox.log -- with no stderr
         # handler, the loop's default printer would otherwise write to nowhere.
         CrashLogger(logger).install_loop_handler(asyncio.get_running_loop())
         app = self.build_app()

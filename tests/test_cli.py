@@ -2518,7 +2518,7 @@ class TestDaemonRestartCommand:
         # tell what's stale without cracking open logs.
         assert "4.1.1" in result.output
         assert "4.2.0" in result.output
-        assert "voxd.log" in result.output
+        assert "vox.log" in result.output
 
     def test_restart_reports_port_contention(self) -> None:
         """``_ensure_port_free`` raising ``SystemExit`` must reach the user.
@@ -2549,7 +2549,7 @@ class TestDaemonRestartCommand:
             "still in use" in result.output
         )
         assert "8421" in result.output
-        assert "voxd.log" in result.output
+        assert "vox.log" in result.output
 
     def test_restart_fails_on_absent_version(self) -> None:
         """Health response missing ``daemon_version``: restart must fail closed.
@@ -2604,7 +2604,7 @@ class TestDaemonRestartCommand:
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 1
-        assert "voxd.log" in result.output
+        assert "vox.log" in result.output
 
     def test_daemon_never_comes_back_exits_with_log_hint(self) -> None:
         """Health never succeeds within the 5s window — exit 1 with log hint."""
@@ -2631,5 +2631,5 @@ class TestDaemonRestartCommand:
             result = runner.invoke(app, ["daemon", "restart"])
 
         assert result.exit_code == 1
-        assert "voxd.log" in result.output
+        assert "vox.log" in result.output
         assert "refused" in result.output

@@ -98,7 +98,7 @@ class DaemonRestarter:
             detail = f": {reason}" if reason else ""
             typer.echo(
                 f"Error: port still occupied after service manager stop{detail}\n"
-                f"Check the logs at {log_dir() / 'voxd.log'}",
+                f"Check the logs at {log_dir() / 'vox.log'}",
                 err=True,
             )
             raise typer.Exit(code=1) from exc
@@ -127,7 +127,7 @@ class DaemonRestarter:
             else:
                 assert_never(plat)
         except (LaunchctlError, subprocess.CalledProcessError) as exc:
-            log_path = log_dir() / "voxd.log"
+            log_path = log_dir() / "vox.log"
             typer.echo(
                 f"Error: service manager failed to start voxd: {exc}\n"
                 f"Check the logs at {log_path}",
@@ -152,7 +152,7 @@ class DaemonRestarter:
             port = health.port
             running_version = health.daemon_version
             wheel_version = installed_version()
-            log_path = log_dir() / "voxd.log"
+            log_path = log_dir() / "vox.log"
 
             if not running_version:
                 typer.echo(
@@ -184,7 +184,7 @@ class DaemonRestarter:
             )
             return
 
-        log_path = log_dir() / "voxd.log"
+        log_path = log_dir() / "vox.log"
         reason = f": {last_exc}" if last_exc is not None else ""
         typer.echo(
             f"Error: voxd did not come back up within 5s{reason}\n"

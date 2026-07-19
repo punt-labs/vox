@@ -1,4 +1,4 @@
-"""Tests for punt_vox.voxd.crash_logging -- uncaught exceptions reach voxd.log."""
+"""Tests for punt_vox.voxd.crash_logging -- uncaught exceptions reach vox.log."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from punt_vox.voxd.crash_logging import CrashLogger
 
 
 def _file_logger(tmp_path: Path) -> tuple[logging.Logger, Path]:
-    """Return an isolated logger writing to a private ``voxd.log`` under tmp."""
-    log_file = tmp_path / "voxd.log"
+    """Return an isolated logger writing to a private ``vox.log`` under tmp."""
+    log_file = tmp_path / "vox.log"
     handler = PrivateRotatingFileHandler(
         str(log_file), maxBytes=1_000_000, backupCount=1, encoding="utf-8"
     )
