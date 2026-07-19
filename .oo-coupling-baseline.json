@@ -1137,8 +1137,8 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.4,
-    "avg_lcom": 0.4
+    "max_lcom": 0.667,
+    "avg_lcom": 0.667
   },
   "src/punt_vox/voxd/speech_handlers.py": {
     "efferent_coupling": 7.0,
