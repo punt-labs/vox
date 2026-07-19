@@ -59,13 +59,15 @@ logger = logging.getLogger(__name__)
 class ProviderRegistry:
     """Provider registration, auto-detection, and resolution."""
 
-    __slots__ = ("_factories",)
+    __slots__ = ("_factories", "_last_logged")
 
     _factories: dict[str, Callable[..., TTSProvider]]
+    _last_logged: str | None
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._factories = {}
+        self._last_logged = None
         return self
 
     def register(self, name: str, factory: Callable[..., TTSProvider]) -> None:
@@ -118,34 +120,44 @@ class ProviderRegistry:
         return factory(**kwargs)
 
     def auto_detect(self) -> str:
-        """Detect the provider from environment.
+        """Detect the provider from environment, logging the decision once.
 
         Checks TTS_PROVIDER env var first, then probes for API keys:
         ElevenLabs > OpenAI > Polly (if AWS credentials valid) >
-        system fallback (say on macOS, espeak on Linux).
+        system fallback (say on macOS, espeak on Linux). The INFO decision line
+        is deduplicated -- a stable choice logs once per process, not per call.
         """
+        choice, reason = self._resolve_choice()
+        if choice != self._last_logged:
+            logger.info("provider: auto-detected %s (%s)", choice, reason)
+            self._last_logged = choice
+        return choice
+
+    def _resolve_choice(self) -> tuple[str, str]:
+        """Return the detected provider name paired with the reason it was chosen."""
         env = os.environ.get("TTS_PROVIDER")
         if env:
-            return env.lower()
+            return env.lower(), "TTS_PROVIDER env var"
         if os.environ.get("ELEVENLABS_API_KEY"):
-            return "elevenlabs"
+            return "elevenlabs", "ELEVENLABS_API_KEY set"
         if os.environ.get("OPENAI_API_KEY"):
-            return "openai"
+            return "openai", "OPENAI_API_KEY set"
         if self._has_aws_credentials():
-            return "polly"
+            return "polly", "AWS credentials valid"
         if platform.system() == "Darwin" and shutil.which("say"):
-            return "say"
+            return "say", "system fallback (macOS)"
         if platform.system() == "Linux" and (
             shutil.which("espeak-ng") or shutil.which("espeak")
         ):
-            return "espeak"
+            return "espeak", "system fallback (Linux)"
         logger.warning("No TTS provider detected; falling back to polly")
-        return "polly"
+        return "polly", "no provider detected"
 
     @staticmethod
     def _has_aws_credentials() -> bool:
-        """Check whether AWS credentials are configured."""
+        """Check whether AWS credentials are configured; DEBUG why Polly is skipped."""
         if not shutil.which("aws"):
+            logger.debug("provider: polly not chosen (aws cli absent)")
             return False
         try:
             result = subprocess.run(
@@ -153,8 +165,11 @@ class ProviderRegistry:
                 capture_output=True,
                 timeout=5,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            logger.debug("provider: polly not chosen (aws probe error: %s)", exc)
             return False
+        if result.returncode != 0:
+            logger.debug("provider: polly not chosen (aws probe: nonzero exit)")
         return result.returncode == 0
 
 
