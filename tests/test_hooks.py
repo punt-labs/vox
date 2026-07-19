@@ -840,6 +840,31 @@ class TestReadHookInput:
             r.close()
         assert result == {}
 
+    def test_malformed_payload_warns_metadata_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Garbled stdin logs one WARNING with a byte count and no payload content."""
+        payload = b'{"secret_token": "leak-me-abcdef"} trailing garbage'
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, payload)
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+                patch.object(sys, "stdin", r),
+            ):
+                assert _read_hook_input() == {}
+        finally:
+            r.close()
+
+        warnings = [
+            m for r in caplog.records if "malformed JSON" in (m := r.getMessage())
+        ]
+        assert len(warnings) == 1
+        assert f"{len(payload)} bytes" in warnings[0]  # metadata only
+        assert "leak-me" not in warnings[0]  # never the content
+
     def test_unexpected_oserror_logs_errno(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -903,6 +928,31 @@ class TestReadHookInput:
             r.close()
         assert result == {}
         assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
+
+class TestConfigAbsentIsQuiet:
+    """A hook in a non-vox repo stays silent, logging only a DEBUG diagnosis line."""
+
+    def test_config_absent_logs_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        """config_dir is None -> one DEBUG line, no INFO/WARNING noise."""
+        r_fd, w_fd = os.pipe()
+        os.write(w_fd, b'{"cwd": "/somewhere/without/vox"}')
+        os.close(w_fd)
+        r = os.fdopen(r_fd, "r")
+        try:
+            with (
+                caplog.at_level(logging.DEBUG, logger="punt_vox.hooks"),
+                patch("punt_vox.hooks.find_config_dir", return_value=None),
+                patch.object(sys, "stdin", r),
+            ):
+                stop_cmd()
+        finally:
+            r.close()
+
+        debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debugs) == 1
+        assert "no vox config" in debugs[0].getMessage()
+        assert not [r for r in caplog.records if r.levelno >= logging.INFO]
 
 
 # ---------------------------------------------------------------------------

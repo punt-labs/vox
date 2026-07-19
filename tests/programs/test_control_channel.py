@@ -115,6 +115,42 @@ class TestSingleWriter:
         assert {p.index for p in _prog(channel).pool} == {20, 21}
 
 
+class TestModeTransitionLogging:
+    """apply_next logs a Program mode transition once, on change only (§4 gap)."""
+
+    async def test_mode_transition_logged_once(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel.post(TurnOn())
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            await channel.apply_next()
+        lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert lines == ["music: off → generating_first"]
+
+    async def test_same_mode_advance_logs_nothing(
+        self,
+        make_rotating: RotatingFactory,
+        policy: PlaybackPolicy,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A rotate within playing_rotating changes no mode -> no transition line."""
+        channel = ControlChannel(make_rotating(policy))
+        channel.post(Rotate())
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            await channel.apply_next()
+        transitions = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.INFO and "music:" in r.getMessage()
+        ]
+        assert transitions == []
+
+
 class TestO2Concurrency:
     """Concurrent next + vibe never interleave: the result is one of the two
     valid sequential outcomes, and the Program is always a legal state."""

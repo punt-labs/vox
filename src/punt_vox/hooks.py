@@ -89,6 +89,7 @@ def _read_hook_input() -> dict[str, object]:
     Uses ``select`` + ``os.read`` to avoid blocking forever when
     Claude Code does not close the stdin pipe.  See biff DES-027.
     """
+    raw_bytes = b""
     try:
         fd = sys.stdin.fileno()
         if not select.select([fd], [], [], 0.1)[0]:
@@ -101,14 +102,20 @@ def _read_hook_input() -> dict[str, object]:
             chunks.append(chunk)
             if not select.select([fd], [], [], 0.05)[0]:
                 break
-        raw = b"".join(chunks).decode()
-        if not raw.strip():
+        raw_bytes = b"".join(chunks)
+        if not raw_bytes.strip():
             return {}
-        data: object = json.loads(raw)
+        data: object = json.loads(raw_bytes.decode())
     except OSError as exc:
         _warn_unexpected_read_error(exc)
         return {}
     except (json.JSONDecodeError, UnicodeDecodeError):
+        # Byte count only, never the content -- an untrusted payload must not
+        # forge a second log line or leak into the log.
+        logger.warning(
+            "hook: malformed JSON payload on stdin (%d bytes); treated as empty",
+            len(raw_bytes),
+        )
         return {}
     if not isinstance(data, dict):
         return {}
@@ -427,6 +434,10 @@ def _resolve_continuous_config() -> tuple[VoxConfig, Path] | None:
     cwd = HookEnvelope.parse(_read_hook_input()).cwd
     config_dir = find_config_dir(cwd)
     if config_dir is None:
+        # DEBUG, not INFO: hooks are globally installed, so this fires on every
+        # event in every non-vox repo -- noise at the default level, visible only
+        # when the operator raises log_level to debug for wiring diagnosis.
+        logger.debug("hook: no vox config for cwd; staying silent")
         return None
     return _with_repo_name(ConfigStore(config_dir).read(), cwd), config_dir
 
@@ -437,6 +448,7 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     payload = StopPayload.parse(_read_hook_input())
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
+        logger.debug("hook stop: no vox config for cwd; staying silent")
         return
     config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
     result = handle_stop(payload, config, config_dir)
@@ -462,6 +474,7 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     payload = NotificationPayload.parse(_read_hook_input())
     config_dir = find_config_dir(payload.cwd)
     if config_dir is None:
+        logger.debug("hook notification: no vox config for cwd; staying silent")
         return
     config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
     handle_notification(payload, config)
