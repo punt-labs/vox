@@ -27,7 +27,7 @@ class Mode(StrEnum):
     """The six-state Program machine (Z free type ``Mode``).
 
     The first four are the original playlist modes;
-    ``RETRYING`` and ``FAILED`` are the resilience states of ``vox-ig52``. The
+    ``RETRYING`` and ``FAILED`` are the resilience states. The
     modes are format-general -- a finite format reads ``PLAYING_ROTATING`` as
     "every Part generated, playing sequentially".
     """

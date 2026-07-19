@@ -1,10 +1,10 @@
-"""The playback-advance strategy seam (Z ``Rotate`` next-Part choice, finding #1).
+"""The playback-advance strategy seam (Z ``Rotate`` next-Part choice).
 
 The loop-versus-stop decision lives here, not in a new ``Mode``: a playlist
 policy never ends, while a finite format's policy signals end-of-list. Returning
 a discriminated ``AdvanceResult`` -- an ``Advance`` or the ``Complete`` singleton
--- rather than a bare ``Part | None`` lets Phase 2/3 add a finite-format policy
-with no change to this Protocol (MAJOR-2).
+-- rather than a bare ``Part | None`` lets a finite-format policy be added
+with no change to this Protocol.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ class Advance:
 class Complete:
     """End-of-list signal: a finite format has no further Part to play.
 
-    Phase-1 playlist never reaches this -- a playlist has no end -- but the
-    shared result type carries it so a Phase-2/3 sequential policy can signal
+    A playlist never reaches this -- a playlist has no end -- but the
+    shared result type carries it so a sequential policy can signal
     end-of-list without changing the Protocol. Use the ``COMPLETE`` singleton.
     """
 

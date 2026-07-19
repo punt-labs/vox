@@ -231,7 +231,7 @@ Each pool is saved under `~/Music/vox/<name>/` --- named by `--name`, else the s
 > /vox y
 
 Vox enabled. You'll hear when tasks finish or need approval.
-Pick a voice with /unmute @<name>.
+Pick a voice with /unmute <name>.
 ```
 
 ### Get a recap
@@ -271,9 +271,8 @@ Chimes are two short notification tones — one for task completion, one for a p
 | `/vox y` | Enable vox (chime notifications) |
 | `/vox n` | Disable vox |
 | `/vox c` | Continuous mode (spoken summaries on task completion) |
-| `/unmute` | Enable voice mode (spoken notifications) |
-| `/unmute @matilda` | Set session voice + enable voice |
-| `/unmute @` | Browse voice roster |
+| `/unmute` | Enable voice mode (spoken notifications), browse the roster |
+| `/unmute matilda` | Set session voice + enable voice |
 | `/mute` | Chimes only --- no voice |
 | `/recap` | Spoken summary of Claude's last response |
 | `/vibe <mood>` | Set session mood --- voice adapts to match |

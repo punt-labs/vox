@@ -1,11 +1,10 @@
-"""The format-neutral sub-views of a Program's runtime status (design section 5).
+"""The format-neutral sub-views of a Program's runtime status.
 
 Three small value objects project the parts of a :class:`ProgramState` a client
 watches -- what is playing, how generation is faring, and which Parts failed
 permanently. Every field is format-agnostic: "Part N of M" reads the same for a
-playlist track, a podcast segment, or an audiobook chapter, so Phases 2--3
-populate the identical shape with no field change. Each round-trips through JSON
-so the value crosses the ``voxd`` wire to any client (PY-EH-8 on deserialize).
+playlist track, podcast segment, or audiobook chapter. Each round-trips through
+JSON so the value crosses the ``voxd`` wire to any client (PY-EH-8 on deserialize).
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ class NowPlaying:
 @final
 @dataclass(frozen=True, slots=True)
 class GenerationStatus:
-    """The program-level generation/error surface (design finding #5).
+    """The program-level generation/error surface.
 
     ``last_error`` is the *program-level* advisory error (set while retrying or
     failed, ``None`` when healthy) -- distinct from the per-Part failures in
@@ -87,7 +86,7 @@ class GenerationStatus:
 @final
 @dataclass(frozen=True, slots=True)
 class FailedPartView:
-    """One permanently-failed Part while the Program plays on (design finding #5)."""
+    """One permanently-failed Part while the Program plays on."""
 
     index: int  # the intrinsic index of a Part that hit a permanent error
     reason: str  # the human-readable failure diagnostic

@@ -344,7 +344,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
     # individual readers (``_read_api_key_file``, ``_read_api_key_stdin``)
     # still reject their own empty content with their own BadParameter
     # messages, so there is no silent fall-through for paths where
-    # emptiness is actually a user error. Cursor Bugbot on PR #175.
+    # emptiness is actually a user error.
     if api_key == "":
         api_key = None
 
@@ -573,9 +573,12 @@ def log_cmd(
 def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
 ) -> None:
-    """Set the session voice."""
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("voice", name)
-    _formatter.emit({"voice": name}, f"{name}'s here.")
+    """Set the session voice, tolerating a stray leading '@' sigil."""
+    voice = SynthesisSpec.normalize_voice(name)
+    if voice is None:
+        raise typer.BadParameter("voice name is empty")
+    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("voice", voice)
+    _formatter.emit({"voice": voice}, f"{voice}'s here.")
 
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ DURABLE_KEYS: frozenset[str] = frozenset(
 
 # The whole vibe cluster is session state, not a durable preference. Keeping
 # vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
-# "manual" mode while the gitignored mood lingered (vox-73m5). Mode, mood, tags,
+# "manual" mode while the gitignored mood lingered. Mode, mood, tags,
 # and the nudge cadence counter now live together in the ephemeral vox.local.md.
 #
 # ``log_level`` is ephemeral for the same reason: a debug toggle a user flips
@@ -190,7 +190,7 @@ class ConfigStore:
         Each file contributes only the keys it owns: durable prefs from
         ``vox.md``, session state from ``vox.local.md``.  Filtering both
         sides keeps the split drift-proof -- a stale ``vibe_mode`` left in a
-        committed ``vox.md`` is ignored rather than resurrected (vox-73m5).
+        committed ``vox.md`` is ignored rather than resurrected.
         """
         fields: dict[str, str] = {}
 

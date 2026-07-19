@@ -37,6 +37,26 @@ class SynthesisSpec:
     vibe_tags: str | None = None
     once: bool = False
 
+    def __post_init__(self) -> None:
+        # Normalize the voice name here so every synthesis surface -- CLI
+        # ``vox say``/``record``, and the ``mic:unmute``/``mic:speak`` MCP
+        # tools -- inherits the ``@``-tolerance from one choke point.
+        object.__setattr__(self, "voice", self.normalize_voice(self.voice))
+
+    @staticmethod
+    def normalize_voice(name: str | None) -> str | None:
+        """Return *name* with a stray leading ``@`` sigil and whitespace stripped.
+
+        Slash-command help documents the bare form (``/unmute sarah``); a caller
+        who types the old ``@sarah`` -- or whose Claude Code prompt kept an ``@``
+        from mention-autocomplete -- still resolves to ``sarah``. A lone ``@`` or
+        blank input carries no voice and returns ``None``.
+        """
+        if name is None:
+            return None
+        cleaned = name.strip().removeprefix("@").strip()
+        return cleaned or None
+
     def validate(self) -> None:
         """Validate voice settings ranges.
 

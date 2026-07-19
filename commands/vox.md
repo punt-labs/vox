@@ -32,7 +32,7 @@ Call the `notify` MCP tool with `mode="n"`. No text output — the panel confirm
 
 1. Call the `notify` MCP tool with `mode="c"`.
 2. Call the `who` MCP tool to list voices.
-3. Display featured voices with blurbs. Tell user they can pick with `/unmute @<name>`.
+3. Display featured voices with blurbs. Tell user they can pick with `/unmute <name>`.
 
 ### `model <name>`
 

@@ -5,24 +5,24 @@ repeated hook invocations with the same quip phrase skip the TTS API
 entirely.  Content-addressed by hash.
 
 This module serves the **anonymous** cache only — calls that use the
-ambient provider credential from ``keys.env``. Per-call provider
-credential overrides (vox-a3e single-user multi-key billing isolation)
-bypass this module entirely at the voxd call site: see the cache
-guards in ``_synthesize_to_file`` in ``src/punt_vox/voxd.py``. That
-design keeps all sensitive credential material out of any digest this
-module computes. CodeQL's ``py/weak-sensitive-data-hashing`` rule
-(correctly) flags any regular cryptographic hash — MD5, SHA-1,
-SHA-256, and friends — as inappropriate for hashing password-class
-input, and the only lint-clean alternatives are password KDFs
-(Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts) whose
-per-call cost is unacceptable for a cache filename computation.
+ambient provider credential from ``keys.env``. A per-call provider
+credential override (single-user multi-key billing isolation) skips the
+cache lookup and store — no ``cache_get``/``cache_put`` — at the voxd call
+site (``SynthesisPipeline.synthesize_to_file`` in
+``src/punt_vox/voxd/synthesis.py``). A ``CacheKey`` may still be built, but
+its parts are (text, voice, provider) only, so no credential material ever
+enters a digest this module computes. CodeQL's
+``py/weak-sensitive-data-hashing`` rule (correctly) flags any regular
+cryptographic hash — MD5, SHA-1, SHA-256, and friends — as inappropriate
+for hashing password-class input, and the only lint-clean alternatives are
+password KDFs (Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts)
+whose per-call cost is unacceptable for a cache filename computation.
 
-The bypass also closes a correctness hazard an earlier draft of PR
-#175 had: a per-call billing scope that accepts cached bytes from
-another scope is violating the whole point of the isolation. Scripts
-that want cache hits for repeated quips should use ``keys.env`` (the
-anonymous path); scripts that want billing attribution should accept
-that every call re-synthesizes.
+Skipping the cache also closes a correctness hazard: a per-call billing scope
+that accepts cached bytes from another scope violates the whole point of
+the isolation. Scripts that want cache hits for repeated quips should use
+``keys.env`` (the anonymous path); scripts that want billing attribution
+should accept that every call re-synthesizes.
 
 No dependencies on other vox modules — this is a standalone cache layer.
 """

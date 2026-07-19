@@ -14,7 +14,7 @@ MAX_RETRY: Final = 5
 class Format(StrEnum):
     """One of the three Program formats (Z free type ``Format``).
 
-    Only ``PLAYLIST`` is realised in Phase 1; ``PODCAST`` and ``AUDIOBOOK`` are
+    Only ``PLAYLIST`` is realised today; ``PODCAST`` and ``AUDIOBOOK`` are
     named so that ``pool_size`` and the operations branching on it are total
     from the start. The string values are the wire/JSON form.
     """
