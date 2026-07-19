@@ -16,6 +16,7 @@ from typing import Self, cast
 from punt_vox.keys import PROVIDER_KEY_NAMES
 from punt_vox.paths import (
     config_dir as _user_config_dir,
+    installed_version,
     log_dir as _user_log_dir,
     run_dir as _user_run_dir,
 )
@@ -234,13 +235,14 @@ class DaemonConfig:
         logger.info("Removed port file")
 
     def log_environment(self) -> None:
-        """Log voxd's process identity and audio env vars at startup."""
+        """Log a short startup INFO; the full process/env dump goes to DEBUG."""
+        logger.info("voxd starting (pid %d, v%s)", os.getpid(), installed_version())
         env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
         getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
         getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
         uid: int | str = getuid() if getuid is not None else "<n/a>"
         gid: int | str = getgid() if getgid is not None else "<n/a>"
-        logger.info(
+        logger.debug(
             "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
             "voxd_binary=%s voxd_module=%s env=%s",
             os.getpid(),
