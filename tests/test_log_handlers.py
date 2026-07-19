@@ -7,6 +7,8 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from punt_vox.log_handlers import PrivateRotatingFileHandler
 
 
@@ -113,3 +115,60 @@ def test_rollover_tightens_a_stale_backup_that_shifts_outward(tmp_path: Path) ->
     assert _mode(log) == 0o600
     for backup in tmp_path.glob("tts.log.*"):
         assert _mode(backup) == 0o600, backup
+
+
+def test_open_refuses_to_follow_a_symlink(tmp_path: Path) -> None:
+    """A symlink planted at the log path makes ``_open`` raise, not write through.
+
+    ``O_NOFOLLOW`` in the pre-create refuses a symlink at ``baseFilename`` -- a
+    symlink there is never legitimate and could redirect the log into an
+    attacker-chosen file. Construction opens the stream, so the refusal surfaces
+    as an ``OSError`` at construction rather than silently following the link.
+    """
+    target = tmp_path / "target.txt"
+    target.write_text("do not write here\n")
+    link = tmp_path / "tts.log"
+    link.symlink_to(target)
+
+    with pytest.raises(OSError):
+        PrivateRotatingFileHandler(str(link), maxBytes=10_000, backupCount=1)
+
+    assert target.read_text() == "do not write here\n", "the link target is untouched"
+
+
+def test_tighten_failure_is_recorded_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``chmod`` that fails lands in ``tighten_failures`` instead of vanishing.
+
+    A pre-existing log the current uid cannot re-chmod (owner changed, a
+    root-run leftover) must not silently stay loose. ``tighten_existing``
+    collects the un-tightenable path so the caller can surface it; the handler
+    still opens and logs (fail-open), it just reports what it could not secure.
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+
+    def _deny_chmod(self: Path, mode: int) -> None:
+        raise PermissionError(f"cannot chmod {self}")
+
+    monkeypatch.setattr(Path, "chmod", _deny_chmod)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert Path(str(log)) in handler.tighten_failures
+
+
+def test_tighten_failures_empty_when_all_succeed(tmp_path: Path) -> None:
+    """A clean sweep leaves ``tighten_failures`` empty -- no false positives."""
+    log = tmp_path / "tts.log"
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert handler.tighten_failures == ()

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Self, cast
 
 from punt_vox.keys import PROVIDER_KEY_NAMES
+from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.paths import (
     config_dir as _user_config_dir,
     log_dir as _user_log_dir,
@@ -288,6 +289,22 @@ class DaemonConfig:
                 },
             }
         )
+        self._warn_on_loose_logs()
+
+    @staticmethod
+    def _warn_on_loose_logs() -> None:
+        """Emit one WARNING per log file the handler could not tighten to 0600.
+
+        Run *after* ``dictConfig`` so the record lands in the now-live file
+        handler (durable and greppable, unlike discarded stderr) and cannot
+        recurse into a mid-rollover tighten -- the handler is attached and idle.
+        """
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, PrivateRotatingFileHandler) and (
+                handler.tighten_failures
+            ):
+                loose = ", ".join(map(str, handler.tighten_failures))
+                logger.warning("could not enforce 0600 on log file(s): %s", loose)
 
     def log_environment(self) -> None:
         """Log voxd's process identity and audio env vars at startup."""

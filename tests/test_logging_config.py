@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,7 +14,6 @@ from punt_vox import logging_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 
 def _stderr_handler(root: logging.Logger) -> logging.Handler:
@@ -75,3 +75,41 @@ class TestConfigureLogging:
         root = logging.getLogger()
         assert _stderr_handler(root).level == logging.WARNING
         assert root.level == logging.INFO
+
+    def test_untightenable_log_is_warned_in_the_live_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file that cannot be chmod'd surfaces as a WARNING in the live log.
+
+        The failure must reach a durable, greppable sink -- not vanish. After
+        ``configure_logging`` the file handler is live, so the post-configure
+        warning lands in ``tts.log`` itself, naming the still-loose path.
+        """
+        (tmp_path / "tts.log").write_text("existing\n")
+
+        def _deny_chmod(self: Path, mode: int) -> None:
+            raise PermissionError(f"cannot chmod {self}")
+
+        monkeypatch.setattr(Path, "chmod", _deny_chmod)
+
+        logging_config.configure_logging()
+
+        contents = (tmp_path / "tts.log").read_text()
+        assert "could not enforce 0600 on log file(s)" in contents
+        assert "tts.log" in contents
+
+    def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:
+        """A symlink at the log path aborts configuration -- the error is not eaten.
+
+        ``O_NOFOLLOW`` makes the handler's ``_open`` raise on a symlink;
+        ``dictConfig`` wraps a handler-construction failure in ``ValueError``,
+        so misconfiguration fails loud instead of writing through the link.
+        """
+        target = tmp_path / "target.txt"
+        target.write_text("do not write here\n")
+        (tmp_path / "tts.log").symlink_to(target)
+
+        with pytest.raises(ValueError):  # dictConfig wraps the O_NOFOLLOW OSError
+            logging_config.configure_logging()
+
+        assert target.read_text() == "do not write here\n"

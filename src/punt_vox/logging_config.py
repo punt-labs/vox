@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import logging.config
 
+from punt_vox.log_handlers import PrivateRotatingFileHandler
 from punt_vox.paths import log_dir as _paths_log_dir
+
+logger = logging.getLogger(__name__)
 
 _LOG_DIR = _paths_log_dir()
 _LOG_FILE = _LOG_DIR / "tts.log"
@@ -76,3 +79,17 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
             },
         }
     )
+    _warn_on_loose_logs()
+
+
+def _warn_on_loose_logs() -> None:
+    """Emit one WARNING per log file the handler could not tighten to 0600.
+
+    Run *after* ``dictConfig`` so the record lands in the now-live file handler
+    (durable and greppable, unlike discarded stderr) and cannot recurse into a
+    mid-rollover tighten -- the handler is fully attached and idle here.
+    """
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, PrivateRotatingFileHandler) and handler.tighten_failures:
+            loose = ", ".join(map(str, handler.tighten_failures))
+            logger.warning("could not enforce 0600 on log file(s): %s", loose)

@@ -290,3 +290,34 @@ class TestConfigureLogging:
                 handler.close()
             root.handlers[:] = saved_handlers
             root.setLevel(saved_level)
+
+    def test_untightenable_log_is_warned_in_voxd_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file the daemon cannot chmod surfaces as a WARNING in voxd.log.
+
+        The daemon has no stderr sink, so an un-tightenable log that vanished
+        silently would leave nothing to grep. The post-configure warning lands
+        in the now-live ``voxd.log`` itself, naming the still-loose path.
+        """
+        (tmp_path / "voxd.log").write_text("existing\n")
+
+        def _deny_chmod(self: Path, mode: int) -> None:
+            raise PermissionError(f"cannot chmod {self}")
+
+        monkeypatch.setattr(Path, "chmod", _deny_chmod)
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        cfg = DaemonConfig(run_dir=tmp_path, config_dir=tmp_path, log_dir=tmp_path)
+        try:
+            cfg.configure_logging()
+
+            contents = (tmp_path / "voxd.log").read_text()
+            assert "could not enforce 0600 on log file(s)" in contents
+            assert "voxd.log" in contents
+        finally:
+            for handler in root.handlers[:]:
+                handler.close()
+            root.handlers[:] = saved_handlers
+            root.setLevel(saved_level)
