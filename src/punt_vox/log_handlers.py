@@ -92,6 +92,11 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
         flags = os.O_CREAT | os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW
         os.close(os.open(self.baseFilename, flags, _FILE_MODE))
         stream = super()._open()
+        # Provisional suppress: a genuine chmod failure is not lost here -- the
+        # follow-up tighten_existing() (run by from_config at construction and by
+        # doRollover) is what records it into tighten_failures for the caller to
+        # surface. Constructing the handler directly, skipping that sweep, would
+        # drop this signal; from_config exists so callers don't.
         with contextlib.suppress(OSError):
             os.fchmod(stream.fileno(), _FILE_MODE)
         return stream

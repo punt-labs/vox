@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Log files are created private atomically, re-tightened at startup, and never fail silently (vox-cn0p)**: three hardening changes to `PrivateRotatingFileHandler` close the gaps left after the initial `0600` work landed. (1) **New log files are created `0600` atomically** — `_open()` pre-creates the file with `os.open(..., O_CREAT | O_NOFOLLOW, 0o600)`, so a brand-new log carries owner-only permissions the instant it exists, closing the sub-millisecond window a plain `open()` + `chmod` leaves at the umask default. `O_NOFOLLOW` additionally refuses a symlink at the log path — never legitimate, and a redirect-through-symlink vector — surfacing as a loud configuration error rather than writing through the link. (2) **The active file and every backup slot are re-tightened to `0600` on handler construction, not only on rollover** — a legacy `0644` backup left by an earlier, laxer run that never rotates is now fixed the first time the handler runs (via the `from_config` startup factory that both `tts.log` and `voxd.log` use), instead of staying world/group-readable until it happens to rotate. (3) **A file that cannot be tightened is surfaced, not swallowed** — a `chmod` that genuinely fails (changed ownership, a root-run leftover) is collected and reported as a durable `WARNING` in the now-live log naming the still-loose path, so an un-securable log leaves a greppable trace rather than silently remaining readable. Tightening remains fail-open, so a transient permission error never crashes logging. Closes vox-cn0p.
+
 ## [4.12.4] - 2026-07-18
 
 ### Security
