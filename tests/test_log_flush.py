@@ -63,6 +63,22 @@ class _CloseRaisesClient:
         raise OSError("socket close failed")
 
 
+class _NonTransportRaisesClient:
+    """A VoxClient stand-in whose connect raises a non-transport exception.
+
+    The narrow guard only caught ``(OSError, RuntimeError, WebSocketException)``;
+    a ``ValueError`` (a genuine bug or a monkeypatched ship path) slipped past it
+    and killed the daemon thread. The broadened ``except Exception`` must catch it
+    too, so any per-cycle error -- transport or not -- falls back and keeps looping.
+    """
+
+    async def connect(self) -> None:
+        raise ValueError("unexpected non-transport failure")
+
+    async def close(self) -> None:
+        return None
+
+
 class TestPeriodicFlusher:
     """The flusher drains the buffer periodically, or locally when voxd is down."""
 
@@ -143,6 +159,33 @@ class TestPeriodicFlusher:
 
         text = fallback.read_text(encoding="utf-8")
         assert "cycle one" in text  # the error cycle still salvaged its batch
+        assert "cycle two" in text  # the thread survived to flush again
+
+    def test_non_transport_error_does_not_kill_the_thread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A NON-transport per-cycle error must not end the loop either.
+
+        The narrow guard caught only transport types; a ``ValueError`` (a real
+        bug, or a monkeypatched ship path) slipped past and silently ended
+        periodic shipping. The broadened ``except Exception`` falls back and the
+        thread survives to flush the next cycle.
+        """
+        fallback = tmp_path / "fallback.log"
+        shipper = LogShipper(AtomicAppendLog(fallback))
+        monkeypatch.setattr(LogShipper, "_instance", shipper)
+        monkeypatch.setattr("punt_vox.log_flush.VoxClient", _NonTransportRaisesClient)
+
+        shipper.enqueue(_wire("cycle one"))
+        flusher = PeriodicFlusher(interval=0.05)
+        flusher.start()
+        time.sleep(0.15)  # first cycle raises ValueError -> falls back, survives
+        shipper.enqueue(_wire("cycle two"))
+        time.sleep(0.15)  # a live thread drains the second cycle too
+        flusher.stop()
+
+        text = fallback.read_text(encoding="utf-8")
+        assert "cycle one" in text  # the non-transport cycle salvaged its batch
         assert "cycle two" in text  # the thread survived to flush again
 
     def test_timed_out_stop_does_not_spawn_a_duplicate(

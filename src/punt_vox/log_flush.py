@@ -20,8 +20,6 @@ import asyncio
 import threading
 from typing import Self, final
 
-import websockets.exceptions
-
 from punt_vox.client import VoxClient
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.log_ship import LogShipper
@@ -94,19 +92,23 @@ class PeriodicFlusher:
         handshake flushes the deque via the shipper, and a failed connect means
         the tail goes to the fallback file so it stays durable within seconds.
 
-        Any per-cycle error (e.g. ``client.close()`` raising after a successful
-        connect) is caught and routed to the fallback, so ONE bad cycle can never
-        kill the daemon thread and stop periodic shipping. The fallback path uses
-        raw ``os`` writes, so it cannot re-enter ``logging`` and recurse.
+        Any per-cycle ``Exception`` -- a transport error (``client.close()``
+        raising after a successful connect) or a genuine bug in the ship path --
+        is caught and routed to the fallback, so ONE bad cycle can never kill the
+        daemon thread and stop periodic shipping. ``KeyboardInterrupt``,
+        ``SystemExit``, and ``CancelledError`` are not ``Exception`` subclasses,
+        so they still propagate and let the process shut down. The fallback path
+        uses raw ``os`` writes, so it cannot re-enter ``logging`` and recurse.
         """
         shipper = LogShipper.active()
         if shipper is None or not shipper.has_pending:
             return
         try:
             asyncio.run(self._ship(shipper))
-        except (OSError, RuntimeError, websockets.exceptions.WebSocketException):
-            # A broken close/socket after a successful connect must not kill the
-            # thread -- route the batch to the fallback and keep the loop running.
+        except Exception:  # noqa: BLE001 -- durability thread must never die on a cycle
+            # Any per-cycle failure (broken close/socket after a successful
+            # connect, or an unexpected bug in the ship path) must not kill the
+            # thread -- route the batch to the raw-os fallback and keep looping.
             shipper.drain_to_fallback()
 
     @staticmethod
