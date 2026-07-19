@@ -63,7 +63,7 @@ records to `voxd` over the **WebSocket it already opens** for its real work.
 disappears; the split-brain disappears; the multi-writer race disappears because
 there is exactly one writer.
 
-```
+```text
 ┌───────────── client process (mcp / hook / cli / detached) ─────────────┐
 │  logging.getLogger(__name__).info("Stop hook: blocking…")              │
 │        │                                                                │
@@ -94,7 +94,7 @@ A new send-only message type on the existing `/ws` socket. **No response** — t
 daemon writes it and reads the next frame; the client never awaits an ack, so log
 shipping adds no round-trip to the hot path.
 
-```
+```text
 {
   "type":    "log",
   "role":    "hook" | "mcp" | "cli" | "playback",   # which client shipped it
@@ -115,7 +115,7 @@ only structured fields, all machine-controlled or already-safe.
 The daemon prefixes the logger name so `vox.log` distinguishes client from
 daemon lines and names the origin process:
 
-```
+```text
 2026-07-18 10:37:41 [INFO] client.hook.punt_vox.hooks: Stop hook: blocking for voice summary
 2026-07-18 10:37:41 [INFO] punt_vox.voxd.programs.control_channel: music: generating_first → playing_filling
 ```
@@ -155,6 +155,7 @@ construction (POSIX atomic `O_APPEND`), so many fallback-writing processes share
 one file with no rotation race.
 
 Fallback is triggered by:
+
 - `LogShipper.flush(ws)` catching **any** exception from `ws.send` → route the
   in-flight batch to `AtomicAppendLog`.
 - `connect()` raising `VoxdConnectionError` → the handler stays buffered; the
@@ -335,7 +336,7 @@ logging subsystem. So even a total logging-construction failure is captured.
 
 `main()` sequence becomes:
 
-```
+```text
 1. CrashLogger(logger).install_bootstrap_excepthook(log_dir()/"vox-boot.log")  # FIRST, no deps
 2. ensure_user_dirs()                    # may raise → caught → vox-boot.log
 3. configure_daemon_logging()            # may raise → caught → vox-boot.log
@@ -505,6 +506,7 @@ boot = `vox-boot.log`.
 buffering"). The long-lived MCP server must make its buffered log records durable
 within **seconds**, not only on the next tool call / `atexit`. Add a lightweight
 periodic flusher to `LogShipper` for long-lived clients:
+
 - A small background flush (e.g. a daemon thread or an asyncio task owned by the
   MCP server) that drains the deque to the daemon every ~2 s while the process
   lives. Keep the existing on-`connect()` / on-`close()` flushes.
@@ -523,6 +525,7 @@ does not change that state space. No `/z-spec` ceremony for this unit.
 
 **D5 — AMENDED: a configurable local log level (the "humble option").** Default
 stays quiet; a user raises verbosity only when debugging.
+
 - Add a `log_level` config key to `config.py` (implementer chooses the
   `DURABLE_KEYS`/`EPHEMERAL_KEYS` routing and states why; a debug toggle a user
   flips "when needed" leans ephemeral/`vox.local.md`, but durable is acceptable if
@@ -547,6 +550,7 @@ stays quiet; a user raises verbosity only when debugging.
   discoverable.
 
 **Leader review findings — REQUIRED in implementation (not optional):**
+
 - **Finding A — framing-interleave test.** Log frames now share the `/ws` socket
   with real RPCs (flushed on connect, before the request frame, and now
   periodically by D2's flusher). Add a test proving **a real tool/RPC call still
