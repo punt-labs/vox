@@ -6,6 +6,7 @@ import asyncio
 import logging
 import multiprocessing
 import re
+import threading
 from pathlib import Path
 
 from punt_vox.append_log import AtomicAppendLog
@@ -36,6 +37,18 @@ class _BrokenWs:
 
     async def send(self, message: str) -> None:
         raise ConnectionResetError(message)
+
+
+class _YieldingWs:
+    """A fake WebSocket whose send yields control, widening the drain race window."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+
+    async def send(self, message: str) -> None:
+        assert message  # a frame was rendered
+        self.sent += 1
+        await asyncio.sleep(0)  # release the GIL mid-drain
 
 
 def _fallback_many(path_str: str, proc_id: int, count: int) -> None:
@@ -111,6 +124,33 @@ class TestLogShipper:
         ws = _ReentrantWs()
         asyncio.run(shipper.flush(ws))
         assert ws.sent == 1  # only the snapshot count, not the reentrant addition
+
+    def test_concurrent_drainers_never_raise(self, tmp_path: Path) -> None:
+        """Two threads draining the same shipper never pop an empty deque (H1).
+
+        The D2 flusher thread and a tool-call worker thread both reach ``flush``;
+        ``await ws.send`` releases the GIL. Without the drain lock the second
+        thread empties the deque and the first pops empty -> IndexError out of the
+        real tool call. The lock serializes them, so no drainer raises.
+        """
+        shipper = LogShipper(AtomicAppendLog(tmp_path / "fallback.log"))
+        for i in range(500):
+            shipper.enqueue(_wire(f"line {i}"))
+        errors: list[BaseException] = []
+
+        def _drain() -> None:
+            try:
+                asyncio.run(shipper.flush(_YieldingWs()))
+            except (IndexError, RuntimeError, OSError) as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_drain) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert errors == []  # no IndexError from a concurrent drain
+        assert not shipper.has_pending  # every buffered record was drained once
 
     def test_fallback_is_multiwriter_safe(self, tmp_path: Path) -> None:
         """Separate processes falling back to one file produce whole, intact lines."""
