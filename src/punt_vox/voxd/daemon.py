@@ -26,7 +26,7 @@ from punt_vox.logging_config import configure_daemon_logging
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.chimes import ChimeResolver
-from punt_vox.voxd.config import (  # pyright: ignore[reportPrivateUsage]
+from punt_vox.voxd.config import (
     DaemonConfig,
     _config_dir,
     _install_token_redact_filter,
