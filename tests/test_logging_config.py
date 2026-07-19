@@ -39,8 +39,15 @@ def _redirect_log_tree(
 
 
 def _pin_level(monkeypatch: pytest.MonkeyPatch, level: str) -> None:
-    """Pin the resolved log level so a test's env/config can't leak in."""
-    monkeypatch.setattr(ConfigStore, "resolve_log_level", lambda: level)
+    """Pin the resolved log level so a test's env/config can't leak in.
+
+    ``resolve_log_level`` is a classmethod, so the replacement must be one too --
+    a zero-arg lambda takes ``cls`` as its first positional and raises on an
+    instance-bound call.
+    """
+    monkeypatch.setattr(
+        ConfigStore, "resolve_log_level", classmethod(lambda _cls: level)
+    )
 
 
 def _file_handler(root: logging.Logger) -> PrivateRotatingFileHandler:
@@ -120,6 +127,21 @@ class TestConfigureClientLogging:
     def test_default_level_is_info(self) -> None:
         logging_config.configure_client_logging(role="cli")
         assert logging.getLogger().level == logging.INFO
+
+    def test_reapply_picks_up_a_level_change(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A long-lived client re-reads the level and flips root + handler live."""
+        _pin_level(monkeypatch, "info")
+        logging_config.configure_client_logging(role="mcp")
+        root = logging.getLogger()
+        assert root.level == logging.INFO
+
+        _pin_level(monkeypatch, "debug")  # e.g. `vox log debug` on another process
+        logging_config.reapply_client_log_level()
+
+        assert root.level == logging.DEBUG
+        assert all(h.level == logging.DEBUG for h in root.handlers)
 
     def test_config_log_level_debug_applies(
         self, monkeypatch: pytest.MonkeyPatch

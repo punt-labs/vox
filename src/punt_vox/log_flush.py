@@ -20,6 +20,8 @@ import asyncio
 import threading
 from typing import Self, final
 
+import websockets.exceptions
+
 from punt_vox.client import VoxClient
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.log_ship import LogShipper
@@ -82,11 +84,21 @@ class PeriodicFlusher:
         A fresh event loop per cycle is fine at this cadence; the connection's
         handshake flushes the deque via the shipper, and a failed connect means
         the tail goes to the fallback file so it stays durable within seconds.
+
+        Any per-cycle error (e.g. ``client.close()`` raising after a successful
+        connect) is caught and routed to the fallback, so ONE bad cycle can never
+        kill the daemon thread and stop periodic shipping. The fallback path uses
+        raw ``os`` writes, so it cannot re-enter ``logging`` and recurse.
         """
         shipper = LogShipper.active()
         if shipper is None or not shipper.has_pending:
             return
-        asyncio.run(self._ship(shipper))
+        try:
+            asyncio.run(self._ship(shipper))
+        except (OSError, RuntimeError, websockets.exceptions.WebSocketException):
+            # A broken close/socket after a successful connect must not kill the
+            # thread -- route the batch to the fallback and keep the loop running.
+            shipper.drain_to_fallback()
 
     @staticmethod
     async def _ship(shipper: LogShipper) -> None:

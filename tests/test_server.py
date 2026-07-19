@@ -2157,6 +2157,18 @@ class TestPerToolLogging:
         ]
         assert named == ["mic:status"]
 
+    @pytest.mark.asyncio
+    async def test_call_tool_reapplies_log_level(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every tool call re-applies the effective level, so vox log takes hold."""
+        import punt_vox.server as srv
+
+        calls: list[bool] = []
+        monkeypatch.setattr(srv, "reapply_client_log_level", lambda: calls.append(True))
+        await srv.mcp.call_tool("status", {})
+        assert calls == [True]
+
 
 class TestLogFlusherWiring:
     """The D2 flusher is a bound instance the server can stop (M1)."""

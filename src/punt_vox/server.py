@@ -25,7 +25,10 @@ from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.log_flush import PeriodicFlusher
-from punt_vox.logging_config import configure_client_logging
+from punt_vox.logging_config import (
+    configure_client_logging,
+    reapply_client_log_level,
+)
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
@@ -57,7 +60,9 @@ class _LoggingFastMCP(FastMCP):
     framework's tool-name-less "Processing request" noise. Unlike a per-function
     decorator (which FastMCP unwraps via ``__wrapped__`` and bypasses), the
     override is always on the invocation path, and it never touches a tool's
-    signature or schema.
+    signature or schema. It is also where the long-lived server picks up a
+    ``vox log`` change: re-applying the level here means a change takes hold
+    within a tool call or two, so DEBUG records ship and ``mic:status`` is honest.
     """
 
     async def call_tool(
@@ -67,7 +72,8 @@ class _LoggingFastMCP(FastMCP):
         # narrowing it would make this an invalid (contravariance-breaking) override.
         arguments: dict[str, Any],
     ) -> Sequence[ContentBlock] | dict[str, Any]:
-        """Log the tool name, then delegate to the framework's dispatch."""
+        """Re-apply the effective log level, name the tool, then delegate."""
+        reapply_client_log_level()
         logger.info("mic:%s", name)
         return await super().call_tool(name, arguments)
 

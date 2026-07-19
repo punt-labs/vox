@@ -116,7 +116,7 @@ class TestSingleWriter:
 
 
 class TestModeTransitionLogging:
-    """apply_next logs a Program mode transition once, on change only (§4 gap)."""
+    """apply_next logs a Program mode transition once, on change only."""
 
     async def test_mode_transition_logged_once(
         self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
@@ -143,6 +143,26 @@ class TestModeTransitionLogging:
             logging.INFO, logger="punt_vox.voxd.programs.control_channel"
         ):
             await channel.apply_next()
+        transitions = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.INFO and "music:" in r.getMessage()
+        ]
+        assert transitions == []
+
+    async def test_radio_to_program_switch_logs_no_none_transition(
+        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A radio->Program switch (before is None) must not log 'music: None -> ...'.
+
+        A radio has no lifecycle mode, so the prior label is None; the line is
+        suppressed unless BOTH sides are real Program modes.
+        """
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        with caplog.at_level(
+            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+        ):
+            channel._log_mode_change(before=None)  # prior source was a radio
         transitions = [
             r.getMessage()
             for r in caplog.records

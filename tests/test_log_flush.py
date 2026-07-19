@@ -32,6 +32,20 @@ class _DownClient:
         return None
 
 
+class _CloseRaisesClient:
+    """A VoxClient stand-in that connects fine but raises on close.
+
+    Exercises the exact finding: a per-cycle error after a successful connect
+    must not propagate out of the daemon thread and end periodic shipping.
+    """
+
+    async def connect(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        raise OSError("socket close failed")
+
+
 class TestPeriodicFlusher:
     """The flusher drains the buffer periodically, or locally when voxd is down."""
 
@@ -88,3 +102,28 @@ class TestPeriodicFlusher:
         flusher.stop()
 
         assert drained_by_loop  # the thread kept running, not exited immediately
+
+    def test_cycle_error_does_not_kill_the_thread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A per-cycle error (close raising after connect) must not end the loop.
+
+        The failing cycle falls back locally and the thread survives to flush the
+        next cycle, so periodic shipping never silently stops.
+        """
+        fallback = tmp_path / "fallback.log"
+        shipper = LogShipper(AtomicAppendLog(fallback))
+        monkeypatch.setattr(LogShipper, "_instance", shipper)
+        monkeypatch.setattr("punt_vox.log_flush.VoxClient", _CloseRaisesClient)
+
+        shipper.enqueue(_wire("cycle one"))
+        flusher = PeriodicFlusher(interval=0.05)
+        flusher.start()
+        time.sleep(0.15)  # first cycle raises on close -> falls back, thread survives
+        shipper.enqueue(_wire("cycle two"))
+        time.sleep(0.15)  # a live thread drains the second cycle too
+        flusher.stop()
+
+        text = fallback.read_text(encoding="utf-8")
+        assert "cycle one" in text  # the error cycle still salvaged its batch
+        assert "cycle two" in text  # the thread survived to flush again

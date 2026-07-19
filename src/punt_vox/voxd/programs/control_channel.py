@@ -144,9 +144,14 @@ class ControlChannel:
         return source.mode.value if isinstance(source, Program) else None
 
     def _log_mode_change(self, before: str | None) -> None:
-        """Log one INFO line when the applied command changed the Program mode."""
+        """Log one INFO line only when one Program mode changed to another.
+
+        Both sides must be real Program modes: a radio has no mode (``None``), so
+        a radio<->Program switch would otherwise read ``music: None -> playing``,
+        which is not a mode transition -- suppress it.
+        """
         after = self._mode_label()
-        if after is not None and after != before:
+        if before is not None and after is not None and before != after:
             logger.info("music: %s → %s", before, after)
 
     def _apply_one(self, signal: ControlSignal) -> None:

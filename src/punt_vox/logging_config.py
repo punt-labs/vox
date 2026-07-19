@@ -125,6 +125,25 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
     )
 
 
+def reapply_client_log_level() -> None:
+    """Re-resolve ``log_level`` and apply it to the running client's handlers.
+
+    A long-lived client (the MCP server) configures logging once at startup, so
+    a later ``vox log debug`` would otherwise never take effect and ``mic:status``
+    would claim a level the process is not using. Called on the per-tool path,
+    this re-reads the effective level and sets the root logger and its handlers --
+    a cheap level flip, not a full ``dictConfig`` rebuild -- so a change takes hold
+    within a tool call or two and status reflects what the process actually does.
+    """
+    level = logging.getLevelNamesMapping().get(_resolve_level(verbose=False))
+    if level is None:
+        return
+    root = logging.getLogger()
+    root.setLevel(level)
+    for handler in root.handlers:
+        handler.setLevel(level)
+
+
 def _suppression_table() -> dict[str, dict[str, str]]:
     """Return the shared third-party + framework logger level overrides."""
     return {name: {"level": "WARNING"} for name in _SUPPRESSED}
