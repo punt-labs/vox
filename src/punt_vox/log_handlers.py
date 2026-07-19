@@ -47,8 +47,8 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
         """Build a handler and re-tighten pre-existing files at startup.
 
         The dictConfig ``"()"`` factory. Construction opens the active file
-        (created 0600 by the opener); this then re-tightens the active log and
-        every existing backup slot, so a legacy 0644 file left by an earlier,
+        (created 0600 atomically by :meth:`_open`); this then re-tightens the
+        active log and every backup slot, so a legacy 0644 file left by an earlier,
         laxer run is fixed the first time the handler runs -- not only when it
         next happens to rotate. ``backupCount`` is unset while the parent's
         constructor runs :meth:`_open`, so the whole-chain sweep cannot live in
