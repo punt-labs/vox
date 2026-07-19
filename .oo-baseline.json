@@ -376,6 +376,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/log_wire.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.6,
+    "max_complexity": 5.0,
+    "avg_complexity": 1.8,
+    "module_size": 97.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/logging_config.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
