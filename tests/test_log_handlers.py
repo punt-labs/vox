@@ -139,7 +139,7 @@ def test_open_refuses_to_follow_a_symlink(tmp_path: Path) -> None:
 def test_tighten_failure_is_recorded_not_swallowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A ``chmod`` that fails lands in ``tighten_failures`` instead of vanishing.
+    """A ``fchmod`` that fails lands in ``tighten_failures`` instead of vanishing.
 
     A pre-existing log the current uid cannot re-chmod (owner changed, a
     root-run leftover) must not silently stay loose. ``tighten_existing``
@@ -149,17 +149,62 @@ def test_tighten_failure_is_recorded_not_swallowed(
     log = tmp_path / "tts.log"
     log.write_text("active\n")
 
-    def _deny_chmod(self: Path, mode: int) -> None:
-        raise PermissionError(f"cannot chmod {self}")
+    real_fchmod = os.fchmod
 
-    monkeypatch.setattr(Path, "chmod", _deny_chmod)
+    def _deny_fchmod(fd: int, mode: int) -> None:
+        raise PermissionError("cannot fchmod")
+
+    monkeypatch.setattr(os, "fchmod", _deny_fchmod)
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    monkeypatch.setattr(os, "fchmod", real_fchmod)  # restore before teardown close
+    handler.close()
+
+    assert Path(str(log)) in handler.tighten_failures
+
+
+def test_symlinked_backup_slot_is_recorded_not_chmodded_through(tmp_path: Path) -> None:
+    """A ``*.log.N`` symlink is reported as a failure, and its target is untouched.
+
+    A path-based ``chmod`` would follow the link and set the victim to 0600 under
+    the handler's authority. The ``O_NOFOLLOW`` open refuses the link (``ELOOP``),
+    so the slot is recorded as un-tightenable and the target keeps its own mode.
+    """
+    log = tmp_path / "tts.log"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("someone else's file\n")
+    victim.chmod(0o644)
+    link = tmp_path / "tts.log.1"
+    link.symlink_to(victim)
 
     handler = PrivateRotatingFileHandler.from_config(
         str(log), maxBytes=1_000_000, backupCount=5
     )
     handler.close()
 
-    assert Path(str(log)) in handler.tighten_failures
+    assert link in handler.tighten_failures, "the symlinked slot is a failure"
+    assert _mode(victim) == 0o644, "the link target was not chmod'd through"
+
+
+def test_vanished_backup_slot_is_skipped_not_recorded(tmp_path: Path) -> None:
+    """A slot that does not exist (ENOENT) is skipped -- no false failure.
+
+    Under multi-writer rollover a slot can vanish between listing and acting; a
+    gone file is not left readable, so it must not appear in ``tighten_failures``
+    (which would emit a false "could not enforce 0600" WARNING for a dead path).
+    """
+    log = tmp_path / "tts.log"
+    log.write_text("active\n")
+    # No tts.log.N files exist -- every backup slot is a vanished/absent slot.
+
+    handler = PrivateRotatingFileHandler.from_config(
+        str(log), maxBytes=1_000_000, backupCount=5
+    )
+    handler.close()
+
+    assert handler.tighten_failures == ()
 
 
 def test_tighten_failures_empty_when_all_succeed(tmp_path: Path) -> None:

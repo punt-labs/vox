@@ -293,7 +293,7 @@ class DaemonConfig:
 
     @staticmethod
     def _warn_on_loose_logs() -> None:
-        """Emit one WARNING per log file the handler could not tighten to 0600.
+        """Emit one WARNING per handler, naming every log file it left un-tightened.
 
         Run *after* ``dictConfig`` so the record lands in the now-live file
         handler (durable and greppable, unlike discarded stderr) and cannot

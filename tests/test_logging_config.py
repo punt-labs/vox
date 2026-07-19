@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -87,10 +88,10 @@ class TestConfigureLogging:
         """
         (tmp_path / "tts.log").write_text("existing\n")
 
-        def _deny_chmod(self: Path, mode: int) -> None:
-            raise PermissionError(f"cannot chmod {self}")
+        def _deny_fchmod(fd: int, mode: int) -> None:
+            raise PermissionError("cannot fchmod")
 
-        monkeypatch.setattr(Path, "chmod", _deny_chmod)
+        monkeypatch.setattr(os, "fchmod", _deny_fchmod)
 
         logging_config.configure_logging()
 
