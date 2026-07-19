@@ -68,6 +68,24 @@ class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
         handler.tighten_existing()
         return handler
 
+    @classmethod
+    def warn_untightened(cls, logger: logging.Logger) -> None:
+        """Emit one WARNING per configured handler naming files it left un-tightened.
+
+        Scan the root logger's handlers of this type and, for each with
+        un-tightenable paths, log one WARNING through *logger* naming them.
+
+        Call this *after* ``dictConfig`` returns, once the handlers are attached
+        and idle: the record lands in the now-live file handler -- durable and
+        greppable, unlike discarded stderr -- and cannot recurse into a
+        mid-rollover tighten. Shared by every configure path so the surfacing
+        cannot drift.
+        """
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, cls) and handler.tighten_failures:
+                loose = ", ".join(map(str, handler.tighten_failures))
+                logger.warning("could not enforce 0600 on log file(s): %s", loose)
+
     @property
     def tighten_failures(self) -> tuple[Path, ...]:
         """Return the paths the last sweep could not chmod to 0600.

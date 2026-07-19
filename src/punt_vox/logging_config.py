@@ -79,17 +79,4 @@ def configure_logging(*, stderr_level: str = "WARNING") -> None:
             },
         }
     )
-    _warn_on_loose_logs()
-
-
-def _warn_on_loose_logs() -> None:
-    """Emit one WARNING per handler, naming every log file it left un-tightened.
-
-    Run *after* ``dictConfig`` so the record lands in the now-live file handler
-    (durable and greppable, unlike discarded stderr) and cannot recurse into a
-    mid-rollover tighten -- the handler is fully attached and idle here.
-    """
-    for handler in logging.getLogger().handlers:
-        if isinstance(handler, PrivateRotatingFileHandler) and handler.tighten_failures:
-            loose = ", ".join(map(str, handler.tighten_failures))
-            logger.warning("could not enforce 0600 on log file(s): %s", loose)
+    PrivateRotatingFileHandler.warn_untightened(logger)
