@@ -175,6 +175,19 @@ class SessionConfig:
         if tags is not None:
             self._vibe_tags = tags
 
+    def set_voice(self, voice: str | None) -> str | None:
+        """Set the session voice, stripping a stray leading '@' sigil.
+
+        Returns the normalized name that was stored, or ``None`` when *voice*
+        carries no usable name (blank or a lone '@') -- the session voice is
+        left unchanged in that case. Shares one normalization rule with the
+        synthesis path via ``SynthesisSpec.normalize_voice``.
+        """
+        normalized = SynthesisSpec.normalize_voice(voice)
+        if normalized is not None:
+            self._voice = normalized
+        return normalized
+
     @staticmethod
     def canonical_tag(value: str | None) -> str | None:
         """Return a trimmed tag, or ``None`` when it is absent or blank.
@@ -788,9 +801,9 @@ def notify(
         updates["speak"] = "y"
         _session.set_speak("y", explicit=False)
 
-    if voice is not None:
-        updates["voice"] = voice
-        _session.voice = voice
+    stored_voice = _session.set_voice(voice)
+    if stored_voice is not None:
+        updates["voice"] = stored_voice
 
     # Persist to disk so hooks (which read config independently) see the change
     ConfigStore(_find_config_dir()).write_fields(updates)
@@ -820,9 +833,9 @@ def speak(
     updates: dict[str, str] = {"speak": mode}
     _session.set_speak(mode)
 
-    if voice is not None:
-        updates["voice"] = voice
-        _session.voice = voice
+    stored_voice = _session.set_voice(voice)
+    if stored_voice is not None:
+        updates["voice"] = stored_voice
 
     # Persist to disk so hooks (which read config independently) see the change
     ConfigStore(_find_config_dir()).write_fields(updates)

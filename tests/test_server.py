@@ -1045,6 +1045,13 @@ class TestNotifyTool:
         assert result["notify"]["voice"] == "matilda"
         assert srv._session.voice == "matilda"
 
+    def test_set_voice_strips_at_sigil(self) -> None:
+        import punt_vox.server as srv
+
+        result = json.loads(notify(mode="c", voice="@sarah"))
+        assert result["notify"]["voice"] == "sarah"
+        assert srv._session.voice == "sarah"
+
     def test_invalid_mode(self) -> None:
         result = json.loads(notify(mode="x"))
         assert "error" in result
@@ -1078,6 +1085,21 @@ class TestSpeakTool:
         result = json.loads(speak(mode="y", voice="matilda"))
         assert result["speak"] == "y"
         assert result["voice"] == "matilda"
+        assert srv._session.voice == "matilda"
+
+    def test_set_voice_strips_at_sigil(self) -> None:
+        import punt_vox.server as srv
+
+        result = json.loads(speak(mode="y", voice="@sarah"))
+        assert result["voice"] == "sarah"
+        assert srv._session.voice == "sarah"
+
+    def test_lone_at_leaves_voice_unset(self) -> None:
+        import punt_vox.server as srv
+
+        srv._session.voice = "matilda"
+        result = json.loads(speak(mode="y", voice="@"))
+        assert "voice" not in result
         assert srv._session.voice == "matilda"
 
     def test_invalid_mode(self) -> None:

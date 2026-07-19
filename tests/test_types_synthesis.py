@@ -135,3 +135,46 @@ class TestSynthesisSpecFrozen:
     def test_has_slots(self) -> None:
         spec = SynthesisSpec()
         assert not hasattr(spec, "__dict__")
+
+
+class TestNormalizeVoice:
+    """normalize_voice strips a stray leading '@' sigil, leniently."""
+
+    def test_bare_name_unchanged(self) -> None:
+        assert SynthesisSpec.normalize_voice("sarah") == "sarah"
+
+    def test_leading_at_stripped(self) -> None:
+        assert SynthesisSpec.normalize_voice("@sarah") == "sarah"
+
+    def test_lone_at_is_none(self) -> None:
+        assert SynthesisSpec.normalize_voice("@") is None
+
+    def test_none_is_none(self) -> None:
+        assert SynthesisSpec.normalize_voice(None) is None
+
+    def test_blank_is_none(self) -> None:
+        assert SynthesisSpec.normalize_voice("   ") is None
+
+    def test_surrounding_whitespace_trimmed(self) -> None:
+        assert SynthesisSpec.normalize_voice("  @matilda  ") == "matilda"
+
+    def test_only_one_leading_at_removed(self) -> None:
+        # A real voice name never starts with '@'; strip exactly the sigil.
+        assert SynthesisSpec.normalize_voice("@@sarah") == "@sarah"
+
+
+class TestSpecNormalizesVoiceOnConstruction:
+    """The voice field is normalized once, at the construction choke point."""
+
+    def test_at_sigil_stripped_on_construction(self) -> None:
+        assert SynthesisSpec(voice="@roger").voice == "roger"
+
+    def test_bare_voice_preserved(self) -> None:
+        assert SynthesisSpec(voice="roger").voice == "roger"
+
+    def test_lone_at_becomes_none(self) -> None:
+        assert SynthesisSpec(voice="@").voice is None
+
+    def test_normalized_voice_reaches_client_kwargs(self) -> None:
+        kwargs = SynthesisSpec(voice="@matilda").to_client_kwargs()
+        assert kwargs["voice"] == "matilda"

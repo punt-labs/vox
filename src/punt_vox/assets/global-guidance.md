@@ -50,8 +50,8 @@ exactly 12 genre-accurate `variations`, one per pool slot.
 
 - `/vox y|n|c` — notification level; `/vox model <name>` / `/vox provider <name>`
   switch TTS engine mid-session.
-- `/unmute [@voice]` — enable voice mode, optionally set the session voice;
-  `/unmute @` browses the roster.
+- `/unmute [voice]` — enable voice mode, optionally set the session voice;
+  `/unmute` (no argument) browses the roster.
 - `/mute` — chimes only (spoken notifications off).
 - `/vibe <mood>|auto|off` — set session mood.
 - `/music on|off|next|play <name>|list` — background music.
