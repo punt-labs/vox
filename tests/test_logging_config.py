@@ -132,17 +132,22 @@ class TestConfigureDaemonLogging:
         assert "could not enforce private permissions on log path(s)" in contents
         assert "0o700" in contents  # the directory failure is named
 
-    def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:
+    def test_symlink_log_path_refused_at_write_time(self, tmp_path: Path) -> None:
+        """A symlinked vox.log is refused at write (O_NOFOLLOW) and reads unhealthy.
+
+        The append sink never follows the link: the write goes to stderr, the
+        target is untouched, and ``log_health`` reports ``writable=False`` so a
+        symlink-redirect attempt is queryable instead of falsely reporting healthy.
+        """
         target = tmp_path / "target.txt"
         target.write_text("do not write here\n")
         log = tmp_path / "logs" / "vox.log"
         log.parent.mkdir(parents=True)
         log.symlink_to(target)
         logging_config.configure_daemon_logging()
-        # The append sink refuses the symlink at write time (O_NOFOLLOW), routing
-        # the failure to stderr rather than following the link.
+        assert logging_config.log_health()["writable"] is False  # symlink != healthy
         logging.getLogger("punt_vox.voxd").info("blocked")
-        assert target.read_text() == "do not write here\n"
+        assert target.read_text() == "do not write here\n"  # link never followed
 
 
 class TestConfigureClientLogging:

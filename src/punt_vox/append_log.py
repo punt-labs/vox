@@ -220,14 +220,29 @@ class AtomicAppendLog:
     def _can_write(path: Path) -> bool:
         """Return whether *path* is appendable or creatable right now; never raise.
 
-        An existing file must be a writable regular file; a not-yet-created file
-        needs its nearest existing ancestor to grant both write and search
-        (``W_OK | X_OK``). Any :class:`OSError` from probing the real filesystem is
-        fail-safe (report ``False``) so a health check can never crash its surface.
+        Probes with ``lstat`` so the answer matches the append open's
+        ``O_NOFOLLOW``: a symlink at the final component -- live or dangling -- is
+        rejected, because the open refuses it and every write would fail even though
+        the link target may look writable. An existing regular file must be writable;
+        a not-yet-created path needs its nearest existing ancestor to grant both
+        write and search (``W_OK | X_OK``). Any :class:`OSError` from probing the
+        real filesystem is fail-safe (report ``False``) so a health check can never
+        crash its surface.
         """
         try:
-            if path.exists():
-                return path.is_file() and os.access(path, os.W_OK)
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            return AtomicAppendLog._anchor_writable(path)
+        except OSError:
+            return False
+        if not stat.S_ISREG(mode):
+            return False  # a symlink (O_NOFOLLOW refuses) or a non-regular entry
+        return os.access(path, os.W_OK)
+
+    @staticmethod
+    def _anchor_writable(path: Path) -> bool:
+        """Return whether *path*'s nearest existing ancestor grants create+search."""
+        try:
             anchor = next(parent for parent in path.parents if parent.exists())
             return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
         except OSError:
