@@ -106,6 +106,32 @@ class TestConfigureDaemonLogging:
         contents = log.read_text(encoding="utf-8")
         assert "could not enforce 0600 on log file(s)" in contents
 
+    def test_untightenable_dir_warned_durably_in_vox_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A logs DIR it cannot force to 0700 also lands in the durable WARNING.
+
+        The dir-tighten runs before dictConfig, so its failure is collected (not
+        debug-logged where it could never land) and folded into the same
+        post-dictConfig WARNING as the file sweep.
+        """
+        (tmp_path / "logs").mkdir()
+        real_chmod = Path.chmod
+
+        def _deny_dir_chmod(
+            self: Path, mode: int, *args: object, **kwargs: object
+        ) -> None:
+            if self.is_dir():
+                raise PermissionError("cannot chmod dir")
+            real_chmod(self, mode, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "chmod", _deny_dir_chmod)
+        logging_config.configure_daemon_logging()
+        logging.getLogger("punt_vox.voxd").info("up")
+        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
+        assert "could not enforce 0600 on log file(s)" in contents
+        assert "0o700" in contents  # the directory failure is named
+
     def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:
         target = tmp_path / "target.txt"
         target.write_text("do not write here\n")

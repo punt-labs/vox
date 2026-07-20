@@ -171,21 +171,27 @@ def _tighten_daemon_tree() -> list[str]:
     """Create the log dir tree and re-tighten vox.log + backups, collecting notes.
 
     Fails closed on a tree it cannot create (the ``mkdir`` ``OSError`` propagates).
-    A pre-existing file it cannot force to 0600 is *collected* -- not logged here,
-    since logging is not configured yet -- so the caller can WARN durably once the
-    handlers exist. The file sweep is the sink's own (``tighten_existing``), which
-    covers the active log, every backup slot, and the rotate lock.
+    Both a *directory* it cannot force to 0700 and a *file* it cannot force to 0600
+    are *collected* -- not logged here, since logging is not configured yet -- so
+    the caller can WARN durably once the handlers exist. Directory failures come
+    through a collecting reporter on the guard; the file sweep is the sink's own
+    ``tighten_existing`` over the active log, every backup slot, and the rotate lock.
     """
-    PrivateState(_LOG_FILE).ensure_private_tree()
-    return [str(path) for path in AtomicAppendLog(_LOG_FILE).tighten_existing()]
+    failures: list[str] = []
+    PrivateState(_LOG_FILE, on_failure=failures.append).ensure_private_tree()
+    failures.extend(str(path) for path in AtomicAppendLog(_LOG_FILE).tighten_existing())
+    return failures
 
 
 def _tighten_client_tree() -> None:
     """Best-effort tighten for a client; never crash a hook.
 
-    The append sink re-tightens the file to 0600 on every write (routing any
-    failure to stderr), so a client's dir-tighten is defense-in-depth -- a
-    ``mkdir`` failure is swallowed rather than raised into the hook.
+    Directory-tighten failures route to stderr (``report_to_stderr``), never to a
+    debug logger that runs before ``dictConfig`` and so could never land. The
+    append sink re-tightens the file to 0600 on every write, so a client's
+    dir-tighten is defense-in-depth -- a ``mkdir`` failure is swallowed, not raised.
     """
     with contextlib.suppress(OSError):
-        PrivateState(_LOG_FILE).ensure_private_tree()
+        PrivateState(
+            _LOG_FILE, on_failure=PrivateState.report_to_stderr
+        ).ensure_private_tree()
