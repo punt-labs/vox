@@ -36,7 +36,6 @@ from punt_vox.voxd.config import (
 from punt_vox.voxd.crash_logging import CrashLogger
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.health import DaemonHealth
-from punt_vox.voxd.log_sink import LogHandler
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -289,7 +288,6 @@ class VoxDaemon:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=health),
-            "log": LogHandler(),
             **programs.handlers(),
         }
 

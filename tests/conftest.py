@@ -117,26 +117,20 @@ def hermetic_vibe_trace(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
-def hermetic_log_fallback(  # pyright: ignore[reportUnusedFunction]
+def hermetic_client_log(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """Redirect the client-log fallback file into a per-test tmp ``logs`` dir.
+    """Redirect the unified ``vox.log`` into a per-test tmp ``logs`` dir.
 
-    The consolidated logging ships client records to ``voxd`` and, when it is
-    unreachable, drains them to ``log_dir() / "vox-fallback.log"`` -- resolving to
-    the real ``~/.punt-labs/vox/logs``.  A CLI/hook test that buffers a record and
-    ``atexit``-drains it would otherwise write the developer's live fallback file.
-    Redirect both the ``log_ship`` resolver (used at handler-install time) and the
-    import-time ``logging_config`` paths so no test can touch the real logs dir.
+    Every process appends its records to ``log_dir() / "vox.log"`` -- resolving to
+    the real ``~/.punt-labs/vox/logs``. A CLI/hook test that configures logging and
+    emits a record would otherwise write the developer's live log. Redirecting the
+    import-time ``logging_config`` paths keeps every test off the real logs dir.
     """
     logs = tmp_path_factory.mktemp("client-log-state") / "logs"
     logs.mkdir()
-    monkeypatch.setattr("punt_vox.log_ship.log_dir", lambda: logs)
     monkeypatch.setattr("punt_vox.logging_config._LOG_DIR", logs)
     monkeypatch.setattr("punt_vox.logging_config._LOG_FILE", logs / "vox.log")
-    monkeypatch.setattr(
-        "punt_vox.logging_config._FALLBACK_FILE", logs / "vox-fallback.log"
-    )
     return logs
 
 

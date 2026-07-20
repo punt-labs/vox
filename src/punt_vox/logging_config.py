@@ -1,10 +1,13 @@
-"""The single logging owner: one daemon file config, one client ship config.
+"""The single logging owner: one append handler over one vox.log for every process.
 
-The daemon is the sole writer of the durable ``vox.log``; every client process
-(MCP server, hook, CLI, detached playback) ships its records to the daemon and
-holds no file handler of its own. This module builds both ends from shared
-constants -- the one format, the third-party + ``mcp`` framework suppression
-table, the max-bytes/backup rotation -- so the two configurations can never drift.
+The daemon and every client (MCP server, hook, CLI, detached playback) install
+the same :class:`AppendLogHandler` pointed at one ``vox.log``. Each process writes
+its own records there by a local ``O_APPEND`` append -- no ship transport, no
+fallback file, no daemon round-trip on a hook's logging hot path (DES-017). A
+client stamps ``client.<role>.`` onto its logger name so its lines grep apart from
+the daemon's; the multi-writer-safe :class:`AtomicAppendLog` behind the handler
+owns rotation and 0600, so the two configs can never drift into two rotation
+mechanisms racing on the file.
 
 Both entry points first tighten ``~/.punt-labs/vox`` and ``…/logs`` to 0700 via
 :class:`PrivateState`, so a client that never ran ``ensure_user_dirs`` still
@@ -20,30 +23,25 @@ from __future__ import annotations
 
 import logging
 import logging.config
-from pathlib import Path
 
 from punt_vox.config import ConfigStore
-from punt_vox.log_handlers import PrivateRotatingFileHandler
-from punt_vox.log_wire import LOG_DATE_FORMAT, LOG_FORMAT, Role
+from punt_vox.log_format import Role
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.private_state import PrivateState
 
-__all__ = ["Role", "configure_client_logging", "configure_daemon_logging"]
+__all__ = [
+    "Role",
+    "configure_client_logging",
+    "configure_daemon_logging",
+    "reapply_client_log_level",
+]
 
 logger = logging.getLogger(__name__)
 
 _LOG_DIR = _paths_log_dir()
 _LOG_FILE = _LOG_DIR / "vox.log"
-_FALLBACK_FILE = _LOG_DIR / "vox-fallback.log"
 
-_MAX_BYTES = 5_242_880  # 5 MB
-_BACKUP_COUNT = 5
-
-_FILE_HANDLER_FACTORY = "punt_vox.log_handlers.PrivateRotatingFileHandler.from_config"
-_SHIP_HANDLER_FACTORY = "punt_vox.log_ship.LogShipper.build_handler"
-# Escape the final formatted line so no field (a client-shipped name, a provider
-# error body) can forge a second physical line in vox.log.
-_FORMATTER_CLASS = "punt_vox.log_sanitize.SanitizingFormatter"
+_APPEND_FACTORY = "punt_vox.log_append_handler.AppendLogHandler.for_file"
 
 # Third-party and mcp-framework loggers pinned to WARNING so vox owns the INFO
 # surface -- notably the 38x "Processing request of type CallToolRequest" noise.
@@ -61,68 +59,29 @@ _SUPPRESSED: tuple[str, ...] = (
 
 
 def configure_daemon_logging() -> None:
-    """Configure the daemon as the single writer of the 0600 ``vox.log``.
+    """Configure the daemon to append its records to the shared 0600 ``vox.log``.
 
-    One private rotating file handler, no stderr handler: a parallel
-    ``StreamHandler`` would have the service manager capture a second, unprotected
-    copy of every record. Re-tightens the log tree first, then sweeps for any
-    pre-existing file it could not force to 0600.
+    One append handler, no stderr handler: a parallel ``StreamHandler`` would have
+    the service manager capture a second, unprotected copy of every record. The
+    ``AtomicAppendLog`` behind the handler re-tightens the file to 0600 on every
+    write. Re-tightens the log tree first (fail-closed).
     """
-    _ensure_tree(_LOG_FILE, best_effort=False)
+    _ensure_tree(best_effort=False)
     level = _resolve_level(verbose=False)
-    logging.config.dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "standard": {
-                    "class": _FORMATTER_CLASS,
-                    "format": LOG_FORMAT,
-                    "datefmt": LOG_DATE_FORMAT,
-                },
-            },
-            "handlers": {
-                "file": {
-                    "()": _FILE_HANDLER_FACTORY,
-                    "filename": str(_LOG_FILE),
-                    "maxBytes": _MAX_BYTES,
-                    "backupCount": _BACKUP_COUNT,
-                    "encoding": "utf-8",
-                    "formatter": "standard",
-                    "level": level,
-                },
-            },
-            "root": {"level": level, "handlers": ["file"]},
-            "loggers": _suppression_table(),
-        }
-    )
-    PrivateRotatingFileHandler.warn_untightened(logger)
+    logging.config.dictConfig(_config(name_prefix="", level=level))
 
 
 def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
-    """Configure a client to ship its records to ``voxd``; no local file handler.
+    """Configure a client to append its records to the shared ``vox.log``.
 
-    The root logger's one handler buffers each record and drains it over the
-    WebSocket the client already opens. ``verbose`` (the CLI ``--verbose``) is a
-    one-shot ``debug``; otherwise the level follows the ``log_level`` config key.
+    The root logger's one handler appends each record locally under the sink's
+    ``flock`` -- no socket, no daemon dependency -- and stamps ``client.<role>.``
+    onto the logger name. ``verbose`` (the CLI ``--verbose``) is a one-shot
+    ``debug``; otherwise the level follows the ``log_level`` config key.
     """
-    _ensure_tree(_FALLBACK_FILE, best_effort=True)
+    _ensure_tree(best_effort=True)
     level = _resolve_level(verbose=verbose)
-    logging.config.dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "handlers": {
-                "ship": {
-                    "()": _SHIP_HANDLER_FACTORY,
-                    "role": role,
-                    "level": level,
-                },
-            },
-            "root": {"level": level, "handlers": ["ship"]},
-            "loggers": _suppression_table(),
-        }
-    )
+    logging.config.dictConfig(_config(name_prefix=f"client.{role}.", level=level))
 
 
 def reapply_client_log_level() -> None:
@@ -142,6 +101,28 @@ def reapply_client_log_level() -> None:
     root.setLevel(level)
     for handler in root.handlers:
         handler.setLevel(level)
+
+
+def _config(*, name_prefix: str, level: str) -> dict[str, object]:
+    """Return the dictConfig for one append handler on the root logger.
+
+    Shared by both entry points so the daemon and client differ only in the
+    logger-name prefix; the handler and suppression table are identical.
+    """
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {
+            "append": {
+                "()": _APPEND_FACTORY,
+                "filename": str(_LOG_FILE),
+                "name_prefix": name_prefix,
+                "level": level,
+            },
+        },
+        "root": {"level": level, "handlers": ["append"]},
+        "loggers": _suppression_table(),
+    }
 
 
 def _suppression_table() -> dict[str, dict[str, str]]:
@@ -167,14 +148,14 @@ def _config_level() -> str:
     return ConfigStore.resolve_log_level().upper()
 
 
-def _ensure_tree(anchor: Path, *, best_effort: bool) -> None:
+def _ensure_tree(*, best_effort: bool) -> None:
     """Create and re-tighten the log directory tree to 0700 (djb re-tighten).
 
     The daemon fails closed on a tree it cannot secure; a client never lets a
     tightening failure crash a hook -- privacy here is defense-in-depth, not a
     precondition for logging.
     """
-    guard = PrivateState(anchor)
+    guard = PrivateState(_LOG_FILE)
     if not best_effort:
         guard.ensure_private_tree()
         return
