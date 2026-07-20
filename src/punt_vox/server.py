@@ -25,6 +25,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.logging_config import (
     configure_client_logging,
+    log_health,
     reapply_client_log_level,
 )
 from punt_vox.music_phrases import MusicMarquee
@@ -919,6 +920,7 @@ def status() -> str:
         "vibe_tags": _session.vibe_tags,
         "style": _music_pref.style,
         "vibe_trace": VibeTraceLog.default().health(),
+        "log": log_health(),
         "log_level": ConfigStore.resolve_log_level(),
     }
     try:

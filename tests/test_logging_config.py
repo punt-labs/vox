@@ -207,6 +207,21 @@ class TestConfigureClientLogging:
         assert logging.getLogger("mcp").level == logging.WARNING
 
 
+class TestLogHealth:
+    """The unified sink's writability is client-observable (like vibe-trace)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[None]:
+        yield from _redirect_log_tree(tmp_path, monkeypatch)
+
+    def test_reports_path_and_writability(self, tmp_path: Path) -> None:
+        health = logging_config.log_health()
+        assert health["path"] == str(tmp_path / "logs" / "vox.log")
+        assert health["writable"] is True
+
+
 class TestShipTransportIsGone:
     """The ship transport and fallback file no longer exist (forward integration)."""
 

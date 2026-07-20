@@ -31,12 +31,19 @@ import stat
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Self, final
+from typing import Self, TypedDict, final
 
 from punt_vox.log_sanitize import SANITIZER
 from punt_vox.private_state import PrivateState
 
-__all__ = ["AtomicAppendLog"]
+__all__ = ["AtomicAppendLog", "SinkHealth"]
+
+
+class SinkHealth(TypedDict):
+    """The sink's client-observable status view: where it writes and if it can now."""
+
+    path: str
+    writable: bool
 
 # ``O_NOFOLLOW`` refuses a symlink at the log path -- never legitimate, and a
 # redirect-through-symlink vector.
@@ -83,6 +90,15 @@ class AtomicAppendLog:
     def path(self) -> Path:
         """Return the file this sink appends to."""
         return self._path
+
+    def health(self) -> SinkHealth:
+        """Return where the sink writes and whether it could append right now.
+
+        The client-observable answer to "is this log itself working?" -- surfaced
+        through ``mic:status`` so a broken sink is queryable, never buried in a
+        second daemon log (the lesson that motivated routing failures out of band).
+        """
+        return {"path": str(self._path), "writable": self.is_writable()}
 
     def append(self, text: str) -> None:
         """Escape *text* to one line and append it atomically; never raise, never log.

@@ -16,22 +16,15 @@ the :meth:`~VibeTraceLog.health` view ``mic:status`` reads.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, TypedDict, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.append_log import AtomicAppendLog
+from punt_vox.append_log import AtomicAppendLog, SinkHealth
 from punt_vox.paths import log_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["TraceHealth", "VibeTraceLog"]
-
-
-class TraceHealth(TypedDict):
-    """The sink's status-API view: where it writes and whether it can right now."""
-
-    path: str
-    writable: bool
+__all__ = ["VibeTraceLog"]
 
 
 _PREFIX = "[vibe-trace]"
@@ -61,14 +54,14 @@ class VibeTraceLog:
         """Return the file path clients ``grep`` for ``[vibe-trace]`` lines."""
         return self._sink.path
 
-    def health(self) -> TraceHealth:
+    def health(self) -> SinkHealth:
         """Return the sink's path and live writability for the status API.
 
-        This is the client-observable answer to "is the proof-trail itself
-        working?" -- surfaced through ``mic:status`` so a broken sink is
-        queryable, never buried in a second daemon log.
+        Delegates to the shared sink's ``health`` -- the client-observable answer
+        to "is the proof-trail itself working?", surfaced through ``mic:status`` so
+        a broken sink is queryable, never buried in a second daemon log.
         """
-        return {"path": str(self._sink.path), "writable": self._sink.is_writable()}
+        return self._sink.health()
 
     def is_writable(self) -> bool:
         """Return whether a trace could be appended to the log right now."""

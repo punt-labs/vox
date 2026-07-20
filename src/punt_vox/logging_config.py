@@ -25,7 +25,7 @@ import contextlib
 import logging
 import logging.config
 
-from punt_vox.append_log import AtomicAppendLog
+from punt_vox.append_log import AtomicAppendLog, SinkHealth
 from punt_vox.config import ConfigStore
 from punt_vox.log_format import Role
 from punt_vox.paths import log_dir as _paths_log_dir
@@ -35,6 +35,7 @@ __all__ = [
     "Role",
     "configure_client_logging",
     "configure_daemon_logging",
+    "log_health",
     "reapply_client_log_level",
 ]
 
@@ -90,6 +91,16 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
     _tighten_client_tree()
     level = _resolve_level(verbose=verbose)
     logging.config.dictConfig(_config(name_prefix=f"client.{role}.", level=level))
+
+
+def log_health() -> SinkHealth:
+    """Return the unified ``vox.log`` sink's client-observable health.
+
+    Surfaced through ``mic:status`` so an operator can query whether the one log
+    every process appends to is itself writable -- the same treatment the
+    ``vibe-trace`` sink already gets.
+    """
+    return AtomicAppendLog(_LOG_FILE).health()
 
 
 def reapply_client_log_level() -> None:
