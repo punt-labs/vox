@@ -77,7 +77,7 @@
 
 % ── Document version ─────────────────────────────────────────────────────────
 \newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
-\prfaqversion{2}{1}
+\prfaqversion{2}{2}
 
 % ── Header/footer ────────────────────────────────────────────────────────────
 \usepackage{fancyhdr}
@@ -386,37 +386,75 @@ Restart Claude Code and type \texttt{/vox y}.
 \end{faqpair}
 
 \begin{faqpair}{How is this different from agent-notify or AgentVibes?}\label{faq:competitors}
-  Two open-source tools already add voice and audio to coding agents.
-  agent-notify \cite{agentnotify2025} provides sound alerts and macOS
-  \texttt{say} voice using the operating system's built-in speech synthesizer.
-  AgentVibes \cite{agentvibes2025} is more capable: 914 voices via macOS
-  \texttt{say}, Piper TTS, and Soprano, plus background music and personality
-  styles. A third project (claude-code-voice-handler) used OpenAI TTS for
-  Claude Code notifications but appears to have been taken down, suggesting
-  maintenance risk is real in this space.
+  Three open-source tools have added voice to coding agents. \textbf{AgentVibes}
+  \cite{agentvibes2025} is the strongest --- an actively maintained, feature-rich
+  Claude Code companion. \textbf{agent-notify} \cite{agentnotify2025} is minimal:
+  OS \texttt{say} plus push alerts. A third, claude-code-voice-handler, used
+  OpenAI TTS but appears to have been taken down. The real comparison is with
+  AgentVibes, so here is an honest head-to-head.
 
-  vox differs in three ways:
+  \begin{center}
+  \small
+  \renewcommand{\arraystretch}{1.3}
+  \begin{tabularx}{\linewidth}{@{} l X X @{}}
+  \toprule
+  \textbf{\color{SectionBlue}Dimension} & \textbf{\color{SectionBlue}AgentVibes} & \textbf{\color{SectionBlue}vox} \\
+  \midrule
+  Providers &
+    Six, including ElevenLabs (added v5.11.0, 2026-06-27) and local neural
+    Piper and Kokoro \cite{agentvibes2026releasenotes,agentvibes2026providers} &
+    ElevenLabs, OpenAI, Polly, plus offline \texttt{say} / \texttt{espeak-ng} \\
+  Expressive delivery &
+    19 static, command-invoked personalities (pirate, zen, \dots); no automatic
+    mood \cite{agentvibes2026personalities} &
+    \texttt{/vibe} auto-mode tracks the session and shifts delivery
+    ([excited], [weary], [sighs]) \\
+  Music &
+    Bundled MP3 catalog with per-track volume &
+    Generated 12-track vibe-matched pools via the ElevenLabs Music API \\
+  Surfaces &
+    CLI (\texttt{npx agentvibes}) + MCP server, both wrapping bash hook scripts
+    \cite{agentvibes2026technicaldeepdive} &
+    MCP server + importable Python library (\texttt{VoxClient}) + CLI, one daemon \\
+  Reusable engine &
+    ``Primarily a Claude Code plugin system,'' not a reusable library
+    \cite{agentvibes2026technicaldeepdive} &
+    langlearn-tts embeds \texttt{VoxClient} as its speech backend \\
+  Stack &
+    Roughly 65\% JavaScript; \texttt{blessed} multi-tab TUI
+    \cite{agentvibes2026github} &
+    Python daemon plus thin stdlib clients \\
+  Age &
+    Repo created 2025-06-10 \cite{agentvibes2026github} &
+    First commit 2026-02-25 (\textasciitilde{}8.5 months later) \\
+  \bottomrule
+  \end{tabularx}
+  \renewcommand{\arraystretch}{1.0}
+  \end{center}
 
-  \textbf{Voice quality.} Most existing tools use free, local TTS engines.
-  vox uses ElevenLabs (consistently among the top-rated providers on the
-  HuggingFace TTS Arena \cite{cnbc2026elevenlabs}), OpenAI TTS, and AWS
-  Polly --- voices that sound natural enough to leave on.
+  \textbf{Where vox is genuinely different.} Not voice quality --- AgentVibes
+  now ships ElevenLabs too, so both reach the same premium tier. vox's edge is
+  structural. It exposes an \emph{importable engine}: a downstream application
+  can embed \texttt{VoxClient}/\texttt{VoxClientSync} in-process, which
+  langlearn-tts already does. AgentVibes, by its own technical documentation, is
+  ``primarily a Claude Code plugin system rather than a universally reusable
+  library'' \cite{agentvibes2026technicaldeepdive} --- its MCP server wraps bash
+  hook scripts rather than exposing an embeddable SDK. AgentVibes does have a
+  working CLI and MCP server, so this is a library-reusability edge, not a claim
+  that it lacks interfaces. Beyond that: vox's mood is dynamic and automatic
+  where AgentVibes' personalities are static and manually selected; vox's music
+  is generated and vibe-matched where AgentVibes plays a fixed catalog; and vox
+  is a focused Python engine rather than a JavaScript application with a full
+  multi-tab TUI.
 
-  \textbf{Packaging.} punt-vox is a PyPI package with a test suite, strict
-  type checking, an MCP server, and a documented API. It is installed with
-  \texttt{uv tool install} and configured with \texttt{vox install}. Existing
-  tools are GitHub repositories without distribution packaging.
-
-  \textbf{Separation of concerns.} vox is a TTS engine that other tools
-  can build on. langlearn-tts (language learning audio) already uses punt-vox
-  as its speech backend. The MCP server exposes synthesis, batching, and pair
-  stitching as tools that any MCP client can call.
-
-  Since v0.7.0, vox also includes zero-config offline fallbacks ---
-  macOS \texttt{say} and Linux \texttt{espeak-ng} --- so it works with no API
-  key at all, matching the accessibility of existing tools. The premium
-  providers (ElevenLabs, OpenAI, Polly) require an API key but deliver voice
-  quality that the offline fallbacks cannot match.
+  \textbf{Where AgentVibes leads, and what vox can learn.} AgentVibes is the
+  older, more established project and bundles local neural voice models ---
+  Piper (900+ voices) and Kokoro (non-English, CPU-only)
+  \cite{agentvibes2026providers} --- giving it a far broader \emph{offline}
+  catalog than vox, whose offline fallback is only macOS \texttt{say} and Linux
+  \texttt{espeak-ng}. That is a real gap: a bundled local neural model is the one
+  concrete idea worth taking from AgentVibes if vox wants a stronger offline
+  story.
 \end{faqpair}
 
 \begin{faqpair}{How do I get started?}\label{faq:getting-started}
@@ -600,12 +638,15 @@ vox say "Build finished."
   Codex. Strengths: no API key required, cross-agent support. Weakness: OS
   TTS only, no packaging or test suite, single developer.
 
-  \textbf{AgentVibes} \cite{agentvibes2025}: Open-source Claude Code plugin.
-  macOS \texttt{say}, Piper TTS, Soprano neural TTS, Windows SAPI. 914 voices.
-  Background music, personality styles, verbosity levels. Strengths: most
-  feature-complete, creative UX (personalities, music). Weakness: no premium
-  TTS providers (no ElevenLabs, no OpenAI TTS), no PyPI packaging, no test
-  suite.
+  \textbf{AgentVibes} \cite{agentvibes2025}: Open-source, actively maintained,
+  and the older project (repo created 2025-06-10). Six TTS providers, including
+  ElevenLabs since v5.11.0 (2026-06-27) plus local neural Piper (900+ voices)
+  and Kokoro \cite{agentvibes2026releasenotes,agentvibes2026providers}. Bundled
+  music catalog, 19 static personality styles, verbosity levels. Strengths: most
+  feature-complete, broad offline voice catalog, creative UX. Weakness: no
+  importable/reusable TTS library (the MCP server wraps bash hook scripts)
+  \cite{agentvibes2026technicaldeepdive}, static personalities rather than
+  dynamic mood, no PyPI packaging or test suite.
 
   \textbf{OS notification center:} macOS/Linux system notifications. Always
   available, no setup. Weakness: visual-only, competes with every other app's
@@ -623,14 +664,19 @@ vox say "Build finished."
   anchored by premium voice quality, drives sustained adoption where OS TTS
   does not.
 
-  \textbf{Honest assessment of risk:} If AgentVibes adds ElevenLabs support,
-  it becomes a strong competitor with a creative feature set (personalities,
-  verbosity levels). vox now also has background music (v4.4.0 via
-  ElevenLabs Music API) and zero-config offline TTS (macOS \texttt{say} and
-  Linux \texttt{espeak-ng}), narrowing the feature gap. vox's defense is
-  engineering quality (packaged, tested, typed, reusable as a library),
-  separation of concerns (TTS engine vs.\ plugin UX), and distributed audio
-  (remote \texttt{voxd}). The competitive moat is narrow.
+  \textbf{Honest assessment of risk:} AgentVibes added ElevenLabs in v5.11.0
+  (2026-06-27) \cite{agentvibes2026releasenotes}, so the two tools now reach
+  provider parity --- premium voice quality is no longer a vox differentiator.
+  vox's remaining edge is structural, not tonal: a reusable, importable engine
+  (\texttt{VoxClient}, already embedded by langlearn-tts) where AgentVibes is
+  ``primarily a Claude Code plugin system''
+  \cite{agentvibes2026technicaldeepdive}; dynamic, automatic mood versus 19
+  static personalities; generated, vibe-matched music versus a bundled catalog;
+  and a focused Python engine versus a roughly 65\% JavaScript application with
+  a multi-tab TUI \cite{agentvibes2026github}. AgentVibes leads on offline voice
+  breadth (bundled Piper and Kokoro models) and is the older, more established
+  project. The competitive moat is narrow and rests on reusability and focus,
+  not voice.
 \end{faqpair}
 
 \begin{faqpair}{What is the user acquisition strategy?}

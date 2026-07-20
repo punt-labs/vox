@@ -93,7 +93,52 @@
   title        = {AgentVibes: Bring Your Claude Code Sessions to Life with Voice},
   year         = {2025},
   url          = {https://github.com/paulpreibisch/AgentVibes},
-  note         = {Open-source competitor. macOS say, Piper TTS, Soprano, Windows SAPI. 914 voices. Background music, personality styles, verbosity levels. No ElevenLabs or OpenAI TTS.},
+  note         = {Open-source competitor, created 2025-06-10. Six TTS providers: macOS say, Windows SAPI, Piper (900+ voices incl. LibriTTS), Kokoro (local neural, CPU-only), Soprano (neural), and ElevenLabs (premium cloud, added v5.11.0, 2026-06-27). 19 static, manually-selected personality styles (no dynamic per-session mood). Bundled MP3 music catalog (not generated). CLI (npx agentvibes) + MCP server (Python wrapper around bash hooks) + Claude Code hook integration; no importable library/SDK for third-party embedding. JavaScript/Shell/PowerShell stack (~95\% of source bytes) with a blessed-based multi-tab TUI (Setup/Voices/Music/BMAD). Apache-2.0. 152 stars, 24 forks, active releases through v5.14.0 as of 2026-07-19.},
+}
+
+@online{agentvibes2026releasenotes,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Release Notes},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/RELEASE_NOTES.md},
+  urldate      = {2026-07-19},
+  note         = {v5.11.0 (2026-06-27, ``Neural voices'') introduced Kokoro and ElevenLabs support -- the point at which AgentVibes gained a premium cloud TTS option.},
+}
+
+@online{agentvibes2026providers,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Providers Documentation},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/providers.md},
+  urldate      = {2026-07-19},
+  note         = {Documents Piper (50+ neural voices, 18 languages) and macOS say (70+ voices) as local/offline providers.},
+}
+
+@online{agentvibes2026personalities,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Personalities Documentation},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/personalities.md},
+  urldate      = {2026-07-19},
+  note         = {Lists 19 static, command-invoked personality styles (pirate, sarcastic, zen, etc.); confirms no automatic/dynamic per-session mood tracking.},
+}
+
+@online{agentvibes2026technicaldeepdive,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Technical Deep Dive},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/technical-deep-dive.md},
+  urldate      = {2026-07-19},
+  note         = {States AgentVibes is primarily a Claude Code plugin system; its MCP server wraps existing bash hook scripts rather than exposing a standalone reusable TTS library/module.},
+}
+
+@online{agentvibes2026github,
+  author       = {{GitHub, Inc.}},
+  title        = {paulpreibisch/AgentVibes -- Repository Metadata},
+  year         = {2026},
+  url          = {https://api.github.com/repos/paulpreibisch/AgentVibes},
+  urldate      = {2026-07-19},
+  note         = {created\_at 2025-06-10; 152 stars, 24 forks, 19 open issues, Apache-2.0 license; language breakdown JavaScript 2.97MB / Shell 0.97MB / PowerShell 0.33MB / Python 0.24MB.},
 }
 
 @misc{cnbc2026elevenlabs,
