@@ -2140,7 +2140,7 @@ Relates to vox-iyqq (positioning) and the audio-programs epic (podcast/audiobook
 
 ### Decision
 
-Every process — daemon and every client, including hooks that do **no** daemon work — appends its own records **directly** to one `vox.log` through the multi-writer-safe `O_APPEND` line writer (`AtomicAppendLog`), with rotation guarded by an `flock` shared/exclusive protocol on a stable lock file (DES-013 size-check-then-rename shape, modeled in `docs/vox-2594-log-rotation.tex`, fuzz-clean). The fdmm ship transport (`log_ship.py`, `log_flush.py`, `log_wire.py`, `voxd/log_sink.py`) and `vox-fallback.log` are deleted outright — no fallback file exists. The daemon logs synchronously on its event loop (one uncontended `flock` per record); a thread offload was explicitly ruled out as premature (operator-ratified 2026-07-20).
+Every process — daemon and every client, including hooks that do **no** daemon work — appends its own records **directly** to one `vox.log` through the multi-writer-safe `O_APPEND` line writer (`AtomicAppendLog`), with rotation guarded by a `flock` shared/exclusive protocol on a stable lock file (DES-013 size-check-then-rename shape, modeled in `docs/vox-2594-log-rotation.tex`, fuzz-clean). The fdmm ship transport (`log_ship.py`, `log_flush.py`, `log_wire.py`, `voxd/log_sink.py`) and `vox-fallback.log` are deleted outright — no fallback file exists. The daemon logs synchronously on its event loop (one uncontended `flock` per record); a thread offload was explicitly ruled out as premature (operator-ratified 2026-07-20).
 
 ### Why
 

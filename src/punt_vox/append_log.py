@@ -12,7 +12,7 @@ processes append here through ``logging``, so calling ``logger.*`` on an
 ``OSError`` would recurse straight back into this sink. On failure it writes a
 best-effort note to ``sys.__stderr__`` and returns.
 
-Rotation is safe under concurrent writers, guarded by an ``flock`` protocol on a
+Rotation is safe under concurrent writers, guarded by a ``flock`` protocol on a
 stable ``<path>.rotate.lock`` file (never itself renamed, so the lock identity
 survives the rename chain). Every append holds ``LOCK_SH`` across
 ``open -> write -> close``; a rotation takes ``LOCK_EX`` -- which ``flock`` grants

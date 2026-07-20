@@ -20,7 +20,7 @@ the largest client class on its primary path.
 
 Every process — daemon included — appends its own records to a single
 `vox.log` through the multi-writer-safe `O_APPEND` line writer already in the
-tree (`AtomicAppendLog`), with rotation guarded by an `flock` shared/exclusive
+tree (`AtomicAppendLog`), with rotation guarded by a `flock` shared/exclusive
 protocol in the DES-013 size-check-then-rename shape. There is no daemon
 dependency for logging, so **there is no fallback file and no ship transport at
 all**.
