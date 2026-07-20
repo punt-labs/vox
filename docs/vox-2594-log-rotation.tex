@@ -1,0 +1,173 @@
+\documentclass{article}
+\usepackage{fuzz}
+
+\begin{document}
+
+\title{vox-2594: Concurrent-Writer Log Rotation}
+\author{rmh}
+\maketitle
+
+% The processes that append to vox.log: the daemon and every transient client
+% (hook, MCP server, CLI, detached playback). Each takes a shared flock to
+% append and upgrades to an exclusive flock to rotate.
+\begin{zed}
+  [WRITER]
+\end{zed}
+
+% The lock state of one vox.log sink guarded by a stable rotate.lock file.
+%   shared     -- writers holding LOCK_SH, each mid open/write/close append.
+%   exclusive  -- the writer holding LOCK_EX to run the rename chain.
+%   size       -- current bytes in the active vox.log.
+%   backups    -- how many rotated backup slots exist (.1 .. .backupCount).
+%   maxBytes   -- rotation threshold.
+%   backupCount-- retained backup slots.
+%
+% The predicate carries the safety invariants the flock protocol must hold:
+%   (I1) a writer cannot hold both a shared and the exclusive lock at once;
+%   (I2) at most one rotator runs the rename chain;
+%   (I3) a rotation excludes every appender -- no append fd is open while a
+%        rename runs, so no line is written to a renamed inode;
+%   (I4) the backup chain never exceeds its retained length.
+\begin{schema}{Rotator}
+  shared: \power WRITER \\
+  exclusive: \power WRITER \\
+  size: \nat \\
+  backups: \nat \\
+  maxBytes: \nat \\
+  backupCount: \nat
+\where
+  shared \cap exclusive = \emptyset \\
+  \# exclusive \leq 1 \\
+  exclusive \neq \emptyset \implies shared = \emptyset \\
+  backups \leq backupCount
+\end{schema}
+
+% Initially no lock is held, the log is empty, and no backups exist. The
+% thresholds are positive so a rotation is reachable and a backup can be kept.
+\begin{schema}{InitRotator}
+  Rotator
+\where
+  shared = \emptyset \\
+  exclusive = \emptyset \\
+  size = 0 \\
+  backups = 0 \\
+  maxBytes > 0 \\
+  backupCount > 0
+\end{schema}
+
+% A writer takes LOCK_SH to begin an append. Refused while any rotator holds
+% LOCK_EX (I3): flock blocks a shared acquire behind an exclusive holder.
+\begin{schema}{AcquireShared}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  exclusive = \emptyset \\
+  w? \notin shared \\
+  shared' = shared \cup \{ w? \} \\
+  exclusive' = exclusive \\
+  size' = size \\
+  backups' = backups \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% The atomic O_APPEND write of one line, performed while holding LOCK_SH. Only
+% fires when the line fits under the threshold; an oversize line rotates first.
+\begin{schema}{Append}
+  \Delta Rotator \\
+  w?: WRITER \\
+  len?: \nat
+\where
+  w? \in shared \\
+  size + len? \leq maxBytes \\
+  size' = size + len? \\
+  shared' = shared \\
+  exclusive' = exclusive \\
+  backups' = backups \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% The writer releases LOCK_SH after close, allowing a pending rotator to proceed.
+\begin{schema}{ReleaseShared}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  w? \in shared \\
+  shared' = shared \setminus \{ w? \} \\
+  exclusive' = exclusive \\
+  size' = size \\
+  backups' = backups \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% A writer that observed an oversize append upgrades to LOCK_EX. It has already
+% released its own shared lock, and flock grants the exclusive lock only once
+% every shared holder has drained (shared = empty) and no other rotator holds it
+% (exclusive = empty). This establishes I3 for the rename that follows.
+\begin{schema}{BeginRotate}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  w? \notin shared \\
+  shared = \emptyset \\
+  exclusive = \emptyset \\
+  exclusive' = \{ w? \} \\
+  shared' = shared \\
+  size' = size \\
+  backups' = backups \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% Under LOCK_EX, re-check found the file still oversize: run the rename chain.
+% The active file resets to empty and one more backup slot exists, capped at
+% backupCount (the oldest backup is overwritten, not accumulated).
+\begin{schema}{Rotate}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  w? \in exclusive \\
+  size > maxBytes \\
+  size' = 0 \\
+  backups < backupCount \implies backups' = backups + 1 \\
+  backups = backupCount \implies backups' = backupCount \\
+  shared' = shared \\
+  exclusive' = exclusive \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% Under LOCK_EX, the re-check found the file already small: a peer rotator ran
+% first. The rotate is a no-op -- idempotency that closes the double-rotate race.
+\begin{schema}{SkipRotate}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  w? \in exclusive \\
+  size \leq maxBytes \\
+  size' = size \\
+  backups' = backups \\
+  shared' = shared \\
+  exclusive' = exclusive \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+% The rotator releases LOCK_EX; appenders may re-acquire LOCK_SH and continue.
+\begin{schema}{EndRotate}
+  \Delta Rotator \\
+  w?: WRITER
+\where
+  w? \in exclusive \\
+  exclusive' = \emptyset \\
+  shared' = shared \\
+  size' = size \\
+  backups' = backups \\
+  maxBytes' = maxBytes \\
+  backupCount' = backupCount
+\end{schema}
+
+\end{document}
+</content>
