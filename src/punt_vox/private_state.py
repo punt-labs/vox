@@ -16,8 +16,11 @@ precondition for functioning.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Self, final
 
@@ -33,14 +36,49 @@ _FILE_MODE = 0o600  # private per-user file
 class PrivateState:
     """The privacy guard for one per-user state file and its ancestor dirs."""
 
-    __slots__ = ("_path",)
+    __slots__ = ("_path", "_report")
 
     _path: Path
+    _report: Callable[[str], None]
 
-    def __new__(cls, path: Path) -> Self:
+    def __new__(
+        cls, path: Path, *, on_failure: Callable[[str], None] | None = None
+    ) -> Self:
         self = super().__new__(cls)
         self._path = path
+        # None selects the default logging reporter; a caller that must never
+        # re-enter logging (the append sink) passes ``report_to_stderr`` instead.
+        self._report = self._report_via_logging if on_failure is None else on_failure
         return self
+
+    @classmethod
+    def for_append_sink(cls, path: Path) -> Self:
+        """Return a guard that routes tighten failures to stderr, never logging.
+
+        The append log tightens on every write from within a ``logging`` emit, so
+        its guard must report failures out-of-band (``report_to_stderr``) to avoid
+        unbounded logging re-entry.
+        """
+        return cls(path, on_failure=cls.report_to_stderr)
+
+    @staticmethod
+    def _report_via_logging(message: str) -> None:
+        """Default tighten-failure sink: a debug line for the ordinary caller."""
+        logger.debug("%s", message)
+
+    @staticmethod
+    def report_to_stderr(message: str) -> None:
+        """Tighten-failure sink for callers that must never re-enter ``logging``.
+
+        The append log's per-write tightening runs *inside* a ``logging`` emit; a
+        ``logger.*`` call here would recurse straight back into that handler. Writing
+        to the real stderr keeps the failure observable without the loop.
+        """
+        err = sys.__stderr__
+        if err is None:
+            return
+        with contextlib.suppress(OSError, ValueError):
+            err.write(f"[private-state] {message}\n")
 
     @property
     def path(self) -> Path:
@@ -93,19 +131,15 @@ class PrivateState:
         return missing
 
     def _tighten_dir(self, directory: Path) -> None:
-        """Best-effort chmod *directory* to 0o700; log and swallow failure."""
+        """Best-effort chmod *directory* to 0o700; report and swallow failure."""
         try:
             directory.chmod(_DIR_MODE)
         except OSError as exc:
-            logger.debug(
-                "private-state: cannot tighten %s to 0o700: %s", directory, exc
-            )
+            self._report(f"cannot tighten {directory} to 0o700: {exc}")
 
     def _tighten_fd(self, fd: int) -> None:
-        """Best-effort chmod the open fd to 0o600; log and swallow failure."""
+        """Best-effort chmod the open fd to 0o600; report and swallow failure."""
         try:
             os.fchmod(fd, _FILE_MODE)
         except OSError as exc:
-            logger.debug(
-                "private-state: cannot tighten %s to 0o600: %s", self._path, exc
-            )
+            self._report(f"cannot tighten {self._path} to 0o600: {exc}")

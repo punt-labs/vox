@@ -7,7 +7,6 @@ via VoxClient.
 
 from __future__ import annotations
 
-import atexit
 import json
 import logging
 import random
@@ -24,9 +23,9 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
-from punt_vox.log_flush import PeriodicFlusher
 from punt_vox.logging_config import (
     configure_client_logging,
+    log_health,
     reapply_client_log_level,
 )
 from punt_vox.music_phrases import MusicMarquee
@@ -381,10 +380,6 @@ _program_tools: ProgramGateway = ClientProgramGateway(VoxClientSync())
 # The daemon-transport faults every tool boundary funnels to a JSON _error; named
 # once so the music/status tools share one contract instead of repeating the tuple.
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
-
-# Bound (not a discarded ``PeriodicFlusher().start()``) so ``run_server`` can stop
-# it and register its final drain -- the durable-within-seconds log shipper.
-_log_flusher: PeriodicFlusher = PeriodicFlusher()
 
 
 def _error(message: str) -> str:
@@ -925,6 +920,7 @@ def status() -> str:
         "vibe_tags": _session.vibe_tags,
         "style": _music_pref.style,
         "vibe_trace": VibeTraceLog.default().health(),
+        "log": log_health(),
         "log_level": ConfigStore.resolve_log_level(),
     }
     try:
@@ -948,15 +944,6 @@ def run_server() -> None:
     global _session
 
     configure_client_logging(role="mcp")
-    # The server is long-lived, so drain buffered log records to voxd every few
-    # seconds (not only on the next tool call / atexit). Gated to this role: a
-    # short-lived hook/CLI never spawns a thread it would exit before using. Bind
-    # the instance (a discarded one could never be stopped) and register its
-    # final drain: configure_client_logging already registered the shipper's
-    # fallback drain, and atexit runs LIFO, so this later registration runs first
-    # -- the tail ships to vox.log while voxd is up, only falling back if it is not.
-    _log_flusher.start()
-    atexit.register(_log_flusher.stop)
     logger.info("Starting vox MCP server (mic)")
 
     # Seed session config from per-repo config if it exists.

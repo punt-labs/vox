@@ -2131,3 +2131,34 @@ DES-042 (the mic metaphor; notification-voice mood = signal, not performance) **
 | Make fun a lede/headline pillar | Operator ruled light-touch — the positioning stays utility-led; fun is one benefit among several |
 
 Relates to vox-iyqq (positioning) and the audio-programs epic (podcast/audiobook = Phases 2–3).
+
+## DES-048: One vox.log — Every Process Appends Directly; the Ship Transport Is Deleted
+
+**Date:** 2026-07-20
+**Status:** SETTLED
+**Topic:** Log transport for the unified `vox.log` (vox-2594, fixing the vox-fdmm defect)
+
+### Decision
+
+Every process — daemon and every client, including hooks that do **no** daemon work — appends its own records **directly** to one `vox.log` through the multi-writer-safe `O_APPEND` line writer (`AtomicAppendLog`), with rotation guarded by a `flock` shared/exclusive protocol on a stable lock file (DES-013 size-check-then-rename shape, modeled in `docs/vox-2594-log-rotation.tex`, fuzz-clean). The fdmm ship transport (`log_ship.py`, `log_flush.py`, `log_wire.py`, `voxd/log_sink.py`) and `vox-fallback.log` are deleted outright — no fallback file exists. The daemon logs synchronously on its event loop (one uncontended `flock` per record); a thread offload was explicitly ruled out as premature (operator-ratified 2026-07-20).
+
+### Why
+
+fdmm (v4.12.5) routed client records over the WebSocket a client opens *for its actual work*, with an `O_APPEND` "daemon-down" fallback. Two false premises: a no-daemon-work hook opens no WebSocket, and the fallback was not a daemon-down path — it was the *primary* path for the largest client class (skip-path hooks). Live measurement: `vox-fallback.log` 4.2 MB + rotations vs `vox.log` 404 KB. A transport that cannot carry the largest client class cannot deliver "one log." Direct append needs no transport at all: `O_APPEND` single-line writes are already atomic across writers; the only genuinely new safety problem is multi-writer rotation, closed by the `flock` protocol (LOCK_SH held across every `open→write→close`; LOCK_EX + size re-check to rotate — no write to a renamed file, at most one rotator, no lost lines).
+
+### Consequences
+
+- Invariants (tested by name): one `vox.log` for daemon + every client record; no daemon round-trip on any hook's logging hot path (DES-017); rotation safe under concurrent writers; 0600 on active file and backups (cn0p); no fallback/migration/shim; persistent-file observability (DES-046).
+- The daemon is no longer the log owner; `voxd/daemon.py` drops the `log` frame route. Client lines are stamped `client.<role>.<module>` for grepping.
+- A logging failure degrades to a `sys.__stderr__` note — never a crashed hook.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|-----------------|
+| A: no-daemon-work hooks open a brief connection to ship their line | Every fast hook pays a daemon round-trip (violates DES-017) and a daemon-down fallback is still required — the two-file split survives |
+| C: clients append to a local spool the daemon drains into `vox.log` | Buys daemon-sole-writer, which `O_APPEND` atomicity already provides, at the cost of a drain loop, spool lifecycle, and event-to-visibility latency |
+| Keep the fallback but make the split observable | The split *is* the defect — "one vox.log" was the shipped promise; observing the failure is not fixing it |
+| Thread offload for the daemon's synchronous `emit` | Same order of cost as the previous in-loop `RotatingFileHandler`; offload now is speculative complexity — revisit only if live-verify shows loop stalls |
+
+Closes vox-2594. Supersedes the fdmm transport recommendation (`docs/logging-proposal.md` rec 3); design of record: `docs/vox-2594-unified-log.md`.

@@ -129,7 +129,7 @@ echo "piped too" | vox say         # ...or read the text from stdin
 
 `vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox say` should speak the phrase through your speakers within a few seconds.
 
-If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/voxd.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
+If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/vox.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
 ## Upgrading
 
@@ -141,7 +141,7 @@ uv tool upgrade punt-vox
 vox daemon restart
 ```
 
-Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/voxd.log` on failure.
+Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/vox.log` on failure.
 
 To confirm the daemon and the installed wheel agree:
 
@@ -401,7 +401,7 @@ Shell        ──► vox say "hi"  ── WebSocket ──►    │
 |---------|------|
 | Config (API keys) | `~/.punt-labs/vox/keys.env` |
 | Agent usage guide | `~/.punt-labs/vox/CLAUDE.md` |
-| Logs | `~/.punt-labs/vox/logs/voxd.log` |
+| Logs | `~/.punt-labs/vox/logs/vox.log` |
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
 | Service unit (Linux) | `/etc/systemd/system/voxd.service` |

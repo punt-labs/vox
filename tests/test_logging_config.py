@@ -11,8 +11,7 @@ import pytest
 
 from punt_vox import logging_config
 from punt_vox.config import ConfigStore
-from punt_vox.log_handlers import PrivateRotatingFileHandler
-from punt_vox.log_ship import DaemonLogHandler
+from punt_vox.log_append_handler import AppendLogHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,7 +24,6 @@ def _redirect_log_tree(
     log_dir = tmp_path / "logs"
     monkeypatch.setattr(logging_config, "_LOG_DIR", log_dir)
     monkeypatch.setattr(logging_config, "_LOG_FILE", log_dir / "vox.log")
-    monkeypatch.setattr(logging_config, "_FALLBACK_FILE", log_dir / "vox-fallback.log")
     # Default: level resolves to the quiet INFO. Individual tests override.
     _pin_level(monkeypatch, "info")
     root = logging.getLogger()
@@ -50,14 +48,20 @@ def _pin_level(monkeypatch: pytest.MonkeyPatch, level: str) -> None:
     )
 
 
-def _file_handler(root: logging.Logger) -> PrivateRotatingFileHandler:
-    handlers = [h for h in root.handlers if isinstance(h, PrivateRotatingFileHandler)]
-    assert len(handlers) == 1
-    return handlers[0]
+def _append_handlers(root: logging.Logger) -> list[AppendLogHandler]:
+    return [h for h in root.handlers if isinstance(h, AppendLogHandler)]
+
+
+def _no_stream_handler(root: logging.Logger) -> bool:
+    """Return whether no bare stderr StreamHandler is installed (DES-046)."""
+    return not any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        for h in root.handlers
+    )
 
 
 class TestConfigureDaemonLogging:
-    """The daemon is the single writer of a private vox.log -- no stderr handler."""
+    """The daemon appends to one private vox.log -- no stderr handler."""
 
     @pytest.fixture(autouse=True)
     def _isolate(
@@ -65,48 +69,89 @@ class TestConfigureDaemonLogging:
     ) -> Iterator[None]:
         yield from _redirect_log_tree(tmp_path, monkeypatch)
 
-    def test_installs_one_private_file_handler(self, tmp_path: Path) -> None:
+    def test_installs_one_append_handler_no_stderr(self, tmp_path: Path) -> None:
         logging_config.configure_daemon_logging()
         root = logging.getLogger()
-        handler = _file_handler(root)
-        assert Path(handler.baseFilename) == tmp_path / "logs" / "vox.log"
-        streams = [
-            h
-            for h in root.handlers
-            if isinstance(h, logging.StreamHandler)
-            and not isinstance(h, logging.FileHandler)
-        ]
-        assert streams == []  # no stderr double-write
+        assert len(_append_handlers(root)) == 1
+        assert _no_stream_handler(root)  # no stderr double-write (DES-046)
 
-    def test_untightenable_log_is_warned_in_the_live_log(
+    def test_daemon_record_lands_in_vox_log_without_client_prefix(
+        self, tmp_path: Path
+    ) -> None:
+        logging_config.configure_daemon_logging()
+        logging.getLogger("punt_vox.voxd.router").info("daemon up")
+        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
+        assert "punt_vox.voxd.router: daemon up" in contents
+        assert "client." not in contents  # the daemon carries no client prefix
+
+    def test_untightenable_file_warned_durably_in_vox_log(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A file it cannot force to 0600 becomes one WARNING in the live vox.log.
+
+        The note is emitted after ``dictConfig``, so it lands in the now-open log
+        (a debug line before configuration could never land) and never re-enters
+        logging via the sink's per-write tighten.
+        """
         log = tmp_path / "logs" / "vox.log"
         log.parent.mkdir(parents=True)
         log.write_text("existing\n")
 
-        def _deny_fchmod(fd: int, mode: int) -> None:
+        def _deny_fchmod(_fd: int, _mode: int) -> None:
             raise PermissionError("cannot fchmod")
 
         monkeypatch.setattr(os, "fchmod", _deny_fchmod)
         logging_config.configure_daemon_logging()
-        contents = log.read_text()
-        assert "could not enforce 0600 on log file(s)" in contents
-        assert "vox.log" in contents
+        logging.getLogger("punt_vox.voxd").info("up")
+        contents = log.read_text(encoding="utf-8")
+        assert "could not enforce private permissions on log path(s)" in contents
 
-    def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:
+    def test_untightenable_dir_warned_durably_in_vox_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A logs DIR it cannot force to 0700 also lands in the durable WARNING.
+
+        The dir-tighten runs before dictConfig, so its failure is collected (not
+        debug-logged where it could never land) and folded into the same
+        post-dictConfig WARNING as the file sweep.
+        """
+        (tmp_path / "logs").mkdir()
+        real_chmod = Path.chmod
+
+        def _deny_dir_chmod(
+            self: Path, mode: int, *args: object, **kwargs: object
+        ) -> None:
+            if self.is_dir():
+                raise PermissionError("cannot chmod dir")
+            real_chmod(self, mode, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "chmod", _deny_dir_chmod)
+        logging_config.configure_daemon_logging()
+        logging.getLogger("punt_vox.voxd").info("up")
+        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
+        assert "could not enforce private permissions on log path(s)" in contents
+        assert "0o700" in contents  # the directory failure is named
+
+    def test_symlink_log_path_refused_at_write_time(self, tmp_path: Path) -> None:
+        """A symlinked vox.log is refused at write (O_NOFOLLOW) and reads unhealthy.
+
+        The append sink never follows the link: the write goes to stderr, the
+        target is untouched, and ``log_health`` reports ``writable=False`` so a
+        symlink-redirect attempt is queryable instead of falsely reporting healthy.
+        """
         target = tmp_path / "target.txt"
         target.write_text("do not write here\n")
         log = tmp_path / "logs" / "vox.log"
         log.parent.mkdir(parents=True)
         log.symlink_to(target)
-        with pytest.raises(ValueError):  # dictConfig wraps the O_NOFOLLOW OSError
-            logging_config.configure_daemon_logging()
-        assert target.read_text() == "do not write here\n"
+        logging_config.configure_daemon_logging()
+        assert logging_config.log_health()["writable"] is False  # symlink != healthy
+        logging.getLogger("punt_vox.voxd").info("blocked")
+        assert target.read_text() == "do not write here\n"  # link never followed
 
 
 class TestConfigureClientLogging:
-    """A client ships records over the socket -- it holds no file handler."""
+    """A client appends to the shared vox.log, stamped with its role."""
 
     @pytest.fixture(autouse=True)
     def _isolate(
@@ -114,11 +159,25 @@ class TestConfigureClientLogging:
     ) -> Iterator[None]:
         yield from _redirect_log_tree(tmp_path, monkeypatch)
 
-    def test_installs_ship_handler_no_file(self) -> None:
+    def test_installs_one_append_handler_no_stderr(self) -> None:
         logging_config.configure_client_logging(role="cli")
         root = logging.getLogger()
-        assert any(isinstance(h, DaemonLogHandler) for h in root.handlers)
-        assert not any(isinstance(h, logging.FileHandler) for h in root.handlers)
+        assert len(_append_handlers(root)) == 1
+        assert _no_stream_handler(root)
+
+    def test_skip_hook_line_lands_in_vox_log_no_fallback(self, tmp_path: Path) -> None:
+        """A hook that does no daemon work still lands its line in vox.log.
+
+        No daemon is reachable in this test, yet the record appends locally -- and
+        no ``vox-fallback.log`` is ever created.
+        """
+        logging_config.configure_client_logging(role="hook")
+        logging.getLogger("punt_vox.hooks").info("stop hook skipped")
+        vox_log = tmp_path / "logs" / "vox.log"
+        assert "client.hook.punt_vox.hooks: stop hook skipped" in vox_log.read_text(
+            encoding="utf-8"
+        )
+        assert not (tmp_path / "logs" / "vox-fallback.log").exists()
 
     def test_verbose_raises_root_to_debug(self) -> None:
         logging_config.configure_client_logging(role="cli", verbose=True)
@@ -177,3 +236,32 @@ class TestConfigureClientLogging:
         logging_config.configure_client_logging(role="mcp")
         assert logging.getLogger("mcp.server.lowlevel").level == logging.WARNING
         assert logging.getLogger("mcp").level == logging.WARNING
+
+
+class TestLogHealth:
+    """The unified sink's writability is client-observable (like vibe-trace)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[None]:
+        yield from _redirect_log_tree(tmp_path, monkeypatch)
+
+    def test_reports_path_and_writability(self, tmp_path: Path) -> None:
+        health = logging_config.log_health()
+        assert health["path"] == str(tmp_path / "logs" / "vox.log")
+        assert health["writable"] is True
+
+
+class TestShipTransportIsGone:
+    """The ship transport and fallback file no longer exist (forward integration)."""
+
+    @pytest.mark.parametrize(
+        "module",
+        ["log_ship", "log_flush", "log_wire", "voxd.log_sink"],
+    )
+    def test_deleted_modules_do_not_import(self, module: str) -> None:
+        import importlib
+
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"punt_vox.{module}")
