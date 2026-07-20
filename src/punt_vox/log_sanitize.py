@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Self, final
 
-__all__ = ["SANITIZER", "LogSanitizer", "SanitizingFormatter"]
+__all__ = ["SANITIZER", "LogSanitizer"]
 
 
 @final
@@ -47,22 +46,3 @@ class LogSanitizer:
 
 
 SANITIZER = LogSanitizer()
-
-
-@final
-class SanitizingFormatter(logging.Formatter):
-    """Escape the whole formatted line so no single field can forge a second line.
-
-    The last line of defense at every daemon file write. The format string renders
-    ``name``/``level``/``message`` -- any of which may carry a client-shipped or
-    provider-error value -- and this then escapes the *final* string, so a newline
-    or C1/CSI byte in any field becomes a visible escape and the record stays
-    exactly one physical line. Formatting the message first, escaping second, is
-    what makes it field-agnostic: it does not matter which field smuggled the byte.
-    """
-
-    __slots__ = ()
-
-    def format(self, record: logging.LogRecord) -> str:
-        """Return the formatted record with every control byte escaped."""
-        return SANITIZER.escape(super().format(record))
