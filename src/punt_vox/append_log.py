@@ -45,6 +45,7 @@ class SinkHealth(TypedDict):
     path: str
     writable: bool
 
+
 # ``O_NOFOLLOW`` refuses a symlink at the log path -- never legitimate, and a
 # redirect-through-symlink vector.
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW

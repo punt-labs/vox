@@ -142,9 +142,7 @@ class TestAtomicAppendLog:
     ) -> None:
         """A rename failure during rotation is surfaced to stderr, not swallowed."""
         notes: list[str] = []
-        monkeypatch.setattr(
-            AtomicAppendLog, "_to_stderr", staticmethod(notes.append)
-        )
+        monkeypatch.setattr(AtomicAppendLog, "_to_stderr", staticmethod(notes.append))
 
         def _deny_replace(_self: Path, _target: Path) -> None:
             raise PermissionError("cannot rename")
