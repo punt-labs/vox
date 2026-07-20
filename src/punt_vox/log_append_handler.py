@@ -67,17 +67,20 @@ class AppendLogHandler(logging.Handler):
 
         The logger name is prefixed for the render only and restored in
         ``finally``, so a client line carries its origin without mutating the
-        shared record for any later handler. A ``%``-arg mis-format is the only
-        realistic fault; ``handleError`` absorbs it so a malformed record never
-        crashes the caller that logged it.
+        shared record for any later handler. This is a ``logging`` system boundary
+        (PY-EH-6): a broken record -- a bad ``%``-arg, a raising ``__str__``, a lone
+        surrogate -- must degrade to ``handleError`` (logging's own last-resort
+        sink), never crash the caller that logged. ``RecursionError`` is re-raised
+        so a genuine stack overflow is never masked. The render and the sink append
+        are both inside the guard, so a fault in either is absorbed identically.
         """
         original = record.name
         try:
             record.name = f"{self._name_prefix}{original}"
-            line = self.format(record)
-        except (TypeError, ValueError):
+            self._sink.append(self.format(record))
+        except RecursionError:
+            raise
+        except Exception:  # noqa: BLE001 -- logging boundary (PY-EH-6): never crash the logger
             self.handleError(record)
-            return
         finally:
             record.name = original
-        self._sink.append(line)

@@ -75,6 +75,38 @@ class TestAppendLogHandler:
         handler.emit(_record("m", "needs %d and %d", 1))  # no exception
         assert not (tmp_path / "vox.log").exists()  # the malformed record is dropped
 
+    def test_missing_percent_key_never_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A %(name)s with no matching key raises KeyError -> absorbed, not crashed."""
+        sink = AtomicAppendLog(tmp_path / "vox.log")
+        handler = AppendLogHandler.bind(sink)
+        monkeypatch.setattr(logging, "raiseExceptions", False)
+        handler.emit(_record("m", "%(missing)s", {"present": 1}))  # no exception
+        assert not (tmp_path / "vox.log").exists()
+
+    def test_raising_str_never_crashes_the_logger(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A record whose argument's __str__ raises degrades to handleError."""
+
+        class _Explosive:
+            def __str__(self) -> str:
+                raise RuntimeError("boom in __str__")
+
+        sink = AtomicAppendLog(tmp_path / "vox.log")
+        handler = AppendLogHandler.bind(sink)
+        monkeypatch.setattr(logging, "raiseExceptions", False)
+        handler.emit(_record("m", "value=%s", _Explosive()))  # no exception
+        assert not (tmp_path / "vox.log").exists()
+
+    def test_surrogate_message_lands_escaped(self, tmp_path: Path) -> None:
+        """A lone surrogate in the message is escaped by the sink, never a crash."""
+        sink = AtomicAppendLog(tmp_path / "vox.log")
+        handler = AppendLogHandler.bind(sink)
+        handler.emit(_record("m", "bad \ud800 char"))  # no exception
+        assert "\\ud800" in sink.path.read_text(encoding="utf-8")
+
     def test_control_bytes_stay_one_line(self, tmp_path: Path) -> None:
         """A smuggled newline is escaped by the sink -- the record stays one line."""
         sink = AtomicAppendLog(tmp_path / "vox.log")
