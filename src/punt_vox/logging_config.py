@@ -21,9 +21,11 @@ it at startup, so a running daemon picks up a change on ``vox daemon restart``.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import logging.config
 
+from punt_vox.append_log import AtomicAppendLog
 from punt_vox.config import ConfigStore
 from punt_vox.log_format import Role
 from punt_vox.paths import log_dir as _paths_log_dir
@@ -64,11 +66,17 @@ def configure_daemon_logging() -> None:
     One append handler, no stderr handler: a parallel ``StreamHandler`` would have
     the service manager capture a second, unprotected copy of every record. The
     ``AtomicAppendLog`` behind the handler re-tightens the file to 0600 on every
-    write. Re-tightens the log tree first (fail-closed).
+    write. Re-tightens the log tree first (fail-closed on a tree it cannot create);
+    any file it could not force to 0600 surfaces as one durable WARNING *after* the
+    handlers exist, so the note lands in the now-live ``vox.log`` -- a debug line
+    emitted before ``dictConfig`` could never land.
     """
-    _ensure_tree(best_effort=False)
+    untightened = _tighten_daemon_tree()
     level = _resolve_level(verbose=False)
     logging.config.dictConfig(_config(name_prefix="", level=level))
+    if untightened:
+        loose = "; ".join(untightened)
+        logger.warning("could not enforce 0600 on log file(s): %s", loose)
 
 
 def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
@@ -79,7 +87,7 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
     onto the logger name. ``verbose`` (the CLI ``--verbose``) is a one-shot
     ``debug``; otherwise the level follows the ``log_level`` config key.
     """
-    _ensure_tree(best_effort=True)
+    _tighten_client_tree()
     level = _resolve_level(verbose=verbose)
     logging.config.dictConfig(_config(name_prefix=f"client.{role}.", level=level))
 
@@ -148,18 +156,25 @@ def _config_level() -> str:
     return ConfigStore.resolve_log_level().upper()
 
 
-def _ensure_tree(*, best_effort: bool) -> None:
-    """Create and re-tighten the log directory tree to 0700 (djb re-tighten).
+def _tighten_daemon_tree() -> list[str]:
+    """Create the log dir tree and re-tighten vox.log + backups, collecting notes.
 
-    The daemon fails closed on a tree it cannot secure; a client never lets a
-    tightening failure crash a hook -- privacy here is defense-in-depth, not a
-    precondition for logging.
+    Fails closed on a tree it cannot create (the ``mkdir`` ``OSError`` propagates).
+    A pre-existing file it cannot force to 0600 is *collected* -- not logged here,
+    since logging is not configured yet -- so the caller can WARN durably once the
+    handlers exist. The file sweep is the sink's own (``tighten_existing``), which
+    covers the active log, every backup slot, and the rotate lock.
     """
-    guard = PrivateState(_LOG_FILE)
-    if not best_effort:
-        guard.ensure_private_tree()
-        return
-    try:
-        guard.ensure_private_tree()
-    except OSError as exc:
-        logger.debug("client log-dir tighten skipped: %s", exc)
+    PrivateState(_LOG_FILE).ensure_private_tree()
+    return [str(path) for path in AtomicAppendLog(_LOG_FILE).tighten_existing()]
+
+
+def _tighten_client_tree() -> None:
+    """Best-effort tighten for a client; never crash a hook.
+
+    The append sink re-tightens the file to 0600 on every write (routing any
+    failure to stderr), so a client's dir-tighten is defense-in-depth -- a
+    ``mkdir`` failure is swallowed rather than raised into the hook.
+    """
+    with contextlib.suppress(OSError):
+        PrivateState(_LOG_FILE).ensure_private_tree()

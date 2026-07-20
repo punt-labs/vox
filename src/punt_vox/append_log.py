@@ -27,7 +27,9 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import os
+import stat
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Self, final
 
@@ -70,7 +72,9 @@ class AtomicAppendLog:
         self = super().__new__(cls)
         self._path = path
         self._lock_path = path.with_name(path.name + _LOCK_SUFFIX)
-        self._guard = PrivateState(path)
+        # Route tighten failures to stderr, never logging: append runs inside a
+        # logging emit, so a logged failure would recurse into this very sink.
+        self._guard = PrivateState.for_append_sink(path)
         self._max_bytes = max_bytes
         self._backup_count = backup_count
         return self
@@ -199,6 +203,49 @@ class AtomicAppendLog:
             return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
         except OSError:
             return False
+
+    def tighten_existing(self) -> tuple[Path, ...]:
+        """Force the active file, every backup, and the lock to 0600; return failures.
+
+        A startup sweep: a file left 0644 by an earlier, laxer run is re-tightened,
+        and every path it could not force to 0600 is returned so a caller (the
+        daemon config) can WARN about it durably once its handlers exist. Never
+        raises -- a vanished slot is benign; a symlink or a genuine ``chmod`` refusal
+        is a real failure and is reported.
+        """
+        return tuple(path for path in self._all_files() if not self._tighten_one(path))
+
+    def _all_files(self) -> Iterator[Path]:
+        """Yield the active file, every possible backup slot, and the rotate lock."""
+        yield self._path
+        for n in range(1, self._backup_count + 1):
+            yield self._path.with_name(f"{self._path.name}.{n}")
+        yield self._lock_path
+
+    @staticmethod
+    def _tighten_one(path: Path) -> bool:
+        """Return whether *path* is now a private (0600) regular file; never raise.
+
+        Opens the slot with ``O_NOFOLLOW`` and ``fchmod``s *that fd* -- never the
+        path -- so a ``*.log.N -> victim`` symlink cannot redirect the chmod onto
+        the victim. A vanished slot (``ENOENT``) is benign and reported tightened; a
+        symlink, non-regular entry, or ``EPERM`` is a real failure.
+        """
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return False
+            os.fchmod(fd, _LOCK_MODE)
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+        return True
 
     def _rotate(self) -> None:
         """Best-effort rename chain; a failure leaves the sink appending in place."""

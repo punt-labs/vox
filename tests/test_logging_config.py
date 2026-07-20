@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -82,6 +83,28 @@ class TestConfigureDaemonLogging:
         contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
         assert "punt_vox.voxd.router: daemon up" in contents
         assert "client." not in contents  # the daemon carries no client prefix
+
+    def test_untightenable_file_warned_durably_in_vox_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file it cannot force to 0600 becomes one WARNING in the live vox.log.
+
+        The note is emitted after ``dictConfig``, so it lands in the now-open log
+        (a debug line before configuration could never land) and never re-enters
+        logging via the sink's per-write tighten.
+        """
+        log = tmp_path / "logs" / "vox.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("existing\n")
+
+        def _deny_fchmod(_fd: int, _mode: int) -> None:
+            raise PermissionError("cannot fchmod")
+
+        monkeypatch.setattr(os, "fchmod", _deny_fchmod)
+        logging_config.configure_daemon_logging()
+        logging.getLogger("punt_vox.voxd").info("up")
+        contents = log.read_text(encoding="utf-8")
+        assert "could not enforce 0600 on log file(s)" in contents
 
     def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:
         target = tmp_path / "target.txt"
