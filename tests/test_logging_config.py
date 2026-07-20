@@ -104,7 +104,7 @@ class TestConfigureDaemonLogging:
         logging_config.configure_daemon_logging()
         logging.getLogger("punt_vox.voxd").info("up")
         contents = log.read_text(encoding="utf-8")
-        assert "could not enforce 0600 on log file(s)" in contents
+        assert "could not enforce private permissions on log path(s)" in contents
 
     def test_untightenable_dir_warned_durably_in_vox_log(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -129,7 +129,7 @@ class TestConfigureDaemonLogging:
         logging_config.configure_daemon_logging()
         logging.getLogger("punt_vox.voxd").info("up")
         contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
-        assert "could not enforce 0600 on log file(s)" in contents
+        assert "could not enforce private permissions on log path(s)" in contents
         assert "0o700" in contents  # the directory failure is named
 
     def test_symlink_log_path_raises_through_dictconfig(self, tmp_path: Path) -> None:

@@ -68,16 +68,19 @@ def configure_daemon_logging() -> None:
     the service manager capture a second, unprotected copy of every record. The
     ``AtomicAppendLog`` behind the handler re-tightens the file to 0600 on every
     write. Re-tightens the log tree first (fail-closed on a tree it cannot create);
-    any file it could not force to 0600 surfaces as one durable WARNING *after* the
-    handlers exist, so the note lands in the now-live ``vox.log`` -- a debug line
-    emitted before ``dictConfig`` could never land.
+    any directory it could not force to 0700 or file it could not force to 0600
+    surfaces as one durable WARNING *after* the handlers exist, so the note lands in
+    the now-live ``vox.log`` -- a debug line emitted before ``dictConfig`` could
+    never land.
     """
     untightened = _tighten_daemon_tree()
     level = _resolve_level(verbose=False)
     logging.config.dictConfig(_config(name_prefix="", level=level))
     if untightened:
         loose = "; ".join(untightened)
-        logger.warning("could not enforce 0600 on log file(s): %s", loose)
+        logger.warning(
+            "could not enforce private permissions on log path(s): %s", loose
+        )
 
 
 def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
