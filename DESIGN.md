@@ -2116,7 +2116,7 @@ Two things are the deliberately-fun side of vox:
 
 ### Positioning weight
 
-In `prfaq.tex`, fun is a **light-touch** benefit among several — **not** a lede/headline pillar (operator ruling). The top-line positioning stays utility-led (voice+audio layer; eyes-free progress tracking); the DJ line sits in the Solution + Shipped features, and podcast/audiobook sit under "Should Do / Next." Applied at prfaq v2.1.
+In `prfaq.tex`, fun is a **light-touch** benefit among several — **not** a lede/headline pillar (operator ruling). The top-line positioning stays utility-led (voice+audio layer; eyes-free progress tracking); the DJ line sits in the Solution + Shipped features, and podcast/audiobook sit under "Should Do / Next." Applied at prfaq v2.1 (current doc version v2.2).
 
 ### Relationship to DES-042
 
