@@ -302,5 +302,3 @@ lock states with the shared/exclusive-exclusion and single-rotator invariants in
 the state schema predicate, one operation schema per transition, and
 `fuzz -t` clean. See that file for the state space and transitions the
 implementation's rotation tests assert by name.
-</content>
-</invoke>
