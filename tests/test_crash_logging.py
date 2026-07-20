@@ -7,17 +7,15 @@ import logging
 import sys
 from pathlib import Path
 
-from punt_vox.log_handlers import PrivateRotatingFileHandler
+from punt_vox.append_log import AtomicAppendLog
+from punt_vox.log_append_handler import AppendLogHandler
 from punt_vox.voxd.crash_logging import CrashLogger
 
 
 def _file_logger(tmp_path: Path) -> tuple[logging.Logger, Path]:
-    """Return an isolated logger writing to a private ``vox.log`` under tmp."""
+    """Return an isolated logger appending to a private ``vox.log`` under tmp."""
     log_file = tmp_path / "vox.log"
-    handler = PrivateRotatingFileHandler(
-        str(log_file), maxBytes=1_000_000, backupCount=1, encoding="utf-8"
-    )
-    handler.setLevel(logging.DEBUG)
+    handler = AppendLogHandler.bind(AtomicAppendLog(log_file), level="DEBUG")
     logger = logging.getLogger(f"punt_vox.test.crash.{tmp_path.name}")
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
@@ -70,7 +68,9 @@ class TestExcepthook:
             for handler in logger.handlers:
                 handler.close()
 
-        assert "voxd is crashing" not in log_file.read_text()
+        # The append sink creates the file lazily, so a deferred Ctrl-C leaves no
+        # log at all -- the strongest form of "nothing was written".
+        assert not log_file.exists()
 
 
 class TestBootstrapExcepthook:
