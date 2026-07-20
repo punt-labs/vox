@@ -7,22 +7,25 @@ end and appends atomically, and a log line is far shorter than the platform's
 atomic-append size, so lines from concurrent processes never interleave -- no
 lock, no long-lived shared handle. Many writers therefore share one file safely.
 
-The error path must never re-enter the logging subsystem: this sink is the
-fallback for records that could not be shipped through ``logging``, so calling
-``logger.*`` on an ``OSError`` would recurse back into the client log handler.
-On failure it writes a best-effort note to ``sys.__stderr__`` and returns.
+The error path must never re-enter the logging subsystem: many concurrent
+processes append here through ``logging``, so calling ``logger.*`` on an
+``OSError`` would recurse straight back into this sink. On failure it writes a
+best-effort note to ``sys.__stderr__`` and returns.
 
-Rotation is best-effort rename-on-oversize: before an append
-that would cross ``max_bytes`` the chain shifts ``.N-1 -> .N``. A rare
-double-rename race under concurrent writers is bounded and never for these
-low-volume sinks (``vibe-trace.log`` reached 62 KB over the project's life); a
-lossless rotate-and-signal scheme is overkill for sinks whose writers hold no
-long-lived descriptor.
+Rotation is safe under concurrent writers, guarded by an ``flock`` protocol on a
+stable ``<path>.rotate.lock`` file (never itself renamed, so the lock identity
+survives the rename chain). Every append holds ``LOCK_SH`` across
+``open -> write -> close``; a rotation takes ``LOCK_EX`` -- which ``flock`` grants
+only once every shared holder has drained -- and re-checks the size before
+renaming. So no rename runs while any writer has an open append fd (no write to a
+renamed file), and at most one rotator renames per threshold crossing (no double
+rotate). This realizes the state model in ``docs/vox-2594-log-rotation.tex``.
 """
 
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import os
 import sys
 from pathlib import Path
@@ -34,8 +37,13 @@ from punt_vox.private_state import PrivateState
 __all__ = ["AtomicAppendLog"]
 
 # ``O_NOFOLLOW`` refuses a symlink at the log path -- never legitimate, and a
-# redirect-through-symlink vector -- for parity with ``PrivateRotatingFileHandler``.
+# redirect-through-symlink vector.
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
+# The stable rotate-lock file is opened read-write so it can carry both a shared
+# (append) and an exclusive (rotate) flock; it is never renamed.
+_LOCK_FLAGS = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+_LOCK_SUFFIX = ".rotate.lock"
+_LOCK_MODE = 0o600  # private per-user lock file
 _MAX_BYTES = 5_242_880  # 5 MB
 _BACKUP_COUNT = 5
 
@@ -44,9 +52,10 @@ _BACKUP_COUNT = 5
 class AtomicAppendLog:
     """An append-only sink safe for many concurrent writers to one file."""
 
-    __slots__ = ("_backup_count", "_guard", "_max_bytes", "_path")
+    __slots__ = ("_backup_count", "_guard", "_lock_path", "_max_bytes", "_path")
 
     _path: Path
+    _lock_path: Path
     _guard: PrivateState
     _max_bytes: int
     _backup_count: int
@@ -60,6 +69,7 @@ class AtomicAppendLog:
     ) -> Self:
         self = super().__new__(cls)
         self._path = path
+        self._lock_path = path.with_name(path.name + _LOCK_SUFFIX)
         self._guard = PrivateState(path)
         self._max_bytes = max_bytes
         self._backup_count = backup_count
@@ -86,17 +96,90 @@ class AtomicAppendLog:
         line = f"{SANITIZER.escape(text)}\n".encode()
         try:
             self._guard.ensure_private_tree()
-            self._rotate_if_needed(len(line))
-            fd = self._guard.open_private(_OPEN_FLAGS)
-            try:
-                if (written := os.write(fd, line)) != len(line):
-                    self._to_stderr(
-                        f"short append to {self._path}: {written} of {len(line)} bytes"
-                    )
-            finally:
-                os.close(fd)
+            self._append_guarded(line)
         except OSError as exc:
             self._to_stderr(f"cannot append to {self._path}: {exc}")
+
+    def _append_guarded(self, line: bytes) -> None:
+        """Append *line* under the rotate lock: shared to write, exclusive to rotate.
+
+        Realizes the ``flock`` protocol modeled in
+        ``docs/vox-2594-log-rotation.tex``. A rotation runs first (only when this
+        line would cross ``max_bytes``) under ``LOCK_EX``; the write then runs
+        under ``LOCK_SH`` held across ``open -> write -> close``. Because
+        ``LOCK_EX`` cannot be granted until every ``LOCK_SH`` holder has released,
+        no rename ever runs while a writer has an open append fd.
+        """
+        lock_fd = self._open_lock()
+        try:
+            if self._would_overflow(len(line)):
+                self._rotate_locked(lock_fd, len(line))
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            try:
+                self._write_line(line)
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+    def _open_lock(self) -> int:
+        """Open the stable rotate-lock file 0600, refusing a symlink at its path.
+
+        A dedicated lock file -- never itself rotated -- gives a lock identity that
+        survives the rename chain, so a writer and a rotator serialize on the same
+        inode across rotations. The ``fchmod`` re-tightens a pre-existing lock file
+        left loose by an earlier, laxer run (best-effort, like the append fd).
+        """
+        fd = os.open(self._lock_path, _LOCK_FLAGS, _LOCK_MODE)
+        with contextlib.suppress(OSError):
+            os.fchmod(fd, _LOCK_MODE)
+        return fd
+
+    def _would_overflow(self, incoming: int) -> bool:
+        """Return whether appending *incoming* bytes would cross ``max_bytes``.
+
+        A missing file (``OSError`` from ``stat``) has zero size, so the first
+        append never rotates. ``max_bytes <= 0`` disables rotation entirely.
+        """
+        if self._max_bytes <= 0:
+            return False
+        try:
+            size = self._path.stat().st_size
+        except OSError:
+            return False
+        return size + incoming > self._max_bytes
+
+    def _rotate_locked(self, lock_fd: int, incoming: int) -> None:
+        """Rotate under ``LOCK_EX``, re-checking so a peer's rotate is a no-op.
+
+        ``LOCK_EX`` blocks until every shared holder has drained, so the rename
+        runs with no writer mid-append. The size re-check under the exclusive lock
+        is the idempotency that closes the double-rotate race: a rotator that
+        queued behind another finds the fresh, small file and skips.
+        """
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            if self._would_overflow(incoming):
+                self._rotate()
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+    def _write_line(self, line: bytes) -> None:
+        """Append *line* through one ``O_APPEND`` fd; a short write goes to stderr.
+
+        A short write (only ``ENOSPC`` in practice, since Python auto-retries
+        ``EINTR``) is *not* looped: re-issuing the remainder would be a second
+        append another writer's line could split, tearing the very line
+        ``O_APPEND`` protects.
+        """
+        fd = self._guard.open_private(_OPEN_FLAGS)
+        try:
+            if (written := os.write(fd, line)) != len(line):
+                self._to_stderr(
+                    f"short append to {self._path}: {written} of {len(line)} bytes"
+                )
+        finally:
+            os.close(fd)
 
     def is_writable(self) -> bool:
         """Return whether a line could be appended right now; never raise.
@@ -116,18 +199,6 @@ class AtomicAppendLog:
             return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
         except OSError:
             return False
-
-    def _rotate_if_needed(self, incoming: int) -> None:
-        """Shift ``.N-1 -> .N`` when the next append would cross ``max_bytes``."""
-        if self._max_bytes <= 0:
-            return
-        try:
-            size = self._path.stat().st_size
-        except OSError:
-            return
-        if size + incoming <= self._max_bytes:
-            return
-        self._rotate()
 
     def _rotate(self) -> None:
         """Best-effort rename chain; a failure leaves the sink appending in place."""

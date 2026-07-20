@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import multiprocessing
 import os
 import re
+import threading
 from collections.abc import Buffer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +26,13 @@ def _append_many(path_str: str, proc_id: int, count: int) -> None:
     as a line that fails :data:`_LINE`.
     """
     sink = AtomicAppendLog(Path(path_str))
+    for seq in range(count):
+        sink.append(f"proc={proc_id} seq={seq} {'x' * 40}")
+
+
+def _append_many_rotating(path_str: str, proc_id: int, count: int) -> None:
+    """Spawn-safe worker: append to a small-cap sink so rotations fire concurrently."""
+    sink = AtomicAppendLog(Path(path_str), max_bytes=4_000, backup_count=20)
     for seq in range(count):
         sink.append(f"proc={proc_id} seq={seq} {'x' * 40}")
 
@@ -115,3 +124,75 @@ class TestAtomicAppendLog:
         lines = path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == procs * per_proc
         assert all(_LINE.match(line) for line in lines)
+
+    def test_rotation_under_two_concurrent_writers_loses_no_lines(
+        self, tmp_path: Path
+    ) -> None:
+        """N processes x M numbered lines across forced rotations -> N*M intact lines.
+
+        The union of the active file and every backup contains every line exactly
+        once, each intact -- rotation never tears, drops, or duplicates a line.
+        Capacity ((backup_count + 1) * max_bytes) exceeds the total bytes, so no
+        line ages out of the backup chain.
+        """
+        path = tmp_path / "x.log"
+        procs, per_proc = 4, 150
+        ctx = multiprocessing.get_context("spawn")
+        workers = [
+            ctx.Process(target=_append_many_rotating, args=(str(path), pid, per_proc))
+            for pid in range(procs)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=60)
+            assert worker.exitcode == 0
+
+        union: list[str] = []
+        for backup in sorted(tmp_path.glob("x.log*")):
+            if backup.name.endswith(".rotate.lock"):
+                continue
+            union.extend(backup.read_text(encoding="utf-8").splitlines())
+        assert len(union) == procs * per_proc  # nothing lost or duplicated
+        assert all(_LINE.match(line) for line in union)  # nothing torn
+        assert len(set(union)) == procs * per_proc  # every (proc, seq) present once
+
+    def test_rotation_excludes_a_concurrent_appender(self, tmp_path: Path) -> None:
+        """LOCK_EX (a rotator) blocks an appender's LOCK_SH -- no renamed-file write.
+
+        Holding the exclusive rotate lock stands in for a rotation in progress; an
+        ``append`` cannot take its shared lock (and so cannot open+write) until the
+        exclusive holder releases, which is what keeps a writer off a renamed inode.
+        """
+        sink = AtomicAppendLog(tmp_path / "x.log")
+        holder = os.open(tmp_path / "x.log.rotate.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        done = threading.Event()
+
+        def _writer() -> None:
+            sink.append("blocked-until-release")
+            done.set()
+
+        thread = threading.Thread(target=_writer)
+        thread.start()
+        try:
+            assert not done.wait(timeout=0.5)  # append blocks on LOCK_SH
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            os.close(holder)
+        assert done.wait(timeout=5)  # append completes once the rotator releases
+        thread.join(timeout=5)
+        assert sink.path.read_text(encoding="utf-8").splitlines() == [
+            "blocked-until-release"
+        ]
+
+    def test_backups_stay_private_after_rotation(self, tmp_path: Path) -> None:
+        """Every rotated backup keeps 0600 -- the rename preserves the private mode."""
+        sink = AtomicAppendLog(tmp_path / "x.log", max_bytes=64, backup_count=2)
+        sink.append("a" * 50)
+        sink.append("b" * 50)  # rotate a -> .1
+        sink.append("c" * 50)  # rotate .1 -> .2, active -> .1
+        for name in ("x.log", "x.log.1", "x.log.2"):
+            path = tmp_path / name
+            assert path.exists()
+            assert (path.stat().st_mode & 0o077) == 0
