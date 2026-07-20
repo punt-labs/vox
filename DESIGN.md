@@ -2096,3 +2096,38 @@ The original Consequences routed `[vibe-trace]` to the MCP-server / hook **stder
 **Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
 
 Closes vox-q1z4. Observability sink corrected under vox-9po7.
+
+## DES-047: Fun Is a Feature — Entertainment Is In Scope, Not a "Won't Do"
+
+**Date:** 2026-07-19
+**Status:** SETTLED
+**Topic:** Whether entertainment / personality / fun is a product goal or an excluded non-goal
+
+### Decision
+
+"Fun is a feature" is part of the punt-labs product **spirit** (the org/product ethos, not the ethos identity tool). vox is **partly** entertainment by design — not a purely utilitarian notification tool. The prior framing that walled entertainment off as out-of-scope is **struck**: the `prfaq.tex` "Won't Do: Agent personality voices" feature-appendix item and the matching "Not personality entertainment" FAQ bullet are **deleted** (operator ruling, 2026-07-19).
+
+Two things are the deliberately-fun side of vox:
+
+- **Agent-as-DJ (shipped).** The music panel's DJ-booth personality (DES-044) and the vibe-matched background-music pools are intentional entertainment — the agent plays DJ for you.
+- **Codebase-aware podcast + audiobook programs (roadmap).** Upcoming audio-program formats (the DES-041 Program model, Phases 2–3) whose content is drawn from the codebase's own **domain**, the **technology** it uses, or **fiction inspired by** it — so a developer can step back, laugh, and not burn out.
+
+**The "partly" is load-bearing.** The work/notification **voice's mood stays honest signal** — tired after failures is *signal*, not a performed theatrical persona (this is the narrow, still-true part of DES-042, which is **not** reversed). What is reversed is only the *broad* reading that vox avoids entertainment altogether: the DJ layer and the podcast/audiobook programs are in scope.
+
+### Positioning weight
+
+In `prfaq.tex`, fun is a **light-touch** benefit among several — **not** a lede/headline pillar (operator ruling). The top-line positioning stays utility-led (voice+audio layer; eyes-free progress tracking); the DJ line sits in the Solution + Shipped features, and podcast/audiobook sit under "Should Do / Next." Applied at prfaq v2.1 (current doc version v2.2).
+
+### Relationship to DES-042
+
+DES-042 (the mic metaphor; notification-voice mood = signal, not performance) **stands**. This ADR does not license the notification voice to role-play a character. It only removes the blanket "no entertainment" scope exclusion so the DJ + podcast/audiobook fun is admissible.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Keep "Not personality entertainment" as a Won't Do | Contradicts "fun is a feature" — treated a real product value (entertainment / anti-burnout) as out of scope |
+| Rescope the exclusion narrowly instead of deleting it | Operator ruled delete outright; the only narrow truth (notification voice = signal) is already covered by DES-042 |
+| Make fun a lede/headline pillar | Operator ruled light-touch — the positioning stays utility-led; fun is one benefit among several |
+
+Relates to vox-iyqq (positioning) and the audio-programs epic (podcast/audiobook = Phases 2–3).

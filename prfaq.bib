@@ -93,7 +93,52 @@
   title        = {AgentVibes: Bring Your Claude Code Sessions to Life with Voice},
   year         = {2025},
   url          = {https://github.com/paulpreibisch/AgentVibes},
-  note         = {Open-source competitor. macOS say, Piper TTS, Soprano, Windows SAPI. 914 voices. Background music, personality styles, verbosity levels. No ElevenLabs or OpenAI TTS.},
+  note         = {Open-source competitor, created 2025-06-10. Six TTS providers: macOS say, Windows SAPI, Piper (900+ voices incl. LibriTTS), Kokoro (local neural, CPU-only), Soprano (neural), and ElevenLabs (premium cloud, added v5.11.0, 2026-06-27). 19 static, manually-selected personality styles (no dynamic per-session mood). Bundled MP3 music catalog (not generated). CLI (npx agentvibes) + MCP server (Python wrapper around bash hooks) + Claude Code hook integration; no importable library/SDK for third-party embedding. JavaScript-dominant stack (JavaScript ~65\% of source bytes; Python ~5\%, the MCP wrapper only) with a blessed-based multi-tab TUI (Setup/Voices/Music/BMAD). Apache-2.0. 152 stars, 24 forks, active releases through v5.14.0 as of 2026-07-19.},
+}
+
+@online{agentvibes2026releasenotes,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Release Notes},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/RELEASE_NOTES.md},
+  urldate      = {2026-07-19},
+  note         = {v5.11.0 (2026-06-27, ``Neural voices'') introduced Kokoro and ElevenLabs support -- the point at which AgentVibes gained a premium cloud TTS option.},
+}
+
+@online{agentvibes2026providers,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Providers Documentation},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/providers.md},
+  urldate      = {2026-07-19},
+  note         = {Documents Piper (50+ neural voices, 18 languages) and macOS say (70+ voices) as local/offline providers.},
+}
+
+@online{agentvibes2026personalities,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Personalities Documentation},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/personalities.md},
+  urldate      = {2026-07-19},
+  note         = {Lists 19 static, command-invoked personality styles (pirate, sarcastic, zen, etc.); confirms no automatic/dynamic per-session mood tracking.},
+}
+
+@online{agentvibes2026technicaldeepdive,
+  author       = {paulpreibisch},
+  title        = {AgentVibes Technical Deep Dive},
+  year         = {2026},
+  url          = {https://github.com/paulpreibisch/AgentVibes/blob/master/docs/technical-deep-dive.md},
+  urldate      = {2026-07-19},
+  note         = {States AgentVibes is primarily a Claude Code plugin system; its MCP server wraps existing bash hook scripts rather than exposing a standalone reusable TTS library/module.},
+}
+
+@online{agentvibes2026github,
+  author       = {{GitHub, Inc.}},
+  title        = {paulpreibisch/AgentVibes -- Repository Metadata},
+  year         = {2026},
+  url          = {https://api.github.com/repos/paulpreibisch/AgentVibes},
+  urldate      = {2026-07-19},
+  note         = {created\_at 2025-06-10; 152 stars, 24 forks, 19 open issues, Apache-2.0 license; language breakdown JavaScript 2.97MB / Shell 0.97MB / PowerShell 0.33MB / Python 0.24MB.},
 }
 
 @misc{cnbc2026elevenlabs,
@@ -112,10 +157,38 @@
   note         = {OpenAI TTS: \$15/1M chars (tts-1), \$30/1M chars (tts-1-hd). AWS Polly: \$4.80/1M standard, \$19.20/1M neural. ElevenLabs: subscription from \$5/month / 30K chars.},
 }
 
-@misc{mordor2025ttsmarket,
-  author       = {{Mordor Intelligence}},
-  title        = {Text to Speech Market Size, Trends Report, Share and Forecast 2030},
-  year         = {2025},
-  url          = {https://www.mordorintelligence.com/industry-reports/text-to-speech-market},
-  note         = {Global TTS market \$3.87B in 2025, projected \$7.28B by 2030 at 12.89\% CAGR.},
+@incollection{baddeleyhitch1974workingmemory,
+  author       = {Baddeley, Alan D. and Hitch, Graham},
+  title        = {Working Memory},
+  booktitle    = {Psychology of Learning and Motivation},
+  volume       = {8},
+  pages        = {47--89},
+  year         = {1974},
+  publisher    = {Academic Press},
+  doi          = {10.1016/S0079-7421(08)60452-1},
+  note         = {Original multi-component working memory model: phonological loop (verbal/acoustic) and visuospatial sketchpad (visual/spatial) as separable, capacity-limited slave systems --- the strongest citation for channel separation between listening and reading/visual work.},
+}
+
+@article{baddeley2000episodicbuffer,
+  author       = {Baddeley, Alan},
+  title        = {The Episodic Buffer: A New Component of Working Memory?},
+  journal      = {Trends in Cognitive Sciences},
+  volume       = {4},
+  number       = {11},
+  pages        = {417--423},
+  year         = {2000},
+  doi          = {10.1016/S1364-6613(00)01538-2},
+  note         = {Refines the working memory model with a shared integrative buffer --- the auditory and visual channels are separable but not fully independent, so ``offload'' is a reduction, not elimination, of load.},
+}
+
+@article{mccrickardchewar2003attuning,
+  author       = {McCrickard, D. Scott and Chewar, Christa M.},
+  title        = {Attuning Notification Design to User Goals and Attention Costs},
+  journal      = {Communications of the ACM},
+  volume       = {46},
+  number       = {3},
+  pages        = {67--72},
+  year         = {2003},
+  doi          = {10.1145/636772.636800},
+  note         = {Attention-utility tradeoff and IRC (Interruption/Reaction/Comprehension) framework for notification systems; peripheral/audio channels reduce interruption cost relative to a visual channel requiring focus.},
 }
