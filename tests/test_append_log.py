@@ -51,6 +51,14 @@ class TestAtomicAppendLog:
         sink.append("line")
         assert (sink.path.stat().st_mode & 0o077) == 0
 
+    def test_rotate_lock_created_private(self, tmp_path: Path) -> None:
+        """The stable rotate lock is created 0600, like the log it guards."""
+        sink = AtomicAppendLog(tmp_path / "x.log")
+        sink.append("line")
+        lock = tmp_path / "x.log.rotate.lock"
+        assert lock.exists()
+        assert (lock.stat().st_mode & 0o077) == 0
+
     def test_append_creates_private_parent(self, tmp_path: Path) -> None:
         logs = tmp_path / "logs"
         AtomicAppendLog(logs / "x.log").append("line")

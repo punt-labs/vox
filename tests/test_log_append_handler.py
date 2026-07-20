@@ -50,17 +50,29 @@ class TestAppendLogHandler:
         handler.emit(_record("m", "spoke %d chars with %s", 5, "say"))
         assert "spoke 5 chars with say" in sink.path.read_text(encoding="utf-8")
 
-    def test_logging_opens_no_socket(self, tmp_path: Path) -> None:
-        """emit touches only the filesystem -- no daemon round-trip (DES-017).
+    def test_logging_opens_no_socket(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """emit constructs no VoxClient -- no daemon round-trip (DES-017).
 
-        A sink that raises if any network attribute is read would fail; the plain
-        filesystem sink proves the hot path is local. The file gaining the line is
-        the positive proof there is no transport in the path.
+        Both client constructors are replaced with sentinels that fail if
+        instantiated, so any attempt to open a daemon connection on the logging
+        hot path would raise. emit completing (and the line landing) proves the
+        path is purely local file I/O.
         """
+        constructed: list[str] = []
+
+        def _forbid(cls: object, *_args: object, **_kwargs: object) -> object:
+            constructed.append(type(cls).__name__)
+            raise AssertionError("logging must not construct a daemon client")
+
+        monkeypatch.setattr("punt_vox.client.VoxClient.__new__", _forbid)
+        monkeypatch.setattr("punt_vox.client_sync.VoxClientSync.__new__", _forbid)
+
         sink = AtomicAppendLog(tmp_path / "vox.log")
         handler = AppendLogHandler.bind(sink)
         handler.emit(_record("m", "no socket here"))
-        assert (tmp_path / "vox.log").exists()
+        assert constructed == []  # no client was ever constructed
         assert "no socket here" in sink.path.read_text(encoding="utf-8")
 
     def test_bad_format_args_never_raise(

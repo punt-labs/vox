@@ -138,6 +138,13 @@ DES-013 pattern from `playback.py`:
   and skips), run the rename chain if still oversize, release `LOCK_EX`, then
   re-take `LOCK_SH` and append the line.
 
+`maxBytes` is a soft cap: when the re-check finds a peer already rotated
+(`SkipRotate`), this writer still appends its line to the fresh file, so the
+active log can sit up to one line over `maxBytes`. This is benign and
+intentional — bounding the file to the byte would require holding the exclusive
+lock across the append, serializing every writer, which the shared-lock design
+exists to avoid.
+
 Why it is safe:
 
 - `LOCK_EX` cannot be acquired until every `LOCK_SH` holder has released, and a
