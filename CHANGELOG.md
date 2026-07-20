@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **prfaq + README repositioned — vox is the voice and audio layer, not a notification tool, with three co-equal surfaces (vox-iyqq)**: the PR/FAQ (v1.3 → v2.1) and the README lede now lead with vox as the voice and audio layer for AI coding agents — voice personalities, mood-aware `/vibe` delivery, background music — of which spoken notifications are **one use, not the whole product**. The eyes-free benefit is stated only to what the evidence supports: listening and watching the screen draw on largely separate cognitive channels (Baddeley working-memory dissociation + HCI audio-notification sources) — with **no** "reduces cognitive load" claim, no percentage, and no misapplied modality-effect or dual-coding citation, plus an explicit boundary disclaimer in the evidence FAQ. The **MCP server**, the **Python library** (`VoxClient`/`VoxClientSync`), and the **`vox` CLI** now get co-equal, first-class treatment with a concrete example each, so vox reads as usable outside a Claude Code plugin. **Fun is a feature (DES-047)**: entertainment is now in scope — the old "agent personality voices / not personality entertainment" Won't-Do exclusion is **deleted**; the agent-as-DJ is called out (shipped) and codebase-aware podcast/audiobook programs are on the roadmap. The work/notification voice's mood stays honest signal, not a performed persona (DES-042 unchanged). Closes vox-iyqq.
+
 ## [4.12.5] - 2026-07-19
 
 ### Changed
