@@ -89,7 +89,10 @@ class AtomicAppendLog:
 
         *text* is escaped by the shared :data:`SANITIZER` so the record is exactly
         one physical line no control byte can forge or corrupt -- callers pass raw
-        content and trust the sink to keep it one line. A short write (only
+        content and trust the sink to keep it one line. The ``encode`` uses
+        ``backslashreplace`` and runs *inside* the guard, so a lone surrogate in
+        *text* (which ``str.translate`` passes through) can never raise a
+        ``UnicodeEncodeError`` out of this never-raise path. A short write (only
         ``ENOSPC`` in practice, since Python auto-retries ``EINTR``) is *not*
         looped: re-issuing the remainder would be a second append another writer's
         line could split, tearing the very line ``O_APPEND`` protects. On any
@@ -97,8 +100,8 @@ class AtomicAppendLog:
         ``logging``, which would recurse into the client log handler this sink
         backstops.
         """
-        line = f"{SANITIZER.escape(text)}\n".encode()
         try:
+            line = f"{SANITIZER.escape(text)}\n".encode(errors="backslashreplace")
             self._guard.ensure_private_tree()
             self._append_guarded(line)
         except OSError as exc:
@@ -188,18 +191,27 @@ class AtomicAppendLog:
     def is_writable(self) -> bool:
         """Return whether a line could be appended right now; never raise.
 
-        Health is a property of the *path*, not of any one process's last write:
+        Health is a property of the *paths*, not of any one process's last write:
         separate processes append here, so trusting a single writer's success
-        would report a peer's state. An existing log must be a writable regular
-        file; a not-yet-created log needs its nearest existing ancestor to grant
-        both write and search (``W_OK | X_OK``). Any :class:`OSError` from probing
-        the real filesystem is fail-safe (report ``False``) so a health check can
-        never crash the surface that reports it.
+        would report a peer's state. The append path opens BOTH the rotate lock and
+        the log file, so both must be writable-or-creatable -- a log the process can
+        append to is still unusable if the lock it must first take cannot be created.
+        """
+        return self._can_write(self._path) and self._can_write(self._lock_path)
+
+    @staticmethod
+    def _can_write(path: Path) -> bool:
+        """Return whether *path* is appendable or creatable right now; never raise.
+
+        An existing file must be a writable regular file; a not-yet-created file
+        needs its nearest existing ancestor to grant both write and search
+        (``W_OK | X_OK``). Any :class:`OSError` from probing the real filesystem is
+        fail-safe (report ``False``) so a health check can never crash its surface.
         """
         try:
-            if self._path.exists():
-                return self._path.is_file() and os.access(self._path, os.W_OK)
-            anchor = self._guard.nearest_existing_ancestor()
+            if path.exists():
+                return path.is_file() and os.access(path, os.W_OK)
+            anchor = next(parent for parent in path.parents if parent.exists())
             return anchor.is_dir() and os.access(anchor, os.W_OK | os.X_OK)
         except OSError:
             return False
@@ -259,7 +271,8 @@ class AtomicAppendLog:
             try:
                 if src.exists():
                     src.replace(dst)
-            except OSError:
+            except OSError as exc:
+                self._to_stderr(f"rotation stalled renaming {src}: {exc}")
                 return
 
     @staticmethod

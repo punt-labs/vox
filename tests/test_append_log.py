@@ -106,6 +106,47 @@ class TestAtomicAppendLog:
         finally:
             locked.chmod(0o700)
 
+    def test_is_writable_false_when_lock_uncreatable(self, tmp_path: Path) -> None:
+        """A writable log is still unhealthy if the rotate lock cannot be created."""
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        sink = AtomicAppendLog(locked / "x.log")
+        sink.append("seed")  # create the log (and lock) while the dir is writable
+        (locked / "x.log.rotate.lock").unlink()  # remove only the lock
+        locked.chmod(0o500)  # dir now read-only: lock cannot be recreated
+        try:
+            assert (locked / "x.log").exists()  # the log itself is present
+            assert sink.is_writable() is False  # but the lock is not creatable
+        finally:
+            locked.chmod(0o700)
+
+    def test_lone_surrogate_never_raises(self, tmp_path: Path) -> None:
+        """A lone surrogate in the text is backslash-escaped, never a UnicodeError."""
+        sink = AtomicAppendLog(tmp_path / "x.log")
+        sink.append("before \ud800 after")  # no exception
+        text = sink.path.read_text(encoding="utf-8")
+        assert "before" in text
+        assert "after" in text
+        assert "\\ud800" in text  # the surrogate is escaped, one line
+
+    def test_rotation_failure_notes_stderr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rename failure during rotation is surfaced to stderr, not swallowed."""
+        notes: list[str] = []
+        monkeypatch.setattr(
+            AtomicAppendLog, "_to_stderr", staticmethod(notes.append)
+        )
+
+        def _deny_replace(_self: Path, _target: Path) -> None:
+            raise PermissionError("cannot rename")
+
+        sink = AtomicAppendLog(tmp_path / "x.log", max_bytes=64, backup_count=2)
+        sink.append("a" * 50)
+        monkeypatch.setattr(Path, "replace", _deny_replace)
+        sink.append("b" * 50)  # would rotate -> rename denied -> stderr note
+        assert any("rotation stalled" in note for note in notes)
+
     def test_concurrent_appends_never_interleave(self, tmp_path: Path) -> None:
         """N processes each append M lines to one file -> N*M whole, intact lines."""
         path = tmp_path / "x.log"
