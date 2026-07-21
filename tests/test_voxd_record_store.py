@@ -61,10 +61,15 @@ class TestContainment:
     def test_empty_and_nul_names_rejected(self, store: RecordStore) -> None:
         with pytest.raises(ValueError, match="NUL"):
             store.resolve("bad\x00name.mp3", "x")
-        # An empty explicit name falls back to content-addressing, so force the
-        # empty-name path through resolve_ref where empty is a real reference.
         with pytest.raises(ValueError, match="empty"):
             store.resolve_ref("")
+
+    def test_empty_name_rejected_by_store(self, store: RecordStore) -> None:
+        """An explicit empty name is invalid; only None content-addresses."""
+        with pytest.raises(ValueError, match="empty"):
+            store.resolve("", "some text")
+        # None still content-addresses (the daemon-generated no-name path).
+        assert store.resolve(None, "some text").name.endswith(".mp3")
 
     @pytest.mark.parametrize("hostile", _HOSTILE_NAMES)
     def test_write_cannot_escape_root(self, store: RecordStore, hostile: str) -> None:

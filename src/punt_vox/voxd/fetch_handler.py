@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Self
 
 from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.voxd._send import safe_send
 from punt_vox.voxd.types import MessageHandler
 
 if TYPE_CHECKING:
@@ -94,14 +95,15 @@ class FetchHandler(MessageHandler):
 
         logger.info("Fetch: id=%r ref=%r bytes=%d", request_id, ref, size)
         data = base64.b64encode(raw).decode("ascii")
-        await websocket.send_json(
+        await safe_send(
+            websocket,
             {
                 "type": "bytes",
                 "id": request_id,
                 "ref": path.name,
                 "data": data,
                 "bytes": size,
-            }
+            },
         )
 
     @staticmethod
@@ -109,7 +111,8 @@ class FetchHandler(MessageHandler):
         websocket: WebSocket, request_id: str, size: int
     ) -> None:
         """Send the too-large-to-fetch error frame for a *size*-byte recording."""
-        await websocket.send_json(
+        await safe_send(
+            websocket,
             {
                 "type": "error",
                 "id": request_id,
@@ -117,12 +120,12 @@ class FetchHandler(MessageHandler):
                     f"recording too large to fetch in one frame ({size} bytes > "
                     f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly"
                 ),
-            }
+            },
         )
 
     @staticmethod
     async def _error(websocket: WebSocket, request_id: str, message: str) -> None:
         """Send an id-stamped error frame for a rejected fetch request."""
-        await websocket.send_json(
-            {"type": "error", "id": request_id, "message": message}
+        await safe_send(
+            websocket, {"type": "error", "id": request_id, "message": message}
         )

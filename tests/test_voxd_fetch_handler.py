@@ -152,3 +152,17 @@ class TestFetchHandler:
 
         assert sent[-1]["type"] == "error"
         assert "cannot read recording" in str(sent[-1]["message"])
+
+    def test_client_disconnect_on_send_does_not_raise(self, tmp_path: Path) -> None:
+        """A client gone when the bytes frame is sent ends the request quietly."""
+        from starlette.websockets import WebSocketDisconnect
+
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "x.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
+        # Must not raise -- a normal disconnect is a quiet end-of-request.
+        asyncio.run(FetchHandler(store=store)(msg, ws))

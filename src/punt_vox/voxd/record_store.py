@@ -73,12 +73,13 @@ class RecordStore:
     def resolve(self, name: str | None, text: str) -> Path:
         """Resolve the destination for a record write, contained in the root.
 
-        A client-supplied *name* is validated as a bare filename; when absent
-        the file is content-addressed by *text* -- the canonical name every
-        other vox MP3 uses. Raises ``ValueError`` on any name that is absolute,
-        separated, traversing, empty, or NUL-bearing.
+        A client-supplied *name* is validated as a bare filename; only ``None``
+        (absent) content-addresses by *text* -- the canonical name every other
+        vox MP3 uses. An explicit empty string is an invalid name, not "absent",
+        so it is rejected (``ValueError``), as are absolute, separated,
+        traversing, and NUL-bearing names.
         """
-        candidate = name if name else generate_filename(text)
+        candidate = generate_filename(text) if name is None else name
         return self._resolve_within_root(candidate)
 
     def resolve_ref(self, ref: str) -> Path:

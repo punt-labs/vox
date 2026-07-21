@@ -8,14 +8,15 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
-from starlette.websockets import WebSocket, WebSocketDisconnect
-
 from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.voxd._send import safe_send
 from punt_vox.voxd.speech_handlers import _SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
 
 if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
+
     from punt_vox.voxd.record_store import RecordStore, RecordWrite
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
@@ -151,24 +152,11 @@ class RecordHandler(MessageHandler):
 
     @staticmethod
     async def _safe_reply(req: _SpeechRequest, payload: dict[str, object]) -> bool:
-        """Send a reply; return True if delivered, False if the client had gone.
+        """Send an id-stamped reply; True if delivered, False if the client had gone.
 
         A client that disconnects mid-record (e.g. Ctrl-C during synthesis) must
-        never crash the daemon or corrupt its send path. A WebSocketDisconnect is
-        the expected closed-client signal and is silent; a RuntimeError from a
-        send on an already-closed socket is logged at debug so a genuine send
-        fault is not swallowed invisibly. The bool lets the caller skip work when
-        the very first (ack) reply never reached the client.
+        never crash the daemon or corrupt its send path -- the shared
+        :func:`safe_send` swallows the closed-client signals. The bool lets the
+        caller skip work when the very first (ack) reply never reached the client.
         """
-        try:
-            await req.reply(payload)
-        except WebSocketDisconnect:
-            return False
-        except RuntimeError as exc:
-            logger.debug(
-                "record reply dropped for id=%r (client closed?): %s",
-                req.request_id,
-                exc,
-            )
-            return False
-        return True
+        return await safe_send(req.websocket, {"id": req.request_id, **payload})

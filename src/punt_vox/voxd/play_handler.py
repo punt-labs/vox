@@ -12,17 +12,17 @@ flock ordering holds.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Self
 
-from starlette.websockets import WebSocket, WebSocketDisconnect
-
 from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.voxd._send import safe_send
 from punt_vox.voxd.playback import PlaybackItem
 from punt_vox.voxd.types import MessageHandler
 
 if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
+
     from punt_vox.voxd.playback import PlaybackQueue, PlaybackResult
     from punt_vox.voxd.record_store import RecordStore
 
@@ -76,12 +76,14 @@ class PlayHandler(MessageHandler):
         )
         # Ack that the job is queued, then wait for the real host-side outcome so
         # a failed playback (missing player, unplayable file, played-nothing)
-        # reaches the client as an error instead of a silent success.
-        await websocket.send_json({"type": "playing", "id": request_id})
+        # reaches the client as an error instead of a silent success. If the ack
+        # never lands the client is gone -- the recording still plays on the host
+        # (already enqueued); just stop, don't await an outcome nobody waits on.
+        if not await safe_send(websocket, {"type": "playing", "id": request_id}):
+            return
         result = await outcome
         if result.ok:
-            with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-                await websocket.send_json({"type": "done", "id": request_id})
+            await safe_send(websocket, {"type": "done", "id": request_id})
             return
         logger.warning(
             "Play failed: id=%r ref=%r %s", request_id, ref, result.failure_detail()
@@ -93,6 +95,6 @@ class PlayHandler(MessageHandler):
     @staticmethod
     async def _error(websocket: WebSocket, request_id: str, message: str) -> None:
         """Send an id-stamped error frame for a rejected play request."""
-        await websocket.send_json(
-            {"type": "error", "id": request_id, "message": message}
+        await safe_send(
+            websocket, {"type": "error", "id": request_id, "message": message}
         )

@@ -157,3 +157,23 @@ class TestPlayHandler:
         assert sent[-1]["type"] == "error"
         assert "no recording" in str(sent[-1]["message"])
         playback.enqueue.assert_not_awaited()
+
+    def test_client_disconnect_on_ack_does_not_raise(self, tmp_path: Path) -> None:
+        """A client gone when the 'playing' ack is sent ends the request quietly.
+
+        The recording was already enqueued (it still plays on the host); the
+        disconnect must not escape as a router traceback.
+        """
+        from starlette.websockets import WebSocketDisconnect
+
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+        playback = _playback_that_completes()
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
+        # Must not raise -- a normal disconnect is a quiet end-of-request.
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+        playback.enqueue.assert_awaited_once()
