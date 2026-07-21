@@ -923,6 +923,10 @@ class TestRecordCommand:
         assert "vox play big.mp3" in result.output  # host playback still offered
         assert "too large to fetch" in result.output
         assert "vox fetch big.mp3" not in result.output
+        # The retrieve hint points at "the daemon host" generically, never a
+        # connection IP (which is the tunnel endpoint under SSH, not the store).
+        assert "the daemon host" in result.output
+        assert "retrieve it from" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_size_mismatch_treated_as_remote_not_error(

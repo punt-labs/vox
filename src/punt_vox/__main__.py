@@ -488,12 +488,14 @@ def _emit_record_locator(result: RecordResult) -> None:
     host = DaemonEnv.host()
     payload["host"] = host
     # Only advertise fetch when the recording actually fits a single fetch frame;
-    # above the limit fetch always fails, so point the user at host playback or a
-    # direct retrieval instead of a command that cannot work.
+    # above the limit fetch always fails, so point at host-side playback instead
+    # of a command that cannot work. No host IP in the retrieve hint: under an
+    # SSH tunnel the connection host is 127.0.0.1 (the tunnel endpoint), which is
+    # not where the recording lives -- say "the daemon host" generically.
     if result.byte_count > FETCH_FRAME_LIMIT_BYTES:
         retrieval = (
-            f"too large to fetch this cut — play on the host with "
-            f"vox play {result.name}, or retrieve it from {host} directly"
+            f"too large to fetch over the wire — play it on the daemon host "
+            f"with vox play {result.name}"
         )
     else:
         retrieval = f"fetch: vox fetch {result.name} -o <path>"
