@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -443,29 +442,66 @@ class TestVoxClientRecord:
     """Test record method."""
 
     @pytest.mark.asyncio
-    async def test_record_returns_bytes(self) -> None:
-        audio_bytes = b"\xff\xfb\x90\x00" * 10
-        encoded = base64.b64encode(audio_bytes).decode("ascii")
-
+    async def test_record_returns_path_and_bytes(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "audio", "id": "r1", "data": encoded})
+            return_value=json.dumps(
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "path": "/out/x.mp3",
+                    "bytes": 40,
+                    "cached": False,
+                }
+            )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        result = await client.record("Hello")
-        assert result == audio_bytes
+        result = await client.record("Hello", output_dir=Path("/out"))
+        assert result.path == Path("/out/x.mp3")
+        assert result.byte_count == 40
+        assert result.cached is False
 
     @pytest.mark.asyncio
-    async def test_record_unexpected_type_raises(self) -> None:
+    async def test_record_sends_output_dir_and_optional_path(self) -> None:
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "done", "id": "r1"}))
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "path": "/pin/y.mp3", "bytes": 12}
+            )
+        )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="Expected 'audio'"):
-            await client.record("Hello")
+        await client.record(
+            "Hi", output_dir=Path("/out"), output_path=Path("/pin/y.mp3")
+        )
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["type"] == "record"
+        assert sent["output_dir"] == "/out"
+        assert sent["output_path"] == "/pin/y.mp3"
+
+    @pytest.mark.asyncio
+    async def test_record_audio_without_path_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "audio", "id": "r1"}))
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="with a path"):
+            await client.record("Hello", output_dir=Path("/out"))
+
+    @pytest.mark.asyncio
+    async def test_record_transport_close_is_wrapped(self) -> None:
+        """A dropped connection surfaces as a VoxError, never a raw traceback."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=OSError("socket gone"))
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdConnectionError, match="connection to voxd lost"):
+            await client.record("Hello", output_dir=Path("/out"))
 
 
 class TestVoxClientVoices:
@@ -787,12 +823,11 @@ class TestVoxClientSync:
             sync_client.chime("done")
 
     def test_record(self) -> None:
-        audio_bytes = b"\xff\xfb\x90\x00" * 5
-        encoded = base64.b64encode(audio_bytes).decode("ascii")
-
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "audio", "id": "r1", "data": encoded})
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "path": "/out/z.mp3", "bytes": 20}
+            )
         )
 
         with patch(
@@ -801,8 +836,9 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.record("Hello")
-            assert result == audio_bytes
+            result = sync_client.record("Hello", output_dir=Path("/out"))
+            assert result.path == Path("/out/z.mp3")
+            assert result.byte_count == 20
 
     def test_voices(self) -> None:
         mock_ws = _make_mock_ws()

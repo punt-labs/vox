@@ -14,9 +14,13 @@ import typer
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
+from punt_vox.client import RecordResult
+from punt_vox.types import generate_filename
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from click.testing import Result
 
 
@@ -788,12 +792,37 @@ class TestApiKeyInputPaths:
 # ---------------------------------------------------------------------------
 
 
+def _fake_record(
+    data: bytes = b"\xff\xfb\x90\x00" * 10,
+) -> Callable[..., RecordResult]:
+    """Return a record side effect that writes the file the daemon would write.
+
+    The daemon owns the write in the real path, so a mocked client stands in by
+    landing *data* at the requested destination and returning the matching
+    :class:`RecordResult`.
+    """
+
+    def _rec(
+        text: str,
+        _spec: object = None,
+        *,
+        output_dir: Path,
+        output_path: Path | None = None,
+    ) -> RecordResult:
+        dest = output_path or output_dir / generate_filename(text)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return RecordResult(path=dest, byte_count=len(data), cached=False)
+
+    return _rec
+
+
 class TestRecordCommand:
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_basic(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10  # fake MP3
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(app, ["record", "hello", "-o", str(out)])
@@ -808,7 +837,7 @@ class TestRecordCommand:
     ) -> None:
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(
@@ -827,7 +856,7 @@ class TestRecordCommand:
         out_dir.mkdir()
 
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(
@@ -843,7 +872,7 @@ class TestRecordCommand:
     ) -> None:
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(
@@ -880,7 +909,7 @@ class TestRecordCommand:
         monkeypatch.chdir(tmp_path)
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(
@@ -910,6 +939,28 @@ class TestRecordCommand:
         assert "not running" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_transport_failure_is_one_line_cli_error(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A wrapped transport failure surfaces as one line, not a traceback."""
+        from punt_vox.client_errors import VoxdProtocolError
+
+        out = tmp_path / "test.mp3"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.side_effect = VoxdProtocolError(
+            "connection to voxd lost during 'record': sent 1009 (message too big)"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "message too big" in result.output
+        assert "Traceback" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_preserves_vibe_tags(
         self,
         mock_client_cls: MagicMock,
@@ -922,7 +973,7 @@ class TestRecordCommand:
         """
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         text = "Hello world [warm] [friendly]"
@@ -1278,7 +1329,7 @@ class TestStdinInput:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         out = tmp_path / "o.mp3"
-        mock_client_cls.return_value.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_client_cls.return_value.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(app, ["record", "-", "-o", str(out)], input="recorded\n")
@@ -1373,7 +1424,7 @@ class TestMainGroup:
     def test_provider_flag(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_instance.record.side_effect = _fake_record()
 
         runner = CliRunner()
         result = runner.invoke(

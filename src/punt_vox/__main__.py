@@ -406,8 +406,6 @@ def record(  # pyright: ignore[reportUnusedFunction]
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
     """
-    from punt_vox.types import generate_filename
-
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     boost = speaker_boost if speaker_boost else None
     spec = _validated_spec(
@@ -429,25 +427,31 @@ def record(  # pyright: ignore[reportUnusedFunction]
     out_dir.mkdir(parents=True, exist_ok=True)
     client = VoxClientSync()
     for i, seg_text in enumerate(segments):
-        # Determine output path
+        # An explicit --output pins the path; otherwise the daemon names each
+        # file by content hash under out_dir (no client-side naming).
         if output is not None and len(segments) == 1:
-            out_path = output
+            out_path: Path | None = output
         elif output is not None:
-            # Multiple segments with explicit --output: append index
             stem = output.stem
             out_path = output.parent / f"{stem}_{i:04d}{output.suffix}"
         else:
-            out_path = out_dir / generate_filename(seg_text)
+            out_path = None
 
         try:
-            mp3_bytes = client.record(seg_text, spec)
+            result = client.record(
+                seg_text, spec, output_dir=out_dir, output_path=out_path
+            )
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(mp3_bytes)
-        _formatter.emit({"path": str(out_path)}, str(out_path))
+        if result.path.stat().st_size != result.byte_count:
+            detail = f"recording size mismatch for {result.path}"
+            _formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1)
+        _formatter.emit(
+            {"path": str(result.path), "bytes": result.byte_count}, str(result.path)
+        )
 
 
 # ---------------------------------------------------------------------------

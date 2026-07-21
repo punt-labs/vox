@@ -25,7 +25,6 @@ from starlette.routing import Route, WebSocketRoute
 from punt_vox.logging_config import configure_daemon_logging
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
-from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.config import (
     DaemonConfig,
     _config_dir,
@@ -34,16 +33,13 @@ from punt_vox.voxd.config import (
     _run_dir,
 )
 from punt_vox.voxd.crash_logging import CrashLogger
-from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
-from punt_vox.voxd.speech_handlers import RecordHandler, SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
-from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
-from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
 
@@ -266,32 +262,6 @@ class VoxDaemon:
         cli()
 
     @staticmethod
-    def _build_handler_dict(
-        *,
-        synthesis: SynthesisPipeline,
-        playback: PlaybackQueue,
-        programs: ProgramSubsystem,
-        health: DaemonHealth,
-    ) -> dict[str, MessageHandler]:
-        """Build the canonical handler dispatch dict (speech + system + programs)."""
-        return {
-            "synthesize": SynthesizeHandler(
-                synthesis=synthesis,
-                playback=playback,
-                once_dedup=OnceDedup(),
-            ),
-            "record": RecordHandler(synthesis=synthesis),
-            "chime": ChimeHandler(
-                chimes=ChimeResolver(),
-                chime_dedup=ChimeDedup(),
-                playback=playback,
-            ),
-            "voices": VoicesHandler(),
-            "health": HealthHandler(health=health),
-            **programs.handlers(),
-        }
-
-    @staticmethod
     def create_app(
         *,
         playback: PlaybackQueue | None = None,
@@ -312,12 +282,12 @@ class VoxDaemon:
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
-            handlers = VoxDaemon._build_handler_dict(
+            handlers = HandlerRegistry(
                 synthesis=syn,
                 playback=pb,
                 programs=progs,
                 health=hlth,
-            )
+            ).build()
             router = WebSocketRouter(
                 handlers=handlers,
                 auth_token=auth_token,
@@ -386,12 +356,12 @@ def main(
     # Use a lambda to defer the lookup.
     health = DaemonHealth(playback, lambda: ws_router.client_count, port)
 
-    handlers = VoxDaemon._build_handler_dict(
+    handlers = HandlerRegistry(
         synthesis=synthesis,
         playback=playback,
         programs=programs,
         health=health,
-    )
+    ).build()
     ws_router = WebSocketRouter(
         handlers=handlers,
         auth_token=auth_token,

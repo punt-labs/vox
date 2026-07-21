@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -454,6 +455,7 @@ class TestApiKeyPassthroughIntegration:
             "text": "billable synthesis",
             "provider": "elevenlabs",
             "voice": "matilda",
+            "output_dir": tempfile.mkdtemp(),
         }
         if api_key is not None:
             msg["api_key"] = api_key
@@ -463,7 +465,10 @@ class TestApiKeyPassthroughIntegration:
             client.websocket_connect("/ws") as ws,
         ):
             ws.send_json(msg)
+            # The daemon acks with 'recording' before the terminal 'audio' frame.
             response: dict[str, object] = ws.receive_json()
+            while response.get("type") == "recording":
+                response = ws.receive_json()
 
         return response
 
@@ -605,6 +610,7 @@ class TestCacheApiKeyBypass:
             "text": text,
             "provider": "elevenlabs",
             "voice": "matilda",
+            "output_dir": tempfile.mkdtemp(),
         }
         if api_key is not None:
             msg["api_key"] = api_key
@@ -614,7 +620,10 @@ class TestCacheApiKeyBypass:
             client.websocket_connect("/ws") as ws,
         ):
             ws.send_json(msg)
+            # The daemon acks with 'recording' before the terminal 'audio' frame.
             response: dict[str, object] = ws.receive_json()
+            while response.get("type") == "recording":
+                response = ws.receive_json()
 
         return response
 

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from _program_fakes import FakeProgramGateway
 
-from punt_vox.client import SynthesizeResult
+from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.music_phrases import (
@@ -684,7 +684,9 @@ class TestRecord:
 
     def test_simple_text(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         mock_client = MagicMock()
-        mock_client.record.return_value = b"\xff\xfb\x90\x00" * 10
+        mock_client.record.return_value = RecordResult(
+            path=tmp_path / "hello.mp3", byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
         monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
@@ -704,10 +706,12 @@ class TestRecord:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         mock_client = MagicMock()
-        mock_client.record.return_value = b"\xff\xfb\x90\x00" * 10
+        out_path = str(tmp_path / "custom.mp3")
+        mock_client.record.return_value = RecordResult(
+            path=Path(out_path), byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        out_path = str(tmp_path / "custom.mp3")
         result = json.loads(record(text="Hello", output_path=out_path))
 
         assert isinstance(result, list)

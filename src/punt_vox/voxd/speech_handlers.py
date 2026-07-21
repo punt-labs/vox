@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import logging
 import time
@@ -15,7 +14,6 @@ from typing import Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from punt_vox import cache as _cache_module
 from punt_vox.providers import auto_detect_provider
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
@@ -31,7 +29,7 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.voxd.types import MessageHandler
 
-__all__ = ["RecordHandler", "SynthesizeHandler"]
+__all__ = ["SynthesizeHandler"]
 
 logger = logging.getLogger(__name__)
 
@@ -233,44 +231,3 @@ class SynthesizeHandler(MessageHandler):
                 ts=time.time(),
             )
         )
-
-
-class RecordHandler(MessageHandler):
-    """Handle 'record' WebSocket messages: TTS without playback."""
-
-    __slots__ = ("_synthesis",)
-
-    _synthesis: SynthesisPipeline
-
-    def __new__(cls, *, synthesis: SynthesisPipeline) -> Self:
-        self = super().__new__(cls)
-        self._synthesis = synthesis
-        return self
-
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Synthesize speech and return audio bytes without playback."""
-        req = _SpeechRequest.from_msg(msg, websocket)
-        if not req.text:
-            await req.error("empty text")
-            return
-
-        logger.info(
-            "Record: id=%r provider=%r voice=%r chars=%d",
-            req.request_id,
-            req.spec.provider or "",
-            req.spec.voice or "",
-            len(req.text),
-        )
-
-        try:
-            outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
-        except Exception as exc:
-            logger.exception("Record synthesis failed for id=%r", req.request_id)
-            await req.error(str(exc))
-            return
-
-        audio_data = outcome.path.read_bytes()
-        if not outcome.path.is_relative_to(_cache_module.CACHE_DIR):
-            outcome.path.unlink(missing_ok=True)
-        encoded = base64.b64encode(audio_data).decode("ascii")
-        await req.reply({"type": "audio", "data": encoded})

@@ -7,14 +7,13 @@ Used by the MCP server, hook handlers, and CLI commands.
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import contextlib
 import json
 import logging
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 import websockets
@@ -45,6 +44,23 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class RecordResult:
+    """Result of a ``record`` call: where the daemon wrote the audio.
+
+    The daemon writes the synthesized MP3 to the caller's destination and
+    returns the final ``path`` plus the ``byte_count`` it wrote -- no audio
+    crosses the wire. A caller asserts byte-correct delivery by comparing
+    ``byte_count`` to the on-disk size of ``path``. ``cached`` reports a
+    content-addressed cache hit, the same observability signal
+    :class:`SynthesizeResult` carries.
+    """
+
+    path: Path
+    byte_count: int
+    cached: bool = False
+
+
+@dataclass(frozen=True)
 class SynthesizeResult:
     """Result of a ``synthesize`` call on voxd.
 
@@ -72,6 +88,14 @@ class SynthesizeResult:
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
+
+# record synthesizes to a file that may take minutes for long text (a fresh
+# 6000-char ElevenLabs synthesis was measured at ~2m). Scale the wait with the
+# text length rather than a fixed cap so a legitimate long synthesis is never
+# abandoned, while a bound proportional to the request keeps a client from
+# hanging unboundedly.
+_RECORD_TIMEOUT_BASE = 60.0
+_RECORD_TIMEOUT_PER_CHAR = 0.05
 
 # ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
@@ -221,15 +245,48 @@ class _VoxdTransport:
     ) -> dict[str, Any]:
         """Send a JSON message and wait for a single JSON response."""
         ws = await self._ensure_connected()
-        await ws.send(json.dumps(msg))
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-        except TimeoutError as exc:
-            msg_type = str(msg.get("type", ""))
-            raise VoxdProtocolError(
-                f"Timeout waiting for response to '{msg_type}'"
-            ) from exc
+        await self._send_frame(ws, msg)
+        msg_type = str(msg.get("type", ""))
+        raw = await self._recv_frame(
+            ws, timeout, f"Timeout waiting for response to '{msg_type}'", msg
+        )
         return self._decode(raw)
+
+    async def _send_frame(
+        self, ws: websockets.asyncio.client.ClientConnection, msg: dict[str, object]
+    ) -> None:
+        """Send one JSON frame, wrapping a lost connection as a ``VoxError``."""
+        try:
+            await ws.send(json.dumps(msg))
+        except (websockets.exceptions.WebSocketException, OSError) as exc:
+            raise VoxdConnectionError(self._transport_failure(msg, exc)) from exc
+
+    async def _recv_frame(
+        self,
+        ws: websockets.asyncio.client.ClientConnection,
+        timeout: float,
+        timeout_msg: str,
+        msg: dict[str, object],
+    ) -> object:
+        """Receive one frame within *timeout*, wrapping every transport failure.
+
+        A ``ConnectionClosed`` or ``OSError`` from ``ws.recv()`` must surface as
+        a :class:`VoxError` -- otherwise it escapes a CLI command's
+        ``(VoxdConnectionError, VoxdProtocolError)`` catch as a raw traceback.
+        A timeout is a protocol failure; a dropped socket is a connection one.
+        """
+        try:
+            return await asyncio.wait_for(ws.recv(), timeout=timeout)
+        except TimeoutError as exc:
+            raise VoxdProtocolError(timeout_msg) from exc
+        except (websockets.exceptions.WebSocketException, OSError) as exc:
+            raise VoxdConnectionError(self._transport_failure(msg, exc)) from exc
+
+    @staticmethod
+    def _transport_failure(msg: dict[str, object], exc: Exception) -> str:
+        """Describe a lost/closed connection for a wrapped transport error."""
+        msg_type = str(msg.get("type", ""))
+        return f"connection to voxd lost during '{msg_type}': {exc}"
 
     @staticmethod
     def _decode(raw: object) -> dict[str, Any]:
@@ -264,7 +321,7 @@ class _VoxdTransport:
         so terminal_type='done' handles that path correctly.
         """
         ws = await self._ensure_connected()
-        await ws.send(json.dumps(msg))
+        await self._send_frame(ws, msg)
         responses: list[dict[str, Any]] = []
         deadline = asyncio.get_running_loop().time() + timeout
         # One message serves both timeout paths (deadline exceeded, recv timeout).
@@ -274,10 +331,7 @@ class _VoxdTransport:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise VoxdProtocolError(timeout_msg)
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-            except TimeoutError as exc:
-                raise VoxdProtocolError(timeout_msg) from exc
+            raw = await self._recv_frame(ws, remaining, timeout_msg, msg)
             resp: dict[str, Any] = json.loads(str(raw))
             responses.append(resp)
             if resp.get("type") == "error":
@@ -426,29 +480,48 @@ class VoxClient:
             msg, timeout=_TIMEOUT_SHORT, terminal_type="done", early_terminal="playing"
         )
 
-    async def record(self, text: str, spec: SynthesisSpec | None = None) -> bytes:
-        """Synthesize and return MP3 bytes (no playback).
+    async def record(
+        self,
+        text: str,
+        spec: SynthesisSpec | None = None,
+        *,
+        output_dir: Path,
+        output_path: Path | None = None,
+    ) -> RecordResult:
+        """Synthesize and have the daemon write the MP3 to disk (no playback).
 
-        *spec* bundles the voice/provider/rate parameters.
+        No audio crosses the wire: the daemon writes the synthesized file to
+        *output_path* (explicit) or, when that is None, to a content-addressed
+        name under *output_dir*, and returns a :class:`RecordResult` with the
+        final path and byte count. *spec* bundles the voice/provider/rate
+        parameters. The response deadline scales with the text length so a
+        long synthesis is not abandoned by a premature timeout.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "record",
             "id": request_id,
             "text": text,
+            "output_dir": str(output_dir),
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
+        if output_path is not None:
+            msg["output_path"] = str(output_path)
 
-        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SYNTHESIS)
-        if resp.get("type") != "audio":
+        timeout = _RECORD_TIMEOUT_BASE + _RECORD_TIMEOUT_PER_CHAR * len(text)
+        responses = await self._transport.send_and_drain(
+            msg, timeout=timeout, terminal_type="audio"
+        )
+        terminal = responses[-1] if responses else {}
+        if terminal.get("type") != "audio" or "path" not in terminal:
             raise VoxdProtocolError(
-                f"Expected 'audio' response, got '{resp.get('type')}'"
+                f"Expected 'audio' response with a path, got '{terminal.get('type')}'"
             )
-        data = resp.get("data", "")
-        try:
-            return base64.b64decode(str(data))
-        except (binascii.Error, ValueError) as exc:
-            raise VoxdProtocolError(f"Invalid audio data from voxd: {exc}") from exc
+        return RecordResult(
+            path=Path(str(terminal["path"])),
+            byte_count=int(terminal.get("bytes", 0)),
+            cached=bool(terminal.get("cached", False)),
+        )
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices; a missing ``voices`` key is a protocol error.
