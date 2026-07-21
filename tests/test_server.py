@@ -742,6 +742,35 @@ class TestRecord:
         assert result[0]["name"] == "custom.mp3"
         assert mock_client.record.call_args.kwargs["name"] == "custom.mp3"
 
+    def test_empty_name_sent_to_daemon_single_segment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit "" is sent for the daemon to reject, not content-addressed."""
+        from punt_vox.client_errors import VoxdProtocolError
+
+        mock_client = MagicMock()
+        # The daemon is the authority: it rejects an empty name pre-ack.
+        mock_client.record.side_effect = VoxdProtocolError("empty recording name")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(record(text="Hello", name=""))
+
+        assert "error" in result  # the daemon's rejection is surfaced
+        assert mock_client.record.call_args.kwargs["name"] == ""  # "" reached the wire
+
+    def test_empty_name_multi_segment_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit "" with multiple segments is rejected, not silently dropped."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(record(segments=[{"text": "a"}, {"text": "b"}], name=""))
+
+        assert "error" in result
+        assert "single-segment" in result["error"]
+        mock_client.record.assert_not_called()
+
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

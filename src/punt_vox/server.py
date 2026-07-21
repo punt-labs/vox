@@ -551,12 +551,14 @@ def record(
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    if name and len(segments) > 1:
+    if name is not None and len(segments) > 1:
         return _error("name only supported for single-segment calls")
 
-    # The daemon owns the store: a single-segment call may pin a bare name,
-    # otherwise the daemon content-addresses by text. No client path.
-    single_name = name if name and len(segments) == 1 else None
+    # The daemon owns the store and is the single authority on name validity:
+    # only an absent (None) name is content-addressed; an explicit name --
+    # including "" -- is sent for the daemon to reject pre-ack. Uses
+    # ``is not None`` (not truthiness) to match client.record and the CLI.
+    single_name = name if name is not None and len(segments) == 1 else None
     effective_provider = _session.provider
     client = _voxd_client()
 
