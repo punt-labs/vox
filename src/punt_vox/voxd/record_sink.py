@@ -58,20 +58,47 @@ class RecordSink:
     def place(self, *, source: Path, text: str, cached: bool) -> RecordWrite:
         """Land *source* at the destination atomically; return path + bytes.
 
-        The audio is copied to a sibling temp in the destination directory and
-        atomically renamed onto the final path -- a rename within one
-        filesystem, so the destination is either the complete file or untouched,
-        never a partial write. ``cached`` sources (cache-hit files) are preserved;
-        ephemeral fresh-synthesis sources are removed after a successful land.
-
-        Once the rename commits, the write is done: the byte count is taken from
-        the temp *before* the rename, and the ephemeral-source cleanup is
-        best-effort. A failure after the commit point must not turn a completed
-        write into a reported failure.
+        A fresh (non-cached) source is already a complete file, so it is moved
+        with an atomic rename -- no byte copy -- falling back to the copy path on
+        ``OSError`` (e.g. ``EXDEV`` when the synth temp dir and the destination
+        are on different filesystems). ``cached`` sources are always copied,
+        never moved, so the cache entry survives. Either way the destination is
+        replaced atomically, so it is the complete file or untouched, never a
+        partial write.
         """
         dest = self._destination(text)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
+        if not cached:
+            moved = self._move(source, dest)
+            if moved is not None:
+                return moved
+        return self._copy(source, dest, cached=cached)
+
+    @staticmethod
+    def _move(source: Path, dest: Path) -> RecordWrite | None:
+        """Atomically rename *source* onto *dest*, or None if it can't (EXDEV).
+
+        Returns ``None`` (never partially writes) so the caller falls back to the
+        cross-filesystem copy path.
+        """
+        try:
+            source.replace(dest)
+        except OSError:
+            return None
+        # An ephemeral source may not be private; the copy path's mkstemp temp is
+        # 0600, so match that here to keep the recording private.
+        dest.chmod(0o600)
+        return RecordWrite(path=dest, byte_count=dest.stat().st_size)
+
+    @staticmethod
+    def _copy(source: Path, dest: Path, *, cached: bool) -> RecordWrite:
+        """Copy *source* to a sibling temp then atomically rename onto *dest*.
+
+        The byte count is taken from the temp *before* the rename (the commit
+        point); the ephemeral-source cleanup afterwards is best-effort, so a
+        failure past the commit never turns a completed write into a failure.
+        """
         fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".mp3.tmp")
         os.close(fd)
         tmp = Path(tmp_name)
@@ -83,7 +110,6 @@ class RecordSink:
             tmp.unlink(missing_ok=True)
             raise
 
-        # Post-commit: cleanup failures never fail the completed write.
         if not cached:
             with contextlib.suppress(OSError):
                 source.unlink(missing_ok=True)

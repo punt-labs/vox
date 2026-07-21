@@ -56,6 +56,72 @@ class TestRecordSink:
 
         assert not src.exists()
 
+    def test_fresh_uses_move_and_lands_0600(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fresh synthesis takes the atomic-move path (no copy) at 0600."""
+
+        # If the move path is taken, copyfile is never called -- make it fail
+        # loudly so a regression to the copy path is caught.
+        def no_copy(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("fresh synthesis must move, not copy")
+
+        monkeypatch.setattr("punt_vox.voxd.record_sink.shutil.copyfile", no_copy)
+
+        src = tmp_path / "ephemeral.mp3"
+        src.write_bytes(b"fresh-audio")
+        src.chmod(0o644)  # ephemeral source is not private until we chmod dest
+        dest = tmp_path / "out.mp3"
+        sink = RecordSink(tmp_path, dest)
+
+        write = sink.place(source=src, text="hi", cached=False)
+
+        assert write.path == dest
+        assert dest.read_bytes() == b"fresh-audio"
+        assert write.byte_count == len(b"fresh-audio")
+        assert dest.stat().st_mode & 0o777 == 0o600
+        assert not src.exists()
+
+    def test_cross_device_falls_back_to_copy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the atomic move can't cross filesystems, copy still lands 0600."""
+        src = tmp_path / "ephemeral.mp3"
+        src.write_bytes(b"xdev-audio")
+        dest = tmp_path / "out.mp3"
+        sink = RecordSink(tmp_path, dest)
+
+        original_replace = Path.replace
+
+        def selective_replace(self: Path, target: Path) -> Path:
+            if self == src:  # the fast-path move -> simulate EXDEV
+                raise OSError("cross-device link")
+            return original_replace(self, target)  # the copy path's temp rename
+
+        monkeypatch.setattr(Path, "replace", selective_replace)
+
+        write = sink.place(source=src, text="hi", cached=False)
+
+        assert write.path == dest
+        assert dest.read_bytes() == b"xdev-audio"
+        assert write.byte_count == len(b"xdev-audio")
+        assert dest.stat().st_mode & 0o777 == 0o600
+        assert not src.exists()
+
+    def test_cached_copy_lands_0600_and_preserves_source(self, tmp_path: Path) -> None:
+        """A cache hit is copied (source preserved) and the dest is 0600."""
+        src = tmp_path / "cache_entry.mp3"
+        src.write_bytes(b"cached-audio")
+        dest = tmp_path / "out.mp3"
+        sink = RecordSink(tmp_path, dest)
+
+        write = sink.place(source=src, text="hi", cached=True)
+
+        assert src.exists()  # cache entry preserved
+        assert dest.read_bytes() == b"cached-audio"
+        assert write.byte_count == len(b"cached-audio")
+        assert dest.stat().st_mode & 0o777 == 0o600
+
     def test_missing_source_leaves_no_partial_file(self, tmp_path: Path) -> None:
         """A copy failure raises and leaves no partial file at the destination."""
         dest = tmp_path / "out.mp3"
@@ -71,11 +137,24 @@ class TestRecordSink:
     def test_post_commit_unlink_failure_does_not_fail_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A cleanup failure after the commit point must not fail a done write."""
+        """A cleanup failure after the commit point must not fail a done write.
+
+        The best-effort source unlink only runs on the copy path, so force the
+        move to fall back to copy (EXDEV) and then fail the source unlink.
+        """
         src = tmp_path / "ephemeral.mp3"
         src.write_bytes(b"abcd")
         dest = tmp_path / "out.mp3"
         sink = RecordSink(tmp_path, dest)
+
+        original_replace = Path.replace
+
+        def force_copy(self: Path, target: Path) -> Path:
+            if self == src:  # fail the fast-path move -> fall back to copy
+                raise OSError("cross-device link")
+            return original_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", force_copy)
 
         original_unlink = Path.unlink
 
