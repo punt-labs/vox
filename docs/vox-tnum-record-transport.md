@@ -131,17 +131,21 @@ Request (client → daemon), one text frame of JSON:
 
 ```json
 {"type":"record","id":"<hex>","text":"<...>",
+ "output_dir":"/abs/dir",
  "output_path":"/abs/file.mp3",
  "...spec fields": "voice, provider, model, rate, language, stability, ..."}
 ```
 
-The request carries `output_path` (an explicit absolute file) **or**
-`output_dir` (a directory) — exactly one.
-
-The caller passes **exactly one** destination directive: `output_path` (an
-explicit absolute file) or `output_dir` (a directory; the daemon names the file
-`generate_filename(text)`, the same content-addressed name every other MP3 uses,
-now computed daemon-side from the text it already holds).
+The request always carries `output_dir` (an absolute directory) and, optionally,
+`output_path` (an absolute explicit file) as a pin. When `output_path` is
+present the daemon writes exactly there; when it is absent the daemon names the
+file `generate_filename(text)` under `output_dir` — the same content-addressed
+name every other MP3 uses, computed daemon-side from the text it already holds.
+Both fields are **absolute**: the client resolves them against the caller's cwd
+before they go on the wire, and the daemon **rejects a non-absolute path with an
+error frame** — `voxd`'s cwd is not the caller's shell, so a relative path is a
+protocol violation, not a directory to resolve. The daemon requires
+`output_dir`; a request without it is an error.
 
 Replies (daemon → client), two text frames — an immediate `recording` ack
 followed by the terminal `audio` frame carrying the final path and byte count:
@@ -157,7 +161,8 @@ frame, which the transport already turns into `VoxdProtocolError`
 
 ### Daemon (`RecordHandler`)
 
-1. Parse the request; reject empty text (unchanged).
+1. Parse the request; reject empty text, a missing `output_dir`, and any
+   non-absolute `output_dir`/`output_path` — each with an error frame.
 2. Send the `recording` ack.
 3. `synthesize_to_file(text, spec)` → `SynthesisOutcome(path, cached)`
    (unchanged; may take minutes).
