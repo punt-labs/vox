@@ -65,18 +65,20 @@ class FetchHandler(MessageHandler):
         # such OSError must reach the client as a clean error frame, never a
         # server-side traceback (matching the record write path).
         try:
-            # A cheap pre-read stat rejects the common oversize case without
-            # reading a huge file into memory. Take the size ONCE (a second stat
-            # could race and raise a generic read error instead of the oversize
-            # error). It is NOT authoritative anyway: a concurrent record
-            # place() can replace/grow the file between stat and read, so the
-            # reply's size and the limit are re-checked below against the bytes
-            # actually read.
+            # A cheap pre-read stat rejects the common oversize case first, but
+            # it is NOT trusted for the read: a token-holding remote caller can
+            # grow/replace the store file between this stat and the read
+            # (record + fetch run concurrently), so reading the whole file would
+            # let it drive an arbitrarily large allocation -- a memory/DoS
+            # vector. Read at most FETCH_FRAME_LIMIT_BYTES + 1 so the worst-case
+            # allocation is bounded regardless of the race; len > limit means
+            # the on-disk file exceeds the budget and is rejected as oversize.
             prelim_size = path.stat().st_size
             if prelim_size > FETCH_FRAME_LIMIT_BYTES:
                 await self._reject_oversize(websocket, request_id, prelim_size)
                 return
-            raw = path.read_bytes()
+            with path.open("rb") as handle:
+                raw = handle.read(FETCH_FRAME_LIMIT_BYTES + 1)
         except OSError as exc:
             logger.warning(
                 "Fetch read failed for id=%r ref=%r: %s", request_id, ref, exc
@@ -86,10 +88,11 @@ class FetchHandler(MessageHandler):
             )
             return
 
-        # Authoritative size = what we read. Guards the stat-vs-read race: a
-        # file grown past the limit after the stat is rejected here, and the
-        # client's byte-count check is compared against a declaration that
-        # matches the payload, never a stale stat.
+        # Authoritative size = what we read (capped at limit + 1). A file grown
+        # past the limit after the stat is rejected here -- the read never held
+        # more than limit + 1 bytes -- and the client's byte-count check is
+        # compared against a declaration that matches the payload, never a stale
+        # stat.
         size = len(raw)
         if size > FETCH_FRAME_LIMIT_BYTES:
             await self._reject_oversize(websocket, request_id, size)

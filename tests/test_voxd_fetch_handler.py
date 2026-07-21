@@ -118,30 +118,54 @@ class TestFetchHandler:
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
 
-    def test_grown_between_stat_and_read_rejected_post_read(
+    def test_grown_between_stat_and_read_is_bounded_and_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A file that grows past the limit after the stat is rejected post-read.
+        """A file grown past the limit after the stat is read bounded, then rejected.
 
-        The authoritative size is the bytes actually read, not the pre-read
-        stat, so a concurrent record place() cannot slip an oversize payload
-        past the frame limit.
+        The pre-read stat sees a small size (passes the fast-path), but the file
+        has grown; the handler reads at most FETCH_FRAME_LIMIT_BYTES + 1, so the
+        worst-case allocation is bounded (no memory/DoS), and len > limit rejects
+        it as oversize -- a token-holding remote caller can't drive an
+        arbitrarily large allocation via a concurrent record place().
         """
         store = RecordStore(tmp_path / "recordings")
         store.root.mkdir(parents=True)
-        (store.root / "x.mp3").write_bytes(b"\x00" * 10)  # small on disk (passes stat)
+        target = store.root / "x.mp3"
+        target.write_bytes(b"\x00" * 10)  # small on disk -> pre-read stat passes
         ws, sent = _capturing_ws()
 
-        def grown(_self: Path) -> bytes:
-            return b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1)
+        class _FakeHandle:
+            def __init__(self) -> None:
+                self.read_arg: int | None = None
 
-        monkeypatch.setattr(Path, "read_bytes", grown)
+            def read(self, size: int = -1) -> bytes:
+                self.read_arg = size  # a huge file returns exactly what is asked
+                return b"\x00" * size
+
+            def __enter__(self) -> _FakeHandle:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+        handles: list[_FakeHandle] = []
+
+        def fake_open(self: Path, *_a: object, **_k: object) -> _FakeHandle:
+            assert self == target, f"unexpected open of {self}"
+            handle = _FakeHandle()
+            handles.append(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", fake_open)
 
         msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
         asyncio.run(FetchHandler(store=store)(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
+        # The read never asked for more than limit + 1 bytes (bounded allocation).
+        assert handles[0].read_arg == FETCH_FRAME_LIMIT_BYTES + 1
 
     def test_declared_bytes_match_payload(self, tmp_path: Path) -> None:
         """The reply's declared 'bytes' equals the decoded payload length."""
@@ -164,7 +188,7 @@ class TestFetchHandler:
         """A ref that passes containment but errors on read → error frame, no traceback.
 
         Simulates the race where the file is deleted (or becomes unreadable)
-        between is_file() and read_bytes(): the client must get a clean error,
+        between is_file() and the open/read: the client must get a clean error,
         not a server-side exception.
         """
         store = RecordStore(tmp_path / "recordings")
@@ -172,10 +196,10 @@ class TestFetchHandler:
         (store.root / "x.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
         ws, sent = _capturing_ws()
 
-        def boom(_self: Path) -> bytes:
+        def boom(_self: Path, *_a: object, **_k: object) -> object:
             raise OSError("vanished mid-read")
 
-        monkeypatch.setattr(Path, "read_bytes", boom)
+        monkeypatch.setattr(Path, "open", boom)
 
         msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
         asyncio.run(FetchHandler(store=store)(msg, ws))
