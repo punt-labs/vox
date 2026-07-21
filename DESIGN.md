@@ -2193,8 +2193,10 @@ problems close as one change under the operator-ratified **pure model**:
   the host with speakers; the CLI still plays an existing local file client-side
   (loopback = the right machine).
 - **Fetch retrieves (vox-eoq9).** A `fetch` wire op returns a store recording's
-  bytes in one bounded frame; `vox fetch` copies directly when the store is on
-  this filesystem, else fetches over the wire.
+  bytes in one bounded frame; `vox fetch` always retrieves those bytes from the
+  connected daemon — there is no local-copy shortcut, because a same-named local
+  file cannot prove it is the store recording (identity, not existence). A
+  recording larger than the frame limit is refused, not truncated.
 
 ### Why
 
