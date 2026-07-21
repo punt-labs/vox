@@ -1,0 +1,140 @@
+\documentclass{article}
+\usepackage{fuzz}
+
+\begin{document}
+
+\title{vox-dvri: Record-Store Path Containment}
+\author{rmh}
+\maketitle
+
+% The daemon owns a recordings store rooted at a single directory it created
+% 0700. A wire client names a file only by a candidate: a "kind" flag
+% (absolute or relative) plus a sequence of path components. The security
+% invariant (vox-zu39, P1) is that the daemon never writes, plays, or reads a
+% path outside that root. This spec models candidate resolution and the store
+% state so the containment invariant is stated in the schema predicate and each
+% operation is shown to preserve it.
+
+% Path components (a bare filename is a one-element sequence) and resolved
+% filesystem paths.
+\begin{zed}
+  [COMP, PATH]
+\end{zed}
+
+% A candidate is absolute or relative. Relative is the only acceptable kind:
+% voxd's cwd is not the caller's shell, and an absolute candidate is a direct
+% escape from the root.
+\begin{zed}
+  Flag ::= isAbs | isRel
+\end{zed}
+
+% The distinguished traversal component ".."; its presence lets a relative
+% candidate climb out of the root, so it is unsafe.
+\begin{axdef}
+  dotdot: COMP
+\end{axdef}
+
+% The store root, an abstract "contained under" relation on paths (reflexive on
+% the root itself), and the resolver that maps a candidate to the path it would
+% land at.
+\begin{axdef}
+  root: PATH \\
+  under: PATH \rel PATH \\
+  resolve: (Flag \cross \seq COMP) \pfun PATH
+\end{axdef}
+
+% A candidate is SAFE exactly when it is relative, non-empty, and free of any
+% ".." component. This is the wire-input rule the daemon enforces before any
+% filesystem touch (it also rejects separators/NUL, modelled here as structural
+% illegality that keeps a name to safe components). The second predicate is the
+% resolver's containment guarantee: every SAFE candidate resolves to a concrete
+% path contained under the root -- the property the implementation's
+% ``(root / name).resolve()`` plus ``is_relative_to(root)`` check must satisfy.
+\begin{axdef}
+  safe: \power (Flag \cross \seq COMP)
+\where
+  \forall k: Flag; s: \seq COMP @ \\
+  \t1 (k, s) \in safe \iff \\
+  \t2 (k = isRel \land dotdot \notin \ran s \land s \neq \langle \rangle) \\
+  \forall k: Flag; s: \seq COMP @ \\
+  \t1 (k, s) \in safe \implies \\
+  \t2 (k, s) \in \dom resolve \land (resolve~(k, s), root) \in under
+\end{axdef}
+
+% The store: the set of paths that hold stored recordings. The invariant --
+% ``every stored write stays within the root'' -- is carried in the predicate,
+% not in prose.
+\begin{schema}{Store}
+  stored: \power PATH
+\where
+  \forall p: stored @ (p, root) \in under
+\end{schema}
+
+\begin{schema}{InitStore}
+  Store'
+\where
+  stored' = \emptyset
+\end{schema}
+
+% Place a recording named by a candidate. Precondition: the candidate is SAFE
+% (an absolute, traversing, or empty candidate never reaches here -- see
+% Reject). The landed path is the resolved path, which the containment
+% guarantee proves is under the root, so the Store invariant is preserved.
+\begin{schema}{Place}
+  \Delta Store \\
+  kind?: Flag \\
+  comps?: \seq COMP \\
+  path!: PATH
+\where
+  (kind?, comps?) \in safe \\
+  path! = resolve~(kind?, comps?) \\
+  stored' = stored \cup \{ path! \}
+\end{schema}
+
+% Report codes for the rejection path.
+\begin{zed}
+  REPORT ::= accepted | rejected
+\end{zed}
+
+% Reject an unsafe candidate: absolute, or containing "..", or empty. The store
+% is unchanged -- no write escapes the root because no write happens.
+\begin{schema}{Reject}
+  \Xi Store \\
+  kind?: Flag \\
+  comps?: \seq COMP \\
+  report!: REPORT
+\where
+  (kind?, comps?) \notin safe \\
+  report! = rejected
+\end{schema}
+
+% Play and Fetch both address an existing store recording by its resolved path.
+% Precondition: the reference is already in ``stored'' -- and every member of
+% ``stored'' is under the root by the invariant -- so neither operation can
+% touch a path outside the sandbox. Read-only: the store is unchanged.
+\begin{schema}{Access}
+  \Xi Store \\
+  ref?: PATH \\
+  report!: REPORT
+\where
+  ref? \in stored \\
+  report! = accepted
+\end{schema}
+
+\begin{zed}
+  Play == Access \\
+  Fetch == Access
+\end{zed}
+
+% A reference that is not a stored recording (an absolute path, a traversal, or
+% simply an unknown name that resolved outside ``stored'') is refused.
+\begin{schema}{AccessReject}
+  \Xi Store \\
+  ref?: PATH \\
+  report!: REPORT
+\where
+  ref? \notin stored \\
+  report! = rejected
+\end{schema}
+
+\end{document}
