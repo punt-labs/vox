@@ -119,3 +119,5 @@
 {"ts":"2026-07-21T17:14:21Z","commit":"471dbe8","source":null,"files_scored":161,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-07-21T17:25:12Z","commit":"7633e92","source":null,"files_scored":161,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"vox-dvri r3: PlaybackQueue gains _fail_outcome/_failure_result resilience helpers (lcom)","deltas":{"src/punt_vox/voxd/playback.py":{"avg_lcom":[0.885,0.895]}}}
 {"ts":"2026-07-21T17:25:13Z","commit":"7633e92","source":null,"files_scored":161,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-07-21T20:37:24Z","commit":"900592f","source":null,"files_scored":161,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"vox-dvri #353: safe_send added as a public wire-frame helper (public_names)","deltas":{"src/punt_vox/voxd/_parse.py":{"public_names":[3.0,4.0]}}}
+{"ts":"2026-07-21T20:37:24Z","commit":"900592f","source":null,"files_scored":161,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}

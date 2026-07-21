@@ -44,6 +44,36 @@ class TestFetchHandler:
         assert reply["type"] == "bytes"
         assert reply["bytes"] == len(data)
         assert base64.b64decode(str(reply["data"])) == data
+        assert reply["ref"] == "a1b2c3.mp3"
+
+    def test_reply_echoes_requested_ref_not_ondisk_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reply echoes the requested ref, not the on-disk name.
+
+        On a case-insensitive filesystem a mixed-case ref resolves to a
+        differently-cased on-disk file; the reply must carry the ref the client
+        asked for so its exact-match check holds after a successful read. Stub
+        resolve_ref so the on-disk name provably differs from the requested ref
+        (deterministic on any filesystem).
+        """
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        ondisk = store.root / "actual.mp3"
+        ondisk.write_bytes(b"\xff\xfb\x90\x00" * 4)
+
+        def stub_resolve(_self: RecordStore, _ref: str) -> Path:
+            return ondisk
+
+        monkeypatch.setattr(RecordStore, "resolve_ref", stub_resolve)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "REQUESTED.mp3"}
+        asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        reply = sent[-1]
+        assert reply["type"] == "bytes"
+        assert reply["ref"] == "REQUESTED.mp3"  # the requested ref, not "actual.mp3"
 
     def test_fetch_ref_outside_root_rejected(self, tmp_path: Path) -> None:
         store = RecordStore(tmp_path / "recordings")

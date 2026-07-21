@@ -1256,6 +1256,30 @@ class TestFetchCommand:
         assert "not running" in result.output
         assert "Traceback" not in result.output
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_post_write_stat_failure_is_one_line_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        """A stat failure after a successful write is a one-line error, no traceback."""
+        out = tmp_path / "got.mp3"
+        mock_client_cls.return_value.fetch.return_value = b"\xff\xfb\x90\x00" * 4
+
+        real_stat = Path.stat
+
+        def selective(self: Path) -> object:
+            if self == out:
+                raise OSError("stat boom")
+            return real_stat(self)
+
+        monkeypatch.setattr(Path, "stat", selective)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "cannot write" in result.output
+        assert "Traceback" not in result.output
+
 
 # ---------------------------------------------------------------------------
 # vibe tests

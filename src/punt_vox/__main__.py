@@ -1058,6 +1058,9 @@ def fetch(
     try:
         data = VoxClientSync().fetch(ref)
         output.write_bytes(data)
+        # Stat inside the guard: a post-write stat failure must be the same
+        # one-line error, not a traceback.
+        size = output.stat().st_size
     except (VoxdConnectionError, VoxdProtocolError) as exc:
         _formatter.error(str(exc), f"Error: {exc}")
         raise typer.Exit(code=1) from exc
@@ -1065,7 +1068,7 @@ def fetch(
         detail = f"cannot write {output}: {exc}"
         _formatter.error(detail, f"Error: {detail}")
         raise typer.Exit(code=1) from exc
-    _formatter.emit({"path": str(output), "bytes": output.stat().st_size}, str(output))
+    _formatter.emit({"path": str(output), "bytes": size}, str(output))
 
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
-from punt_vox.voxd._parse import parse_optional_str
-from punt_vox.voxd._send import safe_send
+from punt_vox.voxd._parse import parse_optional_str, safe_send
 from punt_vox.voxd.types import MessageHandler
 
 if TYPE_CHECKING:
@@ -95,12 +94,16 @@ class FetchHandler(MessageHandler):
 
         logger.info("Fetch: id=%r ref=%r bytes=%d", request_id, ref, size)
         data = base64.b64encode(raw).decode("ascii")
+        # Echo the REQUESTED ref, not path.name: on a case-insensitive
+        # filesystem a mixed-case ref resolves to a differently-cased on-disk
+        # name, and the client's exact-match check would spuriously fail after
+        # a successful read. The ref was already validated by resolve_ref.
         await safe_send(
             websocket,
             {
                 "type": "bytes",
                 "id": request_id,
-                "ref": path.name,
+                "ref": ref,
                 "data": data,
                 "bytes": size,
             },
