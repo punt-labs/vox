@@ -56,12 +56,25 @@ this one.
    synthesis took 2 m 04 s, so the client abandoned the call while the daemon
    was still synthesizing. Fix: the daemon sends an immediate `recording` ack
    the moment it accepts the job, then the client waits for the terminal `audio`
-   frame under a **length-scaled deadline** (illustrative: `max(60, 30 + 0.04 *
-   len(text))` seconds — 6000 chars → 270 s, comfortably above the observed
-   124 s). The wait is proportional to the work and bounded by the request's own
-   text length, so a legitimate long synthesis is never abandoned and no client
-   hangs unboundedly. The ack also separates "daemon never accepted the job"
-   (fast failure) from "synthesis is legitimately long" (slow success).
+   frame under a **length-scaled deadline** (`_RECORD_TIMEOUT_BASE +
+   _RECORD_TIMEOUT_PER_CHAR * len(text)` = 60 + 0.05·len — 6000 chars → 360 s,
+   comfortably above the observed 124 s), **capped at `_RECORD_TIMEOUT_MAX = 600
+   s`**. The wait is proportional to the work and never fixed, so the reported
+   defect — a fixed 30 s deadline firing on a normal multi-minute synthesis — is
+   fixed. The 600 s cap is a hung-daemon backstop: it bounds the client's wait so
+   a wedged daemon is detected within ten minutes rather than never. It does not
+   abandon legitimate work in practice, because `core.py` splits a long record
+   into sentence-boundary chunks synthesized **in parallel**, and every provider
+   caps single-request input length — so real wall-clock for even a
+   tens-of-thousands-char record stays a few minutes, far below the cap. The one
+   bound this trades for: a single synthesis that genuinely ran past 600 s would
+   be abandoned client-side (a one-line timeout error) while the daemon, which
+   has no matching server-side deadline, finishes and lands the file — an
+   orphaned successful write. That case does not arise under parallel chunking +
+   provider input caps; if it ever does, the fix is a daemon-side synthesis
+   deadline so client and daemon agree, not a larger client cap. The ack also
+   separates "daemon never accepted the job" (fast failure) from "synthesis is
+   legitimately long" (slow success).
 
 3. **CLI error mapping.** A `websockets.exceptions.ConnectionClosedError` from
    `ws.recv()` escaped the transport (`send_and_recv` catches only
@@ -93,8 +106,12 @@ this one.
    equals `N`.
 2. **No silent size ceiling.** Audio never crosses the wire, so there is no
    single-frame cap and no transfer size limit within the trust boundary.
-3. A **legitimate long synthesis is never abandoned** by a premature client
-   timeout (length-scaled deadline after an immediate ack).
+3. A **legitimate long synthesis is not abandoned** by a premature *fixed*
+   client timeout: the deadline is length-scaled after an immediate ack
+   (`60 + 0.05·len(text)`), capped at 600 s as a hung-daemon backstop. Parallel
+   chunking + provider input caps keep real wall-clock well under the cap, so no
+   realistic record is abandoned; a synthesis genuinely exceeding 600 s is the
+   one documented bound (see the Timeout section).
 4. **All client-facing transport failures are one-line CLI errors**, never a
    traceback (transport wraps `websockets`/`OSError` into `VoxError` subtypes).
 5. A client **disconnecting mid-transfer never crashes the daemon** or corrupts
