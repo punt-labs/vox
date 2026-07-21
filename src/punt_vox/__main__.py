@@ -430,7 +430,12 @@ def record(  # pyright: ignore[reportUnusedFunction]
     )
 
     segments = _text_input.resolve(text, from_file)
-    if name is not None and len(segments) > 1:
+    if name is not None and not name:
+        # An explicit empty --name would otherwise be normalized to None
+        # daemon-side and silently content-addressed; reject it up front.
+        _formatter.error("--name must not be empty", "Error: --name must not be empty")
+        raise typer.Exit(code=1)
+    if name and len(segments) > 1:
         _formatter.error(
             "--name supports a single segment only",
             "Error: --name supports a single segment only",
@@ -450,10 +455,15 @@ def record(  # pyright: ignore[reportUnusedFunction]
 def _emit_record_locator(result: RecordResult) -> None:
     """Print a stored recording's locator: a local path, or a remote id + host.
 
-    When the store path is visible on this machine (shared filesystem) the
-    on-disk size is verified against the daemon's byte count and the bare path
-    is shown. When it is not (a remote daemon) the id + host locator is shown
-    with the ``play``/``fetch`` commands -- no bogus local path is echoed.
+    The bare local path is shown only when the store path is provably the
+    daemon's recording -- it exists on this machine AND its size equals the
+    daemon-reported byte count. Mere existence is not proof: a remote daemon
+    may share this user's home layout, so a same-named local file (content
+    names collide on text; an explicit --name collides outright) is a
+    different file. A size mismatch therefore means "not the daemon's file"
+    and falls through to the remote locator, never a spurious error. Only a
+    genuine local anomaly -- the path exists but cannot be stat'd (a race or
+    permission fault) -- is a one-line error rather than a traceback.
     """
     payload: dict[str, object] = {
         "id": result.id,
@@ -462,12 +472,16 @@ def _emit_record_locator(result: RecordResult) -> None:
         "bytes": result.byte_count,
         "cached": result.cached,
     }
-    if result.store_path.exists():
-        actual_size = result.store_path.stat().st_size
-        if actual_size != result.byte_count:
-            detail = f"recording size mismatch for {result.store_path}"
-            _formatter.error(detail, f"Error: {detail}")
-            raise typer.Exit(code=1)
+    try:
+        is_local = (
+            result.store_path.is_file()
+            and result.store_path.stat().st_size == result.byte_count
+        )
+    except OSError as exc:
+        detail = f"cannot read recording {result.store_path}: {exc}"
+        _formatter.error(detail, f"Error: {detail}")
+        raise typer.Exit(code=1) from exc
+    if is_local:
         _formatter.emit(payload, str(result.store_path))
         return
 
@@ -1034,22 +1048,16 @@ def fetch(
 ) -> None:
     """Materialize a stored recording to a local path.
 
-    Copies directly from the store when it is on this filesystem (loopback),
-    else fetches the bytes over the wire from a remote daemon, then writes
-    OUTPUT. REF is a bare store id/name; no daemon path is named.
+    Always retrieves the bytes from the connected daemon and writes OUTPUT.
+    There is no local-copy shortcut: a same-named file under this machine's
+    recordings dir is not provably the connected daemon's recording (a remote
+    daemon may share this user's home layout), and the client cannot confirm
+    identity without the daemon's bytes -- so it fetches them. REF is a bare
+    store id/name; no daemon path is named.
     """
-    from punt_vox.paths import recordings_dir
-
-    is_bare = "/" not in ref and "\\" not in ref and ".." not in ref
-    store_path = recordings_dir() / ref
     try:
-        if is_bare and store_path.is_file():
-            import shutil
-
-            shutil.copyfile(store_path, output)
-        else:
-            data = VoxClientSync().fetch(ref)
-            output.write_bytes(data)
+        data = VoxClientSync().fetch(ref)
+        output.write_bytes(data)
     except (VoxdConnectionError, VoxdProtocolError) as exc:
         _formatter.error(str(exc), f"Error: {exc}")
         raise typer.Exit(code=1) from exc

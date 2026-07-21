@@ -512,6 +512,28 @@ class TestVoxClientRecord:
         assert "name" not in sent  # content-addressed daemon-side
 
     @pytest.mark.asyncio
+    async def test_record_empty_name_not_sent(self) -> None:
+        """An empty name is not put on the wire (the daemon would silently drop it)."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "h.mp3",
+                    "path": "/s/h.mp3",
+                    "bytes": 1,
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.record("Hi", name="")
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert "name" not in sent
+
+    @pytest.mark.asyncio
     async def test_record_audio_without_path_raises(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "audio", "id": "r1"}))
@@ -773,6 +795,30 @@ class TestVoxClientPlayFetch:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="byte-count mismatch"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_non_integer_bytes_raises(self) -> None:
+        """A non-int 'bytes' is a clear protocol error, not a misleading mismatch."""
+        import base64
+
+        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "bytes",
+                    "id": "f1",
+                    "ref": "x.mp3",
+                    "data": payload,
+                    "bytes": "notanumber",
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="non-integer 'bytes'"):
             await client.fetch("x.mp3")
 
 

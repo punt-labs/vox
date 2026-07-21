@@ -850,6 +850,21 @@ class TestRecordCommand:
         assert mock_instance.record.call_args.kwargs["name"] == "greeting.mp3"
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_record_empty_name_rejected(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """An explicit empty --name is rejected up front, not silently ignored."""
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hello", "--name", ""])
+
+        assert result.exit_code == 1
+        assert "must not be empty" in result.output
+        mock_instance.record.assert_not_called()
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_name_rejected_for_multiple_segments(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
@@ -910,14 +925,41 @@ class TestRecordCommand:
         assert "vox fetch big.mp3" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_record_size_mismatch_is_error(
+    def test_record_size_mismatch_treated_as_remote_not_error(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
-        """A visible store file whose size != reported bytes is a one-line error."""
+        """A same-named local file of a different size is NOT the daemon's file.
+
+        Against a remote daemon that shares this user's home layout, a same-named
+        local file must not be mistaken for the recording -- a size mismatch means
+        "not ours" and prints the remote locator, never a spurious error (vox-zu39
+        identity-vs-existence gap).
+        """
+        store = tmp_path / "store"
+        store.mkdir()
+        collision = store / "x.mp3"
+        collision.write_bytes(b"x" * 3)  # a different local file, 3 bytes
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = RecordResult(
+            id="x.mp3", name="x.mp3", store_path=collision, byte_count=40
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi"])
+
+        assert result.exit_code == 0
+        assert "vox play x.mp3" in result.output  # remote locator, not an error
+        assert "size mismatch" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_local_store_file_prints_bare_path(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A local file whose size matches the daemon count is shown as a bare path."""
         store = tmp_path / "store"
         store.mkdir()
         landed = store / "x.mp3"
-        landed.write_bytes(b"x" * 3)  # on disk: 3 bytes
+        landed.write_bytes(b"x" * 40)
         mock_instance = mock_client_cls.return_value
         mock_instance.record.return_value = RecordResult(
             id="x.mp3", name="x.mp3", store_path=landed, byte_count=40
@@ -926,9 +968,31 @@ class TestRecordCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["record", "hi"])
 
-        assert result.exit_code == 1
-        assert "size mismatch" in result.output
-        assert "Traceback" not in result.output
+        assert result.exit_code == 0
+        assert str(landed) in result.output
+
+    def test_record_locator_stat_error_is_one_line_error(
+        self, monkeypatch: MagicMock, tmp_path: Path
+    ) -> None:
+        """A store path that exists but cannot be stat'd is a one-line error (inv 4)."""
+        from punt_vox.__main__ import _emit_record_locator
+
+        result = RecordResult(
+            id="x.mp3", name="x.mp3", store_path=tmp_path / "x.mp3", byte_count=40
+        )
+
+        def boom(_self: Path, *_a: object, **_k: object) -> object:
+            raise OSError("permission denied")
+
+        def always_file(_self: Path) -> bool:
+            return True
+
+        monkeypatch.setattr(Path, "is_file", always_file)
+        monkeypatch.setattr(Path, "stat", boom)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _emit_record_locator(result)
+        assert excinfo.value.exit_code == 1
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_custom_voice(
@@ -1155,6 +1219,24 @@ class TestFetchCommand:
 
         assert result.exit_code == 0
         assert out.read_bytes() == b"\xff\xfb\x90\x00" * 4
+        mock_instance.fetch.assert_called_once_with("a1b2c3.mp3")
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_uses_wire_even_with_local_namesake(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """fetch retrieves the daemon's bytes, never a same-named local file."""
+        out = tmp_path / "got.mp3"
+        # A same-named local file must never be substituted for the daemon's.
+        (tmp_path / "a1b2c3.mp3").write_bytes(b"LOCAL-DECOY")
+        mock_instance = mock_client_cls.return_value
+        mock_instance.fetch.return_value = b"DAEMON-BYTES"
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 0
+        assert out.read_bytes() == b"DAEMON-BYTES"
         mock_instance.fetch.assert_called_once_with("a1b2c3.mp3")
 
     @patch(f"{_CLI}.VoxClientSync")
