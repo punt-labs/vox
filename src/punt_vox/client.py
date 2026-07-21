@@ -524,9 +524,19 @@ class VoxClient:
             raise VoxdProtocolError(
                 f"Expected 'audio' response with a path, got '{terminal.get('type')}'"
             )
+        if "bytes" not in terminal:
+            raise VoxdProtocolError("'audio' response missing 'bytes'")
+        try:
+            byte_count = int(terminal["bytes"])
+        except (TypeError, ValueError) as exc:
+            # A non-int bytes must surface as a VoxError, not a raw ValueError a
+            # CLI/tool catch would miss (leaking a traceback).
+            raise VoxdProtocolError(
+                f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
+            ) from exc
         return RecordResult(
             path=Path(str(terminal["path"])),
-            byte_count=int(terminal.get("bytes", 0)),
+            byte_count=byte_count,
             cached=bool(terminal.get("cached", False)),
         )
 

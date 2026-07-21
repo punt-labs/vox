@@ -493,6 +493,34 @@ class TestVoxClientRecord:
             await client.record("Hello", output_dir=Path("/out"))
 
     @pytest.mark.asyncio
+    async def test_record_malformed_bytes_raises_voxerror(self) -> None:
+        """A non-int 'bytes' is a VoxdProtocolError, not a raw ValueError."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": "nope"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="non-integer 'bytes'"):
+            await client.record("hi", output_dir=Path("/out"))
+
+    @pytest.mark.asyncio
+    async def test_record_missing_bytes_raises_voxerror(self) -> None:
+        """A missing 'bytes' is a VoxdProtocolError, not a silent default of 0."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "audio", "id": "r1", "path": "/o/x.mp3"})
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
+            await client.record("hi", output_dir=Path("/out"))
+
+    @pytest.mark.asyncio
     async def test_record_transport_close_is_wrapped(self) -> None:
         """A dropped connection surfaces as a VoxError, never a raw traceback."""
         mock_ws = _make_mock_ws()

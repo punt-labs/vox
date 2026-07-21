@@ -54,7 +54,17 @@ class RecordHandler(MessageHandler):
         if not output_dir:
             await req.error("record requires output_dir")
             return
+        # Enforce absolute at the wire boundary: voxd's cwd is not the caller's
+        # shell, so a relative path would land the recording in the daemon's
+        # directory. Clients resolve to absolute before sending; reject anything
+        # relative rather than write to the wrong place.
+        if not Path(output_dir).is_absolute():
+            await req.error("record requires an absolute output_dir")
+            return
         output_path = parse_optional_str(msg, "output_path")
+        if output_path and not Path(output_path).is_absolute():
+            await req.error("record requires an absolute output_path")
+            return
         sink = RecordSink(Path(output_dir), Path(output_path) if output_path else None)
 
         logger.info(

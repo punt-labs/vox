@@ -449,26 +449,27 @@ class TestApiKeyPassthroughIntegration:
 
         app = build_app()
 
-        msg: dict[str, object] = {
-            "type": "record",
-            "id": "test-rec",
-            "text": "billable synthesis",
-            "provider": "elevenlabs",
-            "voice": "matilda",
-            "output_dir": tempfile.mkdtemp(),
-        }
-        if api_key is not None:
-            msg["api_key"] = api_key
+        with tempfile.TemporaryDirectory() as out_dir:
+            msg: dict[str, object] = {
+                "type": "record",
+                "id": "test-rec",
+                "text": "billable synthesis",
+                "provider": "elevenlabs",
+                "voice": "matilda",
+                "output_dir": out_dir,
+            }
+            if api_key is not None:
+                msg["api_key"] = api_key
 
-        with (
-            TestClient(app) as client,
-            client.websocket_connect("/ws") as ws,
-        ):
-            ws.send_json(msg)
-            # The daemon acks with 'recording' before the terminal 'audio' frame.
-            response: dict[str, object] = ws.receive_json()
-            while response.get("type") == "recording":
-                response = ws.receive_json()
+            with (
+                TestClient(app) as client,
+                client.websocket_connect("/ws") as ws,
+            ):
+                ws.send_json(msg)
+                # The daemon acks with 'recording' before the terminal 'audio'.
+                response: dict[str, object] = ws.receive_json()
+                while response.get("type") == "recording":
+                    response = ws.receive_json()
 
         return response
 
@@ -604,26 +605,27 @@ class TestCacheApiKeyBypass:
 
         app = build_app()
 
-        msg: dict[str, object] = {
-            "type": "record",
-            "id": "test-rec",
-            "text": text,
-            "provider": "elevenlabs",
-            "voice": "matilda",
-            "output_dir": tempfile.mkdtemp(),
-        }
-        if api_key is not None:
-            msg["api_key"] = api_key
+        with tempfile.TemporaryDirectory() as out_dir:
+            msg: dict[str, object] = {
+                "type": "record",
+                "id": "test-rec",
+                "text": text,
+                "provider": "elevenlabs",
+                "voice": "matilda",
+                "output_dir": out_dir,
+            }
+            if api_key is not None:
+                msg["api_key"] = api_key
 
-        with (
-            TestClient(app) as client,
-            client.websocket_connect("/ws") as ws,
-        ):
-            ws.send_json(msg)
-            # The daemon acks with 'recording' before the terminal 'audio' frame.
-            response: dict[str, object] = ws.receive_json()
-            while response.get("type") == "recording":
-                response = ws.receive_json()
+            with (
+                TestClient(app) as client,
+                client.websocket_connect("/ws") as ws,
+            ):
+                ws.send_json(msg)
+                # The daemon acks with 'recording' before the terminal 'audio'.
+                response: dict[str, object] = ws.receive_json()
+                while response.get("type") == "recording":
+                    response = ws.receive_json()
 
         return response
 

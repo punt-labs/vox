@@ -186,3 +186,42 @@ class TestRecordHandler:
 
         assert sent[-1]["type"] == "error"
         assert "output_dir" in str(sent[-1]["message"])
+
+    def test_relative_output_dir_is_rejected(self, tmp_path: Path) -> None:
+        """A relative output_dir over the wire yields an error, not a write."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        handler = _record_handler_with_source(src)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "output_dir": "relative/dir",
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "absolute output_dir" in str(sent[-1]["message"])
+        assert not any(p["type"] == "audio" for p in sent)
+
+    def test_relative_output_path_is_rejected(self, tmp_path: Path) -> None:
+        """A relative output_path over the wire yields an error, not a write."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        handler = _record_handler_with_source(src)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "output_dir": str(tmp_path / "out"),
+            "output_path": "rel.mp3",
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "absolute output_path" in str(sent[-1]["message"])
+        assert not any(p["type"] == "audio" for p in sent)
