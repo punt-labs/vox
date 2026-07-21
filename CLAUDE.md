@@ -18,6 +18,23 @@ Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (pre
 - **MCP server**: `vox-server`
 - **Python**: 3.13+, managed with `uv`
 
+## Mandatory Reading
+
+Source-of-truth documents, `@`-imported so they load into context at session
+start. Read them before writing code.
+
+@docs/WORKFLOW.md
+@../punt-kit/standards/architecture.md
+@../punt-kit/standards/oo.md
+@../punt-kit/standards/python.md
+
+`WORKFLOW.md` is the three-loop development process (backlog → PR → mission),
+with pseudocode and an entry/exit Z schema at each level. The
+`punt-kit/standards` imports are the org's canonical engine-and-clients
+architecture, object-oriented stance, and Python standard (including the OO
+ratchet vox already runs) — cross-repo (external) imports, so the first load
+may ask for approval.
+
 ## Architecture
 
 ### How synthesis works
@@ -95,34 +112,9 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 ## Development Loop
 
-Two nested loops govern all code changes.
+The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
 
-### Inner loop — one mission
-
-Execute after every agent delegation that produces code changes. Do not start the next mission until this loop is complete — starting without local review is a procedural violation.
-
-1. **Delegate** to the right ethos specialist. One mission = one focused task. Never batch multiple steps. Do not use bare `Agent()` for implementation work (review-cycle fixes are the only exception).
-2. **`make check`** — must pass before proceeding. Zero exceptions.
-3. **`make install`** — builds the wheel and installs it locally. `make check` passing is not installation. **After installing, restart `voxd`** — the running daemon loads code at startup and will serve the old version until restarted. Tests that exercise MCP tools, hooks, or the synthesis pipeline are testing the old code if the daemon is stale. Restart with `vox daemon restart` (or kill and relaunch manually).
-4. **`make test`** against the installed artifact — not from source. If no test covers the changed code, write one before marking this step complete.
-5. **Exercise manually** — before running, write expected output for each case. After running, compare actual to expected; differences are bugs. Cover: one invalid or malformed input, one case where a dependency is unavailable or returns an error, one boundary condition. Paste the actual output. **For audio paths, run the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md) and ask the operator after each audible step — log inspection alone is not sufficient because vox produces audio that only the human can judge.**
-6. **`/feature-dev:code-reviewer`** on the mission diff.
-7. **`/pr-review-toolkit:silent-failure-hunter`** on the mission diff.
-8. **Fix every finding.** To dismiss one: document (a) the exact finding, (b) the specific reason it does not apply, (c) the code reference. "Pre-existing", "by design", "intentional", and "expected" are not reasons.
-9. **Re-run both agents.** Exit the fix loop on the first round that produces no findings.
-10. **Commit.**
-
-### Outer loop — one PR (one rollback-coherent unit)
-
-After all missions for the feature complete and each has passed its inner loop:
-
-1. **`make check`** on the full accumulated diff.
-2. **Both local review agents** on the complete diff — cross-mission issues only appear at this level.
-3. **Fix all findings** using the same documentation standard as the inner loop.
-4. **Human IDE review** of the full diff — the only human review in the process. Resolve all findings before proceeding.
-5. **`make install`** then restart `voxd` (`vox daemon restart`), then run the complete user-facing workflow end-to-end, including at least one path through a provider. Paste actual output and verify the changed code was exercised.
-6. **Re-run agents** until clean.
-7. **Open PR.** A PR opened before step 6 is clean is a procedural violation.
+The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test` against the installed artifact; the two local review agents (`code-reviewer` and `silent-failure-hunter`) iterated to a zero-findings round; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
 ### PR boundaries
 
