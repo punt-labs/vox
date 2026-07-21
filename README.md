@@ -206,9 +206,7 @@ Every failure raises a `VoxError` subclass, and `health()` / `program_*` return 
 
 ## Remote Audio
 
-Run Claude Code on a headless server or cloud VM and hear audio on your local machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point at your local voxd, or use an SSH tunnel for network-boundary crossings.
-
-See [docs/remote-setup.md](docs/remote-setup.md) for the full walkthrough (direct network and SSH tunnel approaches).
+Run Claude Code on a headless server or cloud VM and hear audio on your local machine — point the client at your local voxd by setting `VOXD_HOST`/`VOXD_PORT`/`VOXD_TOKEN` on the remote host (they are client-side). See [docs/guide-remote-setup.md](docs/guide-remote-setup.md) for the walkthrough (direct network and SSH tunnel).
 
 ## Background Music
 

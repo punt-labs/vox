@@ -9,6 +9,30 @@ You SSH from machine A (with speakers) to machine B (headless server,
 cloud VM, or second workstation). You run Claude Code on B. When Claude
 finishes a task, you want to hear it on A.
 
+## What plays where
+
+This setup is for **playback that voxd drives**: `vox say`, task
+notifications, chimes, and `/music` all play on the daemon host (machine A) —
+that is the whole point, so you hear your agent on the machine with speakers.
+
+Two commands behave differently, and it is worth knowing before you rely on
+them:
+
+- **`vox record` writes the file on the daemon host (machine A), not on B.**
+  voxd — not the client — writes the recording, so the `.mp3` lands on A's
+  disk. Both the output directory (always sent) and an explicit `-o` path are
+  resolved on B and then used *literally on A*, so recording against a remote
+  daemon works cleanly only when that absolute path also exists on A (for
+  example, matching home directories). Until the recording destination is
+  constrained daemon-side (in progress), keep voxd on a trusted network or
+  behind the SSH tunnel below — the token lets a client influence where the
+  daemon writes. Cross-host path handling is being hardened.
+- **`vox play <file>` plays on the machine you run it from, not through the
+  daemon.** Run on B, it plays on B — and a headless host has no audio — so it
+  does *not* play a recording back on A. To hear a saved file on A, play it on
+  A directly. Routing an existing file through the daemon for playback is
+  planned.
+
 ## Quick decision
 
 - **Same LAN** (both machines on your home/office network) → Direct network (simpler, persistent)

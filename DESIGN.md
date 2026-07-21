@@ -1530,7 +1530,7 @@ Four env vars — three client-side, one server-side:
 - `VOXD_TOKEN` (client): auth token, default from `serve.token` file
 - `VOXD_BIND` (server): bind address via `typer.Option(envvar="VOXD_BIND")`, default `127.0.0.1`
 
-Resolution: explicit arg > env var > file > default. Two deployment models: direct network (same LAN) and SSH tunnel (different networks). Token auth is the security boundary. Access logs redact tokens. Users configure via `.envrc`. See `docs/remote-setup.md` for the setup guide.
+Resolution: explicit arg > env var > file > default. Two deployment models: direct network (same LAN) and SSH tunnel (different networks). Token auth is the security boundary. Access logs redact tokens. Users configure via `.envrc`. See `docs/guide-remote-setup.md` for the setup guide.
 
 ## DES-038: LaunchAgent over LaunchDaemon — Eliminate macOS Background Throttling
 
