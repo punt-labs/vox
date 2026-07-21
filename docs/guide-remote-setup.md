@@ -187,6 +187,53 @@ autossh -M 0 -f -N -R 18421:localhost:8421 machine-B
 
 ---
 
+## Recording and playback over a remote daemon
+
+The daemon is the audio host: it owns the recordings store and plays audio on
+its own machine (the one with speakers). Recording and playback are coherent
+whether the daemon is local or remote.
+
+**Record** captures into the daemon's store and prints a locator — it does not
+write a file on the client and takes no `-o`:
+
+```bash
+# On machine B (driving A's daemon):
+vox record "the build is green"
+# → recorded a1b2c3d4e5f6.mp3 on 192.168.1.100
+#   (play: vox play a1b2c3d4e5f6.mp3; fetch: vox fetch a1b2c3d4e5f6.mp3 -o <path>)
+```
+
+Against a local daemon the same command prints the on-disk store path, which you
+can play or copy directly. Pass `--name greeting.mp3` to store under a chosen
+bare filename (no directories, no `..`).
+
+**Play** a stored recording on the daemon host by its id — audio comes out of
+A's speakers even though you ran the command on B:
+
+```bash
+vox play a1b2c3d4e5f6.mp3     # plays on machine A
+```
+
+`vox play` with an **existing local file path** still plays on the machine you
+run it on (a loopback convenience). A store id/name that is not a local file
+routes to the daemon host.
+
+**Fetch** copies a stored recording to the client when you want the bytes on B:
+
+```bash
+vox fetch a1b2c3d4e5f6.mp3 -o ./build-green.mp3   # writes the file on B
+```
+
+Locally this is a direct filesystem copy; remotely it streams the bytes over the
+wire (bounded to a single frame — very large recordings are retrieved from the
+daemon host directly).
+
+The client never names a path on the daemon's filesystem: a recording is
+referenced only by its store id, and the daemon confines every record/play/fetch
+to its own `0700` recordings root.
+
+---
+
 ## Env vars reference
 
 | Var | Side | Default | Purpose |

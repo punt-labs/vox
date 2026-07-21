@@ -2162,3 +2162,83 @@ fdmm (v4.12.5) routed client records over the WebSocket a client opens *for its 
 | Thread offload for the daemon's synchronous `emit` | Same order of cost as the previous in-loop `RotatingFileHandler`; offload now is speculative complexity — revisit only if live-verify shows loop stalls |
 
 Closes vox-2594. Supersedes the fdmm transport recommendation (`docs/logging-proposal.md` rec 3); design of record: `docs/vox-2594-unified-log.md`.
+
+## DES-049: The Daemon Is the Audio Host — Record-Store Containment, Play, and Fetch
+
+**Date:** 2026-07-21
+**Status:** SETTLED
+**Topic:** Closing the `#351` arbitrary-write hole and making the remote record→play→retrieve loop coherent (vox-dvri, closing vox-zu39, vox-ovb7, vox-eoq9)
+
+### Decision
+
+The daemon owns audio files and playback; clients are thin controllers that
+never dictate a daemon path and never play remote audio locally. Three linked
+problems close as one change under the operator-ratified **pure model**:
+
+- **Record captures to a daemon-owned store.** `vox record` takes no `-o` and
+  sends no path. It synthesizes into `~/.punt-labs/vox/recordings` (`0700`)
+  under a content-addressed name or an optional bare `--name`, and returns a
+  **locator** (`RecordResult(id, name, store_path, byte_count, cached)`), never
+  a client write path. Materializing a copy is a separate, explicit step,
+  `vox fetch <id> -o <path>`.
+- **Containment is the security primitive (P1, vox-zu39).** A new `RecordStore`
+  owns the root and every path decision: it rejects a candidate that is
+  absolute, separated (`/`, `\`), traversing (`..`), empty, or NUL-bearing
+  before any filesystem touch, resolves it under the root, and verifies
+  `resolved.is_relative_to(root)` **after** `.resolve()`. `resolve` (record
+  naming) and `resolve_ref` (play/fetch) share one validator. The token
+  authorizes audio operations, not filesystem writes as the daemon user.
+- **Play routes through the daemon (vox-ovb7).** A `play` wire op resolves a
+  store ref and enqueues it on the serialized `PlaybackQueue`, so audio plays on
+  the host with speakers; the CLI still plays an existing local file client-side
+  (loopback = the right machine).
+- **Fetch retrieves (vox-eoq9).** A `fetch` wire op returns a store recording's
+  bytes in one bounded frame; `vox fetch` copies directly when the store is on
+  this filesystem, else fetches over the wire.
+
+### Why
+
+`#351` moved record writes daemon-side but let a wire client choose the absolute
+`output_dir`/`output_path`. Across the documented remote setup a compromised
+machine B (holding A's token) could overwrite any file A's user can write —
+likely RCE. The trust boundary is **not** the network interface (an SSH tunnel
+makes a remote peer look loopback), so a "local fast-path" that trusts loopback
+would hand the primitive straight back; peer address is never a security input.
+Removing the client-path write primitive by construction — bare name + a
+daemon-owned root with a post-`.resolve()` containment check — is the only sound
+fix. The pure model (record captures, fetch materializes) keeps `record` a
+single path-free verb and preserves `#351`'s byte-free hot path: bytes reappear
+only on the opt-in, cold `fetch`.
+
+### Consequences
+
+- Invariants (tested by name): a wire absolute path / traversal / separator /
+  empty / NUL name is rejected; no write escapes the root; the token grants no
+  FS write; `play` routes through the daemon and a ref outside the root is
+  refused; `fetch` delivers bytes and refuses an out-of-root or oversize ref;
+  `record` returns a store locator, never a client path.
+- Forward integration: the `#351` `output_dir`/`output_path` wire fields and
+  `record_sink.py` are deleted, not bridged. `RecordStore` absorbs the atomic
+  write with the containment check added.
+- The record-store containment property is formally modeled in
+  `docs/vox-dvri-record-store.tex` (`fuzz -t` clean): the invariant "every
+  stored write stays within the root" lives in the `Store` schema predicate,
+  `Place` preserves it, `Reject` covers the hostile inputs, `Play`/`Fetch`
+  resolve only in-store refs.
+- Out of scope (own quick fixes / follow-ups): daemon status via `client.health`
+  (vox-4p5p), cache via daemon (vox-suvs), store retention/eviction, chunked
+  streaming fetch for large remote recordings, remote arbitrary-local-file
+  playback (a future `push` op).
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| `record -o` as client-side delivery (copy locally, fetch remotely) | The operator ruled the pure model: overloading `record` with a delivery path re-introduces a client path on the hot command and a local/remote branch the user must reason about. Separating capture (`record`) from materialization (`fetch`) keeps `record` path-free and puts the one copy-vs-wire decision behind `fetch`. |
+| (b) Local fast-path: loopback keeps direct client-path writes, remote is sandboxed | Unsound by the guide's own topology — the SSH tunnel makes a remote B a loopback peer, so "local = trusted" hands the arbitrary-write primitive back to the tunnelled remote, and it keeps the dangerous write path alive as a security-critical branch. |
+| (c) Always stream bytes back; client writes locally | Reverts `#351`: re-adds base64/bytes-over-wire on every record (the 1 MiB frame ceiling, the unbounded receive buffer) and abandons the daemon-audio-host model that `play <id>` needs. |
+| Daemon echoes the client-requested absolute path | Echoing a client path is the exploit surface itself; the point is that the client never names a daemon path. |
+
+Closes vox-zu39, vox-ovb7, vox-eoq9 (epic vox-dvri). Design of record:
+`docs/vox-dvri-daemon-audio-host.md`; containment model:
+`docs/vox-dvri-record-store.tex`.
