@@ -512,8 +512,12 @@ class TestVoxClientRecord:
         assert "name" not in sent  # content-addressed daemon-side
 
     @pytest.mark.asyncio
-    async def test_record_empty_name_not_sent(self) -> None:
-        """An empty name is not put on the wire (the daemon would silently drop it)."""
+    async def test_record_empty_name_sent_for_daemon_to_reject(self) -> None:
+        """An explicit "" is sent so the daemon -- the single authority -- rejects it.
+
+        The client does not silently drop "": only an absent (None) name is
+        content-addressed; "" goes on the wire and the daemon rejects it pre-ack.
+        """
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
@@ -531,7 +535,7 @@ class TestVoxClientRecord:
 
         await client.record("Hi", name="")
         sent = json.loads(mock_ws.send.call_args.args[0])
-        assert "name" not in sent
+        assert sent["name"] == ""
 
     @pytest.mark.asyncio
     async def test_record_audio_without_path_raises(self) -> None:
@@ -795,6 +799,24 @@ class TestVoxClientPlayFetch:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="with data"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_missing_bytes_raises(self) -> None:
+        """A 'bytes' reply without the count is a protocol error, not a silent write."""
+        import base64
+
+        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "bytes", "id": "f1", "ref": "x.mp3", "data": payload}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio

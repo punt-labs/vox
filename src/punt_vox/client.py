@@ -515,9 +515,10 @@ class VoxClient:
             "text": text,
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
-        # Only a non-empty name goes on the wire: an empty string would be
-        # normalized to None daemon-side and silently content-addressed.
-        if name:
+        # Send name whenever it is not None -- including an explicit "" -- so
+        # the daemon is the single authority on name validity: it rejects an
+        # empty name pre-ack. Only an absent name (None) is content-addressed.
+        if name is not None:
             msg["name"] = name
 
         scaled = _RECORD_TIMEOUT_BASE + _RECORD_TIMEOUT_PER_CHAR * len(text)
@@ -608,24 +609,23 @@ class VoxClient:
         except (ValueError, TypeError) as exc:
             msg_err = f"'bytes' response has invalid base64: {exc}"
             raise VoxdProtocolError(msg_err) from exc
-        # Byte-correct delivery (parity with record): the decoded length must
-        # match the daemon's declared count, so a truncated or corrupted frame
-        # is caught rather than written out as a short file. A non-int 'bytes'
-        # is itself a protocol error -- surface it clearly, not as a misleading
-        # length mismatch against a str/float.
-        declared = terminal.get("bytes")
-        if declared is not None:
-            try:
-                declared_int = int(declared)
-            except (TypeError, ValueError) as exc:
-                msg_err = f"'bytes' response has non-integer 'bytes': {declared!r}"
-                raise VoxdProtocolError(msg_err) from exc
-            if len(data) != declared_int:
-                msg_err = (
-                    f"fetch byte-count mismatch: got {len(data)}, "
-                    f"daemon declared {declared_int}"
-                )
-                raise VoxdProtocolError(msg_err)
+        # Byte-correct delivery (parity with record): 'bytes' is required -- a
+        # missing count would let possibly-truncated data be written unchecked --
+        # must be an int, and must equal the decoded payload length, so a
+        # truncated or corrupted frame is caught rather than written to disk.
+        if "bytes" not in terminal:
+            raise VoxdProtocolError("'bytes' response missing 'bytes'")
+        try:
+            declared_int = int(terminal["bytes"])
+        except (TypeError, ValueError) as exc:
+            msg_err = f"'bytes' response has non-integer 'bytes': {terminal['bytes']!r}"
+            raise VoxdProtocolError(msg_err) from exc
+        if len(data) != declared_int:
+            msg_err = (
+                f"fetch byte-count mismatch: got {len(data)}, "
+                f"daemon declared {declared_int}"
+            )
+            raise VoxdProtocolError(msg_err)
         return data
 
     async def voices(self, provider: str | None = None) -> list[str]:
