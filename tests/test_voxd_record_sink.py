@@ -61,12 +61,12 @@ class TestRecordSink:
     ) -> None:
         """Fresh synthesis takes the atomic-move path (no copy) at 0600."""
 
-        # If the move path is taken, copyfile is never called -- make it fail
-        # loudly so a regression to the copy path is caught.
+        # The copy path calls shutil.copyfileobj -- make it fail loudly so a
+        # regression from the move fast-path to the copy path is caught.
         def no_copy(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("fresh synthesis must move, not copy")
 
-        monkeypatch.setattr("punt_vox.voxd.record_sink.shutil.copyfile", no_copy)
+        monkeypatch.setattr("punt_vox.voxd.record_sink.shutil.copyfileobj", no_copy)
 
         src = tmp_path / "ephemeral.mp3"
         src.write_bytes(b"fresh-audio")
