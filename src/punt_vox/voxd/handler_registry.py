@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.paths import recordings_dir
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.fetch_handler import FetchHandler
+from punt_vox.voxd.play_handler import PlayHandler
 from punt_vox.voxd.record_handler import RecordHandler
+from punt_vox.voxd.record_store import RecordStore
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 
@@ -52,14 +56,21 @@ class HandlerRegistry:
         return self
 
     def build(self) -> dict[str, MessageHandler]:
-        """Return the canonical handler dispatch dict (speech + system + programs)."""
+        """Return the canonical handler dispatch dict (speech + system + programs).
+
+        ``record``, ``play``, and ``fetch`` share one :class:`RecordStore` so the
+        containment root and its path checks are defined in exactly one place.
+        """
+        store = RecordStore(recordings_dir())
         return {
             "synthesize": SynthesizeHandler(
                 synthesis=self._synthesis,
                 playback=self._playback,
                 once_dedup=OnceDedup(),
             ),
-            "record": RecordHandler(synthesis=self._synthesis),
+            "record": RecordHandler(synthesis=self._synthesis, store=store),
+            "play": PlayHandler(playback=self._playback, store=store),
+            "fetch": FetchHandler(store=store),
             "chime": ChimeHandler(
                 chimes=ChimeResolver(),
                 chime_dedup=ChimeDedup(),

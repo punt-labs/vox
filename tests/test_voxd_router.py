@@ -45,6 +45,8 @@ def _make_router(
 ) -> WebSocketRouter:
     """Build a WebSocketRouter for testing without touching real files."""
     from punt_vox.dirs import default_output_dir
+    from punt_vox.paths import recordings_dir
+    from punt_vox.voxd.record_store import RecordStore
 
     pb = PlaybackQueue()
     hl = DaemonHealth(pb, lambda: 0, 0)
@@ -57,7 +59,7 @@ def _make_router(
             playback=pb,
             once_dedup=OnceDedup(),
         ),
-        "record": RecordHandler(synthesis=syn),
+        "record": RecordHandler(synthesis=syn, store=RecordStore(recordings_dir())),
         "chime": ChimeHandler(
             chimes=ChimeResolver(),
             chime_dedup=ChimeDedup(),

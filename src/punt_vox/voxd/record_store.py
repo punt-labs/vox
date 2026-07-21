@@ -1,0 +1,192 @@
+"""Daemon-owned recording store: the one place a record write can land.
+
+A wire client never names a daemon path. It supplies at most a **bare name**
+(or nothing, in which case the store content-addresses by text); the store
+rejects anything absolute, separated, traversing, empty, or NUL-bearing, then
+resolves the candidate under a daemon-owned root and **verifies containment**
+before writing. This is the vox-zu39 (P1) security primitive: the token
+authorizes audio operations, not filesystem writes as the daemon user, so no
+request -- local or remote -- can escape the root.
+
+The write itself is atomic: a fresh source is moved with an atomic rename (copy
+fallback only on cross-filesystem ``EXDEV``); a cached source is copied through
+the descriptor ``mkstemp`` returned (0600, ``O_EXCL``) then ``os.replace``\\ d
+onto the destination, so a crash mid-write leaves no partial file and a
+world-writable race cannot swap a symlink under the write.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import errno
+import os
+import shutil
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Self, final
+
+from punt_vox.types import generate_filename
+
+__all__ = ["RecordStore", "RecordWrite"]
+
+# Names that name the directory itself rather than a file in it.
+_DIR_TOKENS = frozenset({".", ".."})
+
+
+@dataclass(frozen=True, slots=True)
+class RecordWrite:
+    """The landed recording: its final path and byte count.
+
+    ``byte_count`` is the size the daemon wrote, echoed to the client so the
+    caller can assert the on-disk file matches (byte-correct delivery).
+    """
+
+    path: Path
+    byte_count: int
+
+
+@final
+class RecordStore:
+    """Own the recordings root and every path decision within it.
+
+    All naming, containment, and the atomic write live here so the containment
+    invariant is enforced in exactly one place and is unit-testable without a
+    socket. ``resolve`` and ``resolve_ref`` share one validator, so record
+    naming and play/fetch references reject the same hostile inputs.
+    """
+
+    __slots__ = ("_root",)
+
+    _root: Path
+
+    def __new__(cls, root: Path) -> Self:
+        self = super().__new__(cls)
+        self._root = root
+        return self
+
+    @property
+    def root(self) -> Path:
+        """Return the recordings root every write is contained within."""
+        return self._root
+
+    def resolve(self, name: str | None, text: str) -> Path:
+        """Resolve the destination for a record write, contained in the root.
+
+        A client-supplied *name* is validated as a bare filename; when absent
+        the file is content-addressed by *text* -- the canonical name every
+        other vox MP3 uses. Raises ``ValueError`` on any name that is absolute,
+        separated, traversing, empty, or NUL-bearing.
+        """
+        candidate = name if name else generate_filename(text)
+        return self._resolve_within_root(candidate)
+
+    def resolve_ref(self, ref: str) -> Path:
+        """Resolve a play/fetch reference to a contained store path.
+
+        Same validation as :meth:`resolve`: a bare name only, no path escape.
+        The caller checks existence -- an unknown but well-formed name resolves
+        to a path inside the root that simply does not exist yet.
+        """
+        return self._resolve_within_root(ref)
+
+    def place(
+        self, *, source: Path, text: str, name: str | None, cached: bool
+    ) -> RecordWrite:
+        """Land *source* at its contained destination atomically; return path + bytes.
+
+        A fresh (non-cached) source is moved with an atomic rename -- no byte
+        copy -- falling back to the copy path only on cross-filesystem
+        ``EXDEV``. ``cached`` sources are always copied so the cache entry
+        survives. Either way the destination is replaced atomically, so it is
+        the complete file or untouched, never a partial write.
+        """
+        dest = self.resolve(name, text)
+        # dest is a bare name under the root, so the parent is the root itself;
+        # create it 0700 defensively (the daemon also does this at startup).
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._root.chmod(0o700)
+
+        if not cached:
+            moved = self._move(source, dest)
+            if moved is not None:
+                return moved
+        return self._copy(source, dest, cached=cached)
+
+    def _resolve_within_root(self, candidate: str) -> Path:
+        """Validate a bare name and resolve it, verifying root containment.
+
+        The rejection order is cheapest-first and structural before filesystem:
+        empty, NUL, absolute, separator, dot-tokens -- then a post-``resolve``
+        ``is_relative_to`` check that no symlink or normalization escaped the
+        root. Every rejection raises ``ValueError`` with a lowercase message the
+        handler turns into a one-line error frame.
+        """
+        if not candidate:
+            msg = "empty recording name"
+            raise ValueError(msg)
+        if "\x00" in candidate:
+            msg = "recording name contains a NUL byte"
+            raise ValueError(msg)
+        if Path(candidate).is_absolute():
+            msg = "recording name must not be absolute"
+            raise ValueError(msg)
+        if "/" in candidate or "\\" in candidate:
+            msg = "recording name must not contain a path separator"
+            raise ValueError(msg)
+        if candidate in _DIR_TOKENS:
+            msg = "recording name must be a filename, not '.' or '..'"
+            raise ValueError(msg)
+
+        resolved = (self._root / candidate).resolve()
+        if not resolved.is_relative_to(self._root.resolve()):
+            msg = "recording name escapes the recordings root"
+            raise ValueError(msg)
+        return resolved
+
+    @staticmethod
+    def _move(source: Path, dest: Path) -> RecordWrite | None:
+        """Atomically rename *source* onto *dest*, or None when it can't (EXDEV).
+
+        Only a cross-filesystem rename (``EXDEV``) warrants the copy fallback;
+        for any other ``OSError`` (``EACCES``, ``ENOENT``, ...) the copy path
+        would not help and would mask the real cause, so re-raise it.
+        """
+        try:
+            source.replace(dest)
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                return None  # cross-device -- caller falls back to copy
+            raise
+        # An ephemeral source may not be private; the copy path's mkstemp temp is
+        # 0600, so match that here to keep the recording private.
+        dest.chmod(0o600)
+        return RecordWrite(path=dest, byte_count=dest.stat().st_size)
+
+    @staticmethod
+    def _copy(source: Path, dest: Path, *, cached: bool) -> RecordWrite:
+        """Copy *source* to a sibling temp then atomically rename onto *dest*.
+
+        The byte count is taken from the temp *before* the rename (the commit
+        point); the ephemeral-source cleanup afterwards is best-effort, so a
+        failure past the commit never turns a completed write into a failure.
+        """
+        # Write THROUGH the descriptor mkstemp returned (0600, O_EXCL) -- never
+        # close it and reopen the temp by name. The name could be swapped for a
+        # symlink between close and reopen (TOCTOU); writing to the fd targets
+        # the exact inode mkstemp created.
+        fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".mp3.tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as dst, source.open("rb") as src:
+                shutil.copyfileobj(src, dst)
+            byte_count = tmp.stat().st_size
+            tmp.replace(dest)  # commit point -- the write is complete after this
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+
+        if not cached:
+            with contextlib.suppress(OSError):
+                source.unlink(missing_ok=True)
+        return RecordWrite(path=dest, byte_count=byte_count)
