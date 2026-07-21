@@ -50,22 +50,9 @@ class RecordHandler(MessageHandler):
             await req.error("empty text")
             return
 
-        output_dir = parse_optional_str(msg, "output_dir")
-        if not output_dir:
-            await req.error("record requires output_dir")
+        sink = await self._resolve_sink(msg, req)
+        if sink is None:
             return
-        # Enforce absolute at the wire boundary: voxd's cwd is not the caller's
-        # shell, so a relative path would land the recording in the daemon's
-        # directory. Clients resolve to absolute before sending; reject anything
-        # relative rather than write to the wrong place.
-        if not Path(output_dir).is_absolute():
-            await req.error("record requires an absolute output_dir")
-            return
-        output_path = parse_optional_str(msg, "output_path")
-        if output_path and not Path(output_path).is_absolute():
-            await req.error("record requires an absolute output_path")
-            return
-        sink = RecordSink(Path(output_dir), Path(output_path) if output_path else None)
 
         logger.info(
             "Record: id=%r provider=%r voice=%r chars=%d",
@@ -103,6 +90,41 @@ class RecordHandler(MessageHandler):
                 "cached": outcome.cached,
             },
         )
+
+    @staticmethod
+    async def _resolve_sink(
+        msg: dict[str, object], req: _SpeechRequest
+    ) -> RecordSink | None:
+        """Parse and validate the wire destination into a sink, or reply + None.
+
+        Runs before the ack so a bad destination never leaves the client waiting.
+        The path parsing and absolute-validation are wrapped in a ValueError
+        guard: untrusted wire input (e.g. a path with an embedded NUL) must
+        surface as a clean error frame, never crash the connection with the
+        client left hanging for a reply that never comes.
+        """
+        output_dir = parse_optional_str(msg, "output_dir")
+        if not output_dir:
+            await req.error("record requires output_dir")
+            return None
+        output_path = parse_optional_str(msg, "output_path")
+        try:
+            dir_path = Path(output_dir)
+            # voxd's cwd is not the caller's shell; a relative path would land
+            # the recording in the daemon's directory. Reject anything relative.
+            if not dir_path.is_absolute():
+                await req.error("record requires an absolute output_dir")
+                return None
+            explicit: Path | None = None
+            if output_path:
+                explicit = Path(output_path)
+                if not explicit.is_absolute():
+                    await req.error("record requires an absolute output_path")
+                    return None
+        except ValueError:
+            await req.error("record has an invalid output path")
+            return None
+        return RecordSink(dir_path, explicit)
 
     async def _synthesize(self, req: _SpeechRequest) -> SynthesisOutcome | None:
         """Synthesize to a file, or reply with the error and return None."""

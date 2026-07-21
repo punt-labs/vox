@@ -187,6 +187,52 @@ class TestRecordHandler:
         assert sent[-1]["type"] == "error"
         assert "output_dir" in str(sent[-1]["message"])
 
+    def test_malformed_output_dir_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A malformed path (embedded NUL) yields an error frame, not a crash."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        handler = _record_handler_with_source(src)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "output_dir": "/bad\x00dir",
+        }
+        # Must not raise -- a malformed path is a clean error, never a hang.
+        asyncio.run(handler(msg, ws))
+
+        assert any(p["type"] == "error" for p in sent)
+        assert not any(p["type"] == "audio" for p in sent)
+
+    def test_invalid_path_parse_is_rejected_before_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ValueError from path parsing is a clean error sent before the ack."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        handler = _record_handler_with_source(src)
+        ws, sent = _capturing_ws()
+
+        def boom(_self: Path) -> bool:
+            raise ValueError("bad path")
+
+        monkeypatch.setattr(Path, "is_absolute", boom)
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "output_dir": "/some/dir",
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "invalid output path" in str(sent[-1]["message"])
+        # Rejected before the ack -- no recording/audio frame was sent.
+        assert not any(p["type"] in ("recording", "audio") for p in sent)
+
     def test_relative_output_dir_is_rejected(self, tmp_path: Path) -> None:
         """A relative output_dir over the wire yields an error, not a write."""
         src = tmp_path / "src.mp3"
