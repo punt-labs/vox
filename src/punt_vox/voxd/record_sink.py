@@ -11,6 +11,7 @@ file at the destination.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import shutil
 import tempfile
@@ -77,15 +78,18 @@ class RecordSink:
 
     @staticmethod
     def _move(source: Path, dest: Path) -> RecordWrite | None:
-        """Atomically rename *source* onto *dest*, or None if it can't (EXDEV).
+        """Atomically rename *source* onto *dest*, or None when it can't (EXDEV).
 
-        Returns ``None`` (never partially writes) so the caller falls back to the
-        cross-filesystem copy path.
+        Only a cross-filesystem rename (``EXDEV``) warrants the copy fallback;
+        for any other ``OSError`` (``EACCES``, ``ENOENT``, ...) the copy path
+        would not help and would mask the real cause, so re-raise it.
         """
         try:
             source.replace(dest)
-        except OSError:
-            return None
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                return None  # cross-device -- caller falls back to copy
+            raise
         # An ephemeral source may not be private; the copy path's mkstemp temp is
         # 0600, so match that here to keep the recording private.
         dest.chmod(0o600)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 
 import pytest
@@ -95,7 +96,7 @@ class TestRecordSink:
 
         def selective_replace(self: Path, target: Path) -> Path:
             if self == src:  # the fast-path move -> simulate EXDEV
-                raise OSError("cross-device link")
+                raise OSError(errno.EXDEV, "cross-device link")
             return original_replace(self, target)  # the copy path's temp rename
 
         monkeypatch.setattr(Path, "replace", selective_replace)
@@ -107,6 +108,27 @@ class TestRecordSink:
         assert write.byte_count == len(b"xdev-audio")
         assert dest.stat().st_mode & 0o777 == 0o600
         assert not src.exists()
+
+    def test_non_exdev_move_error_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-EXDEV OSError from the move re-raises; no silent copy fallback."""
+        src = tmp_path / "ephemeral.mp3"
+        src.write_bytes(b"nope")
+        dest = tmp_path / "out.mp3"
+        sink = RecordSink(tmp_path, dest)
+
+        def denied_replace(self: Path, target: Path) -> Path:
+            raise OSError(errno.EACCES, "permission denied")
+
+        monkeypatch.setattr(Path, "replace", denied_replace)
+
+        with pytest.raises(OSError, match="permission denied"):
+            sink.place(source=src, text="hi", cached=False)
+
+        # No copy fallback happened -> no destination, no orphan temp.
+        assert not dest.exists()
+        assert not list(tmp_path.glob("*.mp3.tmp"))
 
     def test_cached_copy_lands_0600_and_preserves_source(self, tmp_path: Path) -> None:
         """A cache hit is copied (source preserved) and the dest is 0600."""
@@ -150,8 +172,8 @@ class TestRecordSink:
         original_replace = Path.replace
 
         def force_copy(self: Path, target: Path) -> Path:
-            if self == src:  # fail the fast-path move -> fall back to copy
-                raise OSError("cross-device link")
+            if self == src:  # fail the fast-path move (EXDEV) -> fall back to copy
+                raise OSError(errno.EXDEV, "cross-device link")
             return original_replace(self, target)
 
         monkeypatch.setattr(Path, "replace", force_copy)
