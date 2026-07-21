@@ -208,7 +208,7 @@ write a file on the client and takes no `-o`:
 ```bash
 # On machine B (driving A's daemon):
 vox record "the build is green"
-# → recorded a1b2c3d4e5f6.mp3 on 192.168.1.100
+# → a1b2c3d4e5f6.mp3 on the daemon
 #   (play: vox play a1b2c3d4e5f6.mp3; fetch: vox fetch a1b2c3d4e5f6.mp3 -o <path>)
 ```
 
