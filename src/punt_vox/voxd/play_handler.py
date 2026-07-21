@@ -23,7 +23,7 @@ from punt_vox.voxd.playback import PlaybackItem
 from punt_vox.voxd.types import MessageHandler
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.playback import PlaybackQueue
+    from punt_vox.voxd.playback import PlaybackQueue, PlaybackResult
     from punt_vox.voxd.record_store import RecordStore
 
 __all__ = ["PlayHandler"]
@@ -64,14 +64,31 @@ class PlayHandler(MessageHandler):
             return
 
         logger.info("Play: id=%r ref=%r", request_id, ref)
-        done_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        outcome: asyncio.Future[PlaybackResult] = loop.create_future()
         await self._playback.enqueue(
-            PlaybackItem(path=path, request_id=f"play:{ref}", notify=done_event)
+            PlaybackItem(
+                path=path,
+                request_id=f"play:{ref}",
+                notify=asyncio.Event(),
+                outcome=outcome,
+            )
         )
+        # Ack that the job is queued, then wait for the real host-side outcome so
+        # a failed playback (missing player, unplayable file, played-nothing)
+        # reaches the client as an error instead of a silent success.
         await websocket.send_json({"type": "playing", "id": request_id})
-        await done_event.wait()
-        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-            await websocket.send_json({"type": "done", "id": request_id})
+        result = await outcome
+        if result.ok:
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+                await websocket.send_json({"type": "done", "id": request_id})
+            return
+        logger.warning(
+            "Play failed: id=%r ref=%r %s", request_id, ref, result.failure_detail()
+        )
+        await self._error(
+            websocket, request_id, f"playback failed: {result.failure_detail()}"
+        )
 
     @staticmethod
     async def _error(websocket: WebSocket, request_id: str, message: str) -> None:

@@ -92,6 +92,10 @@ class SynthesizeResult:
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
+# play waits for the host-side playback to FINISH (not just enqueue) so a
+# failure surfaces, so its deadline must cover a full track. Bounded like the
+# record cap so a wedged daemon is still detected within ten minutes.
+_TIMEOUT_PLAYBACK = 600.0
 
 # record synthesizes to a file that may take minutes for long text (a fresh
 # 6000-char ElevenLabs synthesis was measured at ~2m). Scale the wait with the
@@ -552,6 +556,13 @@ class VoxClient:
         its recordings root, refusing any absolute or traversing reference, and
         plays it through its serialized queue -- so audio comes out on the
         machine with speakers, not on a remote client.
+
+        Waits for the terminal ``done`` after the ``playing`` ack, i.e. for
+        playback to actually finish, so a host-side failure (missing player,
+        unplayable file, played-nothing) arrives as an error frame -- the daemon
+        turns it into a ``VoxdProtocolError`` here -- rather than a silent
+        success. This mirrors local ``vox play <file>``, which blocks until the
+        player exits.
         """
         msg: dict[str, object] = {
             "type": "play",
@@ -559,10 +570,7 @@ class VoxClient:
             "ref": ref,
         }
         await self._transport.send_and_drain(
-            msg,
-            timeout=_TIMEOUT_SYNTHESIS,
-            terminal_type="done",
-            early_terminal="playing",
+            msg, timeout=_TIMEOUT_PLAYBACK, terminal_type="done"
         )
 
     async def fetch(self, ref: str) -> bytes:
@@ -586,10 +594,21 @@ class VoxClient:
                 f"Expected 'bytes' response with data, got '{terminal.get('type')}'"
             )
         try:
-            return base64.b64decode(str(terminal["data"]), validate=True)
+            data = base64.b64decode(str(terminal["data"]), validate=True)
         except (ValueError, TypeError) as exc:
             msg_err = f"'bytes' response has invalid base64: {exc}"
             raise VoxdProtocolError(msg_err) from exc
+        # Byte-correct delivery (parity with record): the decoded length must
+        # match the daemon's declared count, so a truncated or corrupted frame
+        # is caught rather than written out as a short file.
+        declared = terminal.get("bytes")
+        if declared is not None and len(data) != declared:
+            msg_err = (
+                f"fetch byte-count mismatch: got {len(data)}, "
+                f"daemon declared {declared}"
+            )
+            raise VoxdProtocolError(msg_err)
+        return data
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices; a missing ``voices`` key is a protocol error.

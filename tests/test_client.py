@@ -677,10 +677,15 @@ class TestVoxClientPlayFetch:
     """Test the play and fetch store-reference methods."""
 
     @pytest.mark.asyncio
-    async def test_play_sends_ref(self) -> None:
+    async def test_play_waits_for_done_after_playing(self) -> None:
+        """play waits for the terminal 'done' (playback finished), not enqueue."""
         mock_ws = _make_mock_ws()
+        # 'playing' is the ack; the client must keep waiting for 'done'.
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "playing", "id": "p1"})
+            side_effect=[
+                json.dumps({"type": "playing", "id": "p1"}),
+                json.dumps({"type": "done", "id": "p1"}),
+            ]
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
@@ -689,6 +694,29 @@ class TestVoxClientPlayFetch:
         sent = json.loads(mock_ws.send.call_args.args[0])
         assert sent["type"] == "play"
         assert sent["ref"] == "a1b2c3.mp3"
+        assert mock_ws.recv.await_count == 2  # did not return at 'playing'
+
+    @pytest.mark.asyncio
+    async def test_play_host_failure_raises(self) -> None:
+        """A host-side playback failure arrives as an error and raises, not exit 0."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "playing", "id": "p1"}),
+                json.dumps(
+                    {
+                        "type": "error",
+                        "id": "p1",
+                        "message": "playback failed: no player",
+                    }
+                ),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="playback failed"):
+            await client.play("a1b2c3.mp3")
 
     @pytest.mark.asyncio
     async def test_fetch_returns_decoded_bytes(self) -> None:
@@ -721,6 +749,30 @@ class TestVoxClientPlayFetch:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="with data"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_byte_count_mismatch_raises(self) -> None:
+        """A decoded length disagreeing with the declared count is a protocol error."""
+        import base64
+
+        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")  # 16 bytes
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "bytes",
+                    "id": "f1",
+                    "ref": "x.mp3",
+                    "data": payload,
+                    "bytes": 99,
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="byte-count mismatch"):
             await client.fetch("x.mp3")
 
 

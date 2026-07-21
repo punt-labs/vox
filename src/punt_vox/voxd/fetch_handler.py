@@ -16,6 +16,7 @@ import base64
 import logging
 from typing import TYPE_CHECKING, Self
 
+from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.types import MessageHandler
 
@@ -27,11 +28,6 @@ if TYPE_CHECKING:
 __all__ = ["FetchHandler"]
 
 logger = logging.getLogger(__name__)
-
-# Raw byte ceiling for a single-frame fetch. Base64 inflates ~33%, so this keeps
-# the encoded frame under the client's default 1 MiB receive limit with room for
-# the JSON envelope. A recording above this is refused, not truncated.
-_MAX_FETCH_BYTES = 700_000
 
 
 class FetchHandler(MessageHandler):
@@ -65,12 +61,12 @@ class FetchHandler(MessageHandler):
             return
 
         size = path.stat().st_size
-        if size > _MAX_FETCH_BYTES:
+        if size > FETCH_FRAME_LIMIT_BYTES:
             await self._error(
                 websocket,
                 request_id,
                 f"recording too large to fetch in one frame ({size} bytes > "
-                f"{_MAX_FETCH_BYTES}); retrieve it from the daemon host directly",
+                f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly",
             )
             return
 

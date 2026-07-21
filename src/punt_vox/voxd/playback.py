@@ -64,6 +64,25 @@ class PlaybackResult:
     stderr: str
     ts: float
 
+    @property
+    def ok(self) -> bool:
+        """True when the player exited cleanly and actually played something.
+
+        A clean exit that lasted under ``_SUSPICIOUS_ELAPSED_S`` almost
+        certainly played nothing (missing audio backend, silently dropped
+        output), so it is treated as a failure for the user-facing ``play``
+        command -- the same signal ``_log_result`` warns on.
+        """
+        return self.rc == 0 and self.elapsed_s >= _SUSPICIOUS_ELAPSED_S
+
+    def failure_detail(self) -> str:
+        """One-line reason for a failed/no-op playback, for a client error frame."""
+        if self.rc != 0:
+            base = f"player exited rc={self.rc}"
+        else:
+            base = f"played nothing (elapsed {self.elapsed_s:.3f}s)"
+        return f"{base}: {self.stderr}" if self.stderr else base
+
     def to_health_dict(self) -> dict[str, object]:
         """Serialize for the health endpoint JSON payload."""
         return {
@@ -77,11 +96,18 @@ class PlaybackResult:
 
 @dataclass(frozen=True, slots=True)
 class PlaybackItem:
-    """An item in the playback queue."""
+    """An item in the playback queue.
+
+    ``outcome``, when set, is resolved by the consumer with this item's
+    :class:`PlaybackResult` the moment its playback finishes -- letting a
+    user-invoked ``play`` await the real host-side result rather than returning
+    at enqueue. Fire-and-forget callers (say/chime/music) leave it ``None``.
+    """
 
     path: Path
     request_id: str
     notify: asyncio.Event
+    outcome: asyncio.Future[PlaybackResult] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -439,8 +465,34 @@ class PlaybackQueue:
             async with self._mutex:
                 await self.play_audio(item.path)
             logger.debug("Playback done: %s", item.path.name)
+            # Resolve the item's outcome from the result play_audio just recorded,
+            # here -- synchronously, before the next item is dequeued -- so an
+            # awaiting play handler sees its own item's result, never a later
+            # item's (the queue is single-consumer and serialized).
+            self._resolve_outcome(item)
             item.notify.set()
             self._queue.task_done()
+
+    def _resolve_outcome(self, item: PlaybackItem) -> None:
+        """Complete *item*'s outcome future, if any, with the recorded result.
+
+        ``play_audio`` always records a result (success, spawn failure, timeout,
+        or bad file), so ``_last_result`` is set here; the ``None`` guard is
+        defensive so a missing result surfaces as a failure rather than a hang.
+        """
+        future = item.outcome
+        if future is None or future.done():
+            return
+        result = self._last_result
+        if result is None:
+            result = PlaybackResult(
+                path=item.path,
+                rc=-1,
+                elapsed_s=0.0,
+                stderr="no playback result recorded",
+                ts=time.time(),
+            )
+        future.set_result(result)
 
     # -- Private helpers -----------------------------------------------------
 

@@ -28,6 +28,7 @@ from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -471,11 +472,18 @@ def _emit_record_locator(result: RecordResult) -> None:
         return
 
     host = DaemonEnv.host()
-    text = (
-        f"{result.name} on {host} "
-        f"(play: vox play {result.name}; fetch: vox fetch {result.name} -o <path>)"
-    )
     payload["host"] = host
+    # Only advertise fetch when the recording actually fits a single fetch frame;
+    # above the limit fetch always fails, so point the user at host playback or a
+    # direct retrieval instead of a command that cannot work.
+    if result.byte_count > FETCH_FRAME_LIMIT_BYTES:
+        retrieval = (
+            f"too large to fetch this cut — play on the host with "
+            f"vox play {result.name}, or retrieve it from {host} directly"
+        )
+    else:
+        retrieval = f"fetch: vox fetch {result.name} -o <path>"
+    text = f"{result.name} on {host} (play: vox play {result.name}; {retrieval})"
     _formatter.emit(payload, text)
 
 
@@ -984,11 +992,20 @@ def play(
     if local.is_file():
         from punt_vox.playback import play_audio
 
+        # Make the dispatch visible so a local/store name collision is never a
+        # silent misdispatch (documented precedence: an existing local file wins).
+        _formatter.emit(
+            {"played": str(local), "where": "local"}, f"playing local file {local}"
+        )
         play_audio(local)
         return
 
     client = VoxClientSync()
     try:
+        _formatter.emit(
+            {"played": ref, "where": "daemon"},
+            f"playing store recording {ref} on the daemon host",
+        )
         client.play(ref)
     except (VoxdConnectionError, VoxdProtocolError) as exc:
         _formatter.error(str(exc), f"Error: {exc}")

@@ -887,6 +887,29 @@ class TestRecordCommand:
         assert "vox fetch a1b2c3.mp3" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_remote_locator_over_fetch_limit_does_not_advertise_fetch(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A recording too large to fetch does not point the user at fetch."""
+        from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = RecordResult(
+            id="big.mp3",
+            name="big.mp3",
+            store_path=tmp_path / "not-here" / "big.mp3",
+            byte_count=FETCH_FRAME_LIMIT_BYTES + 1,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi"])
+
+        assert result.exit_code == 0
+        assert "vox play big.mp3" in result.output  # host playback still offered
+        assert "too large to fetch" in result.output
+        assert "vox fetch big.mp3" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_size_mismatch_is_error(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
@@ -1060,6 +1083,7 @@ class TestPlayCommand:
         assert result.exit_code == 0
         mock_play.assert_called_once()
         mock_client_cls.return_value.play.assert_not_called()
+        assert "playing local file" in result.output  # dispatch made visible
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_play_store_ref_routes_to_daemon(
@@ -1072,6 +1096,25 @@ class TestPlayCommand:
 
         assert result.exit_code == 0
         mock_instance.play.assert_called_once_with("a1b2c3.mp3")
+        assert "store recording a1b2c3.mp3 on the daemon host" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_play_store_ref_host_failure_is_one_line_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A host-side playback failure exits non-zero with a one-line error."""
+        from punt_vox.client_errors import VoxdProtocolError
+
+        mock_instance = mock_client_cls.return_value
+        mock_instance.play.side_effect = VoxdProtocolError(
+            "playback failed: player exited rc=1: no player found"
+        )
+        runner = CliRunner()
+        result = runner.invoke(app, ["play", "a1b2c3.mp3"])
+
+        assert result.exit_code == 1
+        assert "playback failed" in result.output
+        assert "Traceback" not in result.output
 
 
 class TestFetchCommand:

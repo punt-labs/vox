@@ -7,19 +7,42 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from punt_vox.voxd.play_handler import PlayHandler
-from punt_vox.voxd.playback import PlaybackItem
+from punt_vox.voxd.playback import PlaybackItem, PlaybackResult
 from punt_vox.voxd.record_store import RecordStore
 
 
-def _playback_that_completes() -> MagicMock:
-    """A PlaybackQueue mock whose enqueue immediately signals completion."""
+def _ok_result(path: Path) -> PlaybackResult:
+    """A playback result that reads as success (clean exit, real duration)."""
+    return PlaybackResult(path=path, rc=0, elapsed_s=1.2, stderr="", ts=0.0)
+
+
+def _failed_result(path: Path) -> PlaybackResult:
+    """A playback result that reads as failure (player exited non-zero)."""
+    return PlaybackResult(
+        path=path, rc=1, elapsed_s=0.0, stderr="no player found", ts=0.0
+    )
+
+
+def _playback_with(result_for: object) -> MagicMock:
+    """A PlaybackQueue mock whose enqueue resolves the item outcome with *result_for*.
+
+    *result_for* is a callable ``(path) -> PlaybackResult`` so a test can make
+    the host-side playback report success or failure.
+    """
 
     async def _enqueue(item: PlaybackItem) -> None:
         item.notify.set()
+        if item.outcome is not None and not item.outcome.done():
+            item.outcome.set_result(result_for(item.path))  # type: ignore[operator]
 
     playback = MagicMock()
     playback.enqueue = AsyncMock(side_effect=_enqueue)
     return playback
+
+
+def _playback_that_completes() -> MagicMock:
+    """A PlaybackQueue mock whose playback succeeds."""
+    return _playback_with(_ok_result)
 
 
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
@@ -51,7 +74,41 @@ class TestPlayHandler:
         item = playback.enqueue.await_args.args[0]
         assert isinstance(item, PlaybackItem)
         assert item.path == rec.resolve()  # the in-store path, played daemon-side
+        assert item.outcome is not None  # the handler awaits the real outcome
         assert [p["type"] for p in sent] == ["playing", "done"]
+
+    def test_host_side_failure_surfaces_error(self, tmp_path: Path) -> None:
+        """A failed host-side playback reaches the client as an error, not a done."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+        playback = _playback_with(_failed_result)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        assert [p["type"] for p in sent] == ["playing", "error"]
+        assert "playback failed" in str(sent[-1]["message"])
+        assert "no player found" in str(sent[-1]["message"])
+
+    def test_played_nothing_surfaces_error(self, tmp_path: Path) -> None:
+        """A clean exit under the suspicious-elapsed floor is a failure, not success."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+
+        def _noop(path: Path) -> PlaybackResult:
+            return PlaybackResult(path=path, rc=0, elapsed_s=0.001, stderr="", ts=0.0)
+
+        playback = _playback_with(_noop)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "played nothing" in str(sent[-1]["message"])
 
     def test_play_ref_outside_root_rejected(self, tmp_path: Path) -> None:
         store = RecordStore(tmp_path / "recordings")

@@ -11,9 +11,16 @@ if TYPE_CHECKING:
     from punt_vox.types import AudioProviderId
 
 __all__ = [
+    "FETCH_FRAME_LIMIT_BYTES",
     "AudioRequest",
     "AudioResult",
 ]
+
+# Raw byte ceiling for a single-frame ``fetch``. Base64 inflates ~33%, so this
+# keeps the encoded frame under the client's default 1 MiB receive limit with
+# room for the JSON envelope. A recording above this cannot be fetched in one
+# frame -- the daemon refuses it and the CLI locator does not point at fetch.
+FETCH_FRAME_LIMIT_BYTES = 700_000
 
 
 def _metadata() -> dict[str, str]:

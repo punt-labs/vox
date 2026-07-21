@@ -7,7 +7,8 @@ import base64
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from punt_vox.voxd.fetch_handler import _MAX_FETCH_BYTES, FetchHandler
+from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
+from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.record_store import RecordStore
 
 
@@ -74,7 +75,7 @@ class TestFetchHandler:
         """A recording above the single-frame budget is refused with a clear error."""
         store = RecordStore(tmp_path / "recordings")
         store.root.mkdir(parents=True)
-        (store.root / "big.mp3").write_bytes(b"\x00" * (_MAX_FETCH_BYTES + 1))
+        (store.root / "big.mp3").write_bytes(b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1))
         ws, sent = _capturing_ws()
 
         msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "big.mp3"}
