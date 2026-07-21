@@ -60,7 +60,62 @@ class TestPlayAudio:
             ["afplay", str(audio)],
             check=False,
             timeout=PLAYBACK_TIMEOUT,
+            stderr=subprocess.PIPE,
         )
+
+    def test_returns_failure_detail_on_nonzero_exit(self, tmp_path: Path) -> None:
+        """A non-zero player exit is reported so vox play can exit non-zero."""
+        audio = tmp_path / "test.mp3"
+        audio.write_bytes(b"fake")
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stderr = b"AudioFileOpen failed ('typ?')"
+
+        with (
+            patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
+            patch(f"{_MOD}.subprocess.run", return_value=proc),
+            patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
+        ):
+            result = play_audio(audio)
+
+        assert result is not None
+        assert "rc=1" in result
+        assert "AudioFileOpen failed" in result
+
+    def test_returns_none_on_clean_play(self, tmp_path: Path) -> None:
+        """A clean, real-duration play returns None (success)."""
+        audio = tmp_path / "test.mp3"
+        audio.write_bytes(b"fake")
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stderr = b""
+
+        with (
+            patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
+            patch(f"{_MOD}.subprocess.run", return_value=proc),
+            patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 1.0]),
+            patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
+        ):
+            assert play_audio(audio) is None
+
+    def test_returns_failure_when_played_nothing(self, tmp_path: Path) -> None:
+        """A clean exit under the suspicious-elapsed floor is a failure."""
+        audio = tmp_path / "test.mp3"
+        audio.write_bytes(b"fake")
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stderr = b""
+
+        with (
+            patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
+            patch(f"{_MOD}.subprocess.run", return_value=proc),
+            patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 0.001]),
+            patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
+        ):
+            result = play_audio(audio)
+
+        assert result is not None
+        assert "played nothing" in result
 
     def test_creates_lock_parent_directory(self, tmp_path: Path) -> None:
         lock_file = tmp_path / "nested" / "dir" / "playback.lock"
@@ -117,11 +172,12 @@ class TestPlayAudio:
         order: list[str] = []
         t1_holding_lock = threading.Event()
 
-        def fake_play(*args: object, **kwargs: object) -> None:
+        def fake_play(*args: object, **kwargs: object) -> MagicMock:
             order.append("start")
             t1_holding_lock.set()
             time.sleep(0.1)
             order.append("end")
+            return MagicMock(returncode=0, stderr=b"")
 
         with (
             patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
@@ -218,7 +274,11 @@ class TestCliPlay:
 
         with (
             patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
-            patch(f"{_MOD}.subprocess.run") as mock_run,
+            patch(
+                f"{_MOD}.subprocess.run",
+                return_value=MagicMock(returncode=0, stderr=b""),
+            ) as mock_run,
+            patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 1.0]),
             patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
         ):
             runner = CliRunner()

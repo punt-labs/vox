@@ -1076,7 +1076,7 @@ class TestPlayCommand:
         audio = tmp_path / "song.mp3"
         audio.write_bytes(b"\xff\xfb\x90\x00" * 4)
 
-        with patch("punt_vox.playback.play_audio") as mock_play:
+        with patch("punt_vox.playback.play_audio", return_value=None) as mock_play:
             runner = CliRunner()
             result = runner.invoke(app, ["play", str(audio)])
 
@@ -1084,6 +1084,25 @@ class TestPlayCommand:
         mock_play.assert_called_once()
         mock_client_cls.return_value.play.assert_not_called()
         assert "playing local file" in result.output  # dispatch made visible
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_play_local_file_failure_is_one_line_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A failed LOCAL playback exits non-zero with a one-line error."""
+        audio = tmp_path / "notaudio.mp3"
+        audio.write_bytes(b"not audio")
+
+        with patch(
+            "punt_vox.playback.play_audio",
+            return_value="player exited rc=1: AudioFileOpen failed ('typ?')",
+        ):
+            runner = CliRunner()
+            result = runner.invoke(app, ["play", str(audio)])
+
+        assert result.exit_code == 1
+        assert "AudioFileOpen failed" in result.output
+        assert "Traceback" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_play_store_ref_routes_to_daemon(
@@ -1096,7 +1115,8 @@ class TestPlayCommand:
 
         assert result.exit_code == 0
         mock_instance.play.assert_called_once_with("a1b2c3.mp3")
-        assert "store recording a1b2c3.mp3 on the daemon host" in result.output
+        # Reported only after acceptance + completion: past tense, not "playing".
+        assert "played store recording a1b2c3.mp3 on the daemon host" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_play_store_ref_host_failure_is_one_line_error(
@@ -1115,6 +1135,9 @@ class TestPlayCommand:
         assert result.exit_code == 1
         assert "playback failed" in result.output
         assert "Traceback" not in result.output
+        # Cosmetic: a rejected/failed ref must NOT print an optimistic line.
+        assert "played store recording" not in result.output
+        assert "playing store recording" not in result.output
 
 
 class TestFetchCommand:

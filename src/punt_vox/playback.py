@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from punt_vox.paths import user_state_dir
@@ -27,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 LOCK_FILE = user_state_dir() / "playback.lock"
 PLAYBACK_TIMEOUT = 120  # safety valve — no single audio should exceed 2 min
+# A clean exit under this almost certainly played nothing (missing audio
+# backend, unreadable file the player opened then bailed on) -- the same
+# heuristic the daemon's PlaybackQueue applies.
+_SUSPICIOUS_ELAPSED_S = 0.05
 _PENDING_DIR = LOCK_FILE.parent / "pending"
 
 
@@ -47,8 +52,15 @@ def resolve_player() -> list[str]:
     raise FileNotFoundError(msg)
 
 
-def play_audio(path: Path) -> None:
-    """Acquire flock, play audio, release. Blocking."""
+def play_audio(path: Path) -> str | None:
+    """Acquire flock, play audio, release. Blocking.
+
+    Returns ``None`` on a clean, real-duration play, or a one-line failure
+    detail when playback failed -- no player, a timeout, a non-zero player
+    exit, or a clean exit so fast it almost certainly played nothing. The
+    caller (``vox play`` of a local file) turns a non-``None`` result into a
+    one-line error and a non-zero exit, matching the daemon store-ref path.
+    """
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Waiting for playback lock: %s", path.name)
     with LOCK_FILE.open("w") as lock_fd:
@@ -56,19 +68,38 @@ def play_audio(path: Path) -> None:
         logger.info("Acquired playback lock, playing %s", path.name)
         try:
             cmd = resolve_player()
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
             logger.warning("No audio player found (need afplay or ffplay)")
-            return
+            return f"no audio player found: {exc}"
+        start = time.monotonic()
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [*cmd, str(path)],
                 check=False,
                 timeout=PLAYBACK_TIMEOUT,
+                stderr=subprocess.PIPE,
             )
         except subprocess.TimeoutExpired:
             logger.warning(
                 "Playback timed out after %ds for %s", PLAYBACK_TIMEOUT, path
             )
+            return f"playback timed out after {PLAYBACK_TIMEOUT}s"
+        return _classify_local_playback(
+            proc.returncode, time.monotonic() - start, proc.stderr
+        )
+
+
+def _classify_local_playback(
+    rc: int | None, elapsed: float, stderr: bytes | None
+) -> str | None:
+    """Return ``None`` on a clean, real-duration play, else a failure detail."""
+    detail = (stderr or b"").decode("utf-8", errors="replace").strip()
+    if rc != 0:
+        base = f"player exited rc={rc}"
+        return f"{base}: {detail}" if detail else base
+    if elapsed < _SUSPICIOUS_ELAPSED_S:
+        return f"played nothing (elapsed {elapsed:.3f}s)"
+    return None
 
 
 def enqueue(path: Path) -> None:

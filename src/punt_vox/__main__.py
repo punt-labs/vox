@@ -992,24 +992,31 @@ def play(
     if local.is_file():
         from punt_vox.playback import play_audio
 
-        # Make the dispatch visible so a local/store name collision is never a
-        # silent misdispatch (documented precedence: an existing local file wins).
+        # This path plays immediately and blocks, so the dispatch line is
+        # accurate up front (documented precedence: an existing local file wins).
         _formatter.emit(
             {"played": str(local), "where": "local"}, f"playing local file {local}"
         )
-        play_audio(local)
+        detail = play_audio(local)
+        if detail is not None:
+            # A failed local playback must exit non-zero with a one-line error,
+            # the same as the daemon store-ref path.
+            _formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1)
         return
 
     client = VoxClientSync()
     try:
-        _formatter.emit(
-            {"played": ref, "where": "daemon"},
-            f"playing store recording {ref} on the daemon host",
-        )
         client.play(ref)
     except (VoxdConnectionError, VoxdProtocolError) as exc:
         _formatter.error(str(exc), f"Error: {exc}")
         raise typer.Exit(code=1) from exc
+    # Reported only after the daemon accepted the ref and playback finished --
+    # a rejected ref raises above, so we never claim "played" optimistically.
+    _formatter.emit(
+        {"played": ref, "where": "daemon"},
+        f"played store recording {ref} on the daemon host",
+    )
 
 
 # ---------------------------------------------------------------------------
