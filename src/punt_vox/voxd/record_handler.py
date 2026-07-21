@@ -108,11 +108,17 @@ class RecordHandler(MessageHandler):
         if not req.text:
             await req.error("empty text")
             return False
-        try:
-            self._store.resolve(name, req.text)
-        except ValueError as exc:
-            await req.error(str(exc))
-            return False
+        # Only a client-supplied name carries hostile input to reject pre-ack.
+        # The no-name case is content-addressed by place() daemon-side (no
+        # hostile input), so skip the pre-ack resolve -- otherwise it would MD5
+        # the full text here and again in place(), a double hash on the hot path
+        # before the ack for a large record.
+        if name is not None:
+            try:
+                self._store.resolve(name, req.text)
+            except ValueError as exc:
+                await req.error(str(exc))
+                return False
         return True
 
     async def _store_outcome(

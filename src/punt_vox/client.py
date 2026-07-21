@@ -595,6 +595,14 @@ class VoxClient:
             raise VoxdProtocolError(
                 f"Expected 'bytes' response with data, got '{terminal.get('type')}'"
             )
+        # The reply must name the ref it carries and it must be the one we asked
+        # for: a misroute or a stale frame with someone else's bytes must not be
+        # written out as this recording.
+        returned_ref = terminal.get("ref")
+        if returned_ref != ref:
+            raise VoxdProtocolError(
+                f"fetch reply ref mismatch: requested {ref!r}, got {returned_ref!r}"
+            )
         try:
             data = base64.b64decode(str(terminal["data"]), validate=True)
         except (ValueError, TypeError) as exc:
