@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`vox fetch <id> -o <path>` materializes a stored recording (vox-dvri, vox-eoq9)**: retrieves a recording from the daemon store to a local path — a direct filesystem copy when the store is on this machine (loopback), a single-frame wire transfer from a remote daemon otherwise. The reference is a bare store id/name; no daemon path is named.
+- **`vox fetch <id> -o <path>` materializes a stored recording (vox-dvri, vox-eoq9)**: always retrieves the recording's bytes from the connected daemon (a single-frame wire transfer) and writes them to a local path. There is no local-copy shortcut — a same-named file under this machine's recordings dir is not provably the connected daemon's recording, so the client fetches the bytes; a recording above the single-frame limit is refused (retrieve it from the daemon host directly). The reference is a bare store id/name; no daemon path is named.
 
 ### Fixed
 

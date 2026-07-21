@@ -233,9 +233,9 @@ routes to the daemon host.
 vox fetch a1b2c3d4e5f6.mp3 -o ./build-green.mp3   # writes the file on B
 ```
 
-Locally this is a direct filesystem copy; remotely it streams the bytes over the
-wire (bounded to a single frame — very large recordings are retrieved from the
-daemon host directly).
+This always retrieves the bytes from the daemon over the wire, bounded to a
+single frame — a very large recording is refused, so retrieve it from the daemon
+host directly instead.
 
 The client never names a path on the daemon's filesystem: a recording is
 referenced only by its store id, and the daemon confines every record/play/fetch

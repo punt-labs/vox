@@ -65,14 +65,13 @@ class FetchHandler(MessageHandler):
         # such OSError must reach the client as a clean error frame, never a
         # server-side traceback (matching the record write path).
         try:
-            size = path.stat().st_size
-            if size > FETCH_FRAME_LIMIT_BYTES:
-                await self._error(
-                    websocket,
-                    request_id,
-                    f"recording too large to fetch in one frame ({size} bytes > "
-                    f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly",
-                )
+            # A cheap pre-read stat rejects the common oversize case without
+            # reading a huge file into memory. It is NOT authoritative: a
+            # concurrent record place() can replace/grow the file between stat
+            # and read, so the reply's size and the limit are re-checked below
+            # against the bytes actually read.
+            if path.stat().st_size > FETCH_FRAME_LIMIT_BYTES:
+                await self._reject_oversize(websocket, request_id, path.stat().st_size)
                 return
             raw = path.read_bytes()
         except OSError as exc:
@@ -84,6 +83,15 @@ class FetchHandler(MessageHandler):
             )
             return
 
+        # Authoritative size = what we read. Guards the stat-vs-read race: a
+        # file grown past the limit after the stat is rejected here, and the
+        # client's byte-count check is compared against a declaration that
+        # matches the payload, never a stale stat.
+        size = len(raw)
+        if size > FETCH_FRAME_LIMIT_BYTES:
+            await self._reject_oversize(websocket, request_id, size)
+            return
+
         logger.info("Fetch: id=%r ref=%r bytes=%d", request_id, ref, size)
         data = base64.b64encode(raw).decode("ascii")
         await websocket.send_json(
@@ -93,6 +101,22 @@ class FetchHandler(MessageHandler):
                 "ref": path.name,
                 "data": data,
                 "bytes": size,
+            }
+        )
+
+    @staticmethod
+    async def _reject_oversize(
+        websocket: WebSocket, request_id: str, size: int
+    ) -> None:
+        """Send the too-large-to-fetch error frame for a *size*-byte recording."""
+        await websocket.send_json(
+            {
+                "type": "error",
+                "id": request_id,
+                "message": (
+                    f"recording too large to fetch in one frame ({size} bytes > "
+                    f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly"
+                ),
             }
         )
 

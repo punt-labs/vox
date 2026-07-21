@@ -94,10 +94,12 @@ validated bare name) and prints a locator — never a client path, and it takes
   fetch a1b2c3.mp3 -o <path>`). No client absolute path is echoed.
 
 To get the bytes onto the client machine, **`vox fetch <id> -o <path>`** is the
-one materialization path — a filesystem copy when the store path is locally
-visible, a `fetch` wire op otherwise (that copy-vs-wire choice is a
-`fetch`-internal, behavioural, zero-trust-weight detail; `vox record` never
-makes it). The daemon returns only facts; the client formats.
+one materialization path — it **always retrieves the bytes from the connected
+daemon** (`fetch` wire op) and writes them to `<path>`. There is no local-copy
+shortcut: a same-named file under this machine's recordings dir is not provably
+the connected daemon's recording (a remote daemon may share this user's home
+layout), and the client cannot confirm identity without the daemon's bytes, so
+it fetches them. The daemon returns only facts; the client formats.
 
 This keeps `#351`'s win intact: the **hot** record path ships **no audio bytes**
 (it returns a locator). Bytes reappear only on the **cold**, opt-in `fetch` — a
@@ -119,7 +121,7 @@ path that did not work before this change anyway.
 - Root: **`~/.punt-labs/vox/recordings/`**, created `0700` by
   `paths.ensure_user_dirs` alongside `logs`/`run`/`cache`.
 - Flat directory. Default name is the content-addressed
-  `types_audio.generate_filename(text)` (`md5(text)[:12].mp3`) — the same
+  `punt_vox.types.generate_filename(text)` (`md5(text)[:12].mp3`) — the same
   scheme every other vox MP3 uses, computed daemon-side from the text the daemon
   already holds. Identical text → identical file (idempotent, deduped).
 - A client may supply an optional **bare** `name` (validated per the security
@@ -285,7 +287,7 @@ Coherence and ergonomics:
 2. **Local record→play loop.** `vox record "hello from vox"` → prints a store
    locator (id + store path). `vox play <id>` → audio plays on this machine.
 3. **Local materialization.** `vox fetch <id> -o ./out.mp3` → `./out.mp3`
-   exists, size matches; a filesystem copy (loopback, no bytes over the wire).
+   exists, size matches; retrieved from the daemon (no local-copy shortcut).
 4. **Hostile name rejected end-to-end.** `vox record --name '../../etc/x' "x"`,
    `vox play '../../etc/passwd'`, and `vox fetch '/etc/passwd' -o ./x` → each a
    one-line error, exit 1, nothing touched outside the root.

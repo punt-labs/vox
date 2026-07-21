@@ -88,6 +88,46 @@ class TestFetchHandler:
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
 
+    def test_grown_between_stat_and_read_rejected_post_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file that grows past the limit after the stat is rejected post-read.
+
+        The authoritative size is the bytes actually read, not the pre-read
+        stat, so a concurrent record place() cannot slip an oversize payload
+        past the frame limit.
+        """
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "x.mp3").write_bytes(b"\x00" * 10)  # small on disk (passes stat)
+        ws, sent = _capturing_ws()
+
+        def grown(_self: Path) -> bytes:
+            return b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1)
+
+        monkeypatch.setattr(Path, "read_bytes", grown)
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
+        asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "too large" in str(sent[-1]["message"])
+
+    def test_declared_bytes_match_payload(self, tmp_path: Path) -> None:
+        """The reply's declared 'bytes' equals the decoded payload length."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        data = b"\xff\xfb\x90\x00" * 7
+        (store.root / "x.mp3").write_bytes(data)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
+        asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        reply = sent[-1]
+        assert reply["type"] == "bytes"
+        assert reply["bytes"] == len(base64.b64decode(str(reply["data"]))) == len(data)
+
     def test_read_error_is_a_clean_error_frame(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
