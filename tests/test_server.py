@@ -686,28 +686,31 @@ class TestRecord:
         landed = tmp_path / "hello.mp3"
         landed.write_bytes(b"x" * 40)
         mock_client = MagicMock()
-        mock_client.record.return_value = RecordResult(path=landed, byte_count=40)
+        mock_client.record.return_value = RecordResult(
+            id="hello.mp3", name="hello.mp3", store_path=landed, byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello world"))
 
         assert isinstance(result, list)
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
+        assert result[0]["name"] == "hello.mp3"
         assert "path" in result[0]
         mock_client.record.assert_called_once()
 
     def test_size_mismatch_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A delivered file whose size != reported bytes degrades to an error."""
+        """A stored file whose size != reported bytes degrades to an error."""
         landed = tmp_path / "hello.mp3"
         landed.write_bytes(b"x" * 10)  # on disk: 10 bytes
         mock_client = MagicMock()
-        mock_client.record.return_value = RecordResult(path=landed, byte_count=40)
+        mock_client.record.return_value = RecordResult(
+            id="hello.mp3", name="hello.mp3", store_path=landed, byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello world"))
         assert "error" in result
@@ -716,21 +719,20 @@ class TestRecord:
         result = json.loads(record())
         assert "error" in result
 
-    def test_custom_output_path(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_custom_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         mock_client = MagicMock()
-        out_path = str(tmp_path / "custom.mp3")
-        Path(out_path).write_bytes(b"x" * 40)
+        landed = tmp_path / "custom.mp3"
+        landed.write_bytes(b"x" * 40)
         mock_client.record.return_value = RecordResult(
-            path=Path(out_path), byte_count=40
+            id="custom.mp3", name="custom.mp3", store_path=landed, byte_count=40
         )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        result = json.loads(record(text="Hello", output_path=out_path))
+        result = json.loads(record(text="Hello", name="custom.mp3"))
 
         assert isinstance(result, list)
-        assert result[0]["path"] == out_path
+        assert result[0]["name"] == "custom.mp3"
+        assert mock_client.record.call_args.kwargs["name"] == "custom.mp3"
 
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -740,7 +742,6 @@ class TestRecord:
         mock_client = MagicMock()
         mock_client.record.side_effect = VoxdConnectionError("not running")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello"))
         assert "error" in result

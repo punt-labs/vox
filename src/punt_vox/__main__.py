@@ -20,6 +20,7 @@ from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import build_music_app
+from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
@@ -32,7 +33,7 @@ from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
     # Annotation-only; keeps `client` off __main__'s runtime import graph.
-    from punt_vox.client import SynthesizeResult
+    from punt_vox.client import RecordResult, SynthesizeResult
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +150,13 @@ RateOpt = Annotated[
     int,
     typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90%% speed)."),
 ]
-OutputOpt = Annotated[
-    Path | None,
-    typer.Option("--output", "-o", help="Output file path."),
+NameOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--name",
+        help="Bare filename to store the recording under (no path). "
+        "Default: content-addressed by text.",
+    ),
 ]
 OutputDirOpt = Annotated[
     Path | None,
@@ -388,8 +393,7 @@ def record(  # pyright: ignore[reportUnusedFunction]
     voice: VoiceOpt = None,
     language: LanguageOpt = None,
     rate: RateOpt = 90,
-    output: OutputOpt = None,
-    output_dir: OutputDirOpt = None,
+    name: NameOpt = None,
     provider: ProviderOpt = None,
     model: ModelOpt = None,
     stability: StabilityOpt = None,
@@ -401,10 +405,12 @@ def record(  # pyright: ignore[reportUnusedFunction]
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """Synthesize and save audio to file via voxd.
+    """Capture synthesized audio into the daemon's store; print its locator.
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
-    file), or from stdin when TEXT is ``-`` or the input is piped.
+    file), or from stdin when TEXT is ``-`` or the input is piped. The daemon
+    owns the file -- this command names no path. Play it with ``vox play <id>``
+    or copy it out with ``vox fetch <id> -o <path>``.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     boost = speaker_boost if speaker_boost else None
@@ -423,44 +429,54 @@ def record(  # pyright: ignore[reportUnusedFunction]
     )
 
     segments = _text_input.resolve(text, from_file)
-    out_dir = output_dir if output_dir is not None else default_output_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    client = VoxClientSync()
-    for i, seg_text in enumerate(segments):
-        # An explicit --output pins the path; otherwise the daemon names each
-        # file by content hash under out_dir (no client-side naming).
-        if output is not None and len(segments) == 1:
-            out_path: Path | None = output
-        elif output is not None:
-            stem = output.stem
-            out_path = output.parent / f"{stem}_{i:04d}{output.suffix}"
-        else:
-            out_path = None
+    if name is not None and len(segments) > 1:
+        _formatter.error(
+            "--name supports a single segment only",
+            "Error: --name supports a single segment only",
+        )
+        raise typer.Exit(code=1)
 
+    client = VoxClientSync()
+    for seg_text in segments:
         try:
-            result = client.record(
-                seg_text, spec, output_dir=out_dir, output_path=out_path
-            )
+            result = client.record(seg_text, spec, name=name)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
+        _emit_record_locator(result)
 
-        try:
-            # Verify the daemon-written file: an inaccessible path must surface
-            # as a one-line error naming the real file, not an OSError traceback.
-            actual_size = result.path.stat().st_size
-        except OSError as exc:
-            detail = f"cannot read recording {result.path}: {exc}"
-            _formatter.error(detail, f"Error: {detail}")
-            raise typer.Exit(code=1) from exc
 
+def _emit_record_locator(result: RecordResult) -> None:
+    """Print a stored recording's locator: a local path, or a remote id + host.
+
+    When the store path is visible on this machine (shared filesystem) the
+    on-disk size is verified against the daemon's byte count and the bare path
+    is shown. When it is not (a remote daemon) the id + host locator is shown
+    with the ``play``/``fetch`` commands -- no bogus local path is echoed.
+    """
+    payload: dict[str, object] = {
+        "id": result.id,
+        "name": result.name,
+        "path": str(result.store_path),
+        "bytes": result.byte_count,
+        "cached": result.cached,
+    }
+    if result.store_path.exists():
+        actual_size = result.store_path.stat().st_size
         if actual_size != result.byte_count:
-            detail = f"recording size mismatch for {result.path}"
+            detail = f"recording size mismatch for {result.store_path}"
             _formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1)
-        _formatter.emit(
-            {"path": str(result.path), "bytes": result.byte_count}, str(result.path)
-        )
+        _formatter.emit(payload, str(result.store_path))
+        return
+
+    host = DaemonEnv.host()
+    text = (
+        f"{result.name} on {host} "
+        f"(play: vox play {result.name}; fetch: vox fetch {result.name} -o <path>)"
+    )
+    payload["host"] = host
+    _formatter.emit(payload, text)
 
 
 # ---------------------------------------------------------------------------
@@ -953,15 +969,71 @@ def install_desktop(
 
 @app.command()
 def play(
-    audio_file: Annotated[
-        Path,
-        typer.Argument(help="Audio file to play.", exists=True),
+    ref: Annotated[
+        str,
+        typer.Argument(help="A store recording id/name, or a local audio file path."),
     ],
 ) -> None:
-    """Play an audio file with serialized flock-based queuing."""
-    from punt_vox.playback import play_audio
+    """Play a recording on the daemon host, or a local file on this machine.
 
-    play_audio(audio_file)
+    If REF is an existing file on this machine it plays here with serialized
+    flock queuing (loopback = the right machine). Otherwise REF is a store
+    id/name and the daemon plays it on the host with speakers.
+    """
+    local = Path(ref)
+    if local.is_file():
+        from punt_vox.playback import play_audio
+
+        play_audio(local)
+        return
+
+    client = VoxClientSync()
+    try:
+        client.play(ref)
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        _formatter.error(str(exc), f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+# ---------------------------------------------------------------------------
+# fetch
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def fetch(
+    ref: Annotated[str, typer.Argument(help="Store recording id/name to retrieve.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Local path to write the recording to."),
+    ],
+) -> None:
+    """Materialize a stored recording to a local path.
+
+    Copies directly from the store when it is on this filesystem (loopback),
+    else fetches the bytes over the wire from a remote daemon, then writes
+    OUTPUT. REF is a bare store id/name; no daemon path is named.
+    """
+    from punt_vox.paths import recordings_dir
+
+    is_bare = "/" not in ref and "\\" not in ref and ".." not in ref
+    store_path = recordings_dir() / ref
+    try:
+        if is_bare and store_path.is_file():
+            import shutil
+
+            shutil.copyfile(store_path, output)
+        else:
+            data = VoxClientSync().fetch(ref)
+            output.write_bytes(data)
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        _formatter.error(str(exc), f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        detail = f"cannot write {output}: {exc}"
+        _formatter.error(detail, f"Error: {detail}")
+        raise typer.Exit(code=1) from exc
+    _formatter.emit({"path": str(output), "bytes": output.stat().st_size}, str(output))
 
 
 # ---------------------------------------------------------------------------

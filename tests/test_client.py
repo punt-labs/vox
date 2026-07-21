@@ -442,14 +442,15 @@ class TestVoxClientRecord:
     """Test record method."""
 
     @pytest.mark.asyncio
-    async def test_record_returns_path_and_bytes(self) -> None:
+    async def test_record_returns_store_locator(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
                 {
                     "type": "audio",
                     "id": "r1",
-                    "path": "/out/x.mp3",
+                    "name": "x.mp3",
+                    "path": "/store/x.mp3",
                     "bytes": 40,
                     "cached": False,
                 }
@@ -458,29 +459,57 @@ class TestVoxClientRecord:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        result = await client.record("Hello", output_dir=Path("/out"))
-        assert result.path == Path("/out/x.mp3")
+        result = await client.record("Hello")
+        assert result.id == "x.mp3"
+        assert result.name == "x.mp3"
+        assert result.store_path == Path("/store/x.mp3")
         assert result.byte_count == 40
         assert result.cached is False
 
     @pytest.mark.asyncio
-    async def test_record_sends_output_dir_and_optional_path(self) -> None:
+    async def test_record_sends_optional_name(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
-                {"type": "audio", "id": "r1", "path": "/pin/y.mp3", "bytes": 12}
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "y.mp3",
+                    "path": "/s/y.mp3",
+                    "bytes": 12,
+                }
             )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        await client.record(
-            "Hi", output_dir=Path("/out"), output_path=Path("/pin/y.mp3")
-        )
+        await client.record("Hi", name="y.mp3")
         sent = json.loads(mock_ws.send.call_args.args[0])
         assert sent["type"] == "record"
-        assert sent["output_dir"] == "/out"
-        assert sent["output_path"] == "/pin/y.mp3"
+        assert sent["name"] == "y.mp3"
+        assert "output_dir" not in sent  # the #351 path contract is gone
+        assert "output_path" not in sent
+
+    @pytest.mark.asyncio
+    async def test_record_omits_name_when_unset(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "h.mp3",
+                    "path": "/s/h.mp3",
+                    "bytes": 1,
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.record("Hi")
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert "name" not in sent  # content-addressed daemon-side
 
     @pytest.mark.asyncio
     async def test_record_audio_without_path_raises(self) -> None:
@@ -490,7 +519,21 @@ class TestVoxClientRecord:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="with a path"):
-            await client.record("Hello", output_dir=Path("/out"))
+            await client.record("Hello")
+
+    @pytest.mark.asyncio
+    async def test_record_audio_without_name_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "path": "/s/x.mp3", "bytes": 1}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="missing 'name'"):
+            await client.record("Hello")
 
     @pytest.mark.asyncio
     async def test_record_malformed_bytes_raises_voxerror(self) -> None:
@@ -498,27 +541,35 @@ class TestVoxClientRecord:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
-                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": "nope"}
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "x.mp3",
+                    "path": "/o/x.mp3",
+                    "bytes": "nope",
+                }
             )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="non-integer 'bytes'"):
-            await client.record("hi", output_dir=Path("/out"))
+            await client.record("hi")
 
     @pytest.mark.asyncio
     async def test_record_missing_bytes_raises_voxerror(self) -> None:
         """A missing 'bytes' is a VoxdProtocolError, not a silent default of 0."""
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
-            return_value=json.dumps({"type": "audio", "id": "r1", "path": "/o/x.mp3"})
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "name": "x.mp3", "path": "/o/x.mp3"}
+            )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
-            await client.record("hi", output_dir=Path("/out"))
+            await client.record("hi")
 
     @pytest.mark.asyncio
     async def test_record_non_json_frame_raises_voxerror(self) -> None:
@@ -529,7 +580,7 @@ class TestVoxClientRecord:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="invalid JSON"):
-            await client.record("hi", output_dir=Path("/out"))
+            await client.record("hi")
 
     @pytest.mark.asyncio
     async def test_send_and_recv_non_json_frame_raises_voxerror(self) -> None:
@@ -551,7 +602,7 @@ class TestVoxClientRecord:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdConnectionError, match="connection to voxd lost"):
-            await client.record("Hello", output_dir=Path("/out"))
+            await client.record("Hello")
 
     @pytest.mark.asyncio
     async def test_long_synthesis_is_not_abandoned(
@@ -570,18 +621,24 @@ class TestVoxClientRecord:
             captured["timeout"] = timeout
             return [
                 {"type": "recording", "id": "r1"},
-                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1},
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "x.mp3",
+                    "path": "/o/x.mp3",
+                    "bytes": 1,
+                },
             ]
 
         monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
         client = VoxClient(port=8421, token="tok")
 
-        result = await client.record("a" * 6000, output_dir=Path("/out"))
+        result = await client.record("a" * 6000)
 
         # A fresh 6000-char synthesis was measured at ~124s; the deadline must
         # comfortably exceed that (and the old fixed 30s) so it is not abandoned.
         assert captured["timeout"] > 124
-        assert result.path == Path("/o/x.mp3")
+        assert result.store_path == Path("/o/x.mp3")
 
     @pytest.mark.asyncio
     async def test_record_timeout_is_capped(
@@ -598,39 +655,73 @@ class TestVoxClientRecord:
             terminal_type: str,
         ) -> list[dict[str, object]]:
             captured["timeout"] = timeout
-            return [{"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1}]
+            return [
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "x.mp3",
+                    "path": "/o/x.mp3",
+                    "bytes": 1,
+                }
+            ]
 
         monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
         client = VoxClient(port=8421, token="tok")
 
         # Uncapped this text would scale to ~50000s; the cap holds it at 600s.
-        await client.record("a" * 1_000_000, output_dir=Path("/out"))
+        await client.record("a" * 1_000_000)
         assert captured["timeout"] == 600.0
 
-    @pytest.mark.asyncio
-    async def test_relative_output_resolved_to_absolute(self) -> None:
-        """Relative dests resolve against the caller's cwd before the wire.
 
-        voxd's cwd is not the caller's shell, so a bare relative path would land
-        in the daemon's directory; the client sends absolute paths.
-        """
+class TestVoxClientPlayFetch:
+    """Test the play and fetch store-reference methods."""
+
+    @pytest.mark.asyncio
+    async def test_play_sends_ref(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "playing", "id": "p1"})
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.play("a1b2c3.mp3")
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["type"] == "play"
+        assert sent["ref"] == "a1b2c3.mp3"
+
+    @pytest.mark.asyncio
+    async def test_fetch_returns_decoded_bytes(self) -> None:
+        import base64
+
+        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
-                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1}
+                {
+                    "type": "bytes",
+                    "id": "f1",
+                    "ref": "x.mp3",
+                    "data": payload,
+                    "bytes": 16,
+                }
             )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        await client.record(
-            "hi", output_dir=Path("outdir"), output_path=Path("rel.mp3")
-        )
-        sent = json.loads(mock_ws.send.call_args.args[0])
-        assert sent["output_dir"] == str(Path("outdir").resolve())
-        assert sent["output_path"] == str(Path("rel.mp3").resolve())
-        assert sent["output_dir"].startswith("/")
-        assert sent["output_path"].startswith("/")
+        data = await client.fetch("x.mp3")
+        assert data == b"\xff\xfb\x90\x00" * 4
+
+    @pytest.mark.asyncio
+    async def test_fetch_without_data_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "bytes", "id": "f1"}))
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="with data"):
+            await client.fetch("x.mp3")
 
 
 class TestVoxClientVoices:
@@ -955,7 +1046,13 @@ class TestVoxClientSync:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
-                {"type": "audio", "id": "r1", "path": "/out/z.mp3", "bytes": 20}
+                {
+                    "type": "audio",
+                    "id": "r1",
+                    "name": "z.mp3",
+                    "path": "/store/z.mp3",
+                    "bytes": 20,
+                }
             )
         )
 
@@ -965,8 +1062,9 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.record("Hello", output_dir=Path("/out"))
-            assert result.path == Path("/out/z.mp3")
+            result = sync_client.record("Hello")
+            assert result.name == "z.mp3"
+            assert result.store_path == Path("/store/z.mp3")
             assert result.byte_count == 20
 
     def test_voices(self) -> None:

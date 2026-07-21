@@ -358,13 +358,6 @@ def _find_config_dir() -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def _default_output_dir() -> Path:
-    """Resolve the default output directory for record tool."""
-    from punt_vox.dirs import default_output_dir
-
-    return default_output_dir()
-
-
 def _voxd_client() -> VoxClientSync:
     """Create a VoxClientSync instance."""
     return VoxClientSync()
@@ -515,8 +508,7 @@ def record(
     segments: list[dict[str, str]] | None = None,
     rate: int = 90,
     pause_ms: int = 500,  # noqa: ARG001 -- reserved for future multi-segment pause
-    output_path: str | None = None,
-    output_dir: str | None = None,
+    name: str | None = None,
     stability: float | None = None,
     similarity: float | None = None,
     style: float | None = None,
@@ -538,9 +530,8 @@ def record(
             Per-segment "vibe_tags" override the session config.
         rate: Speech rate as percentage. Defaults to 90.
         pause_ms: Pause between segments in milliseconds. Defaults to 500.
-        output_path: Full path for the output file. Auto-generated if omitted.
-        output_dir: Directory for output. Defaults to VOX_OUTPUT_DIR
-            env var or ~/Music/vox/.
+        name: Bare filename to store the recording under (no path).
+            Content-addressed by text when omitted. Single-segment only.
         stability: ElevenLabs voice stability (0.0-1.0).
         similarity: ElevenLabs voice similarity boost (0.0-1.0).
         style: ElevenLabs voice style/expressiveness (0.0-1.0).
@@ -560,27 +551,28 @@ def record(
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
-    if output_path and len(segments) > 1:
-        return _error("output_path only supported for single-segment calls")
+    if name and len(segments) > 1:
+        return _error("name only supported for single-segment calls")
 
-    # A single-segment call may pin an explicit path; otherwise the daemon names
-    # each file by content hash under the output directory.
-    dir_path = Path(output_dir) if output_dir else _default_output_dir()
-    single_path = Path(output_path) if output_path and len(segments) == 1 else None
+    # The daemon owns the store: a single-segment call may pin a bare name,
+    # otherwise the daemon content-addresses by text. No client path.
+    single_name = name if name and len(segments) == 1 else None
     effective_provider = _session.provider
     client = _voxd_client()
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        result = client.record(
-            seg_text, seg_spec, output_dir=dir_path, output_path=single_path
-        )
-        # Same byte-correct-delivery check the CLI makes (invariant 1). A stat
-        # OSError or a mismatch is caught by SegmentBatch.render and degrades to
-        # a clear error rather than a raw traceback.
-        if result.path.stat().st_size != result.byte_count:
-            raise VoxdProtocolError(f"recording size mismatch for {result.path}")
+        result = client.record(seg_text, seg_spec, name=single_name)
+        # Byte-correct-delivery check (invariant 1) when the store is on this
+        # filesystem; a remote daemon's store path is not visible here, so trust
+        # the daemon's reported byte count. A mismatch degrades to a clear error.
+        if result.store_path.exists() and (
+            result.store_path.stat().st_size != result.byte_count
+        ):
+            raise VoxdProtocolError(f"recording size mismatch for {result.store_path}")
         return {
-            "path": str(result.path),
+            "id": result.id,
+            "name": result.name,
+            "path": str(result.store_path),
             "text": seg_text,
             "voice": seg_spec.voice,
             "provider": effective_provider,

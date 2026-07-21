@@ -793,75 +793,142 @@ class TestApiKeyInputPaths:
 
 
 def _fake_record(
+    store_dir: Path,
     data: bytes = b"\xff\xfb\x90\x00" * 10,
 ) -> Callable[..., RecordResult]:
-    """Return a record side effect that writes the file the daemon would write.
+    """Return a record side effect that stands in for the daemon store write.
 
-    The daemon owns the write in the real path, so a mocked client stands in by
-    landing *data* at the requested destination and returning the matching
-    :class:`RecordResult`.
+    The daemon owns the write in the real path, so a mocked client lands *data*
+    under *store_dir* (a local, visible store) and returns the matching
+    :class:`RecordResult` locator.
     """
 
     def _rec(
         text: str,
         _spec: object = None,
         *,
-        output_dir: Path,
-        output_path: Path | None = None,
+        name: str | None = None,
     ) -> RecordResult:
-        dest = output_path or output_dir / generate_filename(text)
+        dest = store_dir / (name or generate_filename(text))
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
-        return RecordResult(path=dest, byte_count=len(data), cached=False)
+        return RecordResult(
+            id=dest.name, name=dest.name, store_path=dest, byte_count=len(data)
+        )
 
     return _rec
 
 
 class TestRecordCommand:
     @patch(f"{_CLI}.VoxClientSync")
-    def test_record_basic(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
-        out = tmp_path / "test.mp3"
+    def test_record_prints_store_locator(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        store = tmp_path / "store"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(store)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+        result = runner.invoke(app, ["record", "hello"])
 
         assert result.exit_code == 0
         mock_instance.record.assert_called_once()
-        assert out.exists()
+        assert generate_filename("hello") in result.output  # the store locator
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_name_option(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        store = tmp_path / "store"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.side_effect = _fake_record(store)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hello", "--name", "greeting.mp3"])
+
+        assert result.exit_code == 0
+        assert mock_instance.record.call_args.kwargs["name"] == "greeting.mp3"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_name_rejected_for_multiple_segments(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(["hello", "world"]))
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["record", "--from", str(input_file), "--name", "x.mp3"]
+        )
+
+        assert result.exit_code == 1
+        assert "single segment" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_remote_prints_locator(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A store path not visible locally prints a play/fetch locator, no error."""
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = RecordResult(
+            id="a1b2c3.mp3",
+            name="a1b2c3.mp3",
+            store_path=tmp_path / "not-here" / "a1b2c3.mp3",
+            byte_count=5,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi"])
+
+        assert result.exit_code == 0
+        assert "vox play a1b2c3.mp3" in result.output
+        assert "vox fetch a1b2c3.mp3" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_size_mismatch_is_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A visible store file whose size != reported bytes is a one-line error."""
+        store = tmp_path / "store"
+        store.mkdir()
+        landed = store / "x.mp3"
+        landed.write_bytes(b"x" * 3)  # on disk: 3 bytes
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = RecordResult(
+            id="x.mp3", name="x.mp3", store_path=landed, byte_count=40
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi"])
+
+        assert result.exit_code == 1
+        assert "size mismatch" in result.output
+        assert "Traceback" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_custom_voice(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["record", "Hallo", "--voice", "hans", "-o", str(out)]
-        )
+        result = runner.invoke(app, ["record", "Hallo", "--voice", "hans"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_instance.record.call_args
-        assert call_kwargs.args[1].voice == "hans"
+        assert mock_instance.record.call_args.args[1].voice == "hans"
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_record_from_file(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(["hello", "world"]))
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["record", "--from", str(input_file), "-d", str(out_dir)]
-        )
+        result = runner.invoke(app, ["record", "--from", str(input_file)])
 
         assert result.exit_code == 0
         assert mock_instance.record.call_count == 2
@@ -870,9 +937,8 @@ class TestRecordCommand:
     def test_record_voice_settings(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -880,8 +946,6 @@ class TestRecordCommand:
             [
                 "record",
                 "hello",
-                "-o",
-                str(out),
                 "--stability",
                 "0.5",
                 "--similarity",
@@ -907,14 +971,11 @@ class TestRecordCommand:
         monkeypatch: MagicMock,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["record", "Guten Tag", "--language", "de", "-o", str(out)]
-        )
+        result = runner.invoke(app, ["record", "Guten Tag", "--language", "de"])
 
         assert result.exit_code == 0
         spec = mock_instance.record.call_args.args[1]
@@ -928,12 +989,11 @@ class TestRecordCommand:
     ) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
         mock_instance.record.side_effect = VoxdConnectionError("not running")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+        result = runner.invoke(app, ["record", "hello"])
 
         assert result.exit_code == 1
         assert "not running" in result.output
@@ -947,37 +1007,16 @@ class TestRecordCommand:
         """A wrapped transport failure surfaces as one line, not a traceback."""
         from punt_vox.client_errors import VoxdProtocolError
 
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
         mock_instance.record.side_effect = VoxdProtocolError(
             "connection to voxd lost during 'record': sent 1009 (message too big)"
         )
 
         runner = CliRunner()
-        result = runner.invoke(app, ["record", "hello", "-o", str(out)])
+        result = runner.invoke(app, ["record", "hello"])
 
         assert result.exit_code == 1
         assert "message too big" in result.output
-        assert "Traceback" not in result.output
-
-    @patch(f"{_CLI}.VoxClientSync")
-    def test_record_inaccessible_path_is_one_line_error(
-        self, mock_client_cls: MagicMock, tmp_path: Path
-    ) -> None:
-        """A stat failure on the returned path is a one-line error, no traceback."""
-        out = tmp_path / "test.mp3"
-        mock_instance = mock_client_cls.return_value
-        # A path that does not exist -> the CLI's stat() verification raises.
-        mock_instance.record.return_value = RecordResult(
-            path=tmp_path / "gone.mp3", byte_count=5
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["record", "hi", "-o", str(out)])
-
-        assert result.exit_code == 1
-        assert "cannot read recording" in result.output
-        assert "gone.mp3" in result.output  # names the real daemon-returned path
         assert "Traceback" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -991,19 +1030,83 @@ class TestRecordCommand:
         Same regression as test_say_preserves_vibe_tags — the CLI
         previously called normalize_for_speech before sending to voxd.
         """
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
         text = "Hello world [warm] [friendly]"
-        result = runner.invoke(app, ["record", text, "-o", str(out)])
+        result = runner.invoke(app, ["record", text])
 
         assert result.exit_code == 0
         sent_text = mock_instance.record.call_args[0][0]
         assert "[warm]" in sent_text
         assert "[friendly]" in sent_text
         assert "warm friendly" not in sent_text
+
+
+class TestPlayCommand:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_play_local_file_plays_on_this_machine(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """An existing local file plays client-side, not through the daemon."""
+        audio = tmp_path / "song.mp3"
+        audio.write_bytes(b"\xff\xfb\x90\x00" * 4)
+
+        with patch("punt_vox.playback.play_audio") as mock_play:
+            runner = CliRunner()
+            result = runner.invoke(app, ["play", str(audio)])
+
+        assert result.exit_code == 0
+        mock_play.assert_called_once()
+        mock_client_cls.return_value.play.assert_not_called()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_play_store_ref_routes_to_daemon(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A non-file ref plays on the daemon host via the play op."""
+        mock_instance = mock_client_cls.return_value
+        runner = CliRunner()
+        result = runner.invoke(app, ["play", "a1b2c3.mp3"])
+
+        assert result.exit_code == 0
+        mock_instance.play.assert_called_once_with("a1b2c3.mp3")
+
+
+class TestFetchCommand:
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_remote_wire_writes_output(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A ref with no local store file fetches bytes over the wire."""
+        out = tmp_path / "got.mp3"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.fetch.return_value = b"\xff\xfb\x90\x00" * 4
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 0
+        assert out.read_bytes() == b"\xff\xfb\x90\x00" * 4
+        mock_instance.fetch.assert_called_once_with("a1b2c3.mp3")
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_connection_error_is_one_line(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        out = tmp_path / "got.mp3"
+        mock_instance = mock_client_cls.return_value
+        mock_instance.fetch.side_effect = VoxdConnectionError("not running")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+        assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1348,15 +1451,14 @@ class TestStdinInput:
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        out = tmp_path / "o.mp3"
-        mock_client_cls.return_value.record.side_effect = _fake_record()
+        client = mock_client_cls.return_value
+        client.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["record", "-", "-o", str(out)], input="recorded\n")
+        result = runner.invoke(app, ["record", "-"], input="recorded\n")
 
         assert result.exit_code == 0, result.output
-        sent = mock_client_cls.return_value.record.call_args.args[0]
-        assert sent == "recorded"
+        assert client.record.call_args.args[0] == "recorded"
 
 
 # ---------------------------------------------------------------------------
@@ -1442,15 +1544,11 @@ class TestMainGroup:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_provider_flag(self, mock_client_cls: MagicMock, tmp_path: Path) -> None:
-        out = tmp_path / "test.mp3"
         mock_instance = mock_client_cls.return_value
-        mock_instance.record.side_effect = _fake_record()
+        mock_instance.record.side_effect = _fake_record(tmp_path / "store")
 
         runner = CliRunner()
-        result = runner.invoke(
-            app,
-            ["record", "hello", "--provider", "polly", "-o", str(out)],
-        )
+        result = runner.invoke(app, ["record", "hello", "--provider", "polly"])
         assert result.exit_code == 0
         spec = mock_instance.record.call_args.args[1]
         assert spec.provider == "polly"
