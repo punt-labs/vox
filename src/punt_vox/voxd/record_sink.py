@@ -99,11 +99,15 @@ class RecordSink:
         point); the ephemeral-source cleanup afterwards is best-effort, so a
         failure past the commit never turns a completed write into a failure.
         """
+        # Write THROUGH the descriptor mkstemp returned (0600, O_EXCL) -- never
+        # close it and reopen the temp by name. In a world-writable output_dir
+        # the name could be swapped for a symlink between close and reopen
+        # (TOCTOU); writing to the fd targets the exact inode mkstemp created.
         fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".mp3.tmp")
-        os.close(fd)
         tmp = Path(tmp_name)
         try:
-            shutil.copyfile(source, tmp)
+            with os.fdopen(fd, "wb") as dst, source.open("rb") as src:
+                shutil.copyfileobj(src, dst)
             byte_count = tmp.stat().st_size
             tmp.replace(dest)  # commit point -- the write is complete after this
         except OSError:

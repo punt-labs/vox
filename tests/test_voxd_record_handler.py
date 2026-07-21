@@ -156,6 +156,29 @@ class TestRecordHandler:
                 ws2.send_json({"type": "health"})
                 assert ws2.receive_json()["type"] == "health"
 
+    def test_client_gone_before_ack_skips_synthesis(self, tmp_path: Path) -> None:
+        """A client gone before the ack skips synthesis and writes no file."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock(
+            return_value=SynthesisOutcome(path=tmp_path / "x.mp3", cached=False)
+        )
+        handler = RecordHandler(synthesis=synth)
+        ws = MagicMock()
+        # The ack itself hits a vanished client.
+        ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
+        out_dir = tmp_path / "out"
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "output_dir": str(out_dir),
+        }
+        asyncio.run(handler(msg, ws))
+
+        synth.synthesize_to_file.assert_not_called()
+        assert not out_dir.exists()
+
     def test_no_partial_file_on_synthesis_error(self, tmp_path: Path) -> None:
         synth = MagicMock()
         synth.synthesize_to_file = AsyncMock(side_effect=RuntimeError("boom"))

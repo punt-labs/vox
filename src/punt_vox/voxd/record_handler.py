@@ -63,8 +63,16 @@ class RecordHandler(MessageHandler):
         )
 
         # Ack immediately so a long synthesis does not trip the client's response
-        # timeout; the client then waits for the terminal 'audio' frame.
-        await self._safe_reply(req, {"type": "recording"})
+        # timeout; the client then waits for the terminal 'audio' frame. If the
+        # ack could not be delivered the client is already gone -- skip synthesis
+        # (a real provider cost) and the write rather than orphan a file for a
+        # request nobody is waiting on.
+        if not await self._safe_reply(req, {"type": "recording"}):
+            logger.info(
+                "Record client gone before ack for id=%r; skipping synthesis",
+                req.request_id,
+            )
+            return
 
         outcome = await self._synthesize(req)
         if outcome is None:
@@ -136,22 +144,25 @@ class RecordHandler(MessageHandler):
             return None
 
     @staticmethod
-    async def _safe_reply(req: _SpeechRequest, payload: dict[str, object]) -> None:
-        """Send a reply, treating a vanished client as a normal end-of-request.
+    async def _safe_reply(req: _SpeechRequest, payload: dict[str, object]) -> bool:
+        """Send a reply; return True if delivered, False if the client had gone.
 
         A client that disconnects mid-record (e.g. Ctrl-C during synthesis) must
         never crash the daemon or corrupt its send path. A WebSocketDisconnect is
         the expected closed-client signal and is silent; a RuntimeError from a
         send on an already-closed socket is logged at debug so a genuine send
-        fault is not swallowed invisibly.
+        fault is not swallowed invisibly. The bool lets the caller skip work when
+        the very first (ack) reply never reached the client.
         """
         try:
             await req.reply(payload)
         except WebSocketDisconnect:
-            pass
+            return False
         except RuntimeError as exc:
             logger.debug(
                 "record reply dropped for id=%r (client closed?): %s",
                 req.request_id,
                 exc,
             )
+            return False
+        return True
