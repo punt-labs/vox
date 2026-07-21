@@ -52,17 +52,32 @@ async def safe_send(websocket: WebSocket, payload: dict[str, object]) -> bool:
     """Send *payload* as JSON; return True if delivered, False if the peer had gone.
 
     A client that closes before or during a reply must end the request quietly,
-    not surface as a traceback through the router's broad ``except``.
-    ``WebSocketDisconnect`` is the expected closed-client signal (silent); a
-    ``RuntimeError`` from a send on an already-closed socket is debug-logged so a
-    genuine send fault is not swallowed invisibly. The bool return lets a caller
-    skip further work once the peer is gone.
+    not surface as a traceback through the router's broad ``except``. Both drop
+    paths are debug-logged with the frame's type/id so an operator grepping the
+    log can tell WHICH request lost its reply -- a normal disconnect is not an
+    error, so it stays at debug, but it carries correlation context.
+    ``WebSocketDisconnect`` is the expected closed-client signal; a
+    ``RuntimeError`` from a send on an already-closed socket also carries the
+    underlying cause. The bool return lets a caller skip work once the peer is
+    gone.
     """
     try:
         await websocket.send_json(payload)
     except WebSocketDisconnect:
+        logger.debug("dropped %s reply: client gone", _frame_context(payload))
         return False
     except RuntimeError as exc:
-        logger.debug("send dropped (client closed?): %s", exc)
+        logger.debug(
+            "dropped %s reply: client closed? %s", _frame_context(payload), exc
+        )
         return False
     return True
+
+
+def _frame_context(payload: dict[str, object]) -> str:
+    """Return a short 'type id=... ref=...' tag identifying a wire frame for logs."""
+    kind = payload.get("type") or payload.get("op") or "frame"
+    ids = " ".join(
+        f"{key}={payload[key]!r}" for key in ("id", "ref", "name") if payload.get(key)
+    )
+    return f"{kind} {ids}".rstrip()
