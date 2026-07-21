@@ -20,11 +20,13 @@ them:
 
 - **`vox record` writes the file on the daemon host (machine A), not on B.**
   voxd — not the client — writes the recording, so the `.mp3` lands on A's
-  disk. The output path is resolved on B and then used *literally on A*, so
-  recording against a remote daemon works cleanly only when that absolute path
-  also exists on A (for example, matching home directories). Pass an explicit
-  `-o /abs/path` that is valid on machine A. Smoothing this cross-host path
-  handling is planned.
+  disk. Both the output directory (always sent) and an explicit `-o` path are
+  resolved on B and then used *literally on A*, so recording against a remote
+  daemon works cleanly only when that absolute path also exists on A (for
+  example, matching home directories). Until the recording destination is
+  constrained daemon-side (in progress), keep voxd on a trusted network or
+  behind the SSH tunnel below — the token lets a client influence where the
+  daemon writes. Cross-host path handling is being hardened.
 - **`vox play <file>` plays on the machine you run it from, not through the
   daemon.** Run on B, it plays on B — and a headless host has no audio — so it
   does *not* play a recording back on A. To hear a saved file on A, play it on
