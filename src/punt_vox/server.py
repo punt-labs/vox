@@ -562,13 +562,12 @@ def record(
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
         result = client.record(seg_text, seg_spec, name=single_name)
-        # Byte-correct-delivery check (invariant 1) when the store is on this
-        # filesystem; a remote daemon's store path is not visible here, so trust
-        # the daemon's reported byte count. A mismatch degrades to a clear error.
-        if result.store_path.exists() and (
-            result.store_path.stat().st_size != result.byte_count
-        ):
-            raise VoxdProtocolError(f"recording size mismatch for {result.store_path}")
+        # No local size assertion: the store path may not be on this machine
+        # (a remote daemon), and a same-named local file of a different size --
+        # a remote daemon sharing this user's home -- is NOT this recording, so
+        # a mismatch must not fail a successful store write (the identity-vs-
+        # existence rule #353 applied to the CLI locator). The daemon-reported
+        # byte count is authoritative; the client reports the locator.
         return {
             "id": result.id,
             "name": result.name,

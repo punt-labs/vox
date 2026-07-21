@@ -700,20 +700,28 @@ class TestRecord:
         assert "path" in result[0]
         mock_client.record.assert_called_once()
 
-    def test_size_mismatch_returns_error(
+    def test_size_mismatch_treated_as_remote_not_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A stored file whose size != reported bytes degrades to an error."""
-        landed = tmp_path / "hello.mp3"
-        landed.write_bytes(b"x" * 10)  # on disk: 10 bytes
+        """A same-named local file of a different size is not this recording.
+
+        Against a remote daemon sharing this user's home, a same-named local
+        file must not fail a successful store write -- the daemon-reported byte
+        count is authoritative, and the tool reports the locator (identity-vs-
+        existence rule #353, MCP parity with the CLI locator).
+        """
+        collision = tmp_path / "hello.mp3"
+        collision.write_bytes(b"x" * 10)  # a different local file, 10 bytes
         mock_client = MagicMock()
         mock_client.record.return_value = RecordResult(
-            id="hello.mp3", name="hello.mp3", store_path=landed, byte_count=40
+            id="hello.mp3", name="hello.mp3", store_path=collision, byte_count=40
         )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
         result = json.loads(record(text="Hello world"))
-        assert "error" in result
+        assert isinstance(result, list)
+        assert result[0]["name"] == "hello.mp3"
+        assert result[0]["bytes"] == 40  # daemon count, not the local 10
 
     def test_no_input_returns_error(self) -> None:
         result = json.loads(record())

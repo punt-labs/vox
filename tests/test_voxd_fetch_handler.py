@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 import base64
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.record_store import RecordStore
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
@@ -83,3 +87,28 @@ class TestFetchHandler:
 
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
+
+    def test_read_error_is_a_clean_error_frame(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ref that passes containment but errors on read → error frame, no traceback.
+
+        Simulates the race where the file is deleted (or becomes unreadable)
+        between is_file() and read_bytes(): the client must get a clean error,
+        not a server-side exception.
+        """
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "x.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+        ws, sent = _capturing_ws()
+
+        def boom(_self: Path) -> bytes:
+            raise OSError("vanished mid-read")
+
+        monkeypatch.setattr(Path, "read_bytes", boom)
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
+        asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "cannot read recording" in str(sent[-1]["message"])

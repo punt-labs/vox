@@ -60,18 +60,32 @@ class FetchHandler(MessageHandler):
             await self._error(websocket, request_id, f"no recording named {ref!r}")
             return
 
-        size = path.stat().st_size
-        if size > FETCH_FRAME_LIMIT_BYTES:
+        # The filesystem reads (stat, read_bytes) can fail on a race -- the file
+        # deleted between is_file() and here -- or a permission/IO fault. Any
+        # such OSError must reach the client as a clean error frame, never a
+        # server-side traceback (matching the record write path).
+        try:
+            size = path.stat().st_size
+            if size > FETCH_FRAME_LIMIT_BYTES:
+                await self._error(
+                    websocket,
+                    request_id,
+                    f"recording too large to fetch in one frame ({size} bytes > "
+                    f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly",
+                )
+                return
+            raw = path.read_bytes()
+        except OSError as exc:
+            logger.warning(
+                "Fetch read failed for id=%r ref=%r: %s", request_id, ref, exc
+            )
             await self._error(
-                websocket,
-                request_id,
-                f"recording too large to fetch in one frame ({size} bytes > "
-                f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly",
+                websocket, request_id, f"cannot read recording {ref!r}: {exc}"
             )
             return
 
         logger.info("Fetch: id=%r ref=%r bytes=%d", request_id, ref, size)
-        data = base64.b64encode(path.read_bytes()).decode("ascii")
+        data = base64.b64encode(raw).decode("ascii")
         await websocket.send_json(
             {
                 "type": "bytes",
