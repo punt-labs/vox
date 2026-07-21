@@ -29,7 +29,6 @@ from punt_vox.logging_config import (
     reapply_client_log_level,
 )
 from punt_vox.music_phrases import MusicMarquee
-from punt_vox.recording import RecordingSink
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
@@ -564,17 +563,29 @@ def record(
     if output_path and len(segments) > 1:
         return _error("output_path only supported for single-segment calls")
 
-    # A single-segment call may pin an explicit path; otherwise the sink names
+    # A single-segment call may pin an explicit path; otherwise the daemon names
     # each file by content hash under the output directory.
     dir_path = Path(output_dir) if output_dir else _default_output_dir()
     single_path = Path(output_path) if output_path and len(segments) == 1 else None
-    sink = RecordingSink(dir_path, single_path)
     effective_provider = _session.provider
     client = _voxd_client()
 
     def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        mp3_bytes = client.record(seg_text, seg_spec)
-        return sink.entry(seg_text, seg_spec.voice, effective_provider, mp3_bytes)
+        result = client.record(
+            seg_text, seg_spec, output_dir=dir_path, output_path=single_path
+        )
+        # Same byte-correct-delivery check the CLI makes (invariant 1). A stat
+        # OSError or a mismatch is caught by SegmentBatch.render and degrades to
+        # a clear error rather than a raw traceback.
+        if result.path.stat().st_size != result.byte_count:
+            raise VoxdProtocolError(f"recording size mismatch for {result.path}")
+        return {
+            "path": str(result.path),
+            "text": seg_text,
+            "voice": seg_spec.voice,
+            "provider": effective_provider,
+            "bytes": result.byte_count,
+        }
 
     defaults = SynthesisSpec(
         voice=voice or _session.voice,

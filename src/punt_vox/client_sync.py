@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from pathlib import Path
 from typing import Any, Self
 
-from punt_vox.client import SynthesizeResult, VoxClient
+from punt_vox.client import RecordResult, SynthesizeResult, VoxClient
 from punt_vox.client_env import DaemonEnv
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -133,9 +134,24 @@ class VoxClientSync:
         """Play a bundled chime asset."""
         self._runner.run(self._call("chime", signal))
 
-    def record(self, text: str, spec: SynthesisSpec | None = None) -> bytes:
-        """Synthesize and return MP3 bytes (no playback)."""
-        return self._runner.run(self._call("record", text, spec))  # type: ignore[no-any-return]
+    def record(
+        self,
+        text: str,
+        spec: SynthesisSpec | None = None,
+        *,
+        output_dir: Path,
+        output_path: Path | None = None,
+    ) -> RecordResult:
+        """Synthesize and have the daemon write the MP3 to disk (no playback).
+
+        Returns a :class:`RecordResult` with the final path and byte count; the
+        daemon writes the file, so no audio crosses the wire.
+        """
+        return self._runner.run(  # type: ignore[no-any-return]
+            self._call(
+                "record", text, spec, output_dir=output_dir, output_path=output_path
+            )
+        )
 
     def voices(self, provider: str | None = None) -> list[str]:
         """List available voices."""
