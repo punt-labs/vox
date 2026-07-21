@@ -521,6 +521,28 @@ class TestVoxClientRecord:
             await client.record("hi", output_dir=Path("/out"))
 
     @pytest.mark.asyncio
+    async def test_record_non_json_frame_raises_voxerror(self) -> None:
+        """A truncated/non-JSON drain frame is a VoxError, not JSONDecodeError."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value="not json{{{")
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="invalid JSON"):
+            await client.record("hi", output_dir=Path("/out"))
+
+    @pytest.mark.asyncio
+    async def test_send_and_recv_non_json_frame_raises_voxerror(self) -> None:
+        """A non-JSON single-response frame is a VoxError, not JSONDecodeError."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(return_value="<<garbage>>")
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="invalid JSON"):
+            await client.health()
+
+    @pytest.mark.asyncio
     async def test_record_transport_close_is_wrapped(self) -> None:
         """A dropped connection surfaces as a VoxError, never a raw traceback."""
         mock_ws = _make_mock_ws()

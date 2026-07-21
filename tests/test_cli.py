@@ -977,6 +977,7 @@ class TestRecordCommand:
 
         assert result.exit_code == 1
         assert "cannot read recording" in result.output
+        assert "gone.mp3" in result.output  # names the real daemon-returned path
         assert "Traceback" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")

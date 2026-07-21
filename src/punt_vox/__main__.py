@@ -441,14 +441,16 @@ def record(  # pyright: ignore[reportUnusedFunction]
             result = client.record(
                 seg_text, spec, output_dir=out_dir, output_path=out_path
             )
-            # Verify inside the try: an inaccessible path must surface as a
-            # one-line error, never an uncaught OSError traceback.
-            actual_size = result.path.stat().st_size
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
+
+        try:
+            # Verify the daemon-written file: an inaccessible path must surface
+            # as a one-line error naming the real file, not an OSError traceback.
+            actual_size = result.path.stat().st_size
         except OSError as exc:
-            detail = f"cannot read recording {out_path or out_dir}: {exc}"
+            detail = f"cannot read recording {result.path}: {exc}"
             _formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1) from exc
 

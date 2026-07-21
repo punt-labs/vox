@@ -291,14 +291,18 @@ class _VoxdTransport:
 
     @staticmethod
     def _decode(raw: object) -> dict[str, Any]:
-        """Parse a wire frame, raising ``VoxdProtocolError`` on an error frame.
+        """Parse a wire frame, raising ``VoxdProtocolError`` on bad JSON or error.
 
-        The one place both drain and single-response paths turn ``voxd``'s
-        ``{"type": "error", "message": ...}`` into a raised protocol error, so
-        the error contract lives in a single spot rather than duplicated at
-        every receive site.
+        The one place both drain and single-response paths turn a malformed or
+        truncated frame, and ``voxd``'s ``{"type": "error", "message": ...}``,
+        into a raised protocol error -- so a non-JSON frame surfaces as a
+        one-line ``VoxError`` instead of a raw ``JSONDecodeError`` traceback, and
+        the error contract lives in a single spot rather than at every site.
         """
-        resp: dict[str, Any] = json.loads(str(raw))
+        try:
+            resp: dict[str, Any] = json.loads(str(raw))
+        except json.JSONDecodeError as exc:
+            raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
         if resp.get("type") == "error":
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
         return resp
@@ -333,10 +337,8 @@ class _VoxdTransport:
             if remaining <= 0:
                 raise VoxdProtocolError(timeout_msg)
             raw = await self._recv_frame(ws, remaining, timeout_msg, msg)
-            resp: dict[str, Any] = json.loads(str(raw))
+            resp = self._decode(raw)  # wraps bad JSON + error frames as VoxError
             responses.append(resp)
-            if resp.get("type") == "error":
-                raise VoxdProtocolError(str(resp.get("message", "unknown error")))
             resp_type = resp.get("type")
             if resp_type == terminal_type:
                 return responses
