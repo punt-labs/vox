@@ -70,44 +70,44 @@ peer.
 
 ## The crux — local-vs-remote coherence
 
-Locally, `vox record -o ./out.mp3` must still land the file where the user
-expects on their one machine. Remotely, the file lives in the daemon store and
-is referenced by id. These are reconciled by moving the *only* security-bearing
-decision (where the daemon writes) entirely into the daemon, and pushing the
-*ergonomic* decision (where the user's copy ends up) entirely into the client,
-where it carries no trust weight.
+Locally and remotely, `vox record` produces a recording *in the daemon store*
+and reports how to reach it. Materializing a user-side copy is a **separate,
+explicit step** (`vox fetch`), never a side effect of recording. This is the
+**pure model** (operator-ratified 2026-07-21): the daemon owns the file; the
+client is a controller that captures and references, never a path the daemon
+writes for it. The security-bearing decision (where the daemon writes) and the
+ergonomic decision (where a copy lands) are cleanly separated across two
+commands, so the record path has *no* client-path branch at all.
 
-### Chosen: (a) uniform daemon-owned store; `-o` is a client-side delivery
+### Chosen: (a-pure) uniform daemon-owned store; record captures, fetch materializes
 
-The daemon **always** writes to the store under a content-addressed name (or a
-validated bare name). It returns a locator — `{id, name, store_path, bytes,
-cached}` — **not** a client path. The client then decides how to deliver the
-user's copy:
+`vox record` **always** writes to the store under a content-addressed name (or a
+validated bare name) and prints a locator — never a client path, and it takes
+**no `-o`**:
 
-- **Shared filesystem (loopback and same machine, or NFS):** `store_path`
-  exists on the client's own filesystem. With `-o`, the client
-  `shutil.copy(store_path, out)` — **no bytes cross the wire**. Without `-o`, it
-  copies into the default output dir (`~/Music/vox/`) exactly as today. The
-  reported path is the bare local path.
-- **Remote (store_path not visible on the client):** with `-o`, the client
-  issues an explicit `fetch` op, receives the bytes, and writes `out` on B.
-  Without `-o`, it prints a **locator** (`recorded a1b2c3.mp3 on <host>` with the
-  `vox play` / `vox fetch` commands). No client absolute path is echoed.
+- **Local (shared filesystem):** the reported `store_path` exists on the user's
+  own filesystem, so the locator names the store id and the on-disk store path.
+  The user can `afplay`/`vox play` it directly; `vox fetch` copies it elsewhere
+  if wanted.
+- **Remote (store_path not visible):** the locator names the store id and the
+  host (`recorded a1b2c3.mp3 on <host> — play: vox play a1b2c3.mp3; fetch: vox
+  fetch a1b2c3.mp3 -o <path>`). No client absolute path is echoed.
 
-The client tells the two apart by a **behavioural test, not a network guess**:
-*does `store_path` exist on my filesystem?* This is robust to the SSH-tunnel
-case (loopback address, remote filesystem → path absent → fetch). The daemon
-returns only facts; the client formats. **All security lives in the daemon; the
-client's local/remote branch carries zero trust weight.**
+To get the bytes onto the client machine, **`vox fetch <id> -o <path>`** is the
+one materialization path — a filesystem copy when the store path is locally
+visible, a `fetch` wire op otherwise (that copy-vs-wire choice is a
+`fetch`-internal, behavioural, zero-trust-weight detail; `vox record` never
+makes it). The daemon returns only facts; the client formats.
 
-This keeps `#351`'s win intact: the **hot** record path still ships **no audio
-bytes** (it returns a locator). Bytes reappear only on the **cold**, opt-in,
-remote `fetch` — a path that did not work before this change anyway.
+This keeps `#351`'s win intact: the **hot** record path ships **no audio bytes**
+(it returns a locator). Bytes reappear only on the **cold**, opt-in `fetch` — a
+path that did not work before this change anyway.
 
 ### Rejected options
 
 | Option | Rejected because |
 |--------|------------------|
+| **`record -o` as client-side delivery** (the original a) | The operator ruled the pure model: overloading `record` with a delivery path re-introduces a client path on the hot command and a local/remote branch the user must reason about. Separating capture (`record`) from materialization (`fetch`) keeps `record` a single, path-free verb and puts the one copy-vs-wire decision behind `fetch`. |
 | **(b) local fast-path** — loopback keeps direct client-path writes; remote is sandboxed | **Unsound by the guide's own topology.** The SSH-tunnel setup makes a remote B a loopback peer, so "local = trusted" hands the arbitrary-write primitive back to the tunnelled remote. It also keeps the dangerous write path alive and makes peer classification a security-critical branch — complexity for a capability we are removing. |
 | **(c) always stream bytes back; client writes locally** — removes the daemon write primitive entirely | Reverts `#351`: re-adds base64/bytes-over-wire on **every** record, re-introducing the 1 MiB frame ceiling, the 33% inflation, and the unbounded client receive buffer that `#351` eliminated by construction. It also abandons the daemon-audio-host model P2/P3 depend on — with no daemon store there is nothing coherent for `vox play <id>` to reference. |
 | **(a′) daemon returns and echoes the client-requested absolute path** | Echoing a client path is the exploit surface itself; the whole point is the client never names a daemon path. |
@@ -189,9 +189,9 @@ linear and below the streaming-transport modeling bar.
   `(id: str, name: str, store_path: Path, byte_count: int, cached: bool)`.
 - **`VoxClient.play(ref: str)`** → `play` op. **`VoxClient.fetch(ref: str) ->
   bytes`** → `fetch` op. Sync facade (`client_sync.py`) gains parity.
-- **CLI `vox record`**: `-o out` becomes client-side delivery — copy from
-  `store_path` if it exists locally, else `fetch` and write. No `-o` →
-  copy-into-default locally / print locator remotely.
+- **CLI `vox record`**: takes **no `-o`** and no output directory. It captures
+  to the store and prints a locator — the store id/name plus, locally, the store
+  path (usable directly); remotely, the host and the `play`/`fetch` commands.
 - **CLI `vox play <ARG>`**: dispatch by a behavioural test — if `ARG` is an
   **existing file on the client filesystem**, keep today's client-side
   `play_audio` fast path (loopback = correct machine, no trust boundary
@@ -199,10 +199,11 @@ linear and below the streaming-transport modeling bar.
   op (plays on A). Precedence: an existing local file wins. Remote playback of
   an *arbitrary local file* (upload-then-play) is a documented follow-up (`push`
   op) — the coherent remote path today is record→`play <id>`.
-- **New CLI `vox fetch <ref> -o <path>`**: explicit retrieval of a store
-  recording to a local path.
+- **New CLI `vox fetch <ref> -o <path>`**: the one materialization path — copy
+  from the store path when locally visible, else `fetch` the bytes over the
+  wire, then write `<path>` on the client.
 - **MCP `record` tool** adapts to the new `RecordResult`; the result JSON
-  reports `name`/`id` and, when local, the delivered path.
+  reports `name`/`id` and the store path.
 
 ## Recommended implementation write set
 
@@ -269,24 +270,26 @@ Coherence and ergonomics:
 - **`test_play_routes_through_daemon`** — `play` op resolves a store ref and
   enqueues on the daemon `PlaybackQueue` (assert enqueue called with the in-root
   path); playback is **not** client-side.
-- **`test_local_record_keeps_path_ergonomic`** — shared-fs `-o out` copies
-  store→out with no wire bytes; `out.stat().st_size == reported bytes`.
+- **`test_record_returns_store_locator`** — `record` returns a `RecordResult`
+  with an id/name and the daemon store path; no client-path field exists on the
+  result.
 - **`test_remote_record_returns_locator`** — store path absent on the client →
-  the client reports a locator, not a bogus local path.
+  the CLI prints a locator (id + host + `play`/`fetch` hints), not a bogus local
+  path.
 - **`test_remote_fetch_delivers_bytes`** — `fetch` returns bytes equal to the
-  store file; `-o` writes them byte-correct on the client.
+  store file; `vox fetch -o` writes them byte-correct on the client.
 
 ## Live-verify plan (running machine — ask the operator after each audible step)
 
 1. `make install`; `vox daemon restart` (the daemon serves code from startup).
 2. **Local record→play loop.** `vox record "hello from vox"` → prints a store
-   locator / local path. `vox play <name>` → audio plays on this machine.
-3. **Local `-o` ergonomic.** `vox record -o ./out.mp3 "test"` → `./out.mp3`
-   exists, size matches; no bytes over the wire (loopback).
-4. **Hostile name rejected end-to-end.** `vox record --name '../../etc/x' "x"`
-   and `vox play '../../etc/passwd'` → each a one-line error, exit 1, nothing
-   touched outside the root. `ls ~/.punt-labs/vox/recordings/` shows only
-   content-addressed files.
+   locator (id + store path). `vox play <id>` → audio plays on this machine.
+3. **Local materialization.** `vox fetch <id> -o ./out.mp3` → `./out.mp3`
+   exists, size matches; a filesystem copy (loopback, no bytes over the wire).
+4. **Hostile name rejected end-to-end.** `vox record --name '../../etc/x' "x"`,
+   `vox play '../../etc/passwd'`, and `vox fetch '/etc/passwd' -o ./x` → each a
+   one-line error, exit 1, nothing touched outside the root.
+   `ls ~/.punt-labs/vox/recordings/` shows only in-root files.
 5. **Remote (SSH tunnel per the guide).** From B: `vox record "remote hi"` →
    prints a locator naming the host; `vox play <id>` → audio plays on **A**;
    `vox fetch <id> -o ./remote.mp3` → the file appears on B, byte-correct.
