@@ -10,6 +10,7 @@ file at the destination.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import tempfile
@@ -62,6 +63,11 @@ class RecordSink:
         filesystem, so the destination is either the complete file or untouched,
         never a partial write. ``cached`` sources (cache-hit files) are preserved;
         ephemeral fresh-synthesis sources are removed after a successful land.
+
+        Once the rename commits, the write is done: the byte count is taken from
+        the temp *before* the rename, and the ephemeral-source cleanup is
+        best-effort. A failure after the commit point must not turn a completed
+        write into a reported failure.
         """
         dest = self._destination(text)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -71,14 +77,17 @@ class RecordSink:
         tmp = Path(tmp_name)
         try:
             shutil.copyfile(source, tmp)
-            tmp.replace(dest)
+            byte_count = tmp.stat().st_size
+            tmp.replace(dest)  # commit point -- the write is complete after this
         except OSError:
             tmp.unlink(missing_ok=True)
             raise
 
+        # Post-commit: cleanup failures never fail the completed write.
         if not cached:
-            source.unlink(missing_ok=True)
-        return RecordWrite(path=dest, byte_count=dest.stat().st_size)
+            with contextlib.suppress(OSError):
+                source.unlink(missing_ok=True)
+        return RecordWrite(path=dest, byte_count=byte_count)
 
     def _destination(self, text: str) -> Path:
         """Resolve the final output path from the explicit path or the dir name."""

@@ -120,6 +120,42 @@ class TestRecordHandler:
         asyncio.run(handler(msg, ws))
         assert ws.send_json.await_count == 2
 
+    def test_client_close_mid_transfer_daemon_serves_next_connection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After a client vanishes mid-record, a NEW connection still works."""
+        from starlette.testclient import TestClient
+
+        from punt_vox.voxd import build_app
+        from punt_vox.voxd.synthesis import SynthesisPipeline
+
+        async def fake_synth(
+            _self: SynthesisPipeline, _text: str, _spec: object
+        ) -> SynthesisOutcome:
+            src = tmp_path / "synth.mp3"
+            src.write_bytes(b"\xff\xfb\x90\x00" * 8)
+            return SynthesisOutcome(path=src, cached=False)
+
+        monkeypatch.setattr(SynthesisPipeline, "synthesize_to_file", fake_synth)
+
+        app = build_app()
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws1:
+                ws1.send_json(
+                    {
+                        "type": "record",
+                        "id": "r1",
+                        "text": "hi",
+                        "output_dir": str(tmp_path / "out"),
+                    }
+                )
+                assert ws1.receive_json()["type"] == "recording"
+                # Exit the context = close mid-transfer, before the 'audio' frame.
+
+            with client.websocket_connect("/ws") as ws2:
+                ws2.send_json({"type": "health"})
+                assert ws2.receive_json()["type"] == "health"
+
     def test_no_partial_file_on_synthesis_error(self, tmp_path: Path) -> None:
         synth = MagicMock()
         synth.synthesize_to_file = AsyncMock(side_effect=RuntimeError("boom"))

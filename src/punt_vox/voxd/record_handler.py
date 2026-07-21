@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
@@ -78,7 +77,9 @@ class RecordHandler(MessageHandler):
             write = await asyncio.to_thread(
                 sink.place, source=outcome.path, text=req.text, cached=outcome.cached
             )
-        except OSError as exc:
+        except Exception as exc:
+            # Any place() failure (not just OSError) must reach the already-ack'd
+            # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
             await self._safe_reply(req, {"type": "error", "message": str(exc)})
             return
@@ -107,9 +108,18 @@ class RecordHandler(MessageHandler):
         """Send a reply, treating a vanished client as a normal end-of-request.
 
         A client that disconnects mid-record (e.g. Ctrl-C during synthesis) must
-        never crash the daemon or corrupt its send path -- suppress the
-        disconnect and the closed-socket RuntimeError, exactly as the synthesize
-        terminal reply does.
+        never crash the daemon or corrupt its send path. A WebSocketDisconnect is
+        the expected closed-client signal and is silent; a RuntimeError from a
+        send on an already-closed socket is logged at debug so a genuine send
+        fault is not swallowed invisibly.
         """
-        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+        try:
             await req.reply(payload)
+        except WebSocketDisconnect:
+            pass
+        except RuntimeError as exc:
+            logger.debug(
+                "record reply dropped for id=%r (client closed?): %s",
+                req.request_id,
+                exc,
+            )

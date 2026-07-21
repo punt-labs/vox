@@ -67,3 +67,27 @@ class TestRecordSink:
         assert not dest.exists()
         # The sibling temp is cleaned up too -- no orphan *.mp3.tmp left behind.
         assert not list(tmp_path.glob("*.mp3.tmp"))
+
+    def test_post_commit_unlink_failure_does_not_fail_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cleanup failure after the commit point must not fail a done write."""
+        src = tmp_path / "ephemeral.mp3"
+        src.write_bytes(b"abcd")
+        dest = tmp_path / "out.mp3"
+        sink = RecordSink(tmp_path, dest)
+
+        original_unlink = Path.unlink
+
+        def failing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+            if self == src:
+                raise OSError("cannot unlink source")
+            original_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+        write = sink.place(source=src, text="hi", cached=False)
+
+        assert write.path == dest
+        assert dest.read_bytes() == b"abcd"
+        assert write.byte_count == 4  # taken from the temp before the commit

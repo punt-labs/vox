@@ -503,6 +503,85 @@ class TestVoxClientRecord:
         with pytest.raises(VoxdConnectionError, match="connection to voxd lost"):
             await client.record("Hello", output_dir=Path("/out"))
 
+    @pytest.mark.asyncio
+    async def test_long_synthesis_is_not_abandoned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A long synthesis gets a deadline well past the old fixed 30s."""
+        captured: dict[str, float] = {}
+
+        async def fake_drain(
+            _self: object,
+            _msg: dict[str, object],
+            *,
+            timeout: float,
+            terminal_type: str,
+        ) -> list[dict[str, object]]:
+            captured["timeout"] = timeout
+            return [
+                {"type": "recording", "id": "r1"},
+                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1},
+            ]
+
+        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        client = VoxClient(port=8421, token="tok")
+
+        result = await client.record("a" * 6000, output_dir=Path("/out"))
+
+        # A fresh 6000-char synthesis was measured at ~124s; the deadline must
+        # comfortably exceed that (and the old fixed 30s) so it is not abandoned.
+        assert captured["timeout"] > 124
+        assert result.path == Path("/o/x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_record_timeout_is_capped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The length-scaled deadline is bounded so a hung daemon is detected."""
+        captured: dict[str, float] = {}
+
+        async def fake_drain(
+            _self: object,
+            _msg: dict[str, object],
+            *,
+            timeout: float,
+            terminal_type: str,
+        ) -> list[dict[str, object]]:
+            captured["timeout"] = timeout
+            return [{"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1}]
+
+        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        client = VoxClient(port=8421, token="tok")
+
+        # Uncapped this text would scale to ~50000s; the cap holds it at 600s.
+        await client.record("a" * 1_000_000, output_dir=Path("/out"))
+        assert captured["timeout"] == 600.0
+
+    @pytest.mark.asyncio
+    async def test_relative_output_resolved_to_absolute(self) -> None:
+        """Relative dests resolve against the caller's cwd before the wire.
+
+        voxd's cwd is not the caller's shell, so a bare relative path would land
+        in the daemon's directory; the client sends absolute paths.
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "path": "/o/x.mp3", "bytes": 1}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.record(
+            "hi", output_dir=Path("outdir"), output_path=Path("rel.mp3")
+        )
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["output_dir"] == str(Path("outdir").resolve())
+        assert sent["output_path"] == str(Path("rel.mp3").resolve())
+        assert sent["output_dir"].startswith("/")
+        assert sent["output_path"].startswith("/")
+
 
 class TestVoxClientVoices:
     """Test voices method."""

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecordResult:
     """Result of a ``record`` call: where the daemon wrote the audio.
 
@@ -60,7 +60,7 @@ class RecordResult:
     cached: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SynthesizeResult:
     """Result of a ``synthesize`` call on voxd.
 
@@ -92,10 +92,11 @@ _TIMEOUT_SHORT = 5.0
 # record synthesizes to a file that may take minutes for long text (a fresh
 # 6000-char ElevenLabs synthesis was measured at ~2m). Scale the wait with the
 # text length rather than a fixed cap so a legitimate long synthesis is never
-# abandoned, while a bound proportional to the request keeps a client from
-# hanging unboundedly.
+# abandoned, while an absolute ceiling still detects a hung daemon within a
+# bounded window regardless of input length.
 _RECORD_TIMEOUT_BASE = 60.0
 _RECORD_TIMEOUT_PER_CHAR = 0.05
+_RECORD_TIMEOUT_MAX = 600.0
 
 # ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
@@ -494,21 +495,27 @@ class VoxClient:
         *output_path* (explicit) or, when that is None, to a content-addressed
         name under *output_dir*, and returns a :class:`RecordResult` with the
         final path and byte count. *spec* bundles the voice/provider/rate
-        parameters. The response deadline scales with the text length so a
-        long synthesis is not abandoned by a premature timeout.
+        parameters. The response deadline scales with the text length (bounded)
+        so a long synthesis is not abandoned by a premature timeout.
+
+        Destinations are resolved to absolute paths *here*, against the caller's
+        cwd, before they go on the wire: ``voxd`` is a persistent daemon whose
+        cwd is not the caller's shell, so a bare relative path would otherwise
+        land in the daemon's directory.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "record",
             "id": request_id,
             "text": text,
-            "output_dir": str(output_dir),
+            "output_dir": str(Path(output_dir).resolve()),
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
         if output_path is not None:
-            msg["output_path"] = str(output_path)
+            msg["output_path"] = str(Path(output_path).resolve())
 
-        timeout = _RECORD_TIMEOUT_BASE + _RECORD_TIMEOUT_PER_CHAR * len(text)
+        scaled = _RECORD_TIMEOUT_BASE + _RECORD_TIMEOUT_PER_CHAR * len(text)
+        timeout = min(scaled, _RECORD_TIMEOUT_MAX)
         responses = await self._transport.send_and_drain(
             msg, timeout=timeout, terminal_type="audio"
         )

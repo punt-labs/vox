@@ -961,6 +961,25 @@ class TestRecordCommand:
         assert "Traceback" not in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_record_inaccessible_path_is_one_line_error(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A stat failure on the returned path is a one-line error, no traceback."""
+        out = tmp_path / "test.mp3"
+        mock_instance = mock_client_cls.return_value
+        # A path that does not exist -> the CLI's stat() verification raises.
+        mock_instance.record.return_value = RecordResult(
+            path=tmp_path / "gone.mp3", byte_count=5
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "cannot read recording" in result.output
+        assert "Traceback" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_record_preserves_vibe_tags(
         self,
         mock_client_cls: MagicMock,

@@ -574,6 +574,11 @@ def record(
         result = client.record(
             seg_text, seg_spec, output_dir=dir_path, output_path=single_path
         )
+        # Same byte-correct-delivery check the CLI makes (invariant 1). A stat
+        # OSError or a mismatch is caught by SegmentBatch.render and degrades to
+        # a clear error rather than a raw traceback.
+        if result.path.stat().st_size != result.byte_count:
+            raise VoxdProtocolError(f"recording size mismatch for {result.path}")
         return {
             "path": str(result.path),
             "text": seg_text,
