@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
-from punt_vox.voxd._parse import parse_optional_str, safe_send
+from punt_vox.voxd._parse import safe_send
 from punt_vox.voxd.speech_handlers import _SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
@@ -50,11 +50,14 @@ class RecordHandler(MessageHandler):
         """Synthesize speech and store it under a daemon-owned name."""
         req = _SpeechRequest.from_msg(msg, websocket)
         # A client supplies at most a bare name; the daemon content-addresses
-        # when it is absent. Accept the request only after empty text and the
-        # name are validated, so a hostile name (absolute, traversing, separated)
-        # or empty text surfaces as a clean error frame *before* the ack --
-        # never leaving the client waiting for a reply that never comes.
-        name = parse_optional_str(msg, "name")
+        # ONLY when the name is absent. Read it raw (not parse_optional_str,
+        # which would collapse an explicit "" to None and silently
+        # content-address it) so an explicit empty name reaches _accept and is
+        # rejected. Accept only after empty text and the name are validated, so
+        # a hostile name (absolute, traversing, separated, empty) or empty text
+        # surfaces as a clean error frame *before* the ack.
+        raw_name = msg.get("name")
+        name = None if raw_name is None else str(raw_name)
         if not await self._accept(req, name):
             return
 

@@ -66,12 +66,15 @@ class FetchHandler(MessageHandler):
         # server-side traceback (matching the record write path).
         try:
             # A cheap pre-read stat rejects the common oversize case without
-            # reading a huge file into memory. It is NOT authoritative: a
-            # concurrent record place() can replace/grow the file between stat
-            # and read, so the reply's size and the limit are re-checked below
-            # against the bytes actually read.
-            if path.stat().st_size > FETCH_FRAME_LIMIT_BYTES:
-                await self._reject_oversize(websocket, request_id, path.stat().st_size)
+            # reading a huge file into memory. Take the size ONCE (a second stat
+            # could race and raise a generic read error instead of the oversize
+            # error). It is NOT authoritative anyway: a concurrent record
+            # place() can replace/grow the file between stat and read, so the
+            # reply's size and the limit are re-checked below against the bytes
+            # actually read.
+            prelim_size = path.stat().st_size
+            if prelim_size > FETCH_FRAME_LIMIT_BYTES:
+                await self._reject_oversize(websocket, request_id, prelim_size)
                 return
             raw = path.read_bytes()
         except OSError as exc:

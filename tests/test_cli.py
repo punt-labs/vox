@@ -1266,10 +1266,13 @@ class TestFetchCommand:
 
         real_stat = Path.stat
 
-        def selective(self: Path) -> object:
+        # Preserve Path.stat's real signature (follow_symlinks) and delegate for
+        # every path but the target, so pytest's own stat(follow_symlinks=...)
+        # calls during traceback rendering are not poisoned (no INTERNALERROR).
+        def selective(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
             if self == out:
                 raise OSError("stat boom")
-            return real_stat(self)
+            return real_stat(self, follow_symlinks=follow_symlinks)
 
         monkeypatch.setattr(Path, "stat", selective)
 

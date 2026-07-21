@@ -196,6 +196,24 @@ class TestRecordHandler:
         assert sent[-1]["type"] == "error"
         assert "empty text" in str(sent[-1]["message"])
 
+    def test_empty_wire_name_rejected_before_ack(self, tmp_path: Path) -> None:
+        """An explicit wire name "" is rejected, not silently content-addressed."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": "",
+        }
+        asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "empty" in str(sent[-1]["message"])
+        assert not any(p["type"] in ("recording", "audio") for p in sent)
+
     def test_absolute_name_rejected_before_ack(self, tmp_path: Path) -> None:
         """An absolute name over the wire is refused before the ack (P1)."""
         src = tmp_path / "src.mp3"
