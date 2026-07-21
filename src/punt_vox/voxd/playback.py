@@ -382,7 +382,11 @@ class PlaybackQueue:
                 path.name,
                 env_snapshot,
             )
-            proc.kill()
+            # The player can exit between the timeout firing and the kill, so a
+            # ProcessLookupError here is benign -- suppress it to keep
+            # play_audio's never-raise contract.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
             with contextlib.suppress(Exception):
                 await proc.wait()
             self._record_result(
@@ -462,16 +466,27 @@ class PlaybackQueue:
         while True:
             item = await self._queue.get()
             logger.debug("Playback start: %s", item.path.name)
-            async with self._mutex:
-                await self.play_audio(item.path)
-            logger.debug("Playback done: %s", item.path.name)
-            # Resolve the item's outcome from the result play_audio just recorded,
-            # here -- synchronously, before the next item is dequeued -- so an
-            # awaiting play handler sees its own item's result, never a later
-            # item's (the queue is single-consumer and serialized).
-            self._resolve_outcome(item)
-            item.notify.set()
-            self._queue.task_done()
+            # One bad item must never leave the outcome future or notify unset:
+            # that would hang the awaiting play client for its full deadline and,
+            # because this consumer is an unsupervised task, kill it -- wedging
+            # every later play AND synthesize while the daemon still looks up.
+            # play_audio is written never to raise; the try/finally is the
+            # backstop for the case it ever does.
+            try:
+                async with self._mutex:
+                    await self.play_audio(item.path)
+                logger.debug("Playback done: %s", item.path.name)
+                # Resolve the outcome from the result play_audio just recorded,
+                # here -- synchronously, before the next item is dequeued -- so
+                # an awaiting play handler sees its own item's result, never a
+                # later item's (the queue is single-consumer and serialized).
+                self._resolve_outcome(item)
+            except Exception:
+                logger.exception("Playback consumer error for %s", item.path.name)
+                self._fail_outcome(item, "playback failed unexpectedly")
+            finally:
+                item.notify.set()
+                self._queue.task_done()
 
     def _resolve_outcome(self, item: PlaybackItem) -> None:
         """Complete *item*'s outcome future, if any, with the recorded result.
@@ -485,14 +500,22 @@ class PlaybackQueue:
             return
         result = self._last_result
         if result is None:
-            result = PlaybackResult(
-                path=item.path,
-                rc=-1,
-                elapsed_s=0.0,
-                stderr="no playback result recorded",
-                ts=time.time(),
-            )
+            result = self._failure_result(item.path, "no playback result recorded")
         future.set_result(result)
+
+    def _fail_outcome(self, item: PlaybackItem, reason: str) -> None:
+        """Resolve *item*'s outcome with a failure result after a consumer crash."""
+        future = item.outcome
+        if future is None or future.done():
+            return
+        future.set_result(self._failure_result(item.path, reason))
+
+    @staticmethod
+    def _failure_result(path: Path, reason: str) -> PlaybackResult:
+        """Build a failing :class:`PlaybackResult` (rc=-1) carrying *reason*."""
+        return PlaybackResult(
+            path=path, rc=-1, elapsed_s=0.0, stderr=reason, ts=time.time()
+        )
 
     # -- Private helpers -----------------------------------------------------
 

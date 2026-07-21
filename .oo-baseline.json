@@ -1352,12 +1352,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/playback.py": {
-    "method_ratio": 0.68,
+    "method_ratio": 0.704,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
+    "avg_params": 1.07,
     "max_complexity": 5.0,
-    "avg_complexity": 2.08,
-    "module_size": 432.0,
+    "avg_complexity": 2.11,
+    "module_size": 453.0,
     "classes_per_module": 3.0,
     "class_to_func_ratio": 0.273,
     "init_violations": 0.0,
