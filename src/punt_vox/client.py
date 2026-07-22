@@ -527,14 +527,13 @@ class VoxClient:
             msg, timeout=timeout, terminal_type="audio"
         )
         terminal = responses[-1] if responses else {}
-        if terminal.get("type") != "audio" or "path" not in terminal:
+        if terminal.get("type") != "audio":
             raise VoxdProtocolError(
-                f"Expected 'audio' response with a path, got '{terminal.get('type')}'"
+                f"Expected 'audio' response, got '{terminal.get('type')}'"
             )
-        if "name" not in terminal:
-            raise VoxdProtocolError("'audio' response missing 'name'")
-        if "bytes" not in terminal:
-            raise VoxdProtocolError("'audio' response missing 'bytes'")
+        for field in ("name", "path", "bytes"):
+            if field not in terminal:
+                raise VoxdProtocolError(f"'audio' response missing {field!r}")
         try:
             byte_count = int(terminal["bytes"])
         except (TypeError, ValueError) as exc:

@@ -10,9 +10,9 @@ request -- local or remote -- can escape the root.
 
 The write itself is atomic: a fresh source is moved with an atomic rename (copy
 fallback only on cross-filesystem ``EXDEV``); a cached source is copied through
-the descriptor ``mkstemp`` returned (0600, ``O_EXCL``) then ``os.replace``\\ d
-onto the destination, so a crash mid-write leaves no partial file and a
-world-writable race cannot swap a symlink under the write.
+the descriptor ``mkstemp`` returned (0600, ``O_EXCL``) then renamed onto the
+destination with ``os.replace``, so a crash mid-write leaves no partial file
+and a world-writable race cannot swap a symlink under the write.
 """
 
 from __future__ import annotations

@@ -84,9 +84,15 @@ def play_audio(path: Path) -> str | None:
                 "Playback timed out after %ds for %s", PLAYBACK_TIMEOUT, path
             )
             return f"playback timed out after {PLAYBACK_TIMEOUT}s"
-        return _classify_local_playback(
+        detail = _classify_local_playback(
             proc.returncode, time.monotonic() - start, proc.stderr
         )
+        if detail is not None:
+            # Log the failure so the detached `python -m punt_vox.playback` path
+            # (enqueue) stays diagnosable in vox.log even when the caller ignores
+            # the returned detail.
+            logger.warning("Playback failed for %s: %s", path.name, detail)
+        return detail
 
 
 def _classify_local_playback(

@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -1060,10 +1062,11 @@ def fetch(
     """
     try:
         data = VoxClientSync().fetch(ref)
-        output.write_bytes(data)
-        # Stat inside the guard: a post-write stat failure must be the same
-        # one-line error, not a traceback.
-        size = output.stat().st_size
+        # Atomic write (temp in the same dir + os.replace): a mid-write failure
+        # (disk full, interrupted I/O) leaves any existing file untouched and
+        # never materializes a partial/truncated file. The post-write stat lives
+        # inside the guard so a stat failure is the same one-line error.
+        size = _atomic_write_bytes(output, data)
     except (VoxdConnectionError, VoxdProtocolError) as exc:
         _formatter.error(str(exc), f"Error: {exc}")
         raise typer.Exit(code=1) from exc
@@ -1072,6 +1075,27 @@ def fetch(
         _formatter.error(detail, f"Error: {detail}")
         raise typer.Exit(code=1) from exc
     _formatter.emit({"path": str(output), "bytes": size}, str(output))
+
+
+def _atomic_write_bytes(output: Path, data: bytes) -> int:
+    """Write *data* to *output* atomically; return the byte count written.
+
+    Writes to a temp file in the destination's directory, then renames it into
+    place with ``os.replace`` -- so the destination is the complete file or
+    untouched, never a partial write. Mirrors the daemon store's mkstemp +
+    replace discipline. On any error the temp is removed and the OSError
+    re-raised.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=output.parent, suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        tmp.replace(output)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return output.stat().st_size
 
 
 # ---------------------------------------------------------------------------

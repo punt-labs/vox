@@ -540,11 +540,15 @@ class TestVoxClientRecord:
     @pytest.mark.asyncio
     async def test_record_audio_without_path_raises(self) -> None:
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "audio", "id": "r1"}))
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "audio", "id": "r1", "name": "x.mp3", "bytes": 1}
+            )
+        )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="with a path"):
+        with pytest.raises(VoxdProtocolError, match="missing 'path'"):
             await client.record("Hello")
 
     @pytest.mark.asyncio
