@@ -45,6 +45,12 @@ class TestSend:
         delivered = asyncio.run(WireReply(ws, "r1").send({"type": "done"}))
         assert delivered is False
 
+    def test_stamp_overrides_payload_id(self) -> None:
+        """A payload carrying its own 'id' cannot override the stamped request id."""
+        ws, sent = _capturing_ws()
+        asyncio.run(WireReply(ws, "real").send({"type": "x", "id": "forged"}))
+        assert sent[-1]["id"] == "real"
+
 
 class TestErrorLogging:
     """error audit-logs the rejection at WARNING and sends the error frame."""

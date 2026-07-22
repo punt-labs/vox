@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self
 
+from punt_vox.log_sanitize import SANITIZER
 from punt_vox.voxd._parse import safe_send
 
 if TYPE_CHECKING:
@@ -45,8 +46,12 @@ class WireReply:
         return self._request_id
 
     async def send(self, payload: dict[str, object]) -> bool:
-        """Send *payload* stamped with this request's id; False if the peer had gone."""
-        return await safe_send(self._websocket, {"id": self._request_id, **payload})
+        """Send *payload* stamped with this request's id; False if the peer had gone.
+
+        The id is stamped *last* so a payload that happens to carry an ``id`` key
+        can never override the wire request id -- the stamp always wins.
+        """
+        return await safe_send(self._websocket, {**payload, "id": self._request_id})
 
     async def error(self, message: str) -> bool:
         """Log this rejection at WARNING (sanitized) and send its error frame.
@@ -65,11 +70,14 @@ class WireReply:
 
     @staticmethod
     def _sanitize(message: str) -> str:
-        """Return *message* with control characters escaped and its length capped."""
-        escaped = "".join(
-            ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii")
-            for ch in message
-        )
+        """Return *message* escaped by the shared log sanitizer and length-capped.
+
+        The shared :data:`SANITIZER` neutralizes the injection surface (every
+        C0/C1/DEL control and Unicode line separator); the cap is applied
+        *after* escaping so it bounds the actual logged field, not the pre-escape
+        input a padded-out probe could inflate.
+        """
+        escaped = SANITIZER.escape(message)
         if len(escaped) > _LOG_FIELD_LIMIT:
             return f"{escaped[:_LOG_FIELD_LIMIT]}..."
         return escaped
