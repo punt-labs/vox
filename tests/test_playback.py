@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from punt_vox.playback import PLAYBACK_TIMEOUT, enqueue, play_audio
+
+if TYPE_CHECKING:
+    import pytest
 
 _MOD = "punt_vox.playback"
 
@@ -97,6 +102,28 @@ class TestPlayAudio:
             patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
         ):
             assert play_audio(audio) is None
+
+    def test_failure_detail_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failure detail is logged (WARNING) so detached playback is diagnosable."""
+        audio = tmp_path / "test.mp3"
+        audio.write_bytes(b"fake")
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stderr = b"AudioFileOpen failed"
+
+        with (
+            patch(f"{_MOD}.resolve_player", return_value=["afplay"]),
+            patch(f"{_MOD}.subprocess.run", return_value=proc),
+            patch(f"{_MOD}.LOCK_FILE", tmp_path / "playback.lock"),
+            caplog.at_level(logging.WARNING, logger=_MOD),
+        ):
+            detail = play_audio(audio)
+
+        assert detail is not None
+        assert "Playback failed" in caplog.text
+        assert "AudioFileOpen failed" in caplog.text
 
     def test_returns_failure_when_played_nothing(self, tmp_path: Path) -> None:
         """A clean exit under the suspicious-elapsed floor is a failure."""

@@ -1267,6 +1267,32 @@ class TestFetchCommand:
         mock_instance.fetch.assert_called_once_with("a1b2c3.mp3")
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_write_failure_leaves_no_partial_file(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        """A mid-write failure leaves any existing file untouched, never a partial.
+
+        The atomic temp + os.replace means the destination is the complete file
+        or the prior content -- never truncated/corrupt.
+        """
+        out = tmp_path / "got.mp3"
+        out.write_bytes(b"OLD")  # an existing file that must survive a failed write
+        mock_client_cls.return_value.fetch.return_value = b"NEW-DATA"
+
+        def failing_replace(_self: Path, _target: Path) -> Path:
+            raise OSError("commit failed")
+
+        monkeypatch.setattr(Path, "replace", failing_replace)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 1
+        assert "cannot write" in result.output
+        assert out.read_bytes() == b"OLD"  # untouched -- no partial materialized
+        assert not list(tmp_path.glob("*.tmp"))  # temp cleaned up
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_fetch_connection_error_is_one_line(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:

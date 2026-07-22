@@ -433,8 +433,8 @@ def record(  # pyright: ignore[reportUnusedFunction]
 
     segments = _text_input.resolve(text, from_file)
     if name is not None and not name:
-        # An explicit empty --name would otherwise be normalized to None
-        # daemon-side and silently content-addressed; reject it up front.
+        # The daemon rejects an empty name (it is the single authority); the CLI
+        # fast-fails here with a clear message before a wasted round-trip.
         _formatter.error("--name must not be empty", "Error: --name must not be empty")
         raise typer.Exit(code=1)
     if name and len(segments) > 1:
