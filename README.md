@@ -34,7 +34,7 @@ vox is usable in three ways, all driving the same `voxd` audio daemon --- so it 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/d99c8dd/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/956ea0b/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -59,7 +59,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/d99c8dd/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/956ea0b/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh
