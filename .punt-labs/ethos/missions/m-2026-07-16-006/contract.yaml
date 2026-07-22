@@ -1,8 +1,9 @@
 mission_id: m-2026-07-16-006
-status: open
+status: failed
 type: implement
 created_at: "2026-07-16T01:52:05Z"
-updated_at: "2026-07-16T01:52:05Z"
+updated_at: "2026-07-20T13:10:31Z"
+closed_at: "2026-07-20T13:10:31Z"
 leader: claude
 worker: rmh
 evaluator:

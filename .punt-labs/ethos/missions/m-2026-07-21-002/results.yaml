@@ -1,0 +1,37 @@
+results:
+    - mission: m-2026-07-21-002
+      round: 1
+      created_at: "2026-07-21T05:08:59Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vox-tnum-record-transport.md
+          added: 323
+          removed: 0
+      evidence:
+        - name: make docs (markdownlint-cli2)
+          status: pass
+        - name: read full record request/response path (client.py, client_sync.py, __main__.py, server.py, speech_handlers.py, daemon.py, router.py, recording.py, synthesis_result.py)
+          status: pass
+        - name: confirmed both record callers (CLI + MCP tool) share VoxClient.record and no other call returns audio bytes
+          status: pass
+      open_questions:
+        - The session-voice fix is ruled YES but must ship as its own implementation mission (independent rollback unit), not bundled with the transport change.
+      prose: |
+        Chosen transport: candidate C — the daemon writes the synthesized MP3 to the caller's destination on disk and returns the PATH plus a byte count; no audio crosses the WebSocket. The client passes exactly one destination directive (output_path or output_dir); the daemon names via generate_filename(text) when only a dir is given, writes atomically (temp + os.replace, so failure leaves no partial file), and replies {"type":"audio","path":...,"bytes":N} after an immediate {"type":"recording"} ack.
+        Why C beats the alternatives: it removes the defect class, not just the current symptom. record's job is to produce a file; today it reads the file back, base64-inflates 33%, ships it, and the client rewrites it to disk on the SAME filesystem. Deleting the byte transfer removes the 1 MiB single-frame ceiling by construction — no frame to cap, no receive buffer to bound.
+          - Reject B (raise client max_size): a raised cap is still a silent ceiling
+            (fails "arbitrarily long") and a large receive buffer reintroduces the
+            unbounded-buffer exposure; wrong for the coming audiobook/podcast lengths.
+          - Reject A (chunked streaming + reassembly): works but adds an ordering /
+            reassembly / partial-cleanup state machine (and triggers the Z-spec gate) for
+            no benefit inside the local same-user, shared-filesystem trust boundary.
+          - Reject D (binary frames): drops base64 inflation but 2.3 MiB still exceeds the
+            1 MiB cap, so it does not fix the ceiling alone.
+
+        Trust boundary: voxd clients are local same-user processes sharing one filesystem; browser origins already rejected. The daemon writing to a client-named path is within its existing filesystem authority (it already owns cache/ephemeral/track files) and grants no new capability. Remote-daemon record is explicitly out of scope; no working large-record behavior exists there today.
+        All four defects fixed: (1) transport — path-return removes the big frame; (2) timeout — recording ack then a length-scaled client wait for the terminal audio frame, so a 2-minute synthesis is never abandoned; (3) CLI error mapping — the transport wraps websockets ConnectionClosed / OSError into VoxdConnectionError/VoxdProtocolError (the types the CLI already catches); (4) daemon-side — no large in-flight frame plus a suppress(WebSocketDisconnect, RuntimeError) guard on the record reply. Both record callers go through VoxClient.record and are fixed by the one change.
+        Implementation write set (my decision): modify speech_handlers.py, client.py (RecordResult type, path-return record over send_and_drain with length-scaled timeout, transport-exception wrapping), client_sync.py, __main__.py, server.py; create optional voxd/record_sink.py; DELETE recording.py (RecordingSink forward-integrated daemon-side, no shim). Test plan names one case per invariant; live-verify drives a real >1 MiB record, cache hit, mid-transfer disconnect, MCP surface, and error surface.
+        Secondary ruling: YES, vox record should inherit the session voice; fix it once daemon-side (resolve configured voice when the request omits it), which also fixes CLI say and lets the MCP server drop its duplicated voice-or-session fallback. Ship as its own mission.
+        Z-spec: NOT produced. C is a linear request/response with one liveness ack, not a 3+ state transfer with reassembly/ordering invariants; the only atomicity concern (no partial file) is a local temp+os.replace guarantee, not a cross-transition protocol invariant. The gate fires for candidate A, deliberately not chosen. Reasons stated in full in the doc.

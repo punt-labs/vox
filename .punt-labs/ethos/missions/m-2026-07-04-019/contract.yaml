@@ -1,8 +1,9 @@
 mission_id: m-2026-07-04-019
-status: open
+status: closed
 type: implement
 created_at: "2026-07-04T16:58:54Z"
-updated_at: "2026-07-04T16:58:54Z"
+updated_at: "2026-07-20T13:09:34Z"
+closed_at: "2026-07-20T13:09:34Z"
 leader: claude
 worker: rmh
 evaluator:

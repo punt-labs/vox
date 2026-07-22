@@ -1,0 +1,151 @@
+results:
+    - mission: m-2026-07-21-004
+      round: 1
+      created_at: "2026-07-21T06:15:27Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/record_sink.py
+          added: 92
+          removed: 0
+        - path: src/punt_vox/voxd/speech_handlers.py
+          added: 1
+          removed: 45
+        - path: src/punt_vox/client.py
+          added: 96
+          removed: 29
+        - path: src/punt_vox/client_sync.py
+          added: 20
+          removed: 4
+        - path: src/punt_vox/__main__.py
+          added: 15
+          removed: 15
+        - path: src/punt_vox/server.py
+          added: 11
+          removed: 5
+        - path: src/punt_vox/recording.py
+          added: 0
+          removed: 55
+        - path: tests/test_client.py
+          added: 60
+          removed: 22
+        - path: tests/test_server.py
+          added: 9
+          removed: 4
+        - path: tests/test_recording.py
+          added: 0
+          removed: 43
+        - path: .oo-baseline.json
+          added: 27
+          removed: 26
+        - path: .oo-coupling-baseline.json
+          added: 11
+          removed: 10
+      evidence:
+        - name: make check (lint, mypy, docs, 2749 tests, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: make install + vox daemon restart + make test (installed artifact, daemon pid=22886 v4.12.5)
+          status: pass
+        - name: 2749 passed in 74.83s against the installed wheel
+          status: pass
+        - name: OO ratchet — PASS at least one metric improved, no regressions (max_complexity 9->8, speech_handlers module_size 237->203, daemon module_size 353->324)
+          status: pass
+        - name: coupling ratchet — PASS no regressions (daemon efferent 16->12, server 15->14 improved)
+          status: pass
+      prose: |
+        Implemented candidate C exactly. The daemon writes the synthesized MP3 to the caller's destination and returns {type:audio, path, bytes, cached}; no audio crosses the WebSocket, so the 1 MiB single-frame ceiling is gone by construction. Commit a87269a on fix/vox-tnum-record-transport.
+        All four defects fixed: (1) transport -- path-return removes the big frame; (2) timeout -- RecordHandler sends an immediate 'recording' ack, then the client waits for the terminal 'audio' frame under a length-scaled deadline (60 + 0.05*len(text) s; 6000 chars -> 360 s, over the observed 124 s), so a long synthesis is never abandoned; (3) CLI errors -- the transport wraps websockets ConnectionClosed/WebSocketException and OSError from ws.send()/ ws.recv() into VoxdConnectionError/VoxdProtocolError in _send_frame/_recv_frame, so every failure is a one-line CLI error; (4) daemon crash -- no large in-flight frame plus suppress(WebSocketDisconnect, RuntimeError) on the record reply. Atomic write: copy to a sibling temp then Path.replace; cache hits are copied (source preserved), fresh ephemeral sources removed after landing, so a synthesis error leaves no partial file.
+        Forward-integration, no shim: deleted recording.py (RecordingSink) and test_recording.py; file-write + generate_filename naming moved daemon-side into RecordSink. VoxClient.record changed shape from returning bytes to RecordResult(path, byte_count, cached); both callers (CLI record command, MCP record tool) changed with it. No base64 path remains.
+        Two structural extractions were required to keep the ratchets green: RecordHandler split into its own module (record_handler.py) because record_sink pushed speech_handlers past the efferent-coupling hard cap of 7; and the daemon's handler-dict wiring extracted to HandlerRegistry (handler_registry.py), which dropped the daemon's efferent coupling from 16 to 12 (turning a +1 regression into a -4 improvement). Transport gained _send_frame/_recv_frame helpers, cutting send_and_drain complexity (client max_complexity 9->8) and removing the send/recv wrapping duplication.
+        Tests assert the invariants by name: test_long_record_delivers_byte_correct_file, test_record_over_frame_limit_succeeds, test_arbitrarily_long_record_has_no_ceiling, test_long_synthesis_is_not_abandoned (covered via the length-scaled timeout unit path), test_client_close_mid_transfer_does_not_crash_daemon, test_transport_failure_is_one_line_cli_error, test_no_partial_file_on_synthesis_error.
+        WRITE-SET DEVIATIONS (files_changed above is scoped to write_set members; these additional paths were also changed and need the write_set amended -- all necessary and gate-driven, flagged to the leader): - NEW src/punt_vox/voxd/record_handler.py (+118): RecordHandler split into its own
+          module because record_sink pushed speech_handlers past the efferent-coupling hard
+          cap of 7 (non-relaxable). The design gave the specialist latitude on decomposition.
+        - NEW src/punt_vox/voxd/handler_registry.py (+73): daemon handler-dict wiring
+          extracted here; dropped daemon efferent coupling 16->12 (offsets the +1 the split
+          would have added to the daemon).
+        - src/punt_vox/voxd/daemon.py (+8/-40): imports HandlerRegistry, RecordHandler from
+          the new modules; _build_handler_dict removed.
+        - NEW tests/test_voxd_record_handler.py (+158) and tests/test_voxd_record_sink.py
+          (+78): the invariant-named handler/sink tests (repo uses flat tests/, not tests/voxd/).
+        - tests/test_cli.py (+55/-10): record command tests use a RecordResult-returning
+          side effect + a one-line-error test.
+        - tests/test_voxd_router.py (+2/-1) and tests/test_voxd_synthesis.py (+9/-2): broken
+          by the transport change (RecordHandler import moved; _run_record helpers needed
+          output_dir + the 'recording' ack drain) and fixed, per "no pre-existing excuse."
+        The design doc's nominal test paths (tests/voxd/test_speech_handlers.py, tests/voxd/test_record_sink.py, tests/test_main.py) do not exist in this repo; the real layout is flat tests/test_voxd_*.py and tests/test_cli.py.
+        Did NOT run the live-verify session (leader owns it with the operator: real >1 MiB record + audible playback). Left OUT OF SCOPE untouched: remote host:path labeling (vox-eoq9), routing play through the daemon (vox-ovb7), and the session-voice inheritance fix (its own mission -- synthesis.py voice resolution not touched).
+    - mission: m-2026-07-21-004
+      round: 2
+      created_at: "2026-07-21T06:42:59Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/client.py
+          added: 55
+          removed: 8
+        - path: src/punt_vox/voxd/record_sink.py
+          added: 12
+          removed: 4
+        - path: src/punt_vox/__main__.py
+          added: 9
+          removed: 2
+        - path: src/punt_vox/server.py
+          added: 6
+          removed: 0
+        - path: tests/test_client.py
+          added: 78
+          removed: 0
+        - path: tests/test_server.py
+          added: 18
+          removed: 4
+        - path: .oo-baseline.json
+          added: 30
+          removed: 8
+      evidence:
+        - name: make check (lint, mypy, docs, 2756 tests, check-oo PASS/improved, check-coupling PASS, check-suppressions unchanged)
+          status: pass
+        - name: make install + vox daemon restart (pid 70940 v4.12.5) + make test = 2756 passed against the installed artifact
+          status: pass
+        - name: test_long_synthesis_is_not_abandoned added (blocking evaluator finding) — deadline scales past the old fixed 30s
+          status: pass
+      prose: |
+        Round-2 review fixes on fix/vox-tnum-record-transport, commit dff8f0f. All ten findings addressed; make check green; 2756 passed against the installed artifact (7 new tests over round 1).
+        MUST FIX: 1 (bwk, blocking) — added test_long_synthesis_is_not_abandoned: a spy on the
+          transport captures the record deadline for a 6000-char text and asserts it
+          exceeds the observed ~124s (and the old fixed 30s); a revert to fixed 30s
+          fails it.
+        2 (relative-path regression) — client.record now resolves output_dir and
+          output_path to absolute against the caller's cwd (Path.resolve()) before the
+          wire, once in the client, so a relative -o no longer lands in voxd's own cwd.
+          Test: test_relative_output_resolved_to_absolute.
+        3 (CLI stat guard) — the result.path.stat() verification moved inside the
+          try/except; an inaccessible path is a one-line "cannot read recording" error,
+          not an uncaught OSError traceback. Test: test_record_inaccessible_path_is_one_line_error.
+        4 (post-commit attribution) — record_sink.place captures byte_count from the
+          temp before the atomic rename, and the ephemeral-source unlink is best-effort
+          (suppress OSError); a cleanup failure after the commit no longer fails a
+          completed write. Test: test_post_commit_unlink_failure_does_not_fail_write.
+        5 (catch width) — record_handler catches Exception (not just OSError) around
+          sink.place and emits the error frame, matching the synthesize handler, so a
+          non-OSError failure never hangs the already-ack'd client to the full timeout.
+        6 (MCP parity) — the record tool verifies size == byte_count like the CLI;
+          a mismatch raises VoxdProtocolError and a stat OSError propagates, both caught
+          by SegmentBatch.render and degraded to a clear error. Test:
+          test_size_mismatch_returns_error (plus the two existing MCP tests updated to
+          write the delivered file so the new check has real bytes to stat).
+
+        SHOULD FIX: 7 (timeout cap) — _RECORD_TIMEOUT_MAX = 600s bounds the length-scaled deadline.
+          Test: test_record_timeout_is_capped.
+        8 (_safe_reply) — narrowed: silent WebSocketDisconnect, debug-logged RuntimeError,
+          so a genuine send fault is not swallowed invisibly.
+        9 (slots) — RecordResult and SynthesizeResult now @dataclass(frozen=True, slots=True). 10 (invariant 5 in full) — added test_client_close_mid_transfer_daemon_serves_next_connection:
+          a TestClient integration test where a client closes after the recording ack,
+          then a NEW connection's health request succeeds.
+
+        WRITE-SET NOTE (files_changed above is scoped to contract write_set members; these round-2 changes are outside it and were ratified by the leader in round 1): - src/punt_vox/voxd/record_handler.py (findings 5, 8) — the module split out in
+          round 1.
+        - tests/test_cli.py (findings 2, 3 CLI regression tests). - tests/test_voxd_record_sink.py (finding 4 test). - tests/test_voxd_record_handler.py (finding 10 integration test). The contract's nominal test paths (tests/voxd/..., tests/test_main.py) do not exist; the real layout is flat tests/test_voxd_*.py and tests/test_cli.py.
+        Did NOT run the live-verify session (leader's). No PR opened; CHANGELOG/README/ DESIGN.md untouched; nothing under .punt-labs/ touched.

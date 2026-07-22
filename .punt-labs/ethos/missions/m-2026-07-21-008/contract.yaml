@@ -1,0 +1,78 @@
+mission_id: m-2026-07-21-008
+status: closed
+type: design
+created_at: "2026-07-21T13:36:17Z"
+updated_at: "2026-07-21T15:59:32Z"
+closed_at: "2026-07-21T15:59:32Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-21T13:36:17Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs:
+    ticket: vox-dvri
+    files:
+        - docs/vox-tnum-record-transport.md
+        - docs/guide-remote-setup.md
+        - src/punt_vox/voxd/record_handler.py
+        - src/punt_vox/voxd/record_sink.py
+        - src/punt_vox/playback.py
+        - src/punt_vox/__main__.py
+        - src/punt_vox/client.py
+        - src/punt_vox/client_gateway.py
+        - DESIGN.md
+        - CLAUDE.md
+        - TESTING.md
+write_set:
+    - docs/vox-dvri-daemon-audio-host.md
+    - docs/vox-dvri-record-store.tex
+    - .tmp/missions/results/vox-dvri-design-note.md
+success_criteria:
+    - 'Design the coherent "daemon is the audio host" model as ONE change, resolving three linked problems: (P1 SECURITY, vox-zu39) voxd currently writes/replaces any client-supplied ABSOLUTE output_path/output_dir as the daemon OS user — RecordHandler only checks is_absolute, RecordSink mkdirs + os.replace. Across the remote trust boundary (machine B holds A''s VOXD_TOKEN per docs/guide-remote-setup.md), a compromised B gets arbitrary file overwrite on A -> likely RCE. (vox-ovb7) `vox play <file>` runs the player in the CLIENT process (playback.py play_audio, no daemon) so it plays on the wrong machine remotely. (vox-eoq9) a recording lands on the daemon host but the client has no coherent way to reference, play, or retrieve it. Read the ACTUAL code first (record_handler, record_sink, playback, client.record, the __main__ record/play commands, client_gateway).'
+    - 'SECURITY INVARIANT the design MUST establish (this is the P1): the daemon NEVER writes to a client-dictated absolute path. Record output resolves under a daemon-owned recordings root; the client sends a filename or a generated id (or nothing -> daemon-generated content-addressed name); the daemon rejects absolute paths and traversal (..), resolves the candidate, and verifies containment within the root before writing. The token authorizes audio operations, not filesystem writes as the daemon user. Forward-integrate the #351 output_path/output_dir absolute-path wire contract (no shim). State the trust model explicitly in the design.'
+    - 'DECIDE the local-vs-remote coherence — the crux, and the main thing to escalate. Locally (loopback daemon) `vox record -o ./out.mp3` today lands the file where the user expects on their one machine; that ergonomic must be preserved or a clearly-better replacement designed. Remotely the file lives under the daemon root and is referenced/played/retrieved through the daemon. Options to weigh and pick among (or better): (a) uniform — daemon-owned store always, client refers by id, `-o` becomes a client-side retrieval (stream bytes back to the client path) rather than a daemon-side write path; (b) local fast-path — loopback keeps direct client-path writes, remote is sandboxed+id-based; (c) always stream bytes back to the client and the client writes locally (this removes the daemon-side write primitive entirely and makes record client-local again, at the cost of re-adding a bytes-over-wire path — reconcile with why #351 moved it daemon-side). Document the rejected options and WHY.'
+    - 'PLAY through the daemon (vox-ovb7): design a wire op so `vox play` plays on the daemon host (where the user hears audio), referencing a file by the daemon-owned id/name from the record store — NOT a client absolute path (same trust constraint). Preserve the current local behavior (loopback: plays on the one machine). The flock playback serialization must still hold.'
+    - 'RETRIEVAL + labeling (vox-eoq9): how a remote client learns where its recording is and gets it to B if wanted (stream-back or explicit fetch), and how record output is reported (an id and/or host:path locator, only when remote; bare path when local). No exploit-y absolute-path echoing.'
+    - Z-SPEC / formal-modeling assessment (required per CLAUDE.md). Assess whether the record-store containment + play/retrieve protocol qualifies (state + safety invariant "every write stays within the root", "no client path escapes the sandbox"). If it qualifies produce docs/vox-dvri-record-store.tex modeling it with the containment invariant in the state schema, fuzz -t clean; if not, state why explicitly.
+    - 'The design doc docs/vox-dvri-daemon-audio-host.md contains: the chosen model + mechanism (record-store root layout, id scheme, containment check, wire ops for record/play/retrieve, what changes in the #351 contract); the security analysis (the closed primitive, the trust model, the test that proves containment); the IMPLEMENTATION WRITE SET (your decision — likely record_handler, record_sink, a new store module, playback/play wire op, client, __main__, server, and the guide + DESIGN ADR); a test plan asserting the invariants BY NAME (e.g. "wire absolute path rejected", "traversal rejected", "write cannot escape the root", "play routes through the daemon", "local record keeps its path ergonomic"); a LIVE-VERIFY plan; and how the guide (docs/guide-remote-setup.md) record/play section gets rewritten once this lands (removing the current caveats). Note the related-but-separate mechanical beads vox-4p5p (daemon status via client.health) and vox-suvs (cache via daemon) are OUT of this design — they are their own quick fixes.'
+    - Commit the design artifacts to branch feat/vox-dvri-design (already checked out in this worktree). make check green before the commit (run gates individually if the combined target stalls; read full output). Do NOT write implementation code, do NOT touch src/, do NOT open a PR.
+    - Write the result to .tmp/missions/results/vox-dvri-design-note.md and submit via ethos mission result. Time-box a focused pass, ~25-30 min. Decisive and implementable.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Why now
+
+    The remote setup is documented (docs/guide-remote-setup.md) and #351 made
+    `vox record` write daemon-side — which created a P1 arbitrary-write primitive
+    (vox-zu39) and left the remote record->play loop incoherent (play still runs
+    client-side; no way to reference/retrieve a daemon-side recording). This
+    design closes the security hole and makes the loop coherent in one pass. It
+    is the daemon-is-audio-host epic (vox-dvri): the daemon owns audio files and
+    playback; clients are thin controllers that never dictate a daemon-side
+    absolute path and never do remote playback locally.
+
+    ## Trust model (state it, design to it)
+
+    voxd may serve REMOTE clients that hold the token but live in a different
+    trust domain (machine B, per the guide). The token authorizes audio
+    operations. It must NOT grant filesystem writes as the daemon user. Any
+    design that lets a wire client choose a daemon-side absolute write path fails.
+
+    ## Constraints
+
+    - Forward integration, no migration/compat/shim. The #351 output_path/
+      output_dir absolute-path contract is superseded, not bridged.
+    - Local (loopback) ergonomics matter: do not regress `vox record`/`vox play`
+      for the common single-machine user.
+    - voxd logs to a file, never stderr/print.
+    - Never Read/Write/Bash .punt-labs/vox/vox.md or vox.local.md; never touch
+      .punt-labs/ethos/.
+
+    ## Deliverable
+
+    A committed design (+ Z spec if triggered) an implementation mission can
+    execute. The leader reviews it, escalates the local-vs-remote/security-model
+    decision to the operator, then dispatches implementation. Security-priority.

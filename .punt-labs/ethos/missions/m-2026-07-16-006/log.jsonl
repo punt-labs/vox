@@ -1,1 +1,3 @@
 {"ts":"2026-07-16T01:52:05Z","event":"create","actor":"claude","details":{"evaluator":"gvr","ticket":"vox-q1z4","worker":"rmh"}}
+{"ts":"2026-07-20T13:10:28Z","event":"result","actor":"claude","details":{"confidence":1,"evidence_entries":1,"files_changed":0,"round":1,"verdict":"fail"}}
+{"ts":"2026-07-20T13:10:31Z","event":"close","actor":"claude","details":{"round":1,"status":"failed","verdict":"fail"}}

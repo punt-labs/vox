@@ -1,0 +1,56 @@
+results:
+    - mission: m-2026-07-20-004
+      round: 1
+      created_at: "2026-07-20T05:06:14Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vox-2594-log-rotation.tex
+          added: 173
+          removed: 0
+        - path: docs/vox-2594-unified-log.md
+          added: 299
+          removed: 0
+      evidence:
+        - name: uv run fuzz -t docs/vox-2594-log-rotation.tex (Z spec type-check)
+          status: pass
+        - name: make check — ruff, ruff format, shellcheck, mypy (307 files), pyright (0 errors), markdownlint on the design doc
+          status: pass
+        - name: root cause verified in code (log_ship.py drains over the client's real-work socket; connectionless skip-hooks never open one)
+          status: pass
+        - name: all six contract invariants stated verbatim and shown satisfied in docs/vox-2594-unified-log.md
+          status: pass
+      open_questions:
+        - 'Escalation before implementation: under B the daemon logs synchronously on its asyncio loop (as it already does with RotatingFileHandler); emit adds one uncontended flock per record plus a rare sub-ms wait behind a peer''s rename — same order as today''s in-loop rotation, no thread offload proposed (YAGNI). Named as an explicit round-trip/rotation tradeoff for the leader/operator to rule on.'
+        - make check's docs target also flags markdownlint in RESUME.md (leader's tracked+modified file) and research/*.md (untracked researcher artifacts) — outside this write_set and dirty at session start; left untouched to avoid clobbering other agents' uncommitted work, not introduced by this change.
+      prose: |
+        Chosen approach: candidate B — every process (daemon + clients) appends
+        directly to one vox.log via the existing multi-writer-safe AtomicAppendLog
+        (O_APPEND, 0600, O_NOFOLLOW), with rotation guarded by an flock
+        shared/exclusive protocol in the DES-013 size-check-then-rename shape. B's
+        mechanism already exists in-tree (it backs only the fallback today); the fix
+        points every writer at vox.log through it and DELETES the ship/buffer/wire/
+        sink transport (log_ship.py, log_flush.py, voxd/log_sink.py, log_wire.py) and
+        vox-fallback.log outright — no fallback, no daemon round-trip on a hook's
+        logging hot path (DES-017).
+
+        Rejected A (brief-connect: every fast hook pays a daemon round-trip and still
+        needs a fallback) and C (client spool the daemon drains: adds a drain loop,
+        spool lifecycle, and event-to-visibility latency to buy daemon-sole-writer, a
+        guarantee O_APPEND atomicity already provides).
+
+        The one new safety code is the flock rotation protocol (shared lock held
+        across every append; exclusive lock + size re-check to rotate), which closes
+        the double-rotate and write-to-a-renamed-file races that were negligible for
+        low-volume vibe-trace.log but real for a high-volume multi-writer vox.log. The
+        Z spec docs/vox-2594-log-rotation.tex models the writer/rotator lock states
+        with the safety invariants in the Rotator state-schema predicate
+        (shared ∩ exclusive = empty; #exclusive ≤ 1; exclusive ≠ empty ⇒ shared =
+        empty; backups ≤ backupCount) and one operation schema per transition; fuzz -t
+        exits 0.
+
+        The design doc carries the mechanism (open flags, lock protocol, rotation
+        algorithm, missing/unwritable-dir failure behavior), the implementation write
+        set, an invariant-named test plan, a running-machine live-verify plan, and the
+        stale-file cleanup. Committed on fix/vox-2594-unified-vox-log at 31e09be.

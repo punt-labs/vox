@@ -1,0 +1,3 @@
+{"ts":"2026-07-21T05:00:17Z","event":"create","actor":"claude","details":{"evaluator":"bwk","ticket":"vox-tnum","worker":"rmh"}}
+{"ts":"2026-07-21T05:08:59Z","event":"result","actor":"rmh","details":{"confidence":0.9,"evidence_entries":3,"files_changed":1,"round":1,"verdict":"pass"}}
+{"ts":"2026-07-21T05:26:43Z","event":"close","actor":"claude","details":{"round":1,"status":"closed","verdict":"pass"}}

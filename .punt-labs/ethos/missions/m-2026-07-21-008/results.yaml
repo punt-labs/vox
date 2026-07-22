@@ -1,0 +1,35 @@
+results:
+    - mission: m-2026-07-21-008
+      round: 1
+      created_at: "2026-07-21T13:57:42Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vox-dvri-daemon-audio-host.md
+          added: 328
+          removed: 0
+        - path: docs/vox-dvri-record-store.tex
+          added: 120
+          removed: 0
+      evidence:
+        - name: fuzz -t docs/vox-dvri-record-store.tex (containment invariant type-checks)
+          status: pass
+        - name: make check green in worktree (docs-only; no src touched)
+          status: pass
+        - name: leader review + fuzz re-verified from main checkout
+          status: pass
+      prose: |
+        Design of the daemon-is-audio-host model committed as d1d2bdd on
+        feat/vox-dvri-design (worktree). Chose option (a): uniform daemon-owned
+        recordings store; the daemon always writes under a 0700 root by
+        content-addressed/bare name and returns a locator, never a client path; -o
+        is client-side delivery (shared-fs copy vs remote fetch, decided by a
+        behavioural filesystem test). Closes the P1 (vox-zu39) by construction —
+        the daemon never writes/plays/reads a client-dictated path; containment is
+        verified with is_relative_to(root) post-resolve. Play routes through the
+        daemon PlaybackQueue (vox-ovb7); fetch is opt-in single-frame retrieval
+        (vox-eoq9). Z-spec produced and fuzz-clean. Result submitted by the leader
+        on the worker's behalf: the mission was created in the main checkout, so
+        `ethos mission result` from the worktree found no matching prefix (worktree
+        has its own .punt-labs/ethos tree without the untracked mission record).
