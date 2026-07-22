@@ -95,5 +95,11 @@ MagicMock/
 
 # Local-path counterpart: ethos writes per-session activity logs and locks
 # under .punt-labs/local/ethos/sessions/ — same runtime churn as above, ignored.
+# Both flat (sessions/<id>.audit.jsonl) and nested (sessions/<id>/audit.jsonl)
+# layouts are covered so the layout documented in CLAUDE.md cannot re-dirty the
+# tree; only the per-session ACTIVITY artifacts are ignored, not durable records.
 .punt-labs/local/ethos/sessions/*.audit.jsonl
 .punt-labs/local/ethos/sessions/*.lock
+.punt-labs/local/ethos/sessions/**/audit.jsonl
+.punt-labs/local/ethos/sessions/**/*.audit.jsonl
+.punt-labs/local/ethos/sessions/**/*.lock
