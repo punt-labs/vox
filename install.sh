@@ -19,7 +19,7 @@ MARKETPLACE_REPO="punt-labs/claude-plugins"
 MARKETPLACE_NAME="punt-labs"
 PLUGIN_NAME="vox"
 PACKAGE="punt-vox"
-VERSION="4.12.5"
+VERSION="4.13.0"
 BINARY="vox"
 
 # --- Step 1: Prerequisites ---
