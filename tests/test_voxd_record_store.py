@@ -34,6 +34,9 @@ _HOSTILE_NAMES = [
     ".",
     "",
     "bad\x00name.mp3",
+    "bad\nname.mp3",
+    "tab\tname.mp3",
+    "esc\x1bname.mp3",
 ]
 
 
@@ -63,6 +66,18 @@ class TestContainment:
             store.resolve("bad\x00name.mp3", "x")
         with pytest.raises(ValueError, match="empty"):
             store.resolve_ref("")
+
+    def test_control_char_names_rejected(self, store: RecordStore) -> None:
+        """A newline/tab/escape in a name is refused before any filesystem touch.
+
+        Such a name would inject into the operator's log or terminal via the
+        record locator. resolve and resolve_ref share the validator, so record
+        naming and play/fetch refs both reject it.
+        """
+        with pytest.raises(ValueError, match="control character"):
+            store.resolve("bad\nname.mp3", "x")
+        with pytest.raises(ValueError, match="control character"):
+            store.resolve_ref("esc\x1bname.mp3")
 
     def test_empty_name_rejected_by_store(self, store: RecordStore) -> None:
         """An explicit empty name is invalid; only None content-addresses."""

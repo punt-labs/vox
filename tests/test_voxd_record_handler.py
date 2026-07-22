@@ -297,6 +297,35 @@ class TestRecordHandler:
         assert sent[-1]["type"] == "error"
         assert "absolute" in str(sent[-1]["message"])
 
+    def test_control_char_name_rejected_and_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A newline-bearing name is refused, audit-logged, and never echoed raw.
+
+        The rejection emits one WARNING; the sanitizer escapes the newline so no
+        raw control character reaches the log record (log-injection defense).
+        """
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "rej-nl",
+            "text": "hi",
+            "name": "bad\nINJECTED.mp3",
+        }
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "rej-nl" in warnings[0].getMessage()
+        assert "\n" not in warnings[0].getMessage()  # sanitized, no raw newline
+        assert sent[-1]["type"] == "error"
+        assert "control character" in str(sent[-1]["message"])
+        assert not any(p["type"] in ("recording", "audio") for p in sent)
+
     def test_successful_record_logs_info_not_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -111,7 +111,14 @@ class FetchHandler(MessageHandler):
 
     @staticmethod
     async def _reject_oversize(reply: WireReply, size: int) -> None:
-        """Send the too-large-to-fetch error frame for a *size*-byte recording."""
+        """Send the too-large-to-fetch error frame for a *size*-byte recording.
+
+        An oversize recording is a legitimate too-large file, not a probe, so it
+        is logged at INFO -- distinct from the WARNING class used for a rejected
+        or failed op -- keeping the audit trail symmetric with the read-fault
+        path, which also logs.
+        """
+        logger.info("Fetch rejected oversize: id=%r bytes=%d", reply.request_id, size)
         await reply.send(
             {
                 "type": "error",

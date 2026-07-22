@@ -119,6 +119,23 @@ class TestFetchHandler:
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
 
+    def test_oversize_rejection_logs_info(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An oversize refusal logs at INFO -- a legitimate large file, not a probe."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "big.mp3").write_bytes(b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1))
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f9", "ref": "big.mp3"}
+        with caplog.at_level(logging.INFO):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any("oversize" in m and "f9" in m for m in infos)
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
     def test_grown_between_stat_and_read_is_bounded_and_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

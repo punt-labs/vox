@@ -22,6 +22,7 @@ import errno
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
@@ -32,6 +33,21 @@ __all__ = ["RecordStore", "RecordWrite"]
 
 # Names that name the directory itself rather than a file in it.
 _DIR_TOKENS = frozenset({".", ".."})
+
+# Structural name rejections, first-match-raises. ``not isprintable`` rejects an
+# embedded newline, tab, or terminal escape that a record locator would echo
+# raw into the operator's log or terminal -- a log/terminal-injection vector.
+_NAME_REJECTIONS: tuple[tuple[Callable[[str], bool], str], ...] = (
+    (lambda c: not c, "empty recording name"),
+    (lambda c: "\x00" in c, "recording name contains a NUL byte"),
+    (lambda c: Path(c).is_absolute(), "recording name must not be absolute"),
+    (
+        lambda c: "/" in c or "\\" in c,
+        "recording name must not contain a path separator",
+    ),
+    (lambda c: c in _DIR_TOKENS, "recording name must be a filename, not '.' or '..'"),
+    (lambda c: not c.isprintable(), "recording name contains a control character"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,27 +133,15 @@ class RecordStore:
     def _resolve_within_root(self, candidate: str) -> Path:
         """Validate a bare name and resolve it, verifying root containment.
 
-        The rejection order is cheapest-first and structural before filesystem:
-        empty, NUL, absolute, separator, dot-tokens -- then a post-``resolve``
-        ``is_relative_to`` check that no symlink or normalization escaped the
-        root. Every rejection raises ``ValueError`` with a lowercase message the
-        handler turns into a one-line error frame.
+        Structural rejections (``_NAME_REJECTIONS``, cheapest-first) run before
+        the filesystem touch; then a post-``resolve`` ``is_relative_to`` check
+        catches any symlink or normalization that escaped the root. Every
+        rejection raises ``ValueError`` with a lowercase message the handler
+        turns into a one-line error frame.
         """
-        if not candidate:
-            msg = "empty recording name"
-            raise ValueError(msg)
-        if "\x00" in candidate:
-            msg = "recording name contains a NUL byte"
-            raise ValueError(msg)
-        if Path(candidate).is_absolute():
-            msg = "recording name must not be absolute"
-            raise ValueError(msg)
-        if "/" in candidate or "\\" in candidate:
-            msg = "recording name must not contain a path separator"
-            raise ValueError(msg)
-        if candidate in _DIR_TOKENS:
-            msg = "recording name must be a filename, not '.' or '..'"
-            raise ValueError(msg)
+        for is_rejected, msg in _NAME_REJECTIONS:
+            if is_rejected(candidate):
+                raise ValueError(msg)
 
         resolved = (self._root / candidate).resolve()
         if not resolved.is_relative_to(self._root.resolve()):
