@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
@@ -118,6 +119,23 @@ class TestFetchHandler:
         assert sent[-1]["type"] == "error"
         assert "too large" in str(sent[-1]["message"])
 
+    def test_oversize_rejection_logs_info(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An oversize refusal logs at INFO -- a legitimate large file, not a probe."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "big.mp3").write_bytes(b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1))
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f9", "ref": "big.mp3"}
+        with caplog.at_level(logging.INFO):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any("oversize" in m and "f9" in m for m in infos)
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
     def test_grown_between_stat_and_read_is_bounded_and_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -220,3 +238,34 @@ class TestFetchHandler:
         msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
         # Must not raise -- a normal disconnect is a quiet end-of-request.
         asyncio.run(FetchHandler(store=store)(msg, ws))
+
+    def test_unknown_recording_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A not-found ref is audit-logged once at WARNING with the request id."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f7", "ref": "nope.mp3"}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "f7" in warnings[0].getMessage()
+
+    def test_traversal_ref_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A blocked path-escape ref leaves an audit WARNING carrying the id."""
+        store = RecordStore(tmp_path / "recordings")
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f8", "ref": "../../etc/x"}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "f8" in warnings[0].getMessage()

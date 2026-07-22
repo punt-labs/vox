@@ -17,10 +17,13 @@ import logging
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
-from punt_vox.voxd._parse import parse_optional_str, safe_send
+from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.record_store import RecordStore
@@ -43,27 +46,24 @@ class FetchHandler(MessageHandler):
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Resolve a store reference and return its bytes, or an error frame."""
-        request_id = str(msg.get("id", ""))
+        """Resolve a store reference, then return its bytes or an error frame."""
+        reply = WireReply(websocket, str(msg.get("id", "")))
         ref = parse_optional_str(msg, "ref")
         if not ref:
-            await self._error(websocket, request_id, "fetch requires a ref")
+            await reply.error("fetch requires a ref")
             return
-
         try:
             path = self._store.resolve_ref(ref)
         except ValueError as exc:
-            await self._error(websocket, request_id, str(exc))
+            await reply.error(str(exc))
             return
-
         if not path.is_file():
-            await self._error(websocket, request_id, f"no recording named {ref!r}")
+            await reply.error(f"no recording named {ref!r}")
             return
+        await self._read_and_send(reply, path, ref)
 
-        # The filesystem reads (stat, read_bytes) can fail on a race -- the file
-        # deleted between is_file() and here -- or a permission/IO fault. Any
-        # such OSError must reach the client as a clean error frame, never a
-        # server-side traceback (matching the record write path).
+    async def _read_and_send(self, reply: WireReply, path: Path, ref: str) -> None:
+        """Read *path* bounded to one frame and send its bytes, or an error frame."""
         try:
             # A cheap pre-read stat rejects the common oversize case first, but
             # it is NOT trusted for the read: a token-holding remote caller can
@@ -75,16 +75,19 @@ class FetchHandler(MessageHandler):
             # the on-disk file exceeds the budget and is rejected as oversize.
             prelim_size = path.stat().st_size
             if prelim_size > FETCH_FRAME_LIMIT_BYTES:
-                await self._reject_oversize(websocket, request_id, prelim_size)
+                await self._reject_oversize(reply, prelim_size)
                 return
             with path.open("rb") as handle:
                 raw = handle.read(FETCH_FRAME_LIMIT_BYTES + 1)
         except OSError as exc:
+            # A read fault (the file deleted between is_file() and here, or a
+            # permission/IO error) is a resource failure, not a rejected probe:
+            # log it once here and send without re-logging via reply.error.
             logger.warning(
-                "Fetch read failed for id=%r ref=%r: %s", request_id, ref, exc
+                "Fetch read failed for id=%r ref=%r: %s", reply.request_id, ref, exc
             )
-            await self._error(
-                websocket, request_id, f"cannot read recording {ref!r}: {exc}"
+            await reply.send(
+                {"type": "error", "message": f"cannot read recording {ref!r}: {exc}"}
             )
             return
 
@@ -95,46 +98,33 @@ class FetchHandler(MessageHandler):
         # stat.
         size = len(raw)
         if size > FETCH_FRAME_LIMIT_BYTES:
-            await self._reject_oversize(websocket, request_id, size)
+            await self._reject_oversize(reply, size)
             return
 
-        logger.info("Fetch: id=%r ref=%r bytes=%d", request_id, ref, size)
+        logger.info("Fetch: id=%r ref=%r bytes=%d", reply.request_id, ref, size)
         data = base64.b64encode(raw).decode("ascii")
         # Echo the REQUESTED ref, not path.name: on a case-insensitive
         # filesystem a mixed-case ref resolves to a differently-cased on-disk
         # name, and the client's exact-match check would spuriously fail after
         # a successful read. The ref was already validated by resolve_ref.
-        await safe_send(
-            websocket,
-            {
-                "type": "bytes",
-                "id": request_id,
-                "ref": ref,
-                "data": data,
-                "bytes": size,
-            },
-        )
+        await reply.send({"type": "bytes", "ref": ref, "data": data, "bytes": size})
 
     @staticmethod
-    async def _reject_oversize(
-        websocket: WebSocket, request_id: str, size: int
-    ) -> None:
-        """Send the too-large-to-fetch error frame for a *size*-byte recording."""
-        await safe_send(
-            websocket,
+    async def _reject_oversize(reply: WireReply, size: int) -> None:
+        """Send the too-large-to-fetch error frame for a *size*-byte recording.
+
+        An oversize recording is a legitimate too-large file, not a probe, so it
+        is logged at INFO -- distinct from the WARNING class used for a rejected
+        or failed op -- keeping the audit trail symmetric with the read-fault
+        path, which also logs.
+        """
+        logger.info("Fetch rejected oversize: id=%r bytes=%d", reply.request_id, size)
+        await reply.send(
             {
                 "type": "error",
-                "id": request_id,
                 "message": (
                     f"recording too large to fetch in one frame ({size} bytes > "
                     f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly"
                 ),
-            },
-        )
-
-    @staticmethod
-    async def _error(websocket: WebSocket, request_id: str, message: str) -> None:
-        """Send an id-stamped error frame for a rejected fetch request."""
-        await safe_send(
-            websocket, {"type": "error", "id": request_id, "message": message}
+            }
         )
