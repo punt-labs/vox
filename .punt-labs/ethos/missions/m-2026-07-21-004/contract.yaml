@@ -1,0 +1,89 @@
+mission_id: m-2026-07-21-004
+status: closed
+type: implement
+created_at: "2026-07-21T05:32:53Z"
+updated_at: "2026-07-21T06:48:31Z"
+closed_at: "2026-07-21T06:48:31Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-21T05:32:53Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-tnum
+    files:
+        - docs/vox-tnum-record-transport.md
+        - src/punt_vox/voxd/speech_handlers.py
+        - src/punt_vox/client.py
+        - src/punt_vox/client_sync.py
+        - src/punt_vox/__main__.py
+        - src/punt_vox/server.py
+        - src/punt_vox/recording.py
+        - TESTING.md
+write_set:
+    - src/punt_vox/voxd/speech_handlers.py
+    - src/punt_vox/voxd/record_sink.py
+    - src/punt_vox/client.py
+    - src/punt_vox/client_sync.py
+    - src/punt_vox/__main__.py
+    - src/punt_vox/server.py
+    - src/punt_vox/recording.py
+    - tests/voxd/test_speech_handlers.py
+    - tests/voxd/test_record_sink.py
+    - tests/test_client.py
+    - tests/test_main.py
+    - tests/test_server.py
+    - tests/test_recording.py
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .tmp/missions/results/vox-tnum-impl-note.md
+success_criteria:
+    - 'Implement docs/vox-tnum-record-transport.md exactly — candidate C: the daemon writes the synthesized MP3 to the caller-specified destination and returns {type:audio, path, bytes}; NO audio crosses the WebSocket. Fix all four defects the doc enumerates: (1) big-frame 1009 (gone — no payload frame); (2) premature timeout (immediate `recording` ack + length-scaled client wait for the terminal `audio` frame); (3) CLI raw traceback (transport wraps websockets ConnectionClosed/WebSocketException and OSError from ws.recv()/ws.send() into VoxdConnectionError/VoxdProtocolError — the general fix for every call, not just record); (4) daemon AssertionError on client mid-transfer close (guard the reply with contextlib.suppress(WebSocketDisconnect, RuntimeError), matching SynthesizeHandler).'
+    - 'Atomic destination write: synthesize to a sibling temp in the destination directory, then os.replace onto the final path, so a crash or synthesis error mid-write leaves NO partial file. Cache hit = copy from the cache file (never move — preserve the cache entry); fresh synthesis = move the ephemeral temp. Preserve 0600/private semantics the existing sink uses.'
+    - 'Forward integration, no shim: delete src/punt_vox/recording.py (RecordingSink) and tests/test_recording.py; file-write + content-hash naming (generate_filename) move daemon-side (record_sink.py). VoxClient.record changes shape from returning bytes to returning a RecordResult(path, bytes, cached); every caller (CLI record, MCP record tool) changes with it. No base64 path remains.'
+    - 'OUT OF SCOPE — do NOT implement here (separate beads): remote host:path labeling and cross-host path resolution (vox-eoq9, P4); routing vox play through the daemon (vox-ovb7, P3); the record/say session-voice inheritance fix (its own later mission — it touches synthesis.py + server.py and must not collide with this mission). Implement C for the local/loopback case the doc specifies; the daemon writes to the output_path/output_dir it is given.'
+    - 'Tests assert the invariants BY NAME per the design doc test plan: test_long_record_delivers_byte_correct_file (output size == reply bytes == source len); test_record_over_frame_limit_succeeds (terminal frame is a path frame, no data key, no >1MiB frame); test_arbitrarily_long_record_has_no_ceiling; test_long_synthesis_is_not_abandoned (fake synth sleeps past the old 30s; client still gets audio under the length-scaled deadline); test_client_close_mid_transfer_does_not_crash_daemon (disconnect after ack before audio; handler returns clean; a subsequent health on a new connection succeeds); test_transport_failure_is_one_line_cli_error (force ConnectionClosedError; wrapped as VoxdProtocolError; CLI exits 1, single line, no traceback); test_no_partial_file_on_synthesis_error (synth raises after ack; destination does NOT exist).'
+    - 'make check exits 0 before EVERY commit — read the FULL output, never pipe through tail/head/grep; run gates individually if the combined target OOM-stalls in the sandbox. OO ratchet: no metric regresses on touched files and at least one improves (deleting RecordingSink + extracting record_sink is real paydown); make update-oo and stage .oo-baseline.json + .oo-audit.jsonl; check .oo-coupling-baseline.json if structure shifts. NO suppressions beyond the PY-DP-9 enumerated classes with the rule cited inline.'
+    - 'Commit incrementally — one commit per logical step (record_sink extraction; daemon handler; client RecordResult + transport error-wrapping; client_sync parity; CLI record; MCP record tool; tests). Each commit passes make check. Do not accumulate more than 30 minutes of uncommitted changes. Branch: fix/vox-tnum-record-transport (already checked out — do not create branches/worktrees, do not open a PR, do not touch CHANGELOG/README/DESIGN.md — the leader owns those).'
+    - 'After code is committed: make install, then vox daemon restart, then make test against the installed artifact (a stale daemon serves the old record path). Report the actual make check + make test output tails (typed as text you read in full) in the result note. Do NOT run the live-verify session — the leader runs that with the operator (it needs a real >1 MiB record + audible playback confirmation).'
+    - 'Write the result note to .tmp/missions/results/vox-tnum-impl-note.md (what changed, files_changed, gate output, any deviation from the design doc with reason) and submit via ethos mission result. Time-box: 30 minutes.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    ## Goal
+
+    Ship the vox-tnum size fix: vox record of arbitrarily long text works, no
+    1 MiB WebSocket frame ceiling. Design of record: docs/vox-tnum-record-
+    transport.md (committed c9cc6e5), candidate C — the daemon writes the file
+    and returns the path; no audio crosses the wire.
+
+    ## Why candidate C (settled, operator-aware)
+
+    record's purpose is to produce a file; the daemon already owns every other
+    audio file on disk (cache, tracks, ephemeral). Writing the record file
+    daemon-side removes the byte transfer entirely — no frame to cap, no receive
+    buffer to bound. It also fits the coherent "daemon is the audio host" model
+    the follow-on beads complete (vox-ovb7 routes play through the daemon;
+    vox-eoq9 labels remote paths). This mission implements ONLY the record
+    transport for the local/loopback case.
+
+    ## The four defects (all reproduced live 2026-07-20)
+
+    1. 3,072,047-byte reply frame > client 1 MiB max_size -> close 1009.
+    2. Fresh 6000-char synthesis took 2m04s; client 30s timeout fired first;
+       daemon finished with no receiver, no file written.
+    3. websockets ConnectionClosedError escaped the CLI's VoxError catch as a
+       raw rich traceback.
+    4. Daemon raised AssertionError in the websockets drain when the client
+       closed mid-transfer (uvicorn.error: data transfer failed).
+
+    ## Cautions
+
+    - The daemon logs to a file, never stderr/print (voxd is a daemon).
+    - emit/reply guards must never raise; a client vanishing is normal.
+    - Never Read/Write/Bash .punt-labs/vox/vox.md or vox.local.md; never touch
+      .punt-labs/ethos/.

@@ -1,0 +1,95 @@
+mission_id: m-2026-07-20-006
+status: closed
+type: implement
+created_at: "2026-07-20T13:10:37Z"
+updated_at: "2026-07-20T14:44:23Z"
+closed_at: "2026-07-20T14:44:23Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-20T13:10:37Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-2594
+    files:
+        - docs/vox-2594-unified-log.md
+        - docs/vox-2594-log-rotation.tex
+        - docs/logging-proposal.md
+        - src/punt_vox/append_log.py
+        - src/punt_vox/logging_config.py
+        - src/punt_vox/log_ship.py
+        - src/punt_vox/log_flush.py
+        - src/punt_vox/log_wire.py
+        - src/punt_vox/voxd/log_sink.py
+        - TESTING.md
+write_set:
+    - src/punt_vox/log_append_handler.py
+    - src/punt_vox/log_format.py
+    - src/punt_vox/append_log.py
+    - src/punt_vox/logging_config.py
+    - src/punt_vox/client.py
+    - src/punt_vox/server.py
+    - src/punt_vox/hooks.py
+    - src/punt_vox/voxd/daemon.py
+    - src/punt_vox/log_ship.py
+    - src/punt_vox/log_flush.py
+    - src/punt_vox/log_wire.py
+    - src/punt_vox/voxd/log_sink.py
+    - tests/test_log_append_handler.py
+    - tests/test_append_log.py
+    - tests/test_logging_config.py
+    - tests/test_log_ship.py
+    - tests/test_log_flush.py
+    - tests/test_log_wire.py
+    - tests/voxd/test_log_sink.py
+    - tests/test_client.py
+    - tests/test_server.py
+    - tests/test_hooks.py
+    - tests/voxd/test_daemon.py
+    - tests/conftest.py
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .tmp/missions/results/vox-2594-impl-note.md
+success_criteria:
+    - 'Implement docs/vox-2594-unified-log.md exactly — candidate B, RATIFIED by the operator 2026-07-20 with two rulings you must honor: (1) proceed as designed; (2) the daemon logs synchronously on its asyncio loop — do NOT add a thread offload. Forward integration: DELETE src/punt_vox/log_ship.py, log_flush.py, log_wire.py, voxd/log_sink.py and their tests outright (move surviving LOG_FORMAT/LOG_DATE_FORMAT/Role constants out first per the doc). No migration, compat, shim, or bridge code of any kind; no fallback file may exist anywhere in src/ after this change. The write_set is your permission envelope, not a prescription — you own the final module shape.'
+    - 'The flock rotation protocol in append_log.py is the core safety change: stable <path>.rotate.lock file (created 0600 inside the private 0700 log dir), LOCK_SH held across open(O_APPEND)->write->close on every append, LOCK_EX + size RE-CHECK to rotate, in the DES-013 size-check-then-rename shape. It must realize the Z model in docs/vox-2594-log-rotation.tex (AcquireShared/Append/ReleaseShared/BeginRotate/Rotate/SkipRotate/EndRotate).'
+    - 'Tests assert the invariants BY NAME per the doc test plan: "skip-hook line lands in vox.log" (no daemon reachable, vox-fallback.log never created); "logging opens no socket"; "rotation under two concurrent writers loses no lines" (N processes x M numbered lines, union of vox.log+backups == N*M intact lines); "no write to a renamed file" (LOCK_EX blocks while a shared holder appends); "log files keep 0600" after forced rotation; "fallback path no longer exists" (imports of the four deleted modules raise ModuleNotFoundError; grep of src/ for vox-fallback is empty); "observability stays persistent-file" (no StreamHandler on root after either configure call); "log dir unwritable degrades, never crashes".'
+    - 'make check exits 0 before EVERY commit — read the FULL output, never pipe through tail/head/grep; if the sandbox OOM-stalls the combined target, run the gates individually and read each. OO ratchet: no metric regresses on touched files and at least one genuinely improves (deleting the four ship modules is real paydown); run make update-oo and stage .oo-baseline.json + .oo-audit.jsonl; check .oo-coupling-baseline.json if structure shifted. NO suppressions (# noqa, # type: ignore, xfail) — fix the code; the only allowed classes are the PY-DP-9 enumerations with the rule cited inline.'
+    - 'Commit incrementally — one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes. Branch: fix/vox-2594-unified-vox-log (already checked out — do not create branches or worktrees, do not open a PR, do not touch CHANGELOG.md/README.md/DESIGN.md — the leader owns those).'
+    - 'After the code is committed: make install, then vox daemon restart, then make test against the installed artifact (a stale daemon serves the old sink). Report the actual test output in your result note. Do NOT perform the live-verify session or the user-dir stale-file cleanup — the leader runs those with the operator.'
+    - 'Write the result note to .tmp/missions/results/vox-2594-impl-note.md (what changed, files_changed, actual make check + make test output tails typed as text you read in full, any deviation from the design doc with reason) and submit via ethos mission result. Time-box: 30 minutes.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    ## Goal
+
+    Ship the ratified vox-2594 fix: one vox.log receives daemon records and
+    every client record, including hooks that do no daemon work. The design
+    of record is docs/vox-2594-unified-log.md (committed 31e09be) with the
+    Z model docs/vox-2594-log-rotation.tex (fuzz-clean, verified by leader).
+    The fdmm ship transport and vox-fallback.log are deleted outright.
+
+    ## Non-negotiable invariants (from the design, operator-ratified)
+
+    1. One vox.log for daemon + every client record incl. skip-path hooks.
+    2. No daemon round-trip on any hook's logging hot path (DES-017).
+    3. Rotation safe under concurrent writers: no lost or torn line, no
+       write to a renamed file, at most one rotator (flock protocol).
+    4. 0600 on vox.log and every backup (cn0p).
+    5. No fallback file, no migration/compat/shim code.
+    6. Persistent-file observability, never stderr-only (DES-046).
+
+    ## Cautions
+
+    - emit() never raises and never re-enters logging; sink I/O errors go
+      to sys.__stderr__ (AtomicAppendLog already behaves this way).
+    - Single sanitization pass: handler renders LOG_FORMAT plain,
+      AtomicAppendLog.append applies SANITIZER to the whole line.
+    - Never Read/Write/Bash .punt-labs/vox/vox.md or vox.local.md; never
+      touch .punt-labs/ethos/.
+    - hooks.py is in the write_set only for import/reference fixes if the
+      deletions require them — no behavioral changes there.

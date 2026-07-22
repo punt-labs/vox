@@ -1,0 +1,18 @@
+results:
+    - mission: m-2026-07-05-004
+      round: 1
+      created_at: "2026-07-20T13:10:27Z"
+      author: claude
+      verdict: fail
+      confidence: 1
+      files_changed: []
+      evidence:
+        - name: administrative audit — mission record vs shipped code
+          status: pass
+      prose: |
+        Administrative close by the leader (2026-07-20). The mission's work was
+        completed and shipped outside the mission record; the worker never
+        submitted a result artifact (known partial-enforcement gap, CLAUDE.md
+        "Lessons from vox-0qi"). Closed as failed-process to release the
+        write_set, which blocks the vox-2594 implementation mission. The
+        corresponding code is already merged and released (≤ v4.12.5).

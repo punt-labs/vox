@@ -1,0 +1,89 @@
+mission_id: m-2026-07-21-002
+status: closed
+type: design
+created_at: "2026-07-21T05:00:17Z"
+updated_at: "2026-07-21T05:26:43Z"
+closed_at: "2026-07-21T05:26:43Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-21T05:00:17Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-tnum
+    files:
+        - src/punt_vox/client.py
+        - src/punt_vox/client_sync.py
+        - src/punt_vox/__main__.py
+        - src/punt_vox/voxd/daemon.py
+        - src/punt_vox/voxd/speech_handlers.py
+        - DESIGN.md
+        - CLAUDE.md
+        - TESTING.md
+write_set:
+    - docs/vox-tnum-record-transport.md
+    - docs/vox-tnum-record-transport.tex
+    - .tmp/missions/results/vox-tnum-design-note.md
+success_criteria:
+    - 'DECIDE the audio-return transport for record. Read the ACTUAL code first (the record request/response path: client.py record + transport send_and_recv, client_sync.py, __main__.py record command, voxd speech_handlers record handler, and how the daemon frames its reply). Evaluate at least these candidates against the invariants: (A) chunked/streamed audio frames with client-side reassembly; (B) raise the negotiated websockets max_size on the audio channel to a bounded ceiling; (C) daemon writes the file itself and returns the PATH (record produces a file anyway; the daemon already owns cache/track/ephemeral files on disk) so large audio never crosses the wire; (D) binary frames instead of JSON-embedded audio. Pick one, document rejection rationale for the others. A different, better alternative is allowed if it satisfies every invariant. State the trust boundary you are designing to (voxd clients are local same-user; browser-origin handshakes already rejected) so the chosen mechanism does not reintroduce an unbounded-buffer exposure.'
+    - 'The design MUST fix all four observed defects (reproduced live 2026-07-20, evidence in the bead): (1) TRANSPORT root cause — a record whose MP3 exceeds ~1 MiB is undeliverable (client closes 1009 message-too-big; 6000-char text = 3,072,047-byte frame); (2) TIMEOUT — a fresh 6000-char ElevenLabs synthesis took 2m04s but the client response timeout expired first, so the daemon finished and cached with no receiver and the -o file was never written (the fix must ensure a legitimate long synthesis is not abandoned — ack-then-stream, length-scaled timeout, or progress frames — state which); (3) CLI ERROR MAPPING — websockets ConnectionClosedError escapes __main__.py record`s (VoxdConnectionError, VoxdProtocolError) catch as a raw rich traceback; every transport failure must surface as a one-line CLI error (CLI standard); (4) DAEMON-SIDE — when the client disconnects mid-transfer the daemon raises AssertionError in the websockets drain path (uvicorn.error: data transfer failed); the daemon must handle a client close gracefully and never leave its send path in a bad state.'
+    - 'INVARIANTS the chosen design MUST satisfy, stated verbatim in the doc: (1) vox record of arbitrarily long text delivers the COMPLETE, byte-correct MP3 to the requested output path (assert reassembled/written bytes == synthesized bytes); (2) no silent size ceiling — either no single-frame cap on audio or a transfer with no practical size limit within the trust boundary; (3) a legitimate long synthesis is never abandoned by a premature client timeout; (4) all client-facing transport failures are one-line CLI errors, never a traceback; (5) a client disconnecting mid-transfer never crashes the daemon or corrupts its connection/send state; (6) no unbounded-buffer exposure beyond the stated local-same-user trust boundary; (7) no migration/compat/shim/bridge code — forward-integrate the old single-frame return path out.'
+    - 'Z-SPEC ASSESSMENT (required per the CLAUDE.md formal-modeling gate). If the chosen transport is a stateful transfer (e.g. chunked streaming with reassembly: idle -> transferring -> complete/aborted, with invariants like in-order delivery, reassembled == produced, abort leaves no partial file) it meets the trigger — produce docs/vox-tnum-record-transport.tex modeling the transfer states with invariants in the state schema predicate, one operation schema per transition, fuzz -t exit 0 (zspec check). If the chosen approach is NOT a state machine (e.g. candidate C path-return, or a single bounded-size frame), state the reasons explicitly in the design doc — silence is not an assessment.'
+    - 'The design doc docs/vox-tnum-record-transport.md contains: chosen approach + mechanism detail (message/frame schema, ordering/reassembly or path-handoff protocol, timeout/ack behavior, failure behavior on client-close and on synthesis error); a note on whether the SAME return path is used by any other client call that returns bytes (e.g. does any play/segment path or a future consumer hit the same ceiling) and whether they are fixed by the same change; the IMPLEMENTATION WRITE SET (files to create/modify/delete — your decision, not inherited); a test plan whose cases assert the invariants BY NAME (e.g. "long record delivers byte-correct file", "record over frame limit succeeds", "client-close mid-transfer does not crash daemon", "transport failure is a one-line CLI error"); and a LIVE-VERIFY plan for the running machine (drive a real >1 MiB record end-to-end; the -o file is written and plays back; a mid-transfer disconnect leaves the daemon healthy per vox doctor). Also RULE on the secondary observation: record log lines show voice='' (provider default used) while the session voice is roger — decide whether vox record should inherit the session voice like say/unmute, and if so include it in the write set; if not, justify.'
+    - Commit the design artifacts to branch fix/vox-tnum-record-transport (already checked out). make check green before the commit (read FULL output; run gates individually if the combined target stalls). Do NOT write implementation code, do NOT touch src/, do NOT open a PR.
+    - 'Write the result summary to .tmp/missions/results/vox-tnum-design-note.md and submit via ethos mission result. Time-box: single focused design pass, target 20-25 minutes.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Problem (reproduced live twice, 2026-07-20, on the merged vox-2594 wheel 4.12.5)
+
+    `vox record -o out.mp3 "<~6000-char text>"` fails. The daemon synthesizes
+    and caches the audio correctly (chunk-split at the 4,949-char eleven_v3
+    limit, merged to one 6000-char stream), but the reply cannot be delivered:
+    the daemon returns the recorded audio as a SINGLE WebSocket message and the
+    3,072,047-byte frame exceeds the client's 1 MiB websockets default max_size.
+    The client dies with `ConnectionClosedError: sent 1009 (message too big)`
+    and the -o file is never written. Second run (cache hit, instant) isolates
+    the transport failure from synthesis time. A control 45-char record works
+    end-to-end in ~1 second.
+
+    Four stacked defects, all observed:
+    1. Transport: single-frame audio return over a 1 MiB-capped channel — any
+       record above ~1 MiB is permanently undeliverable.
+    2. Timeout: first run — the 6000-char synthesis took 2m04s but the client
+       response timeout fired first; daemon finished with no receiver, no file.
+    3. CLI error mapping: ConnectionClosedError escapes the record command's
+       (VoxdConnectionError, VoxdProtocolError) catch as a full rich traceback.
+    4. Daemon-side: on the client's mid-transfer close the daemon raises
+       AssertionError in websockets' write_close_frame/drain
+       (`uvicorn.error: data transfer failed ... AssertionError`).
+
+    ## Why this is a design mission, not a quick fix
+
+    It crosses the daemon/client boundary and the fix is a protocol/transport
+    decision with real tradeoffs (stream-and-reassemble vs. raise the cap vs.
+    the daemon writes the file and returns a path vs. binary frames). The COO is
+    NOT prescribing a write set — the specialist decides the transport and the
+    decomposition. The leader will review the design and escalate the transport
+    choice to the operator BEFORE implementation dispatches.
+
+    ## Key asymmetry to weigh
+
+    The play/unmute path never sends audio over the wire — the daemon plays it
+    locally via afplay/ffplay. Only `record` (and any client that needs the
+    bytes back) must return audio to the caller. Whatever the fix, confirm which
+    call sites share the ceiling and whether one change fixes all of them.
+
+    ## Constraints
+
+    - voxd clients are LOCAL same-user processes; browser-origin WS handshakes
+      are already rejected (CSWSH defense). State the trust boundary the chosen
+      mechanism relies on; do not reintroduce an unbounded-buffer exposure.
+    - No migration/compat/shim/bridge — forward-integrate the old return path.
+    - Never Read/Write/Bash .punt-labs/vox/vox.md or vox.local.md; never touch
+      .punt-labs/ethos/.
+    - Deliverable is a committed design doc (+ Z spec if the trigger fires) an
+      implementation mission can execute without further design decisions.

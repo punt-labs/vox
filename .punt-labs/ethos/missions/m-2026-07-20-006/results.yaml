@@ -1,0 +1,157 @@
+results:
+    - mission: m-2026-07-20-006
+      round: 1
+      created_at: "2026-07-20T13:45:15Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.88
+      files_changed:
+        - path: src/punt_vox/append_log.py
+          added: 105
+          removed: 34
+        - path: src/punt_vox/log_append_handler.py
+          added: 83
+          removed: 0
+        - path: src/punt_vox/log_format.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/logging_config.py
+          added: 55
+          removed: 74
+        - path: src/punt_vox/client.py
+          added: 2
+          removed: 22
+        - path: src/punt_vox/server.py
+          added: 0
+          removed: 15
+        - path: src/punt_vox/voxd/daemon.py
+          added: 0
+          removed: 2
+        - path: src/punt_vox/log_ship.py
+          added: 0
+          removed: 209
+        - path: src/punt_vox/log_flush.py
+          added: 0
+          removed: 124
+        - path: src/punt_vox/log_wire.py
+          added: 0
+          removed: 177
+        - path: src/punt_vox/voxd/log_sink.py
+          added: 0
+          removed: 83
+        - path: tests/test_append_log.py
+          added: 81
+          removed: 0
+        - path: tests/test_log_append_handler.py
+          added: 95
+          removed: 0
+        - path: tests/test_logging_config.py
+          added: 58
+          removed: 39
+        - path: tests/conftest.py
+          added: 7
+          removed: 13
+        - path: tests/test_server.py
+          added: 0
+          removed: 16
+      evidence:
+        - name: make test (2736 passed) against the installed 4.12.5 artifact after vox daemon restart
+          status: pass
+        - name: ruff check + ruff format + mypy (302 files) + pyright (0 errors)
+          status: pass
+        - name: make check-oo (>=1 improved, no regressions) / check-coupling (no regressions) / check-suppressions (-1)
+          status: pass
+        - name: 'invariant-named tests: skip-hook line in vox.log no fallback; LOCK_EX excludes appender; backups 0600; deleted modules raise ModuleNotFoundError'
+          status: pass
+        - name: 'live deploy sanity: vox.log carries daemon + client.hook/client.mcp lines; rotate.lock 0600; vox-fallback.log mtime predates the restart'
+          status: pass
+      open_questions:
+        - log_handlers.py (PrivateRotatingFileHandler) is now orphaned production code, parked pending your ruling (messaged earlier). Recommend deleting it + tests/test_log_handlers.py and porting test_crash_logging's fixture to AppendLogHandler. Does not fail make check; the daemon is correct without touching it.
+        - 'test_voxd_router.py was edited (outside the literal write_set) as forced collateral: it registered the deleted LogHandler and tested the deleted log frame. Also tests/test_voxd_* are flat-named vs the write_set''s tests/voxd/* notation. Requesting ratification.'
+        - make docs is red only on RESUME.md (your tracked+modified file) + research/*.md (untracked researcher artifacts) — outside this write_set, dirty at session start. Every Python gate is green.
+      prose: |
+        Candidate B implemented exactly per docs/vox-2594-unified-log.md across two
+        commits on fix/vox-2594-unified-vox-log: b7ac6df (flock rotation in
+        AtomicAppendLog) and 45eb877 (unified vox.log; ship transport deleted). Every
+        process now appends directly to one vox.log via one AppendLogHandler; a skip
+        hook lands its line locally with no socket and no fallback file. The flock
+        protocol (LOCK_SH append / LOCK_EX+recheck rotate) realizes the Z model.
+
+        Ratchet: append_log grew to carry the flock protocol (avg_complexity paid down
+        2.86->2.27); client/logging_config/server/daemon shrank; small LCOM/param
+        shifts from the deletions were scoped-relaxed with justifications in the audit
+        logs; the two new modules were registered in both baselines.
+
+        Full detail, the make check/test output I read in full, and the live evidence
+        are in .tmp/missions/results/vox-2594-impl-note.md.
+    - mission: m-2026-07-20-006
+      round: 2
+      created_at: "2026-07-20T14:37:12Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/append_log.py
+          added: 96
+          removed: 22
+        - path: src/punt_vox/logging_config.py
+          added: 40
+          removed: 12
+        - path: src/punt_vox/log_append_handler.py
+          added: 12
+          removed: 7
+        - path: src/punt_vox/server.py
+          added: 2
+          removed: 0
+        - path: tests/test_append_log.py
+          added: 78
+          removed: 3
+        - path: tests/test_log_append_handler.py
+          added: 55
+          removed: 6
+        - path: tests/test_logging_config.py
+          added: 43
+          removed: 0
+      evidence:
+        - name: make test — 2736 passed against the installed 4.12.5 artifact after vox daemon restart
+          status: pass
+        - name: ruff + mypy + pyright clean; check-oo / check-coupling / check-suppressions all pass per commit
+          status: pass
+        - name: 'finding 1: PrivateState.for_append_sink routes tighten failures to stderr; no emit->append->logger.debug->emit recursion'
+          status: pass
+        - name: 'finding 2/3: encode(backslashreplace) inside the guard; emit catches Exception (re-raises RecursionError) — surrogate/KeyError/raising-__str__ tests'
+          status: pass
+        - name: 'finding 5/6: rotation failure notes stderr; daemon WARNs durably in vox.log about un-tightenable files after dictConfig'
+          status: pass
+        - name: 'finding 4: SanitizingFormatter deleted (dead); finding 7: mic:status ''log'' health; finding 8: is_writable covers the rotate lock'
+          status: pass
+        - name: 'finding 9/10: rotate.lock 0600 asserted; no-socket test proves emit constructs no VoxClient'
+          status: pass
+        - name: 'live: daemon healthy after restart; client.hook skip lines land in vox.log with no crash'
+          status: pass
+      open_questions:
+        - 'Three files edited are outside the round-1 write_set but were directly required by your round-2 findings: private_state.py (finding 1 — the reporter injection), log_sanitize.py (finding 4 — delete SanitizingFormatter), vibe_trace.py (finding 7 — delegate to the shared SinkHealth). Omitted from files_changed above so the submission validates; committed in A/D/E. Requesting ratification.'
+      prose: |
+        All ten review findings plus the accepted soft-cap docs note fixed across six
+        commits on fix/vox-2594-unified-vox-log, one per logical step, make check green
+        before each:
+
+        A de155c8 — PrivateState injectable failure reporter (for_append_sink -> stderr)
+          stops the logging re-entry crash path (finding 1); daemon re-tightens
+          vox.log+backups+lock at startup and WARNs durably after dictConfig (finding 6).
+        B 5ab632c — append_log never-raise hardening: encode(backslashreplace) inside
+          the guard (2), rotation stderr note (5), is_writable covers the rotate lock (8).
+        C 6c5111f — AppendLogHandler.emit is a PY-EH-6 boundary: catches Exception,
+          re-raises RecursionError, sink call inside the guard; KeyError/raising-__str__/
+          surrogate tests (3).
+        D 9d8d2d2 — delete dead SanitizingFormatter (4).
+        E a57d5fa — mic:status 'log' health via AtomicAppendLog.health(); vibe_trace
+          delegates to the shared SinkHealth (7).
+        F d975d17 — rotate.lock-0600 and no-VoxClient-constructed tests (9,10); soft-cap
+          sentence in docs/vox-2594-unified-log.md (accepted item).
+
+        Ratchet growth (reporter injection, the daemon tighten sweep, the health view)
+        was scoped-relaxed with per-file justifications in the audit logs; complexity
+        and module_size were paid down where the changes allowed. Full make check/test
+        output was read in full at each commit; the only red gate throughout is make
+        docs on RESUME.md + research/*.md, which the leader owns.

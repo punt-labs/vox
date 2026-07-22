@@ -1,0 +1,90 @@
+mission_id: m-2026-07-20-004
+status: closed
+type: design
+created_at: "2026-07-20T04:56:17Z"
+updated_at: "2026-07-20T13:09:33Z"
+closed_at: "2026-07-20T13:09:33Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-20T04:56:17Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-2594
+    files:
+        - docs/logging-proposal.md
+        - DESIGN.md
+        - CLAUDE.md
+        - TESTING.md
+write_set:
+    - docs/vox-2594-unified-log.md
+    - docs/vox-2594-log-rotation.tex
+    - .tmp/missions/results/vox-2594-design-note.md
+success_criteria:
+    - 'DECIDE the transport: evaluate at least the three candidates in the context (A brief-connect ship, B direct multi-writer O_APPEND append to one vox.log with flock-guarded rotation, C client spool drained by daemon) against the invariants, grounded in the ACTUAL code (read the fdmm logging implementation in src/punt_vox/ first — logging setup, client fallback path, daemon log sink, rotation). Pick one, document rejection rationale for the others. A different, better alternative is allowed if it satisfies every invariant.'
+    - 'INVARIANTS the chosen design MUST satisfy, stated verbatim in the doc: (1) one vox.log receives daemon records AND every client record, including hooks that do no daemon work (Stop/UserPromptSubmit/SubagentStop skip paths, config updates); (2) no hook pays a daemon round-trip on its logging hot path (DES-017); (3) rotation is safe under concurrent writers — no lost or torn lines, no write to a renamed file; (4) log files keep 0600 (cn0p); (5) vox-fallback.log is DELETED outright — no fallback file, no migration/compat/shim/bridge code of any kind (hard design gate); (6) observability stays persistent-file, never stderr-only (DES-046).'
+    - 'Z-SPEC ASSESSMENT (required, per CLAUDE.md formal-modeling gate): concurrent-writer rotation has invariants across transitions. If it meets the trigger (3+ states with transitions OR invariants that silent-corrupt on a wrong transition), produce docs/vox-2594-log-rotation.tex modeling writer/rotator states with the invariants in the state schema predicate, one operation schema per transition, and fuzz type-check exit 0 (zspec check). If you judge it does NOT qualify, state the reasons explicitly in the design doc — silence is not an assessment.'
+    - 'The design doc docs/vox-2594-unified-log.md contains: chosen approach + mechanism detail (open flags, lock protocol, rotation algorithm, failure behavior when the log dir is missing/unwritable); the IMPLEMENTATION WRITE SET (files to create/modify/delete — your decision, not inherited); a test plan whose cases assert the invariants BY NAME (e.g. "skip-hook line lands in vox.log", "rotation under two concurrent writers loses no lines", "fallback path no longer exists"); a LIVE-VERIFY plan for the running machine (drive a real session; vox-fallback.log stops growing; skip-hook lines appear in vox.log); and a cleanup step for the leftover tts.log/voxd.log/hook-errors.log stale files (confirm nothing writes them under the current code, mv to .tmp, verify, remove).'
+    - Commit the design artifacts to branch fix/vox-2594-unified-vox-log (already checked out). make check green before the commit. Do NOT write implementation code, do NOT touch src/, do NOT open a PR.
+    - 'Write the result summary to .tmp/missions/results/vox-2594-design-note.md and submit via ethos mission result. Time-box: this is a single focused design pass — target 20 minutes.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    ## Problem (verified on the live machine, 2026-07-19)
+
+    v4.12.5 (vox-fdmm) promised "one vox.log". It does not deliver it.
+    vox.log = 404 KB; vox-fallback.log = 4.2 MB plus .1/.2/.3 rotations at
+    ~5 MB each — the fallback is the largest, freshest file. vox.log only
+    holds daemon lines plus lines from clients that opened a daemon
+    connection for real work (synthesis/chime). Every hook that does NO
+    daemon work (Stop/UserPromptSubmit/SubagentStop skip paths, config
+    updates) lands in vox-fallback.log even when the daemon is UP — and
+    those are the majority of hook fires.
+
+    ## Root cause
+
+    The fdmm design (docs/logging-proposal.md, rec at line 69) routes client
+    log records over the WebSocket the client opens for its actual work, with
+    an O_APPEND fallback labeled "daemon-down". Two false premises: (1) not
+    every client has a WebSocket — a no-daemon-work hook opens none; (2) the
+    fallback is not a daemon-down path — it is the primary path for the
+    largest client class. The transport cannot cover connectionless clients.
+    The design itself named the connectionless alternative (the vibe-trace
+    O_APPEND shared-file line writer) and set it aside.
+
+    ## Candidate approaches (you decide; leader leans B but the design rules)
+
+    - A: no-daemon-work hooks open a brief fire-and-forget connection to ship
+      their line. Concern: every fast hook pays a daemon round-trip (DES-017);
+      still needs a fallback when the daemon is down — the split survives.
+    - B: every process (daemon included) appends directly to one vox.log via
+      a multi-writer-safe O_APPEND line writer (pattern proven by the
+      vibe-trace append_log path); rotation guarded by flock in the
+      size-check-then-rename shape of the DES-013 playback lock. No daemon
+      dependency for logging, so no fallback file exists at all. Reopens
+      multi-writer rotation, which the flock protocol must close.
+    - C: clients append to a local spool the daemon drains into vox.log.
+      Daemon stays sole writer/rotator; costs a drain loop, spool lifecycle,
+      and latency between event and visibility.
+
+    ## Hard constraints
+
+    - No migration/compat/shim code — delete the fallback path outright
+      (forward integration). Punt Labs has no installed base to migrate.
+    - Hooks are short-lived subprocesses; their latency budget is the reason
+      DES-017 exists. Logging must never block or slow a hook noticeably.
+    - 0600 on every log file (cn0p hardening).
+    - voxd is the only long-lived process; clients are transient.
+    - Rotation: current fallback rotates at ~5 MB x 3; the unified scheme
+      must cap total disk while never corrupting concurrent appends.
+
+    ## Deliverable
+
+    A committed design doc (+ Z spec if triggered) that an implementation
+    mission can execute without further design decisions. The leader reviews
+    it, escalates the rotation/round-trip tradeoff to the operator, and only
+    then dispatches implementation. Live-verify on the running machine is
+    part of the definition of done for the overall fix.

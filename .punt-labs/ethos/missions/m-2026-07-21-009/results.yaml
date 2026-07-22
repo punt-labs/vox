@@ -1,0 +1,103 @@
+results:
+    - mission: m-2026-07-21-009
+      round: 1
+      created_at: "2026-07-21T16:56:00Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/record_store.py
+          added: 192
+          removed: 0
+        - path: src/punt_vox/voxd/play_handler.py
+          added: 81
+          removed: 0
+        - path: src/punt_vox/voxd/fetch_handler.py
+          added: 94
+          removed: 0
+        - path: src/punt_vox/voxd/record_handler.py
+          added: 60
+          removed: 58
+        - path: src/punt_vox/voxd/record_sink.py
+          added: 0
+          removed: 130
+        - path: src/punt_vox/client.py
+          added: 80
+          removed: 25
+        - path: src/punt_vox/__main__.py
+          added: 110
+          removed: 44
+        - path: docs/vox-dvri-daemon-audio-host.md
+          added: 330
+          removed: 0
+        - path: tests/test_voxd_record_store.py
+          added: 218
+          removed: 0
+      evidence:
+        - name: make check green (2806 tests; ruff/format/mypy/pyright/shellcheck/markdownlint clean; OO/coupling/suppression ratchets pass)
+          status: pass
+        - name: 12 by-name containment + coherence tests present and passing
+          status: pass
+        - name: docs/vox-dvri-record-store.tex fuzz -t clean under the pure model
+          status: pass
+        - name: 'leader diff review (containment in record_store; #351 output_dir/output_path deleted; play/fetch in-root)'
+          status: pass
+      prose: |
+        Implementation of the operator-ratified PURE daemon-is-audio-host model on
+        feat/vox-dvri-design (worktree). Commits c0bc84d (design amend), c2a35d0
+        (daemon: RecordStore containment + play/fetch; record_sink deleted), 7db9e49
+        (client/CLI/MCP: record locator, play/fetch, vox fetch), 471dbe8 (guide
+        rewrite, DES-049, CHANGELOG incl. Security/vox-zu39). P1 (vox-zu39) closed by
+        construction: client sends at most a bare name; RecordStore rejects
+        absolute/separator/../empty/NUL before any FS touch, resolves under the 0700
+        root, verifies is_relative_to(root) after .resolve(); the #351 output_dir/
+        output_path wire fields are deleted (no shim). play routes through the daemon
+        PlaybackQueue; fetch is single-frame bounded. Result submitted by the leader
+        from the main checkout (worktree cannot see the mission record). NOT done by
+        the worker (leader's, per contract): make install + daemon restart +
+        installed-artifact test (would clobber the operator's shared daemon), the
+        live-verify session, and the PR.
+    - mission: m-2026-07-21-009
+      round: 2
+      created_at: "2026-07-21T17:29:17Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.92
+      files_changed:
+        - path: src/punt_vox/voxd/play_handler.py
+          added: 20
+          removed: 8
+        - path: src/punt_vox/voxd/fetch_handler.py
+          added: 4
+          removed: 2
+        - path: src/punt_vox/client.py
+          added: 40
+          removed: 10
+        - path: src/punt_vox/__main__.py
+          added: 45
+          removed: 15
+      evidence:
+        - name: make check green (2813 tests, +7 over round 1; ratchets pass)
+          status: pass
+        - name: 'silent-failure-hunter re-hunt: all 4 round-2 findings confirmed fixed; the new consumer-resilience finding fixed + tested'
+          status: pass
+        - name: 'leader spot-verify: consumer try/finally always resolves the outcome future and sets notify'
+          status: pass
+      open_questions:
+        - 'Write-set under-scoped by the leader: the contract listed src/punt_vox/playback.py (client player) but the daemon PlaybackQueue is src/punt_vox/voxd/playback.py, where the play-outcome + consumer-resilience changes had to land. Also src/punt_vox/types_audio.py gained the shared FETCH_FRAME_LIMIT_BYTES constant. Both are leader-ratified expansions; the contract path was simply wrong.'
+      prose: |
+        Round 2 addressed the local-review (silent-failure-hunter) findings. Commit
+        7633e92: vox play surfaces the host-side playback outcome (one-line error +
+        non-zero exit on failure, matching local play); fetch verifies decoded length
+        vs declared bytes; play prints its local-vs-store dispatch; the over-limit
+        record locator no longer advertises fetch. Commit af8dcd0 (review-cycle
+        resilience fix): the daemon PlaybackQueue consumer per-item body is wrapped in
+        try/finally so a raising play_audio can never leave the outcome future/notify
+        unset — no client hang, no dead consumer, no wedged queue; the timeout-branch
+        proc.kill is guarded against ProcessLookupError. Security (djb) and code
+        review were clean in round 1 and are unaffected. The primary files for these
+        changes — src/punt_vox/voxd/playback.py (daemon queue) and
+        src/punt_vox/types_audio.py (shared limit constant) — fell outside the
+        leader's write_set (contract listed the client-side playback.py path by
+        mistake); leader-ratified. Still the leader's, not run by the worker: make
+        install + daemon restart + live-verify.

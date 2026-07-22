@@ -1,0 +1,11 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-20T14:12:03Z"
+      author: claude
+      converging: true
+      signals:
+        - 'evaluator (bwk): PASS — all six invariants verified against the diff; flock protocol matches the Z model; 3 non-blocking coverage items'
+        - make check green; 2736 tests pass against installed artifact; live-verify confirms skip-hook lines in vox.log and fallback frozen
+        - local review found 3 crash paths in never-raise code (logging re-entry recursion via PrivateState logger.debug inside emit; uncaught UnicodeEncodeError on surrogates; emit catch scope narrower than format can raise) plus silent degradations (rotate failure no signal, tighten-failure observability regressed, is_writable unwired)
+      recommendation: continue
+      reason: Round 1 delivered the ratified design and passes evaluation; round 2 hardens the never-raise contract (the exact defect class that shipped fdmm broken) and closes the reviewer findings before the PR opens.
