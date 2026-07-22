@@ -92,3 +92,8 @@ MagicMock/
 .punt-labs/ethos/ethos.yaml
 .punt-labs/ethos/sessions/
 .punt-labs/ethos/missions/.create.lock
+
+# Local-path counterpart: ethos writes per-session activity logs and locks
+# under .punt-labs/local/ethos/sessions/ — same runtime churn as above, ignored.
+.punt-labs/local/ethos/sessions/*.audit.jsonl
+.punt-labs/local/ethos/sessions/*.lock
