@@ -105,9 +105,9 @@ class RecordHandler(MessageHandler):
         """Reject empty text or a hostile name before the ack; else accept.
 
         Resolving the candidate name once here is the single pre-ack gate: it
-        raises on any name that is absolute, separated, traversing, empty, or
-        NUL-bearing, which becomes a one-line error frame -- logged as a
-        rejected op so a blocked probe of the store is not silent.
+        raises on any name that is absolute, separated, traversing, empty,
+        NUL-bearing, or non-printable, which becomes a one-line error frame --
+        logged as a rejected op so a blocked probe of the store is not silent.
         """
         reply = WireReply(req.websocket, req.request_id)
         if not req.text:

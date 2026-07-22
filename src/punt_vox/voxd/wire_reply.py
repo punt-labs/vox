@@ -75,9 +75,11 @@ class WireReply:
         The shared :data:`SANITIZER` neutralizes the injection surface (every
         C0/C1/DEL control and Unicode line separator); the cap is applied
         *after* escaping so it bounds the actual logged field, not the pre-escape
-        input a padded-out probe could inflate.
+        input a padded-out probe could inflate. The ellipsis is counted inside
+        the limit, so the returned string is never longer than the limit.
         """
+        ellipsis = "..."
         escaped = SANITIZER.escape(message)
         if len(escaped) > _LOG_FIELD_LIMIT:
-            return f"{escaped[:_LOG_FIELD_LIMIT]}..."
+            return f"{escaped[: _LOG_FIELD_LIMIT - len(ellipsis)]}{ellipsis}"
         return escaped
