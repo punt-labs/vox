@@ -52,6 +52,18 @@ def run_dir() -> Path:
     return user_state_dir() / "run"
 
 
+def recordings_dir() -> Path:
+    """Daemon-owned recordings store under ``<state>/recordings``.
+
+    Every ``record`` write lands here under a name the daemon controls; the
+    directory is created 0700 so no other local user can read a recording. It
+    is the containment root for the path checks in
+    :class:`~punt_vox.voxd.record_store.RecordStore` -- a wire client never
+    names a path outside it.
+    """
+    return user_state_dir() / "recordings"
+
+
 def keys_env_file() -> Path:
     """Full path to ``keys.env`` inside the config dir."""
     return config_dir() / "keys.env"
@@ -61,12 +73,13 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
     """Create the per-user state dir and its required subdirectories.
 
     Creates ``<state_root>``, ``<state_root>/logs``, ``<state_root>/run``,
-    and ``<state_root>/cache``. When *state_root* is ``None``, resolves
-    to the current user's state dir via ``user_state_dir()``.
+    ``<state_root>/cache``, and ``<state_root>/recordings``. When *state_root*
+    is ``None``, resolves to the current user's state dir via
+    ``user_state_dir()``.
 
-    All four dirs are chmod 0700 because every one of them holds
-    private per-user state: provider API keys, spoken-text logs, auth
-    token, cached synthesis output. The chmod is applied on every call,
+    All dirs are chmod 0700 because every one of them holds private
+    per-user state: provider API keys, spoken-text logs, auth token,
+    cached synthesis output, saved recordings. The chmod is applied on every call,
     not just at creation time, so pre-existing directories with looser
     permissions (for example 0755 from an older version that respected
     process umask) are tightened on the next startup.
@@ -78,7 +91,7 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
         state_root = user_state_dir()
     state_root.mkdir(parents=True, exist_ok=True)
     state_root.chmod(0o700)
-    for subdir in ("logs", "run", "cache"):
+    for subdir in ("logs", "run", "cache", "recordings"):
         d = state_root / subdir
         d.mkdir(parents=True, exist_ok=True)
         # Enforce 0700 even on pre-existing dirs with looser permissions.

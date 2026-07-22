@@ -43,8 +43,15 @@ def _make_router(
     *,
     auth_token: str | None = None,
 ) -> WebSocketRouter:
-    """Build a WebSocketRouter for testing without touching real files."""
+    """Build a WebSocketRouter with the real handler wiring for routing tests.
+
+    Not filesystem-isolated: it resolves user-home paths (default_output_dir /
+    recordings_dir) and ProgramSubsystem scans the on-disk catalog at init. The
+    router tests exercise message dispatch, not audio or file effects.
+    """
     from punt_vox.dirs import default_output_dir
+    from punt_vox.paths import recordings_dir
+    from punt_vox.voxd.record_store import RecordStore
 
     pb = PlaybackQueue()
     hl = DaemonHealth(pb, lambda: 0, 0)
@@ -57,7 +64,7 @@ def _make_router(
             playback=pb,
             once_dedup=OnceDedup(),
         ),
-        "record": RecordHandler(synthesis=syn),
+        "record": RecordHandler(synthesis=syn, store=RecordStore(recordings_dir())),
         "chime": ChimeHandler(
             chimes=ChimeResolver(),
             chime_dedup=ChimeDedup(),

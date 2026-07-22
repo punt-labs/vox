@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from punt_vox.client import RecordResult, SynthesizeResult, VoxClient
 from punt_vox.client_env import DaemonEnv
@@ -139,19 +138,25 @@ class VoxClientSync:
         text: str,
         spec: SynthesisSpec | None = None,
         *,
-        output_dir: Path,
-        output_path: Path | None = None,
+        name: str | None = None,
     ) -> RecordResult:
-        """Synthesize and have the daemon write the MP3 to disk (no playback).
+        """Synthesize into the daemon's store; return a locator, not a path.
 
-        Returns a :class:`RecordResult` with the final path and byte count; the
-        daemon writes the file, so no audio crosses the wire.
+        Returns a :class:`RecordResult` locator (store id/name, store path,
+        byte count). The daemon owns the file; no audio crosses the wire and the
+        client names no daemon path.
         """
         return self._runner.run(  # type: ignore[no-any-return]
-            self._call(
-                "record", text, spec, output_dir=output_dir, output_path=output_path
-            )
+            self._call("record", text, spec, name=name)
         )
+
+    def play(self, ref: str) -> None:
+        """Play a stored recording on the daemon host by its store reference."""
+        self._runner.run(self._call("play", ref))
+
+    def fetch(self, ref: str) -> bytes:
+        """Return a stored recording's bytes by its store reference."""
+        return cast("bytes", self._runner.run(self._call("fetch", ref)))
 
     def voices(self, provider: str | None = None) -> list[str]:
         """List available voices."""

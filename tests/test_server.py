@@ -686,51 +686,90 @@ class TestRecord:
         landed = tmp_path / "hello.mp3"
         landed.write_bytes(b"x" * 40)
         mock_client = MagicMock()
-        mock_client.record.return_value = RecordResult(path=landed, byte_count=40)
+        mock_client.record.return_value = RecordResult(
+            id="hello.mp3", name="hello.mp3", store_path=landed, byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello world"))
 
         assert isinstance(result, list)
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
+        assert result[0]["name"] == "hello.mp3"
         assert "path" in result[0]
         mock_client.record.assert_called_once()
 
-    def test_size_mismatch_returns_error(
+    def test_size_mismatch_treated_as_remote_not_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A delivered file whose size != reported bytes degrades to an error."""
-        landed = tmp_path / "hello.mp3"
-        landed.write_bytes(b"x" * 10)  # on disk: 10 bytes
+        """A same-named local file of a different size is not this recording.
+
+        Against a remote daemon sharing this user's home, a same-named local
+        file must not fail a successful store write -- the daemon-reported byte
+        count is authoritative, and the tool reports the locator (identity-vs-
+        existence rule #353, MCP parity with the CLI locator).
+        """
+        collision = tmp_path / "hello.mp3"
+        collision.write_bytes(b"x" * 10)  # a different local file, 10 bytes
         mock_client = MagicMock()
-        mock_client.record.return_value = RecordResult(path=landed, byte_count=40)
+        mock_client.record.return_value = RecordResult(
+            id="hello.mp3", name="hello.mp3", store_path=collision, byte_count=40
+        )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello world"))
-        assert "error" in result
+        assert isinstance(result, list)
+        assert result[0]["name"] == "hello.mp3"
+        assert result[0]["bytes"] == 40  # daemon count, not the local 10
 
     def test_no_input_returns_error(self) -> None:
         result = json.loads(record())
         assert "error" in result
 
-    def test_custom_output_path(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_custom_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         mock_client = MagicMock()
-        out_path = str(tmp_path / "custom.mp3")
-        Path(out_path).write_bytes(b"x" * 40)
+        landed = tmp_path / "custom.mp3"
+        landed.write_bytes(b"x" * 40)
         mock_client.record.return_value = RecordResult(
-            path=Path(out_path), byte_count=40
+            id="custom.mp3", name="custom.mp3", store_path=landed, byte_count=40
         )
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
 
-        result = json.loads(record(text="Hello", output_path=out_path))
+        result = json.loads(record(text="Hello", name="custom.mp3"))
 
         assert isinstance(result, list)
-        assert result[0]["path"] == out_path
+        assert result[0]["name"] == "custom.mp3"
+        assert mock_client.record.call_args.kwargs["name"] == "custom.mp3"
+
+    def test_empty_name_sent_to_daemon_single_segment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit "" is sent for the daemon to reject, not content-addressed."""
+        from punt_vox.client_errors import VoxdProtocolError
+
+        mock_client = MagicMock()
+        # The daemon is the authority: it rejects an empty name pre-ack.
+        mock_client.record.side_effect = VoxdProtocolError("empty recording name")
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(record(text="Hello", name=""))
+
+        assert "error" in result  # the daemon's rejection is surfaced
+        assert mock_client.record.call_args.kwargs["name"] == ""  # "" reached the wire
+
+    def test_empty_name_multi_segment_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit "" with multiple segments is rejected, not silently dropped."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        result = json.loads(record(segments=[{"text": "a"}, {"text": "b"}], name=""))
+
+        assert "error" in result
+        assert "single-segment" in result["error"]
+        mock_client.record.assert_not_called()
 
     def test_voxd_connection_error_returns_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -740,7 +779,6 @@ class TestRecord:
         mock_client = MagicMock()
         mock_client.record.side_effect = VoxdConnectionError("not running")
         monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        monkeypatch.setattr("punt_vox.server._default_output_dir", lambda: tmp_path)
 
         result = json.loads(record(text="Hello"))
         assert "error" in result

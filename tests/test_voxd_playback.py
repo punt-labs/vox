@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,12 +13,107 @@ import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.voxd import _PLAYBACK_TIMEOUT_DEFAULT_S
-from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
 
 
 def _make_playback_queue() -> PlaybackQueue:
     """Build a fresh PlaybackQueue for testing."""
     return PlaybackQueue()
+
+
+class TestConsumerResilience:
+    """A raising item must not hang its client or wedge the queue for later items."""
+
+    def test_raising_item_resolves_failure_and_queue_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bad = tmp_path / "bad.mp3"
+        good = tmp_path / "good.mp3"
+
+        async def fake_play(self: PlaybackQueue, path: Path) -> None:
+            if path.name == "bad.mp3":
+                raise RuntimeError("boom")
+            # A clean, real-duration success for the following item.
+            self._record_result(path=path, rc=0, elapsed=1.0, stderr="")
+
+        monkeypatch.setattr(PlaybackQueue, "play_audio", fake_play)
+
+        async def _run() -> tuple[PlaybackResult, PlaybackResult]:
+            pq = PlaybackQueue()
+            consumer = asyncio.create_task(pq.consumer())
+            loop = asyncio.get_running_loop()
+            fut_bad: asyncio.Future[PlaybackResult] = loop.create_future()
+            fut_good: asyncio.Future[PlaybackResult] = loop.create_future()
+            await pq.enqueue(
+                PlaybackItem(
+                    path=bad, request_id="1", notify=asyncio.Event(), outcome=fut_bad
+                )
+            )
+            await pq.enqueue(
+                PlaybackItem(
+                    path=good, request_id="2", notify=asyncio.Event(), outcome=fut_good
+                )
+            )
+            try:
+                r_bad = await asyncio.wait_for(fut_bad, timeout=2)
+                r_good = await asyncio.wait_for(fut_good, timeout=2)
+            finally:
+                consumer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await consumer
+            return r_bad, r_good
+
+        r_bad, r_good = asyncio.run(_run())
+
+        # The crashing item resolved to a failure -- the client gets an error,
+        # not a 600s hang.
+        assert r_bad.rc == -1
+        assert not r_bad.ok
+        # The queue is not wedged: the next item still played and succeeded.
+        assert r_good.ok
+
+    def test_cancel_mid_item_resolves_outcome_no_hang(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancelling the consumer mid-item still resolves the item's outcome.
+
+        PlayHandler awaits the outcome future with no timeout, so a pending
+        future on daemon shutdown (task cancellation) would hang the request
+        forever and leak the task.
+        """
+        started = asyncio.Event()
+
+        async def blocking_play(_self: PlaybackQueue, _path: Path) -> None:
+            started.set()
+            await asyncio.Event().wait()  # never completes -> cancelled here
+
+        monkeypatch.setattr(PlaybackQueue, "play_audio", blocking_play)
+
+        async def _run() -> PlaybackResult:
+            pq = PlaybackQueue()
+            consumer = asyncio.create_task(pq.consumer())
+            loop = asyncio.get_running_loop()
+            outcome: asyncio.Future[PlaybackResult] = loop.create_future()
+            await pq.enqueue(
+                PlaybackItem(
+                    path=tmp_path / "x.mp3",
+                    request_id="1",
+                    notify=asyncio.Event(),
+                    outcome=outcome,
+                )
+            )
+            await started.wait()  # consumer is inside play_audio, holding the item
+            consumer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await consumer
+            # The finally must have resolved the outcome despite the cancel.
+            return await asyncio.wait_for(outcome, timeout=2)
+
+        result = asyncio.run(_run())
+
+        assert result.rc == -1
+        assert not result.ok
+        assert "interrupted" in result.stderr
 
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:

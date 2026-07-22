@@ -7,6 +7,7 @@ Used by the MCP server, hook handlers, and CLI commands.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -45,17 +46,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class RecordResult:
-    """Result of a ``record`` call: where the daemon wrote the audio.
+    """Locator for a recording the daemon stored -- never a client path.
 
-    The daemon writes the synthesized MP3 to the caller's destination and
-    returns the final ``path`` plus the ``byte_count`` it wrote -- no audio
-    crosses the wire. A caller asserts byte-correct delivery by comparing
-    ``byte_count`` to the on-disk size of ``path``. ``cached`` reports a
-    content-addressed cache hit, the same observability signal
-    :class:`SynthesizeResult` carries.
+    ``record`` captures to the daemon-owned store; the client never names a
+    daemon path. ``id`` and ``name`` are the store reference (the store
+    filename) a caller passes to :meth:`VoxClient.play` or
+    :meth:`VoxClient.fetch`. ``store_path`` is the daemon-side path -- usable
+    directly when the client shares the daemon's filesystem, and the source for
+    a local :meth:`VoxClient.fetch` copy. ``byte_count`` is the size the daemon
+    wrote; ``cached`` reports a content-addressed cache hit.
     """
 
-    path: Path
+    id: str
+    name: str
+    store_path: Path
     byte_count: int
     cached: bool = False
 
@@ -88,6 +92,15 @@ class SynthesizeResult:
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
+# play waits for the host-side playback to FINISH (not just enqueue) so a
+# failure surfaces, so its deadline must cover a full track. Bounded like the
+# record cap so a wedged daemon is still detected within ten minutes.
+_TIMEOUT_PLAYBACK = 600.0
+# fetch returns one near-1-MiB (base64) frame; a local daemon is instant, but
+# the documented remote/SSH-tunnel path can be slow, so a near-limit transfer
+# must not be abandoned mid-send. fetch is a cold, opt-in, one-shot retrieval,
+# so it can afford a generous wait well above the synthesis deadline.
+_TIMEOUT_FETCH = 120.0
 
 # record synthesizes to a file that may take minutes for long text (a fresh
 # 6000-char ElevenLabs synthesis was measured at ~2m). Scale the wait with the
@@ -488,33 +501,30 @@ class VoxClient:
         text: str,
         spec: SynthesisSpec | None = None,
         *,
-        output_dir: Path,
-        output_path: Path | None = None,
+        name: str | None = None,
     ) -> RecordResult:
-        """Synthesize and have the daemon write the MP3 to disk (no playback).
+        """Synthesize into the daemon's store; return a locator, not a path.
 
-        No audio crosses the wire: the daemon writes the synthesized file to
-        *output_path* (explicit) or, when that is None, to a content-addressed
-        name under *output_dir*, and returns a :class:`RecordResult` with the
-        final path and byte count. *spec* bundles the voice/provider/rate
-        parameters. The response deadline scales with the text length (bounded)
-        so a long synthesis is not abandoned by a premature timeout.
-
-        Destinations are resolved to absolute paths *here*, against the caller's
-        cwd, before they go on the wire: ``voxd`` is a persistent daemon whose
-        cwd is not the caller's shell, so a bare relative path would otherwise
-        land in the daemon's directory.
+        No audio crosses the wire and the client names no daemon path. The
+        daemon stores the MP3 under a validated bare *name* or, when that is
+        None, a content-addressed name, and returns a :class:`RecordResult`
+        locator (store id/name, store path, byte count). *spec* bundles the
+        voice/provider/rate parameters. The response deadline scales with the
+        text length (bounded) so a long synthesis is not abandoned by a
+        premature timeout.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
             "type": "record",
             "id": request_id,
             "text": text,
-            "output_dir": str(Path(output_dir).resolve()),
             **(spec or SynthesisSpec()).to_client_kwargs(),
         }
-        if output_path is not None:
-            msg["output_path"] = str(Path(output_path).resolve())
+        # Send name whenever it is not None -- including an explicit "" -- so
+        # the daemon is the single authority on name validity: it rejects an
+        # empty name pre-ack. Only an absent name (None) is content-addressed.
+        if name is not None:
+            msg["name"] = name
 
         scaled = _RECORD_TIMEOUT_BASE + _RECORD_TIMEOUT_PER_CHAR * len(text)
         timeout = min(scaled, _RECORD_TIMEOUT_MAX)
@@ -522,12 +532,13 @@ class VoxClient:
             msg, timeout=timeout, terminal_type="audio"
         )
         terminal = responses[-1] if responses else {}
-        if terminal.get("type") != "audio" or "path" not in terminal:
+        if terminal.get("type") != "audio":
             raise VoxdProtocolError(
-                f"Expected 'audio' response with a path, got '{terminal.get('type')}'"
+                f"Expected 'audio' response, got '{terminal.get('type')}'"
             )
-        if "bytes" not in terminal:
-            raise VoxdProtocolError("'audio' response missing 'bytes'")
+        for field in ("name", "path", "bytes"):
+            if field not in terminal:
+                raise VoxdProtocolError(f"'audio' response missing {field!r}")
         try:
             byte_count = int(terminal["bytes"])
         except (TypeError, ValueError) as exc:
@@ -536,11 +547,90 @@ class VoxClient:
             raise VoxdProtocolError(
                 f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
             ) from exc
+        store_name = str(terminal["name"])
         return RecordResult(
-            path=Path(str(terminal["path"])),
+            id=store_name,
+            name=store_name,
+            store_path=Path(str(terminal["path"])),
             byte_count=byte_count,
             cached=bool(terminal.get("cached", False)),
         )
+
+    async def play(self, ref: str) -> None:
+        """Play a stored recording on the daemon host by its store reference.
+
+        *ref* is a bare store name (never a path). The daemon resolves it inside
+        its recordings root, refusing any absolute or traversing reference, and
+        plays it through its serialized queue -- so audio comes out on the
+        machine with speakers, not on a remote client.
+
+        Waits for the terminal ``done`` after the ``playing`` ack, i.e. for
+        playback to actually finish, so a host-side failure (missing player,
+        unplayable file, played-nothing) arrives as an error frame -- the daemon
+        turns it into a ``VoxdProtocolError`` here -- rather than a silent
+        success. This mirrors local ``vox play <file>``, which blocks until the
+        player exits.
+        """
+        msg: dict[str, object] = {
+            "type": "play",
+            "id": uuid.uuid4().hex[:12],
+            "ref": ref,
+        }
+        await self._transport.send_and_drain(
+            msg, timeout=_TIMEOUT_PLAYBACK, terminal_type="done"
+        )
+
+    async def fetch(self, ref: str) -> bytes:
+        """Return a stored recording's bytes for a client that lacks the store.
+
+        *ref* is a bare store name. The daemon resolves it inside the recordings
+        root and returns the bytes in a single frame; a recording above the
+        frame budget is refused with an error rather than truncated.
+        """
+        msg: dict[str, object] = {
+            "type": "fetch",
+            "id": uuid.uuid4().hex[:12],
+            "ref": ref,
+        }
+        responses = await self._transport.send_and_drain(
+            msg, timeout=_TIMEOUT_FETCH, terminal_type="bytes"
+        )
+        terminal = responses[-1] if responses else {}
+        if terminal.get("type") != "bytes" or "data" not in terminal:
+            raise VoxdProtocolError(
+                f"Expected 'bytes' response with data, got '{terminal.get('type')}'"
+            )
+        # The reply must name the ref it carries and it must be the one we asked
+        # for: a misroute or a stale frame with someone else's bytes must not be
+        # written out as this recording.
+        returned_ref = terminal.get("ref")
+        if returned_ref != ref:
+            raise VoxdProtocolError(
+                f"fetch reply ref mismatch: requested {ref!r}, got {returned_ref!r}"
+            )
+        try:
+            data = base64.b64decode(str(terminal["data"]), validate=True)
+        except (ValueError, TypeError) as exc:
+            msg_err = f"'bytes' response has invalid base64: {exc}"
+            raise VoxdProtocolError(msg_err) from exc
+        # Byte-correct delivery (parity with record): 'bytes' is required -- a
+        # missing count would let possibly-truncated data be written unchecked --
+        # must be an int, and must equal the decoded payload length, so a
+        # truncated or corrupted frame is caught rather than written to disk.
+        if "bytes" not in terminal:
+            raise VoxdProtocolError("'bytes' response missing 'bytes'")
+        try:
+            declared_int = int(terminal["bytes"])
+        except (TypeError, ValueError) as exc:
+            msg_err = f"'bytes' response has non-integer 'bytes': {terminal['bytes']!r}"
+            raise VoxdProtocolError(msg_err) from exc
+        if len(data) != declared_int:
+            msg_err = (
+                f"fetch byte-count mismatch: got {len(data)}, "
+                f"daemon declared {declared_int}"
+            )
+            raise VoxdProtocolError(msg_err)
+        return data
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices; a missing ``voices`` key is a protocol error.
