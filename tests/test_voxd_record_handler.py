@@ -323,7 +323,7 @@ class TestRecordHandler:
         assert "rej-nl" in warnings[0].getMessage()
         assert "\n" not in warnings[0].getMessage()  # sanitized, no raw newline
         assert sent[-1]["type"] == "error"
-        assert "control character" in str(sent[-1]["message"])
+        assert "non-printable" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
 
     def test_successful_record_logs_info_not_warning(

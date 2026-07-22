@@ -74,9 +74,9 @@ class TestContainment:
         record locator. resolve and resolve_ref share the validator, so record
         naming and play/fetch refs both reject it.
         """
-        with pytest.raises(ValueError, match="control character"):
+        with pytest.raises(ValueError, match="non-printable"):
             store.resolve("bad\nname.mp3", "x")
-        with pytest.raises(ValueError, match="control character"):
+        with pytest.raises(ValueError, match="non-printable"):
             store.resolve_ref("esc\x1bname.mp3")
 
     def test_empty_name_rejected_by_store(self, store: RecordStore) -> None:

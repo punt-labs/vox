@@ -46,7 +46,10 @@ _NAME_REJECTIONS: tuple[tuple[Callable[[str], bool], str], ...] = (
         "recording name must not contain a path separator",
     ),
     (lambda c: c in _DIR_TOKENS, "recording name must be a filename, not '.' or '..'"),
-    (lambda c: not c.isprintable(), "recording name contains a control character"),
+    (
+        lambda c: not c.isprintable(),
+        "recording name contains a non-printable character",
+    ),
 )
 
 
