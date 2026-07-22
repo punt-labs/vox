@@ -96,6 +96,11 @@ _TIMEOUT_SHORT = 5.0
 # failure surfaces, so its deadline must cover a full track. Bounded like the
 # record cap so a wedged daemon is still detected within ten minutes.
 _TIMEOUT_PLAYBACK = 600.0
+# fetch returns one near-1-MiB (base64) frame; a local daemon is instant, but
+# the documented remote/SSH-tunnel path can be slow, so a near-limit transfer
+# must not be abandoned mid-send. fetch is a cold, opt-in, one-shot retrieval,
+# so it can afford a generous wait well above the synthesis deadline.
+_TIMEOUT_FETCH = 120.0
 
 # record synthesizes to a file that may take minutes for long text (a fresh
 # 6000-char ElevenLabs synthesis was measured at ~2m). Scale the wait with the
@@ -588,7 +593,7 @@ class VoxClient:
             "ref": ref,
         }
         responses = await self._transport.send_and_drain(
-            msg, timeout=_TIMEOUT_SYNTHESIS, terminal_type="bytes"
+            msg, timeout=_TIMEOUT_FETCH, terminal_type="bytes"
         )
         terminal = responses[-1] if responses else {}
         if terminal.get("type") != "bytes" or "data" not in terminal:

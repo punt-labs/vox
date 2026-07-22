@@ -1086,6 +1086,9 @@ def _atomic_write_bytes(output: Path, data: bytes) -> int:
     replace discipline. On any error the temp is removed and the OSError
     re-raised.
     """
+    # Create the destination directory first so a nested -o path (e.g.
+    # ./out/rec.mp3) works, instead of mkstemp failing with FileNotFoundError.
+    output.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=output.parent, suffix=".tmp")
     tmp = Path(tmp_name)
     try:

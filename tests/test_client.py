@@ -772,6 +772,42 @@ class TestVoxClientPlayFetch:
         assert data == b"\xff\xfb\x90\x00" * 4
 
     @pytest.mark.asyncio
+    async def test_fetch_uses_generous_fetch_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """fetch waits on the dedicated _TIMEOUT_FETCH, not the synthesis one."""
+        import base64
+
+        from punt_vox.client import _TIMEOUT_FETCH
+
+        captured: dict[str, float] = {}
+        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+
+        async def fake_drain(
+            _self: object,
+            _msg: dict[str, object],
+            *,
+            timeout: float,
+            terminal_type: str,
+        ) -> list[dict[str, object]]:
+            captured["timeout"] = timeout
+            frame: dict[str, object] = {
+                "type": "bytes",
+                "id": "f1",
+                "ref": "x.mp3",
+                "data": payload,
+                "bytes": 16,
+            }
+            return [frame]
+
+        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        client = VoxClient(port=8421, token="tok")
+
+        await client.fetch("x.mp3")
+
+        assert captured["timeout"] == _TIMEOUT_FETCH
+        assert captured["timeout"] > 30.0  # clearly larger than synthesis
+
     async def test_fetch_ref_mismatch_raises(self) -> None:
         """A reply naming a different ref must not be written as this recording."""
         import base64

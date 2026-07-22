@@ -1293,6 +1293,21 @@ class TestFetchCommand:
         assert not list(tmp_path.glob("*.tmp"))  # temp cleaned up
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_fetch_creates_nested_output_dir(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """A nested -o path creates the directory instead of FileNotFoundError."""
+        out = tmp_path / "out" / "nested" / "rec.mp3"  # parent dirs do not exist
+        mock_client_cls.return_value.fetch.return_value = b"\xff\xfb\x90\x00" * 4
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["fetch", "a1b2c3.mp3", "-o", str(out)])
+
+        assert result.exit_code == 0, result.output
+        assert out.read_bytes() == b"\xff\xfb\x90\x00" * 4
+        assert not list(out.parent.glob("*.tmp"))  # atomic: no temp left behind
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_fetch_connection_error_is_one_line(
         self, mock_client_cls: MagicMock, tmp_path: Path
     ) -> None:
