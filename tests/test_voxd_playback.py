@@ -72,6 +72,49 @@ class TestConsumerResilience:
         # The queue is not wedged: the next item still played and succeeded.
         assert r_good.ok
 
+    def test_cancel_mid_item_resolves_outcome_no_hang(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancelling the consumer mid-item still resolves the item's outcome.
+
+        PlayHandler awaits the outcome future with no timeout, so a pending
+        future on daemon shutdown (task cancellation) would hang the request
+        forever and leak the task.
+        """
+        started = asyncio.Event()
+
+        async def blocking_play(_self: PlaybackQueue, _path: Path) -> None:
+            started.set()
+            await asyncio.Event().wait()  # never completes -> cancelled here
+
+        monkeypatch.setattr(PlaybackQueue, "play_audio", blocking_play)
+
+        async def _run() -> PlaybackResult:
+            pq = PlaybackQueue()
+            consumer = asyncio.create_task(pq.consumer())
+            loop = asyncio.get_running_loop()
+            outcome: asyncio.Future[PlaybackResult] = loop.create_future()
+            await pq.enqueue(
+                PlaybackItem(
+                    path=tmp_path / "x.mp3",
+                    request_id="1",
+                    notify=asyncio.Event(),
+                    outcome=outcome,
+                )
+            )
+            await started.wait()  # consumer is inside play_audio, holding the item
+            consumer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await consumer
+            # The finally must have resolved the outcome despite the cancel.
+            return await asyncio.wait_for(outcome, timeout=2)
+
+        result = asyncio.run(_run())
+
+        assert result.rc == -1
+        assert not result.ok
+        assert "interrupted" in result.stderr
+
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
     """Build a fake asyncio subprocess returning (rc, stderr)."""

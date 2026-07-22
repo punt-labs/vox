@@ -900,6 +900,29 @@ class TestRecordCommand:
         assert result.exit_code == 0
         assert "vox play a1b2c3.mp3" in result.output
         assert "vox fetch a1b2c3.mp3" in result.output
+        # The human text says "on the daemon" -- never the connection IP (a
+        # tunnel endpoint, not where the recording lives).
+        assert "on the daemon" in result.output
+        assert "127.0.0.1" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_record_locator_json_payload_keeps_host(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """The machine-readable payload still carries the connection host."""
+        mock_instance = mock_client_cls.return_value
+        mock_instance.record.return_value = RecordResult(
+            id="a1b2c3.mp3",
+            name="a1b2c3.mp3",
+            store_path=tmp_path / "not-here" / "a1b2c3.mp3",
+            byte_count=5,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["record", "hi", "--json"])
+
+        assert result.exit_code == 0
+        assert '"host"' in result.output  # machine-readable payload keeps the endpoint
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_remote_locator_over_fetch_limit_does_not_advertise_fetch(

@@ -485,13 +485,14 @@ def _emit_record_locator(result: RecordResult) -> None:
         _formatter.emit(payload, str(result.store_path))
         return
 
-    host = DaemonEnv.host()
-    payload["host"] = host
+    # The connection host stays in the structured payload (machine-readable,
+    # accurate as the endpoint) but NOT in the human text: under an SSH tunnel
+    # it is 127.0.0.1 (the tunnel endpoint), not where the recording lives, and
+    # the CLI cannot reliably tell tunnel from direct -- so the text says "the
+    # daemon" generically (matching the guide example).
+    payload["host"] = DaemonEnv.host()
     # Only advertise fetch when the recording actually fits a single fetch frame;
-    # above the limit fetch always fails, so point at host-side playback instead
-    # of a command that cannot work. No host IP in the retrieve hint: under an
-    # SSH tunnel the connection host is 127.0.0.1 (the tunnel endpoint), which is
-    # not where the recording lives -- say "the daemon host" generically.
+    # above the limit fetch always fails, so point at host-side playback instead.
     if result.byte_count > FETCH_FRAME_LIMIT_BYTES:
         retrieval = (
             f"too large to fetch over the wire — play it on the daemon host "
@@ -499,7 +500,7 @@ def _emit_record_locator(result: RecordResult) -> None:
         )
     else:
         retrieval = f"fetch: vox fetch {result.name} -o <path>"
-    text = f"{result.name} on {host} (play: vox play {result.name}; {retrieval})"
+    text = f"{result.name} on the daemon (play: vox play {result.name}; {retrieval})"
     _formatter.emit(payload, text)
 
 

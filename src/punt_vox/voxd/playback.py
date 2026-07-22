@@ -485,6 +485,13 @@ class PlaybackQueue:
                 logger.exception("Playback consumer error for %s", item.path.name)
                 self._fail_outcome(item, "playback failed unexpectedly")
             finally:
+                # Catch-all in the finally so cancellation (daemon shutdown) or
+                # any non-Exception BaseException still resolves the outcome --
+                # PlayHandler awaits that future with no timeout, so a pending
+                # future would hang the request forever and leak the task. A
+                # no-op when the success/error path already resolved it (guards
+                # done()).
+                self._fail_outcome(item, "playback interrupted (daemon shutting down)")
                 item.notify.set()
                 self._queue.task_done()
 
