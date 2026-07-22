@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from punt_vox.voxd.play_handler import PlayHandler
 from punt_vox.voxd.playback import PlaybackItem, PlaybackResult
 from punt_vox.voxd.record_store import RecordStore
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _ok_result(path: Path) -> PlaybackResult:
@@ -177,3 +182,41 @@ class TestPlayHandler:
         # Must not raise -- a normal disconnect is a quiet end-of-request.
         asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
         playback.enqueue.assert_awaited_once()
+
+    def test_unknown_recording_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A not-found ref is audit-logged once at WARNING with the request id."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        playback = _playback_that_completes()
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p7", "ref": "nope.mp3"}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "p7" in warnings[0].getMessage()
+        playback.enqueue.assert_not_awaited()
+
+    def test_successful_play_logs_info_not_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A clean play logs its INFO line and emits no rejection WARNING."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
+        playback = _playback_that_completes()
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
+        with caplog.at_level(logging.INFO):
+            asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        assert any(
+            r.levelno == logging.INFO and "Play:" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]

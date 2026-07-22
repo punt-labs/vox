@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
@@ -220,3 +221,34 @@ class TestFetchHandler:
         msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
         # Must not raise -- a normal disconnect is a quiet end-of-request.
         asyncio.run(FetchHandler(store=store)(msg, ws))
+
+    def test_unknown_recording_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A not-found ref is audit-logged once at WARNING with the request id."""
+        store = RecordStore(tmp_path / "recordings")
+        store.root.mkdir(parents=True)
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f7", "ref": "nope.mp3"}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "f7" in warnings[0].getMessage()
+
+    def test_traversal_ref_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A blocked path-escape ref leaves an audit WARNING carrying the id."""
+        store = RecordStore(tmp_path / "recordings")
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "fetch", "id": "f8", "ref": "../../etc/x"}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(FetchHandler(store=store)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "f8" in warnings[0].getMessage()

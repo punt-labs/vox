@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -267,3 +268,49 @@ class TestRecordHandler:
 
         assert any(p["type"] == "error" for p in sent)
         assert not any(p["type"] == "audio" for p in sent)
+
+    def test_rejected_hostile_name_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A blocked hostile name emits exactly one audit WARNING with the id.
+
+        The rejection is the security-relevant event: an operator grepping
+        vox.log must see the blocked probe. Containment behavior is unchanged --
+        the error frame still names the reason and no ack/audio is sent.
+        """
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "rej-9",
+            "text": "hi",
+            "name": "/etc/passwd",
+        }
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "rej-9" in warnings[0].getMessage()
+        assert sent[-1]["type"] == "error"
+        assert "absolute" in str(sent[-1]["message"])
+
+    def test_successful_record_logs_info_not_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A clean record logs its INFO line and emits no rejection WARNING."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\xff\xfb\x90\x00" * 8)
+        ws, _sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "record", "id": "r1", "text": "hi"}
+        with caplog.at_level(logging.INFO):
+            asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+
+        assert any(
+            r.levelno == logging.INFO and "Record:" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING]

@@ -8,10 +8,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
-from punt_vox.voxd._parse import safe_send
 from punt_vox.voxd.speech_handlers import _SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -64,18 +64,19 @@ class RecordHandler(MessageHandler):
         logger.info(
             "Record: id=%r name=%r provider=%r voice=%r chars=%d",
             req.request_id,
-            name or "",
-            req.spec.provider or "",
-            req.spec.voice or "",
+            name,
+            req.spec.provider,
+            req.spec.voice,
             len(req.text),
         )
 
+        reply = WireReply(req.websocket, req.request_id)
         # Ack immediately so a long synthesis does not trip the client's response
         # timeout; the client then waits for the terminal 'audio' frame. If the
         # ack could not be delivered the client is already gone -- skip synthesis
         # (a real provider cost) and the write rather than orphan a file for a
         # request nobody is waiting on.
-        if not await self._safe_reply(req, {"type": "recording"}):
+        if not await reply.send({"type": "recording"}):
             logger.info(
                 "Record client gone before ack for id=%r; skipping synthesis",
                 req.request_id,
@@ -90,15 +91,14 @@ class RecordHandler(MessageHandler):
         if write is None:
             return
 
-        await self._safe_reply(
-            req,
+        await reply.send(
             {
                 "type": "audio",
                 "name": write.path.name,
                 "path": str(write.path),
                 "bytes": write.byte_count,
                 "cached": outcome.cached,
-            },
+            }
         )
 
     async def _accept(self, req: _SpeechRequest, name: str | None) -> bool:
@@ -106,10 +106,12 @@ class RecordHandler(MessageHandler):
 
         Resolving the candidate name once here is the single pre-ack gate: it
         raises on any name that is absolute, separated, traversing, empty, or
-        NUL-bearing, which becomes a one-line error frame.
+        NUL-bearing, which becomes a one-line error frame -- logged as a
+        rejected op so a blocked probe of the store is not silent.
         """
+        reply = WireReply(req.websocket, req.request_id)
         if not req.text:
-            await req.error("empty text")
+            await reply.error("empty text")
             return False
         # Only a client-supplied name carries hostile input to reject pre-ack.
         # The no-name case is content-addressed by place() daemon-side (no
@@ -120,7 +122,7 @@ class RecordHandler(MessageHandler):
             try:
                 self._store.resolve(name, req.text)
             except ValueError as exc:
-                await req.error(str(exc))
+                await reply.error(str(exc))
                 return False
         return True
 
@@ -140,7 +142,9 @@ class RecordHandler(MessageHandler):
             # Any place() failure (not just OSError) must reach the already-ack'd
             # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
-            await self._safe_reply(req, {"type": "error", "message": str(exc)})
+            await WireReply(req.websocket, req.request_id).send(
+                {"type": "error", "message": str(exc)}
+            )
             return None
 
     async def _synthesize(self, req: _SpeechRequest) -> SynthesisOutcome | None:
@@ -149,16 +153,7 @@ class RecordHandler(MessageHandler):
             return await self._synthesis.synthesize_to_file(req.text, req.spec)
         except Exception as exc:
             logger.exception("Record synthesis failed for id=%r", req.request_id)
-            await self._safe_reply(req, {"type": "error", "message": str(exc)})
+            await WireReply(req.websocket, req.request_id).send(
+                {"type": "error", "message": str(exc)}
+            )
             return None
-
-    @staticmethod
-    async def _safe_reply(req: _SpeechRequest, payload: dict[str, object]) -> bool:
-        """Send an id-stamped reply; True if delivered, False if the client had gone.
-
-        A client that disconnects mid-record (e.g. Ctrl-C during synthesis) must
-        never crash the daemon or corrupt its send path -- the shared
-        :func:`safe_send` swallows the closed-client signals. The bool lets the
-        caller skip work when the very first (ack) reply never reached the client.
-        """
-        return await safe_send(req.websocket, {"id": req.request_id, **payload})

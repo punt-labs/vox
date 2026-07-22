@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Blocked record/play/fetch operations now leave an audit trail in `vox.log` (vox-1hbo)**: the vox-zu39 containment correctly *refused* a hostile record `--name` or a play/fetch `ref` (absolute, traversing `..`, separated, empty) and an unknown recording, but the rejection was silent — a `grep` of `vox.log` for a blocked path-escape probe returned nothing, so an operator could not detect probing of the recordings root while successes and resource failures were both logged. Every rejected daemon store op (a containment `ValueError` **and** a not-found probe) now emits one `WARNING` to the single `vox.log`, carrying the wire request id and the reason, so a blocked attempt is greppable alongside everything else. The logging is centralized: a new `WireReply` value object (bound to one request's socket and id) is the one place record, play, and fetch emit an error frame, and it logs the rejection there — the duplicated per-handler `_error`/`_safe_reply` helpers are removed. The attacker-controlled name/ref is **sanitized before it reaches the log** — newlines and control characters are escaped and the field is length-capped — to close a log-injection vector into `vox.log`; the client-facing error frame carries the message verbatim, so the wire protocol and exit behavior are unchanged. Closes vox-1hbo.
+
 ## [4.13.0] - 2026-07-22
 
 ### Added
