@@ -5,7 +5,7 @@ group shape the music catalog already has, so the same verbs mean the same
 thing across both daemon-owned stores.
 
 - **Bead:** vox-jei3
-- **Status:** design, pending operator ratification
+- **Status:** operator-ratified (rulings of 2026-07-22)
 - **Depends on:** DES-049 (daemon audio host, record-store containment),
   vox-1hbo (WireReply audit logging), the audio-programs Z model
   (`docs/audio-programs.tex`)
@@ -113,7 +113,7 @@ nothing to parse around.
 $ vox rec new "the build is green"
 a1b2c3d4e5f6.mp3
 $ vox music new "warm analog pads, slow, D minor, instrumental, loopable"
-trk-7f3a91
+7f3a91
 ```
 
 The id is the daemon's; the client echoes it. This replaces the old `record`
@@ -148,9 +148,11 @@ for recordings and the existing `select`/advance path for music.
 There is no local-file play. A local file is played with the operating
 system's own tool; see §"play/say reconciliation".
 
-`vox music play` today also resolves a **tag radio** (`--style`/`--vibe`/
-`--name`, a union of matching albums). The ratified surface names `play <id>`;
-preserving the shipped tag radio is flagged as design call D-3.
+`vox music play` takes a bare `<id>` positional **and** keeps its existing tag
+selectors — `--style`, `--vibe`, `--name` — which resolve a union radio over
+matching albums. Both forms stay: the `<id>` positional is the unified-verb
+primary form, and the tag radio (a shipped per-vibe, cross-genre feature) is not
+removed (D-3, resolved: keep both). No shipped behavior is lost.
 
 ### get
 
@@ -166,8 +168,8 @@ $ vox rec get a1b2c3d4e5f6.mp3
 **directory named for the album**, containing the album's parts:
 
 ```console
-$ vox music get trk-7f3a91
-./warm-pads--calm/
+$ vox music get 7f3a91
+./warm-pads-7f3a91/
   part-01.mp3
 ```
 
@@ -178,6 +180,11 @@ is on the same filesystem, `get` retrieves through the daemon, because a
 same-named local file cannot prove it is the store member (DES-049's identity,
 not existence, rule). If the CWD target already exists, `get` errors rather
 than clobbering (design call D-1, resolved: error).
+
+`get` works for a recording or album of **any size**. The bytes cross the wire
+in bounded chunks (§"Chunked transfer"), so a long recording and a real ~3 MB
+music track both retrieve in full — the old 700 000-byte single-frame ceiling
+is deleted, not designed around.
 
 ### remove
 
@@ -229,14 +236,16 @@ recordings verbs are its worst offenders:
 
 - **`record`** (a ~40-line command body) plus **`_emit_record_locator`** (a
   branch-heavy locator builder that stats the store path, compares byte counts,
-  and forks local-vs-remote text) plus **`fetch`** and **`_atomic_write_bytes`**
-  plus **`play`** (the overloaded local-file/store-ref dispatch) — all move out
-  of `__main__.py`. `_emit_record_locator` and the atomic-write helper are
-  **deleted outright**, not relocated: `new` prints a bare id (no locator to
-  build) and `get` writes a fresh CWD file that refuses on collision (no
-  atomic-replace-at-a-chosen-path to perform). That is negative code — the
-  design removes more `__main__` complexity than the `rec` verbs add back,
-  because the deleted helpers were the complex part.
+  and forks local-vs-remote text) plus **`fetch`** plus **`play`** (the
+  overloaded local-file/store-ref dispatch) — all move out of `__main__.py`.
+  `_emit_record_locator` and the `play` local-file branch are **deleted
+  outright**: `new` prints a bare id (no locator to build), and local-file play
+  is dropped (D-6). The atomic-write helper is not deleted but **demoted** — it
+  moves into the `get` reassembly (a chunk stream still lands atomically to
+  avoid a partial file) and sheds the caller-chosen `-o` path, so the surviving
+  logic is smaller. That is net negative code: the design removes more
+  `__main__` complexity than the `rec` verbs add back, because the deleted
+  locator and dispatch were the complex part.
 - The remaining `__main__.py` unused option aliases (`OutputDirOpt`'s `-o`
   usage on `fetch`, and any `NameOpt`/spec-flag wiring that only `record` used)
   follow their commands out. `NameOpt` and the synthesis-spec flags move onto
@@ -270,12 +279,16 @@ not reinvent them:
 
 - **Token first.** The router rejects an absent/invalid token before dispatch
   (unchanged).
-- **Containment (DES-049 / `RecordStore`).** Any id/ref the client supplies is
-  a **bare name**. It is rejected if absolute, separator-bearing (`/`, `\`),
-  traversing (`..`), empty, NUL-bearing, or non-printable, *before* any
-  filesystem touch; then resolved under the daemon-owned root and verified
-  `is_relative_to(root)` **after** `.resolve()`. Record naming and
-  play/get/remove refs share one validator.
+- **Containment (DES-049 / `RecordStore`).** Any **bare name** the client
+  supplies — a recording id, or the part name inside a resolved album — is
+  rejected if absolute, separator-bearing (`/`, `\`), traversing (`..`), empty,
+  NUL-bearing, or non-printable, *before* any filesystem touch; then resolved
+  under its daemon-owned root and verified `is_relative_to(root)` **after**
+  `.resolve()`. A **music album id is not a bare name** — it is a catalog key:
+  the daemon resolves it through `Catalog.by_id` to the album's opaque on-disk
+  locator (`<slug>-<id>`), and the bare-name validator applies only to the part
+  name *inside* the resolved album directory (F2). Recording naming, part
+  validation, and play/get/remove all share one validator.
 - **Audit logging (vox-1hbo / `WireReply`).** Every reply is stamped with the
   request id through `WireReply.send`; every rejection is logged at WARNING
   (sanitized) through `WireReply.error`, so a blocked probe is greppable in
@@ -284,7 +297,7 @@ not reinvent them:
 The op names below are illustrative of the wire contract; the implementation
 mission owns handler-module layout.
 
-### rec: reuse `record`, `play`, `fetch` unchanged on the wire
+### rec: reuse `record` and `play`; `get` is the chunked `fetch`
 
 - **`rec new`** → the existing `record` op. Request carries `text` and an
   optional bare `name` plus spec fields; replies with the immediate
@@ -292,9 +305,41 @@ mission owns handler-module layout.
   `cached`). **No wire change.** The CLI simply prints `name` (the bare id) and
   discards the `path` — the daemon-path probe is deleted client-side.
 - **`rec play`** → the existing `play` op. **No change.**
-- **`rec get`** → the existing `fetch` op (single-frame base64 bytes, bounded
-  by `FETCH_FRAME_LIMIT_BYTES` = 700 000). **No wire change.** The CLI writes
-  the bytes to `./<ref>` instead of to a `-o` path, and refuses on collision.
+- **`rec get`** → the `fetch` op, now a **chunked stream** (§"Chunked
+  transfer"). The CLI reassembles the chunks and writes `./<ref>` in the
+  current directory, refusing on collision. The single-frame 700 000-byte
+  ceiling is deleted: any-size recordings retrieve in full.
+
+### Chunked transfer (get)
+
+`fetch` retrieves a store file of **arbitrary total size** in **bounded
+per-frame memory**. It replaces the single-frame base64 `fetch` outright —
+forward integration, no size-capped path left behind. The
+`FETCH_FRAME_LIMIT_BYTES` total-file ceiling is deleted; a per-chunk bound
+(`FETCH_CHUNK_BYTES`, e.g. 256 KiB — the exact value is an implementation
+tuning knob, what matters is that it is fixed and small) bounds each frame.
+
+- **Request:** `{"type":"fetch","id":"<hex>","ref":"a1b2c3d4e5f6.mp3"}` for a
+  recording; `{"type":"fetch","id":"<hex>","album":"7f3a91","part":"part-01.mp3"}`
+  for a music part (the album id is catalog-resolved; the part name is
+  bare-name-validated inside the resolved album directory).
+- **Reply (begin):** `{"type":"fetch_begin","id":"<hex>","ref":"…","bytes":<total>,"chunks":<n>,"sha256":"<hex>"}`
+- **Reply (data), n frames in order:** `{"type":"chunk","id":"<hex>","seq":<k>,"data":"<base64 ≤ FETCH_CHUNK_BYTES>"}`
+- **Reply (end):** `{"type":"fetch_end","id":"<hex>","ref":"…","bytes":<total>}`
+- **Reply (rejected):** an error frame **before** `fetch_begin` — a hostile
+  ref/part (audit-logged) or `no recording named '<ref>'` / `no album named
+  '<id>'`.
+
+The ref/part is resolved and containment-checked **once**, before the first
+byte. The daemon reads the file in `FETCH_CHUNK_BYTES` slices and emits them in
+strictly increasing `seq`; the client reassembles in `seq` order, checks the
+running total against `bytes`, and (optionally) verifies the `sha256`, then
+writes atomically (temp in the destination dir + `os.replace`) so a mid-stream
+failure never leaves a partial file. A read fault mid-stream ends the exchange
+with an `{"type":"error"}` frame instead of `fetch_end`; the client discards the
+partial and exits non-zero. The stream is one request's worth of frames on the
+one socket, each stamped with the request id by `WireReply` — no interleaving,
+no separate connection.
 
 ### rec: `rec_list` — enumerate the recordings store
 
@@ -320,14 +365,18 @@ success (so a client can trust the result).
 
 ### music: `music_new` — generate one track into the catalog
 
-Spends ElevenLabs music credits. Authors **one** track and files it as a fresh
-single-track catalog album (§"Music generation"). It does **not** touch the
-active Program.
+Authors **one** track and files it as a fresh single-track catalog album
+(§"Music generation"). It does **not** touch the active Program. It generates
+immediately — **no confirmation prompt, no `--yes`, no up-front cost gate**
+(the credit spend is a plain consequence of the verb, not something to guard).
 
 - **Request:** `{"type":"music_new","id":"<hex>","prompt":"<verbatim>","name":"<optional handle>"}`
 - **Reply (ack):** `{"type":"generating","id":"<hex>"}` — sent before the
   long generation so the client's response timeout does not fire.
-- **Reply (ok):** `{"type":"album","id":"<hex>","album_id":"trk-7f3a91","parts":1}`
+- **Reply (ok):** `{"type":"album","id":"<hex>","album_id":"7f3a91","parts":1}`
+  — `album_id` is a normal bare id minted exactly like every other album:
+  6 hex chars from `secrets.token_hex(3)`, addressable by `Catalog.by_id` (F3;
+  no special `trk-` scheme).
 - **Reply (rejected):** an error frame — empty prompt (audit-logged), a
   `bad_prompt`/ToS rejection, or a daemon/provider fault. On any rejection the
   catalog is unchanged **and the active Program's mode/pool/`lastError` are
@@ -347,38 +396,39 @@ already renders it.
 
 ### music: `music_get` — copy an album's parts to the client
 
-An album is a directory of parts; a single track is ~3 MB, above the 700 000-byte
-`fetch` frame budget. `music_get` therefore delivers a **manifest**, then the
-client retrieves each part through the existing single-frame `fetch` op.
+An album is a directory of parts. `music_get` delivers a small **manifest**,
+then the client retrieves each part through the chunked `fetch` op
+(§"Chunked transfer"), so real ~3 MB tracks transfer in full.
 
-- **Request:** `{"type":"music_manifest","id":"<hex>","ref":"trk-7f3a91"}`
-- **Reply (ok):** `{"type":"manifest","id":"<hex>","album":"warm-pads--calm","parts":[{"ref":"trk-7f3a91/part-01.mp3","bytes":2950000}, …]}`
-- **Reply (rejected):** an error frame — a hostile `ref` (audit-logged) or
-  `no album named '<ref>'`.
+- **Request:** `{"type":"music_manifest","id":"<hex>","album":"7f3a91"}`
+- **Reply (ok):** `{"type":"manifest","id":"<hex>","album":"warm-pads-7f3a91","parts":[{"part":"part-01.mp3","bytes":2950000}, …]}`
+- **Reply (rejected):** an error frame — an unknown album (`no album named
+  '<id>'`, audit-logged) or a catalog-resolution failure.
 
-Containment for the two-level album layout applies the **same discipline
-per path segment**: the album id and each part name are each validated as bare
-names (reject absolute/separator/traversal/empty/NUL/non-printable), the album
-directory is resolved under the music root, and each part is verified
-`is_relative_to` the album directory after `.resolve()`. This extends the
-vox-dvri validator to a known-depth `<album>/<part>` ref; it does not weaken it.
+The album is addressed by its **catalog id** (`7f3a91`), which the daemon
+resolves through `Catalog.by_id` to the opaque on-disk locator (`warm-pads-7f3a91`)
+— the id is a catalog key, never a path segment (F2). The manifest reports that
+on-disk album name and the list of **part names**. The bare-name/`is_relative_to`
+containment validator is applied only to each **part name** when the client
+fetches it (`{"album":"7f3a91","part":"part-01.mp3"}`), resolved *inside* the
+already-resolved album directory. Catalog-resolve the album; filesystem-validate
+the part.
 
-The client creates `./<album>/` (refusing on collision, D-1) and fetches each
-listed part. A part above the frame limit is refused with the same error `rec
-get` gives — remote transfer of a realistic (large) album is out of scope for
-this cut, inheriting DES-049's chunked-streaming follow-up. Local albums whose
-parts fit the frame transfer fully; this keeps `music_get` linear and below the
-streaming-transport modeling bar, exactly as `fetch` is.
+The client creates `./<album-name>/` (refusing on collision, D-1) and
+chunked-fetches every listed part into it. There is no size limit — a realistic
+album transfers completely.
 
 ### music: `music_remove` — delete a catalog album
 
-- **Request:** `{"type":"music_remove","id":"<hex>","ref":"trk-7f3a91"}`
-- **Reply (ok):** `{"type":"removed","id":"<hex>","album_id":"trk-7f3a91"}`
-- **Reply (rejected):** an error frame — a hostile `ref` (audit-logged),
-  `no album named '<ref>'`, or `album trk-7f3a91 is playing; stop it first`
-  when the album backs the active Program pool or Radio selection (D-2).
+- **Request:** `{"type":"music_remove","id":"<hex>","album":"7f3a91"}`
+- **Reply (ok):** `{"type":"removed","id":"<hex>","album_id":"7f3a91"}`
+- **Reply (rejected):** an error frame — an unknown album (`no album named
+  '<id>'`, audit-logged), or `album 7f3a91 is playing; stop it first` when the
+  album backs the active Program pool or Radio selection (D-2).
 
-Removing the album deletes its directory and every part within it, in-root.
+The album is catalog-resolved by id (`Catalog.by_id`, F2), never treated as a
+path. Removing it deletes the resolved album directory and every part within it,
+in-root.
 
 ## Music generation semantics
 
@@ -427,23 +477,20 @@ Removing the album deletes its directory and every part within it, in-root.
   store operation, so it stays a top-level verb and is **not** folded into
   `rec`. The line is clean: `say` is ephemeral; `rec new` is durable (stored,
   returns an id you can `play`/`get`/`remove`). `say` is unchanged.
-
-## Open design calls (leader / operator)
-
-- **D-3 — does `vox music play` keep its tag radio?** The ratified surface
-  names `play <id>`. The shipped `music play` also resolves a union radio by
-  `--style`/`--vibe`/`--name` (a per-vibe, cross-genre feature). *Recommend:*
-  keep `<id>` as the unified-verb positional primary form **and** preserve the
-  tag selection as optional arguments/flags on the same `play` command, so no
-  shipped feature is silently dropped. Flagged because it stretches the literal
-  `play <id>`.
-- **D-7 — MCP `mic` parity for the new verbs.** The MCP surface is agent-facing
-  and already exposes `music_list`/`music_play`/`music_next` and the `record`
-  tool. *Recommend:* do **not** add `rec_list`/`rec_remove`/`music_new`/`get`/
-  `remove` MCP tools now — the CLI is the management surface; agents rarely
-  list or prune. The only required MCP change is that the `record` tool's
-  result loses the client-path field and returns the bare id, matching `rec
-  new`. Flagged for the leader to confirm the lean MCP surface.
+- **D-3 — `vox music play` keeps its tag radio: KEEP BOTH.** `play` takes a
+  bare `<id>` positional **and** the existing `--style`/`--vibe`/`--name`
+  selectors (a per-vibe, cross-genre union radio). The `<id>` is the
+  unified-verb primary form; the tag selectors are retained unchanged. No
+  shipped behavior is removed.
+- **D-7 — MCP `mic` parity: EXPOSE THE NEW VERBS.** The projection model
+  (architecture.md — one engine, thin clients, one code path, build the
+  surfaces that have callers) governs: vox is agent-facing, so the MCP surface
+  is first-class, not a lean afterthought. Every new verb is exposed on `mic`
+  at parity with the CLI — `rec new/list/play/get/remove` and `music
+  new/list/play/get/remove` (plus `next`/`status`) — and each MCP tool hits the
+  **same engine op** the CLI hits (one code path, no forked logic). The `record`
+  / `rec new` MCP result returns the **bare id**, never a daemon path, matching
+  the CLI.
 
 ## Touched surfaces
 
@@ -452,19 +499,28 @@ The leader authors the doc-set files; the implementation mission owns the code.
 **Code (implementation mission):**
 
 - `src/punt_vox/__main__.py` — delete top-level `record`, `play`, `fetch` and
-  the `-o` option; delete `_emit_record_locator` and the fetch
-  `_atomic_write_bytes`; mount the `rec` group.
+  the `-o` option; delete `_emit_record_locator` and the `play` local-file
+  branch; move the atomic-write helper into the `get` chunk-reassembly path
+  (shedding the `-o` target); mount the `rec` group.
 - The `rec` command group — a humble object + `build_rec_app`, mirroring
   `cli_music.py`'s `MusicCli`/`build_music_app` shape (module name the
   implementation's choice).
 - `src/punt_vox/cli_music.py` — add `new`, `get`, `remove` to the group.
 - `src/punt_vox/client.py` / `client_sync.py` — add `rec_list`, `rec_remove`,
-  `music_new`, `music_get`, `music_remove`; `record`/`play`/`fetch` stay.
+  `music_new`, `music_get`, `music_remove`; rewrite `fetch` to consume the
+  chunked stream (`fetch_begin`/`chunk`*/`fetch_end`) and reassemble with
+  bounded memory; `record`/`play` stay.
 - `src/punt_vox/voxd/` — handlers for `rec_list`, `rec_remove`, `music_new`,
-  `music_manifest`, `music_remove`; register them in the handler registry;
-  extend the music-store resolver to the per-segment `<album>/<part>` ref.
-- `src/punt_vox/server.py` — the `record` MCP tool result drops the client path
-  (D-7); other `mic` tools unchanged pending the D-7 ruling.
+  `music_manifest`, `music_remove`; **rewrite the `fetch` handler to stream
+  bounded chunks** (delete the `FETCH_FRAME_LIMIT_BYTES` total-file ceiling and
+  the oversize-reject path; add the per-chunk `FETCH_CHUNK_BYTES` bound);
+  register the new ops; resolve a music album by `Catalog.by_id` and
+  filesystem-validate the part name inside the resolved album directory (F2).
+- `src/punt_vox/server.py` — MCP parity (D-7): add `rec new/list/play/get/
+  remove` and `music new/get/remove` tools alongside the existing
+  `music`/`music_play`/`music_list`/`music_next`, each delegating to the same
+  engine op as its CLI twin; the `record`/`rec new` tool result returns the bare
+  id (no daemon path).
 
 **Docs (leader):**
 
@@ -522,6 +578,29 @@ is "a catalogued album has at least one Part" (an empty album is not an album).
 from* this Catalog by the orchestration seam, exactly as finding #7 already
 abstracts.
 
+### Combined state invariant (F5)
+
+The Catalog, the Program, and the Radio compose into one system state whose
+**global invariant** names the coupling the earlier draft only asserted:
+
+```text
+System
+  Catalog
+  Program
+  Radio
+  ────────────────────────────────────────
+  Program.pool ∪ Radio.selection ⊆ ⋃ (ran Catalog.albums)
+```
+
+Every playing or selected Part belongs to some catalogued album. This is the
+single fact that makes "you cannot delete a playing album" a **theorem**, not a
+hand-checked precondition: because `MusicRemove` removes an album from
+`Catalog.albums`, deleting one whose Parts are in `Program.pool` or
+`Radio.selection` would shrink `⋃ (ran Catalog.albums)` below the live set and
+break the invariant — so the model *forbids* it by construction. The
+`MusicRemove` precondition below is the derived form of this invariant, kept
+explicit for readability.
+
 ### New operation schemas
 
 **`MusicNew` — author one track into a fresh album (success).** Mutates only
@@ -571,11 +650,13 @@ MusicRemove
   albums' = {victim?} ⩤ albums
 ```
 
-(The `Program.pool`/`Radio.selection` reference is written here as a property;
-the jms mission decides the precise schema inclusion — a combined
-Catalog+Program+Radio view, or a derived `liveParts` set — to keep `fuzz`
-happy. The intent is fixed: refuse when the victim's Parts intersect the live
-source.)
+The precondition `albums(victim?) ∩ (Program.pool ∪ Radio.selection) = ∅` is
+exactly what the `System` global invariant (F5) forces: with the invariant in
+scope, any removal that keeps a live Part out of the Catalog is unreachable, so
+`MusicRemove` operating on the combined `System` state cannot delete a playing
+album. The jms mission decides the mechanical schema inclusion (the combined
+`System` view above, or a derived `liveParts` set) to keep `fuzz` happy; the
+intent is fixed and now derived, not merely asserted.
 
 `music_get` generates nothing and mutates no state; it is a pure read over
 `albums(victim?)`, modeled (if at all) as `ΞCatalog ∧ ΞProgram ∧ ΞRadio` — it
@@ -601,6 +682,19 @@ is a pure in-store read.
   `music_get` spend none — consistent with the model's existing
   "replay/consume generates nothing" property.
 
+### Chunked transfer — model obligation (minimal)
+
+The chunked `fetch` (§"Chunked transfer") is a small stateful sequence:
+`begin → chunk* → (end | error)`, with a monotone `seq` and the reassembly
+invariant `Σ len(chunk.data) = bytes`. It is **transport**, not audio-program
+state — it touches no `Program`, `Radio`, or `Catalog` field — so it does **not**
+belong in `docs/audio-programs.tex`. If the leader judges the ordered-stream
+worth pinning, jms models it as a **separate, minimal** `Transfer` schema (three
+states, the monotone-seq and byte-sum invariants, and the "error discards the
+partial" property), on the order of the record-transport model. Recommended
+scope: keep it out of the audio-programs model; a one-page standalone spec at
+most. It is below the bar that `record` transport already set.
+
 ## Test surface
 
 Coverage must **rise** and the test count must go **up** — the implementation
@@ -623,13 +717,13 @@ assert on the emitted payload and exit. No subprocess, no socket.
 | `rec new` | prints exactly the bare id (no path/host); `--name` passthrough; empty text → clean error, exit 1; a daemon error → one-line error, exit 1. |
 | `rec list` | empty store → "no recordings"; N recordings → N ids one per line; `--json` → `[{id,bytes}]`; output pipes (no size column in human mode). |
 | `rec play` | delegates the id to the gateway `play`; daemon error → exit 1; playback failure surfaced (not silent success). |
-| `rec get` | writes `./<id>` with the fetched bytes; **collision** → error, exit 1, existing file untouched (D-1); daemon/oversize/not-found errors → exit 1, no partial file left. |
+| `rec get` | reassembles the chunk stream and writes `./<id>`; a large (multi-chunk) recording round-trips byte-correct; **collision** → error, exit 1, existing file untouched (D-1); a not-found/mid-stream error → exit 1, no partial file left. |
 | `rec remove` | delegates the id; not-found → error; hostile id → error before any delete. |
-| `music new` | verbatim prompt passthrough (no expansion); prints the album id; `bad_prompt`/empty prompt → error, exit 1; the active-program status is unchanged after the call. |
+| `music new` | verbatim prompt passthrough (no expansion); prints the bare album id; **no confirmation prompt** (generates directly); `bad_prompt`/empty prompt → error, exit 1; the active-program status is unchanged after the call. |
 | `music list` | existing coverage stays green (album rendering). |
-| `music play` | `<id>` positional resolves an album; (pending D-3) tag args still resolve the radio. |
-| `music get` | creates `./<album>/` with its parts; **collision** on the directory → error (D-1); a part-level oversize/not-found → exit 1. |
-| `music remove` | deletes an idle album; **refuses** the album backing the active source with the D-2 message, exit 1. |
+| `music play` | `<id>` positional resolves an album; `--style`/`--vibe`/`--name` still resolve the union radio (D-3, both kept). |
+| `music get` | catalog-resolves the id; creates `./<album-name>/` and chunk-fetches its parts (a real ~3 MB part round-trips); **collision** on the directory → error (D-1); unknown id → exit 1. |
+| `music remove` | catalog-resolves the id; deletes an idle album; **refuses** the album backing the active source with the D-2 message, exit 1. |
 
 ### Registration / surface tests
 
@@ -639,6 +733,22 @@ assert on the emitted payload and exit. No subprocess, no socket.
   the registration is gone — the forward-integration guard).
 - No `-o`/`--output` option exists anywhere in the audio-store surface;
   `--output-dir`/`-d` still exists only under `install-desktop`.
+
+### MCP parity tests (D-7)
+
+The `mic` surface exposes the new verbs at parity with the CLI, and each tool
+hits the same engine op (one code path). Test through the FastMCP tool
+functions in `server.py` (the `test_server.py` pattern):
+
+- Every new tool is registered: `rec_new`/`rec_list`/`rec_play`/`rec_get`/
+  `rec_remove` and `music_new`/`music_get`/`music_remove` (alongside the
+  existing music tools).
+- The `record`/`rec new` tool result is the **bare id** — no store path, no
+  host field, in the returned JSON.
+- A tool and its CLI twin, driven against the same in-memory gateway, produce
+  the same engine call and the same result payload (one-code-path assertion).
+- The music generate tool takes a verbatim prompt (no expansion) and generates
+  without a confirmation round-trip.
 
 ### Daemon op unit tests (in-memory store under `tmp_path`)
 
@@ -650,9 +760,11 @@ with a fake `WebSocket` capturing frames — the pattern
 |----|-----------|
 | `rec_list` | lists only immediate in-root files, no recursion; empty root → empty `entries`; a sub-directory or symlink is not followed out of the root. |
 | `rec_remove` | removes an in-root file, replies `removed`; not-found → error frame; the containment corpus (absolute/traversal/separator/empty/NUL/non-printable) → error frame **and a WireReply WARNING audit line**, store unchanged. |
-| `music_new` | success adds a single-track album and replies `album` with `parts:1`; empty prompt → audit-logged error; `bad_prompt` → error **and the Program/catalog otherwise unchanged** (the model's `MusicNewBadPrompt`: no `failed`, no `lastError`); the `generating` ack precedes the terminal frame. |
-| `music_manifest` | replies the album name + per-part refs + sizes; the per-segment containment corpus on both `<album>` and `<part>` → error + audit line; unknown album → error. |
-| `music_remove` | removes an idle album directory and its parts; refuses when the album's parts intersect the active pool/selection (D-2) → error, directory intact. |
+| `music_new` | success adds a single-track album, mints a 6-hex id, replies `album` with `parts:1`; empty prompt → audit-logged error; `bad_prompt` → error **and the Program/catalog otherwise unchanged** (the model's `MusicNewBadPrompt`: no `failed`, no `lastError`); the `generating` ack precedes the terminal frame. |
+| `music_manifest` | catalog-resolves the id to the on-disk album name and part names; an **unknown album id** → error + audit line; the id is never treated as a path (F2). |
+| `music_remove` | catalog-resolves the id, removes an idle album directory and its parts; refuses when the album's parts intersect the active pool/selection (D-2) → error, directory intact. |
+| `fetch` (chunked) | a multi-chunk file streams `fetch_begin` + N ordered `chunk` + `fetch_end`; each `chunk.data` ≤ `FETCH_CHUNK_BYTES`; the reassembled bytes equal the source (byte-correct, any size); a mid-stream read fault → terminal `error` frame, client-side partial discarded; a hostile ref → error **before** `fetch_begin`, audit-logged. |
+| `fetch` (music part) | `{"album":"<id>","part":"<name>"}` catalog-resolves the album, then bare-name-validates the part inside the resolved album dir (F2); a hostile **part** name → error + audit line; a part escaping the album dir is rejected. |
 
 ### Reused invariants asserted by name
 
@@ -663,10 +775,13 @@ the tests **re-assert it at the new ops**, not just at the old ones:
   `_empty_`, `_nul_`, `_nonprintable_` — one per rejection class, each
   checking (a) an error frame, (b) a WireReply WARNING line in the log,
   (c) nothing deleted outside the root.
-- `test_music_manifest_ref_escape_rejected` — the two-segment
-  `<album>/<part>` extension of the same corpus.
+- `test_music_part_name_escape_rejected` — a hostile **part** name in a
+  `fetch` (music) request is rejected inside the catalog-resolved album
+  directory; the album **id** is a catalog key, not a validated path (F2).
+- `test_music_unknown_album_id_rejected` — an id with no catalog entry is a
+  clean `no album named` error, never a filesystem probe.
 - `test_token_does_not_grant_fs_delete` — the trust-model twin of DES-049's
-  write test: no authorized `rec_remove`/`music_remove`, whatever its ref,
+  write test: no authorized `rec_remove`/`music_remove`, whatever its input,
   deletes outside the root.
 
 ### Property / model-alignment tests
@@ -681,6 +796,12 @@ Assert the audio-programs delta by name:
   `MusicNewBadPrompt`).
 - `test_music_remove_refuses_playing_album` — the D-2 precondition
   (`albums(victim) ∩ (pool ∪ selection) = ∅`).
+- `test_live_parts_stay_catalogued` — the F5 global invariant: after any
+  accepted `music_new`/`music_remove`, every Part in the active pool/selection
+  is still a member of some catalogued album.
+- `test_fetch_reassembles_any_size` — the chunk-transfer invariant: for files
+  spanning 1, 2, and many chunks, `Σ chunk bytes = total` and the reassembled
+  file equals the source; a dropped/short final chunk fails the total check.
 
 ### Live-verify (operator, by ear)
 
