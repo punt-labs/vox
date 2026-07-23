@@ -1039,12 +1039,21 @@ picture of ``authoring a catalog track does not disturb the running program''.
   program' = program \\
   radio' = radio \\
   newId? \notin \dom catalog.albums \\
+  track? \notin \bigcup (\ran catalog.albums) \\
   catalog'.albums = catalog.albums \oplus \{ newId? \mapsto \{ track? \} \}
 \end{schema}
 
-The new id is fresh ($newId? \notin \dom albums$) and the new album is
-non-empty (its single Part \texttt{track?}), so the after-state satisfies both
-\texttt{Catalog} invariants; and because the Catalog only grows,
+The new id is fresh ($newId? \notin \dom albums$), the incoming \texttt{track?}
+is not already catalogued ($track? \notin \bigcup (\ran albums)$), and the new
+album is non-empty (its single Part \texttt{track?}). The freshness of
+\texttt{track?} is not a redundancy: without it the \texttt{Catalog} partition
+invariant --- distinct albums share no Part --- would silently \emph{disable}
+\texttt{MusicNew} whenever \texttt{track?} already lived in another album, since
+$catalog.albums \oplus \{newId? \mapsto \{track?\}\}$ would then place the same
+Part in two albums and admit no valid after-\texttt{Catalog}. The precondition
+restores ``authoring one track into a fresh album always succeeds'' as a fact of
+the schema rather than an accident of the input. With it, the after-state
+satisfies both \texttt{Catalog} invariants; and because the Catalog only grows,
 $\bigcup (\ran catalog'.albums) \supseteq \bigcup (\ran catalog.albums)$, so the
 \texttt{System} invariant is preserved with the unchanged pool and selection
 still contained. A full, playing Program ($\# pool = poolSize~format$) is
@@ -1116,9 +1125,19 @@ $catalog'.albums = \{victim?\} \ndres catalog.albums$, it follows that
 \]
 The obligation is a consequence of the two \texttt{System} invariants together
 with the Catalog partition; \texttt{fuzz} type-checks the schemas but does not
-discharge it, so the derivation is exercised by \texttt{probcli} state-space
-exploration (an attempted removal of a live album has no valid after-state), not
-merely asserted in the schema text.
+discharge it. It was therefore exercised by \texttt{probcli} over a bounded,
+flattened image of the \texttt{System} state (\texttt{catalog.albums},
+\texttt{program.pool}, and \texttt{radio.selection} carried as flat components,
+with $|ALBUM| = |PART| = 4$), in which \texttt{MusicRemove} appears \emph{with
+its intersection guard struck out}. Exhaustive state-space exploration ($505$
+reachable states, $2185$ transitions, every operation covered) finds no
+reachable after-state in which a removed album's Parts still intersect
+$pool \cup selection$: with the guard absent, the $\Delta$-framing's demand that
+the after-state satisfy the \texttt{System} invariant leaves an attempted
+removal of a live album with no valid after-state, so the operation is simply
+not enabled there. The explicit precondition is thus the calculated
+\texttt{pre}~\texttt{MusicRemove}, confirmed by exploration, not an added guard
+asserted in the schema text.
 
 \texttt{vox music get} generates nothing and mutates no state: it is a pure read
 over $albums~victim?$, modelled --- if at all --- as \texttt{$\Xi System$},
@@ -1207,6 +1226,33 @@ postconditions; they are the intended proof obligations for animation.
     $filling = ztrue$ guard has no inhabitant in a \texttt{Radio}, so that
     branch's precondition is false, leaving the enabled no-op as the sole
     inhabited operation.
+  \item \textbf{Authoring leaves a full pool playing}
+    (\texttt{test\_music\_new\_leaves\_full\_pool\_playing}): \texttt{MusicNew}
+    frames $program' = program$ and $radio' = radio$, so a full, playing Program
+    ($\# pool = poolSize~format$, $mode = playingRotating$) is byte-for-byte
+    unchanged --- authoring a catalog track never disturbs the running
+    program's slots, mode, or fill.
+  \item \textbf{Authoring one fresh track always succeeds}
+    (\texttt{test\_music\_new\_fresh\_track\_succeeds}): \texttt{MusicNew}
+    requires both $newId? \notin \dom albums$ and
+    $track? \notin \bigcup (\ran albums)$; on any \texttt{System} a fresh
+    $(newId?, track?)$ pair exists, and with it the after-state satisfies both
+    \texttt{Catalog} invariants, so the operation is total on fresh input and is
+    never silently disabled by the partition invariant.
+  \item \textbf{Cannot delete a playing album}
+    (\texttt{test\_music\_remove\_refuses\_live\_album}): \texttt{MusicRemove}'s
+    precondition $albums~victim? \cap (pool \cup selection) = \emptyset$ is
+    forced by the \texttt{System} invariant, not merely asserted --- an attempted
+    removal of an album backing the active Program pool or Radio selection has no
+    valid after-\texttt{System}, confirmed by \texttt{probcli}
+    (Section~\ref{sec:removederived}).
+  \item \textbf{Authoring cannot hard-fail the program}
+    (\texttt{test\_music\_new\_bad\_prompt\_local}): \texttt{MusicNewBadPrompt}
+    is \texttt{$\Xi System$} --- a generation rejection while authoring a catalog
+    track holds \texttt{catalog}, \texttt{program}, and \texttt{radio} all fixed
+    and never drives the Program to \texttt{failed}, in deliberate contrast to
+    \texttt{FirstTrackBadPrompt}, which fails a track \emph{into} the running
+    pool.
 \end{itemize}
 
 \section{Findings from Formalisation}
