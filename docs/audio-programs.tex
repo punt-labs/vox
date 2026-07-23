@@ -946,6 +946,188 @@ the model. With \texttt{RadioNext} $\defs$ \texttt{RadioRotate} already giving
 advance, \texttt{SwitchProgram} to retarget to generate, and \texttt{RadioOff}
 to stop.
 
+\section{The Catalog and the Combined System State}
+\label{sec:catalog}
+
+Everything above treats the pool a Program or Radio plays as \emph{resolved}
+input: \texttt{diskPool?}, \texttt{newPool?}, \texttt{selection?} arrive as
+sets of ready Parts, and finding~\#7 records the deliberate decision to abstract
+away the lookup that produces them. That abstraction is right for the play/fill
+machine, which never authors or deletes an album --- it only consumes a pool
+someone else resolved. It is wrong for the two operations this section adds.
+\texttt{vox music new} and \texttt{vox music remove} mutate exactly the set that
+finding~\#7 hides: the catalog of albums from which a pool is resolved. To state
+what they do, and to prove that ``you cannot delete a playing album'' without
+hand-checking it, the model must make that catalog explicit --- while leaving
+the Program and Radio operations untouched on their resolved pools.
+
+\subsection{The album identifier and the Catalog}
+
+An \texttt{ALBUM} is an opaque catalog identifier: the id \texttt{vox music list}
+prints and \texttt{play}, \texttt{get}, and \texttt{remove} address. It is a
+catalog key, never a filesystem path (the daemon resolves it through its own
+lookup to an on-disk locator); the model treats it as opaque.
+
+\begin{zed}
+  [ALBUM]
+\end{zed}
+
+The \texttt{Catalog} maps each catalogued album to the set of ready Parts it
+holds. Two invariants pin its shape. First, a catalogued album has at least one
+Part --- an empty album is not an album. Second, the albums \emph{partition}
+their Parts: distinct albums share no Part. This second invariant is not
+decoration; it is the on-disk reality that each Part is a file living inside
+exactly one album directory, and it is precisely the fact that turns the
+\texttt{MusicRemove} precondition below from an assertion into a consequence
+(Section~\ref{sec:removederived}).
+
+\begin{schema}{Catalog}
+  albums : ALBUM \pfun \power PART
+  \where
+  \forall a : \dom albums @ albums~a \neq \emptyset \\
+  \forall a, b : \dom albums @ a \neq b \implies albums~a \cap albums~b = \emptyset
+\end{schema}
+
+\subsection{The System state}
+\label{sec:system}
+
+The Catalog, the Program, and the Radio compose into one system state. They are
+carried as \emph{schema-typed components} --- \texttt{program : Program},
+\texttt{radio : Radio} --- rather than by flat schema inclusion, and the choice
+is forced. \texttt{Program} and \texttt{Radio} both declare \texttt{playing} and
+\texttt{lastPlayed}; a flat $Catalog \land Program \land Radio$ would
+\emph{identify} those same-named components, so the one Part playing on the
+Program and the one playing on the Radio would be constrained equal, and the
+Program's $playing \subseteq pool$ would collide with the Radio's
+$playing \subseteq selection$. Since the channel holds one source at a time,
+that identification is nonsense. Naming the components keeps the two sources'
+cursors apart --- \texttt{program.playing} and \texttt{radio.playing} are
+distinct --- exactly as \texttt{SwitchProgram} keeps the two states apart at the
+orchestration seam.
+
+\begin{schema}{System}
+  catalog : Catalog \\
+  program : Program \\
+  radio : Radio
+  \where
+  program.pool \cup radio.selection \subseteq \bigcup (\ran catalog.albums)
+\end{schema}
+
+The global invariant reads: every Part in the active Program pool or the active
+Radio selection belongs to some catalogued album. This is the single fact that
+makes deletion of a playing album impossible \emph{by construction} rather than
+by a guard the implementation must remember to write. The Program and Radio
+still consume a \emph{resolved} pool, not the Catalog directly (finding~\#7 is
+preserved): the invariant couples the resolved sets to the catalog they were
+resolved from, but no Program or Radio operation reads \texttt{catalog}. The
+coupling is a fact about reachable system states, discharged at the seam that
+resolves a pool, not a new input to the play/fill machine.
+
+\subsection{MusicNew --- author one track into a fresh album}
+
+\texttt{MusicNew} files a freshly generated single-track album under a new id. It
+grows the Catalog and frames the Program and Radio unchanged
+--- $program' = program$ and $radio' = radio$ are the images of \texttt{$\Xi
+Program$} and \texttt{$\Xi Radio$} in the schema-typed \texttt{System}, the model
+picture of ``authoring a catalog track does not disturb the running program''.
+
+\begin{schema}{MusicNew}
+  \Delta System \\
+  newId? : ALBUM \\
+  track? : PART
+  \where
+  program' = program \\
+  radio' = radio \\
+  newId? \notin \dom catalog.albums \\
+  catalog'.albums = catalog.albums \oplus \{ newId? \mapsto \{ track? \} \}
+\end{schema}
+
+The new id is fresh ($newId? \notin \dom albums$) and the new album is
+non-empty (its single Part \texttt{track?}), so the after-state satisfies both
+\texttt{Catalog} invariants; and because the Catalog only grows,
+$\bigcup (\ran catalog'.albums) \supseteq \bigcup (\ran catalog.albums)$, so the
+\texttt{System} invariant is preserved with the unchanged pool and selection
+still contained. A full, playing Program ($\# pool = poolSize~format$) is
+byte-for-byte unchanged: authoring never touches the running program's twelve
+slots or its mode, and no \texttt{MusicNew} branch sets \texttt{mode} to
+\texttt{failed}.
+
+\subsection{MusicNewBadPrompt --- a generation rejection that stays local}
+
+A permanent generation rejection (a \texttt{bad\_prompt} / ToS refusal, an empty
+prompt, or a provider fault) leaves \emph{everything} unchanged: the Catalog
+gains no album, and --- the point of contrast with \texttt{FirstTrackBadPrompt}
+--- the Program does \emph{not} enter \texttt{failed}, and its \texttt{lastError}
+is not set. The reason is reported to the caller, never promoted to a
+program-level error. This is \texttt{$\Xi System$}: catalog, program, and radio
+all held fixed.
+
+\begin{schema}{MusicNewBadPrompt}
+  \Xi System \\
+  reason? : REASON
+  \where
+  true
+\end{schema}
+
+Where \texttt{FirstTrackBadPrompt} fires from \texttt{generatingFirst} on an
+empty-pool Program and drives it to \texttt{failed} with a retained reason,
+\texttt{MusicNewBadPrompt} touches no Program field at all. The two are the
+model's statement that a failure \emph{into the running program's pool} is a
+program-level failure, while a failure \emph{authoring a catalog track} is not:
+catalog authoring is a side channel that cannot hard-fail the program.
+
+\subsection{MusicRemove --- delete a catalog album, refusing the live one}
+\label{sec:removederived}
+
+\texttt{MusicRemove} deletes an album from the Catalog. Its precondition forbids
+removing an album whose Parts back the active Program pool or Radio selection.
+
+\begin{schema}{MusicRemove}
+  \Delta System \\
+  victim? : ALBUM
+  \where
+  program' = program \\
+  radio' = radio \\
+  victim? \in \dom catalog.albums \\
+  catalog.albums~victim? \cap (program.pool \cup radio.selection) = \emptyset \\
+  catalog'.albums = \{ victim? \} \ndres catalog.albums
+\end{schema}
+
+The intersection precondition is written explicitly, for readability, but it is
+not a free-standing assumption: it is forced by the \texttt{System} invariant.
+Consider the same operation with the intersection line struck out --- just the
+frame, $victim? \in \dom albums$, and the removal equation. Its after-state must
+still be a valid \texttt{System}, so
+$program'.pool \cup radio'.selection \subseteq \bigcup (\ran catalog'.albums)$.
+Substituting the frame ($program' = program$, $radio' = radio$) and the removal
+($catalog'.albums = \{victim?\} \ndres catalog.albums$), and using the Catalog
+partition invariant --- distinct albums share no Part, so removing
+\texttt{victim?} drops exactly $albums~victim?$ from the union --- the
+containment can hold only if $albums~victim?$ is disjoint from
+$pool \cup selection$. The precondition is therefore the calculated
+\texttt{pre}~\texttt{MusicRemove}, not an added guard.
+
+Stated as a proof obligation: for any before- and after-\texttt{System} related
+by the frame $program' = program \land radio' = radio$, by
+$victim? \in \dom catalog.albums$, and by the removal
+$catalog'.albums = \{victim?\} \ndres catalog.albums$, it follows that
+\[
+  catalog.albums~victim? \cap (program.pool \cup radio.selection) = \emptyset.
+\]
+The obligation is a consequence of the two \texttt{System} invariants together
+with the Catalog partition; \texttt{fuzz} type-checks the schemas but does not
+discharge it, so the derivation is exercised by \texttt{probcli} state-space
+exploration (an attempted removal of a live album has no valid after-state), not
+merely asserted in the schema text.
+
+\texttt{vox music get} generates nothing and mutates no state: it is a pure read
+over $albums~victim?$, modelled --- if at all --- as \texttt{$\Xi System$},
+needing no new schema, exactly as \texttt{Fetch} in the record-store model is a
+pure in-store read. \texttt{MusicNew} is the one operation here that spends
+credits (one track); \texttt{MusicRemove} and \texttt{music get} spend none,
+consistent with the model's standing ``replay and consume generate nothing''
+property.
+
 \section{Key Properties}
 
 The following hold by construction (state invariants) or as operation
