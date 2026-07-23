@@ -197,6 +197,72 @@ removed a1b2c3d4e5f6.mp3
 Unchanged. `vox music next` advances the active source; `vox music status`
 reports it. Both already exist in the `music` group.
 
+## CLI decomposition (structure)
+
+This change must **lower** complexity on the files it touches, not relocate
+verbs into a bigger `__main__` god-module. The target shape is the one
+`cli_music.py` already demonstrates: **a Typer sub-app per noun, backed by a
+humble-object command class of thin verb methods that delegate to the engine.**
+
+### The shape
+
+- **One sub-app per store.** `vox rec` is its own Typer group, built by a
+  `build_rec_app(formatter)` factory that mirrors `build_music_app` exactly:
+  it constructs a `RecCli` humble object and binds each verb method as a
+  command (`app.command("new")(cli.new)`, `list`, `play`, `get`, `remove`).
+  `__main__.py` gains one line — `app.add_typer(build_rec_app(_formatter),
+  name="rec")` — the twin of the existing music line, and **loses** the three
+  top-level command bodies (`record`, `play`, `fetch`) and their helpers.
+- **`RecCli` is a `@final` humble object**, the twin of `MusicCli`: `__slots__`
+  of `(_formatter, _gateway_factory)`, a `_default_gateway` staticmethod, a
+  `_fail` staticmethod, and one short method per verb. Each method parses its
+  arguments, calls one gateway/engine method, and formats the result through
+  the shared `OutputFormatter`. No business logic — the daemon decides.
+- **`cli_music.py` grows three focused verb methods** (`new`, `get`, `remove`)
+  on the existing `MusicCli`, each the same thin shape. It does not grow a new
+  responsibility — `MusicCli` already *is* "the music verbs".
+
+### The paydown
+
+`__main__.py` is the highest-complexity module the change touches, and the
+recordings verbs are its worst offenders:
+
+- **`record`** (a ~40-line command body) plus **`_emit_record_locator`** (a
+  branch-heavy locator builder that stats the store path, compares byte counts,
+  and forks local-vs-remote text) plus **`fetch`** and **`_atomic_write_bytes`**
+  plus **`play`** (the overloaded local-file/store-ref dispatch) — all move out
+  of `__main__.py`. `_emit_record_locator` and the atomic-write helper are
+  **deleted outright**, not relocated: `new` prints a bare id (no locator to
+  build) and `get` writes a fresh CWD file that refuses on collision (no
+  atomic-replace-at-a-chosen-path to perform). That is negative code — the
+  design removes more `__main__` complexity than the `rec` verbs add back,
+  because the deleted helpers were the complex part.
+- The remaining `__main__.py` unused option aliases (`OutputDirOpt`'s `-o`
+  usage on `fetch`, and any `NameOpt`/spec-flag wiring that only `record` used)
+  follow their commands out. `NameOpt` and the synthesis-spec flags move onto
+  `RecCli.new`, where they are that verb's own parameters, not module-global
+  aliases shared with `say`.
+
+The measurable effect: `__main__.py` sheds ~150 lines of command bodies and its
+single most branch-heavy function; `radon cc` and the OO ratchet
+(`method_ratio`, `module_size`, `max_complexity`) improve on it. `RecCli` lands
+as a small, cohesive, fully-methodized class (high `method_ratio`, low
+per-method complexity), and `cli_music.py` stays a focused single-class module.
+The implementation mission must verify the ratchet improves on `__main__.py`,
+not merely holds — the extraction is the paydown, and it names the highest-CC
+function it removes (`_emit_record_locator`).
+
+### The engine boundary
+
+`RecCli` delegates through a gateway the way `MusicCli` uses `ProgramGateway` —
+a thin protocol with an in-memory implementation for tests (see §"Test
+surface"). Recordings today reach the daemon through `VoxClientSync.record`/
+`play`/`fetch`; the design adds `rec_list`/`rec_remove` to that client and
+routes `RecCli` through a `RecordGateway` protocol (production impl wraps
+`VoxClientSync`; test impl is an in-memory store). This keeps the presentation
+layer (Typer + `RecCli`) free of transport detail and the dependency arrow
+pointing inward (CLI → gateway → client → daemon), per PL-PA-2.
+
 ## Daemon wire-op contracts
 
 Every op below obeys the invariants already established in the codebase — do
@@ -535,29 +601,92 @@ is a pure in-store read.
   `music_get` spend none — consistent with the model's existing
   "replay/consume generates nothing" property.
 
-## Verification (implementation mission, illustrative)
+## Test surface
 
-The design's tests assert the modeled properties and the wire contracts by
-name:
+Coverage must **rise** and the test count must go **up** — the implementation
+mission's success criteria require it (`make coverage`, `pytest --co`). This is
+achievable without heavy mocks because every command and every daemon op is
+designed as a **humble object over an in-memory implementation** (python.md,
+PL-TT-5): the command methods delegate to a gateway protocol, and the daemon
+handlers delegate to a `RecordStore`/catalog that runs against a `tmp_path`
+root. Unit tests hit real logic in milliseconds; subprocess/E2E tests are
+reserved for wire framing.
 
-- **Surface.** `vox rec new/list/play/get/remove` and `vox music
-  new/list/play/get/remove/next/status` each dispatch; the old `record`/`play`/
-  `fetch` top-level commands are gone (a help/registration test).
-- **`new` prints a bare id.** `vox rec new "x"` emits exactly the store id, no
-  path/host; `vox music new "…"` emits the album id.
-- **Containment (reused).** `rec_list`/`rec_remove`/`music_manifest`/
-  `music_remove` reject an absolute/traversing/separator/empty/NUL ref with an
-  audit-logged error and touch nothing outside the root — the DES-049 corpus,
-  extended to the `<album>/<part>` ref.
-- **`get` writes under the store name, refuses collision.** `vox rec get <id>`
-  writes `./<id>`; a second `get` errors. `vox music get <id>` writes
-  `./<album>/` with its parts.
-- **`music new` does not disturb the program.** With a full playing pool,
-  `music_new` leaves `mode`/`pool`/playback unchanged; a `bad_prompt` returns an
-  error and the Program stays healthy (not `failed`).
-- **`music remove` refuses the live album**, and deletes an idle one.
+### Command unit tests (humble object, in-memory gateway)
 
-Live-verify (ask the operator by ear after each audible step): `rec new` →
-`rec play` on the host; `rec get` into a temp dir; `music new "<prompt>"` →
-`music play <id>` → the new track sounds right; hostile ids rejected
-end-to-end; `music remove` of the playing album refused.
+Construct `RecCli(formatter, gateway_factory=lambda: InMemoryRecordGateway())`
+and `MusicCli(formatter, in_memory_program_gateway)`; call the verb method;
+assert on the emitted payload and exit. No subprocess, no socket.
+
+| Command | Must cover |
+|---------|-----------|
+| `rec new` | prints exactly the bare id (no path/host); `--name` passthrough; empty text → clean error, exit 1; a daemon error → one-line error, exit 1. |
+| `rec list` | empty store → "no recordings"; N recordings → N ids one per line; `--json` → `[{id,bytes}]`; output pipes (no size column in human mode). |
+| `rec play` | delegates the id to the gateway `play`; daemon error → exit 1; playback failure surfaced (not silent success). |
+| `rec get` | writes `./<id>` with the fetched bytes; **collision** → error, exit 1, existing file untouched (D-1); daemon/oversize/not-found errors → exit 1, no partial file left. |
+| `rec remove` | delegates the id; not-found → error; hostile id → error before any delete. |
+| `music new` | verbatim prompt passthrough (no expansion); prints the album id; `bad_prompt`/empty prompt → error, exit 1; the active-program status is unchanged after the call. |
+| `music list` | existing coverage stays green (album rendering). |
+| `music play` | `<id>` positional resolves an album; (pending D-3) tag args still resolve the radio. |
+| `music get` | creates `./<album>/` with its parts; **collision** on the directory → error (D-1); a part-level oversize/not-found → exit 1. |
+| `music remove` | deletes an idle album; **refuses** the album backing the active source with the D-2 message, exit 1. |
+
+### Registration / surface tests
+
+- `vox rec` and `vox music` expose exactly `new/list/play/get/remove`
+  (+ `next/status` for music); Typer `--help` lists them.
+- The top-level `record`, `play`, and `fetch` commands **do not exist** (assert
+  the registration is gone — the forward-integration guard).
+- No `-o`/`--output` option exists anywhere in the audio-store surface;
+  `--output-dir`/`-d` still exists only under `install-desktop`.
+
+### Daemon op unit tests (in-memory store under `tmp_path`)
+
+Each handler runs against a real `RecordStore`/catalog rooted at `tmp_path`
+with a fake `WebSocket` capturing frames — the pattern
+`tests/voxd/test_*_handler.py` already uses.
+
+| Op | Must cover |
+|----|-----------|
+| `rec_list` | lists only immediate in-root files, no recursion; empty root → empty `entries`; a sub-directory or symlink is not followed out of the root. |
+| `rec_remove` | removes an in-root file, replies `removed`; not-found → error frame; the containment corpus (absolute/traversal/separator/empty/NUL/non-printable) → error frame **and a WireReply WARNING audit line**, store unchanged. |
+| `music_new` | success adds a single-track album and replies `album` with `parts:1`; empty prompt → audit-logged error; `bad_prompt` → error **and the Program/catalog otherwise unchanged** (the model's `MusicNewBadPrompt`: no `failed`, no `lastError`); the `generating` ack precedes the terminal frame. |
+| `music_manifest` | replies the album name + per-part refs + sizes; the per-segment containment corpus on both `<album>` and `<part>` → error + audit line; unknown album → error. |
+| `music_remove` | removes an idle album directory and its parts; refuses when the album's parts intersect the active pool/selection (D-2) → error, directory intact. |
+
+### Reused invariants asserted by name
+
+The containment and audit-logging behaviour is reused (DES-049, vox-1hbo), so
+the tests **re-assert it at the new ops**, not just at the old ones:
+
+- `test_rec_remove_absolute_ref_rejected`, `_traversal_`, `_separator_`,
+  `_empty_`, `_nul_`, `_nonprintable_` — one per rejection class, each
+  checking (a) an error frame, (b) a WireReply WARNING line in the log,
+  (c) nothing deleted outside the root.
+- `test_music_manifest_ref_escape_rejected` — the two-segment
+  `<album>/<part>` extension of the same corpus.
+- `test_token_does_not_grant_fs_delete` — the trust-model twin of DES-049's
+  write test: no authorized `rec_remove`/`music_remove`, whatever its ref,
+  deletes outside the root.
+
+### Property / model-alignment tests
+
+Assert the audio-programs delta by name:
+
+- `test_music_new_leaves_full_pool_playing` — a full, playing Program is
+  byte-for-byte unchanged after `music_new` (model: `MusicNew` frames
+  `ΞProgram`).
+- `test_music_new_bad_prompt_does_not_fail_program` — `bad_prompt` returns an
+  error and the Program's `mode`/`lastError` are untouched (model:
+  `MusicNewBadPrompt`).
+- `test_music_remove_refuses_playing_album` — the D-2 precondition
+  (`albums(victim) ∩ (pool ∪ selection) = ∅`).
+
+### Live-verify (operator, by ear)
+
+`make install`; `vox daemon restart`; then: `rec new` → `rec play` on the host;
+`rec get` into a temp dir (and a second `get` refuses); `music new "<prompt>"`
+→ `music play <id>` → the new track sounds right and the running program keeps
+playing; hostile ids rejected end-to-end; `music remove` of the playing album
+refused. A log cannot judge audio — confirm each audible step with the
+operator.
