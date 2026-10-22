@@ -226,20 +226,16 @@ class TestElevenLabsProviderSynthesize:
         assert exc_info.value.status_code == 429
 
 
-_SECRET_KEY = "sk_live_0123456789abcdef"
-
-
 class TestElevenLabsProviderVoicesAuth:
-    """A rejected key on the voices fetch crosses as a typed, secret-free reason."""
+    """A rejected key on the voices fetch crosses as a typed credentials reason."""
 
     def test_list_voices_401_crosses_as_an_auth_error(
         self, mock_elevenlabs_client: MagicMock
     ) -> None:
         """The roster fetch is the panel's first call, so it meets a bad key first.
 
-        Without the translation the SDK's ``ApiError`` -- whose headers carry the
-        request's API key -- reaches the voices handler's broad guard and the
-        client sees only ``"operation failed"``.
+        Without the translation the SDK's ``ApiError`` reaches the voices
+        handler's broad guard and the client sees only ``"operation failed"``.
         """
         from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
@@ -247,8 +243,10 @@ class TestElevenLabsProviderVoicesAuth:
 
         mock_elevenlabs_client.voices.get_all.side_effect = ApiError(
             status_code=401,
-            headers={"xi-api-key": _SECRET_KEY},
-            body={"detail": {"status": "invalid_api_key", "message": "bad key"}},
+            headers={"content-type": "application/json", "server": "envoy"},
+            body={
+                "detail": {"status": "invalid_api_key", "message": "Invalid API key"}
+            },
         )
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
 
@@ -259,7 +257,6 @@ class TestElevenLabsProviderVoicesAuth:
             "provider 'elevenlabs' rejected the credentials (HTTP 401); "
             "run `vox doctor`"
         )
-        assert _SECRET_KEY not in str(exc_info.value)
 
     def test_list_voices_non_401_api_error_re_raises_unchanged(
         self, mock_elevenlabs_client: MagicMock

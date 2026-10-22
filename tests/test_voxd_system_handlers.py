@@ -470,18 +470,19 @@ class TestVoicesHandler:
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A 401 from the provider reaches the client as its reason, not as
-        ``"operation failed"``, and the key the SDK held never rides along.
+        ``"operation failed"``.
         """
         from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
         from punt_vox.providers.elevenlabs import ElevenLabsProvider
 
-        secret = "sk_live_0123456789abcdef"
         client = MagicMock()
         client.voices.get_all.side_effect = ApiError(
             status_code=401,
-            headers={"xi-api-key": secret},
-            body={"detail": {"status": "invalid_api_key", "message": "bad key"}},
+            headers={"content-type": "application/json", "server": "envoy"},
+            body={
+                "detail": {"status": "invalid_api_key", "message": "Invalid API key"}
+            },
         )
         provider = ElevenLabsProvider(client=client)
 
@@ -500,5 +501,4 @@ class TestVoicesHandler:
             "provider 'elevenlabs' rejected the credentials (HTTP 401); "
             "run `vox doctor`"
         )
-        assert secret not in repr(ws.sent)
-        assert secret not in caplog.text
+        assert "operation failed" not in repr(ws.sent)

@@ -348,10 +348,10 @@ class ElevenLabsProvider(TTSProvider):
         """Turn a 401 from the SDK into a :class:`ProviderAuthError` (F3).
 
         ``WireReply.reject_or_fault`` sends that error's sentence to the client; a
-        bare ``ApiError`` would be laundered to ``"operation failed"``, and its
-        text carries the request headers, API key included. Guards whichever call
-        meets a rejected key first -- the voice roster, then synthesis. Other
-        statuses (429, 500, 400) are not credential problems and re-raise.
+        bare ``ApiError`` would be laundered to ``"operation failed"`` (its own text
+        is raw response headers and body). Guards whichever call meets a rejected
+        key first -- the voice roster, then synthesis. Other statuses (429, 500,
+        400) are not credential problems and re-raise.
         """
         try:
             yield
