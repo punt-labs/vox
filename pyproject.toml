@@ -27,7 +27,9 @@ dependencies = [
     "boto3-stubs[polly]>=1.35.0",
     "botocore-stubs>=1.35.0",
     "elevenlabs>=2.0.0",
-    "mcp>=1.28.1",
+    # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
+    # Dependabot security alert #57, and a PyPI install does not read uv.lock.
+    "mcp>=1.30.0",
     "mutagen>=1.47.0",
     "openai>=1.0.0",
     "pydub>=0.25.0",
