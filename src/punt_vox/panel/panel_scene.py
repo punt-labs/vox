@@ -3,9 +3,8 @@
 Four regions top to bottom: a one-line status slot, the Notifications radio,
 the Mic Mode radio, and the Voice combo + preview button, separated by rules --
 the layout locked in ``docs/vox-control-panel-ui.md``. The status slot renders
-empty unless :class:`~punt_vox.panel.panel_notice.PanelNotice` carries a
-warning, so the scene's shape never changes between the silent and the
-warning case.
+empty unless :class:`~punt_vox.panel.panel_notice.PanelNotice` carries a warning,
+so the scene's shape never changes between the silent and the warning case.
 
 The frame uses a fixed ``size`` rather than ``frame.flags.auto_resize``: this
 panel's section labels render as ImGui's ``separator_text`` widget, which by
@@ -23,7 +22,7 @@ size must be correct from the panel's very first render.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import final
+from typing import ClassVar, final
 
 from punt_lux import RenderRequest, SeparatorElement, TextElement
 from punt_lux.operations.models import FrameSpec
@@ -54,6 +53,8 @@ _FRAME_SIZE = (340, 340)
 @dataclass(frozen=True, slots=True)
 class PanelScene:
     """Project the panel's current settings and notice onto the ``vox.panel`` scene."""
+
+    FRAME_ID: ClassVar[str] = _SCENE_ID
 
     notify: str
     speak: str

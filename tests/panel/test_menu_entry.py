@@ -30,7 +30,7 @@ class TestRegistered:
         rest = FakeRest()
         entry = build_entry(FakeService(), lambda: rest)
         assert await entry.registered() is True
-        assert rest.registered == [("vox-panel", "Vox")]
+        assert rest.registered == [("vox-panel", "Vox", "vox.panel")]
 
     async def test_a_refusal_is_reported_down_and_logged(
         self,

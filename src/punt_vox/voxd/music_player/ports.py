@@ -39,11 +39,9 @@ class ScenePublisher(Protocol):
 
     Two verbs, because a push carries an intent as well as a tree. A refresh
     updates a window the user is already looking at and must leave its stacking
-    order alone; an install puts the window in front of the user, which is what a
-    menu click asks for and what a fresh hub connection needs -- the concrete
-    sink backs an install with both a ``show`` push and an explicit frame raise,
-    because ``show`` alone does not reliably raise a frame already installed
-    (DES-072 addendum).
+    order alone; an install puts the whole scene on the wire, which is what a
+    menu click asks for and what a fresh hub connection needs. Reopening a
+    window the user closed is the display's job, done on the menu click.
     """
 
     def submit(self, request: RenderRequest) -> None:

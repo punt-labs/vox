@@ -153,10 +153,12 @@ class FakeCallbackAccessor:
     def __init__(self, outer: FakeRest) -> None:
         self._outer = outer
 
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         if self._outer.fail_at == "register":
             raise self._outer.error
-        self._outer.registered.append((callback_id, label))
+        self._outer.registered.append((callback_id, label, frame_id))
         return self._outer.register_result
 
 
@@ -175,7 +177,7 @@ class FakeRest:
         error: Exception | None = None,
     ) -> None:
         self.register_result = register_result if register_result is not None else Ok()
-        self.registered: list[tuple[str, str]] = []
+        self.registered: list[tuple[str, str, str | None]] = []
         self.rendered_count = 0
         self.patched_count = 0
         self.listener_built: FakeListener | None = None
@@ -206,6 +208,7 @@ class FakeService:
     def __init__(self, *, raise_on: Failure = "") -> None:
         self.callback_id = "vox-panel"
         self.label = "Vox"
+        self.frame_id = "vox.panel"
         self.refusal = FAILURE_TEXT
         # Open unless a test closes it to stand in for a voxd slow to answer.
         self.prefetch_gate = threading.Event()

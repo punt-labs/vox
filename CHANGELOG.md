@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `Music` window and the `Vox` panel reopen from the Lux menu after the user closes them.** Both menu entries were registered with no frame, so a click had nothing to reopen, and a content push never reopens a closed frame. Each entry now carries the frame its scene lands in (`vox.music`, `vox.panel`), and the display restores that frame on the click. The explicit `client.frame.raise_` call that stood in for this is gone: luxd removed it (a 404 logged as "luxd refused to raise the vox.music frame: Not Found"), and `FrameRaiser` and `FrameId` went with it. Needs `punt-lux>=0.33.0`.
+- **A rejected ElevenLabs key now reaches the panel as its reason instead of "operation failed".** The voice-roster fetch let the SDK's 401 escape to the voices handler's catch-all, which can only say "operation failed" and whose text carries the request headers. The roster fetch now raises the same typed credential error synthesis does, so the panel shows "provider 'elevenlabs' rejected the credentials (HTTP 401); run `vox doctor`" and no key or header reaches the wire or the log.
+
 ### Changed
 
+- `punt-lux` floor raised to 0.33.0 for `client.callback.register(..., frame_id=...)`.
 - `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
   abbreviations are now family-friendly ("laughing my head off" and "what
   the heck", respectively) instead of profane.

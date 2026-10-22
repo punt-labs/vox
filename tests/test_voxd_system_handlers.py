@@ -7,6 +7,7 @@ import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from unittest.mock import MagicMock
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
@@ -463,3 +464,41 @@ class TestVoicesHandler:
         assert ws.sent[-1]["id"] == "vf5"
         assert ws.sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
         assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_provider_key_crosses_as_a_concise_reason(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 401 from the provider reaches the client as its reason, not as
+        ``"operation failed"``, and the key the SDK held never rides along.
+        """
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        from punt_vox.providers.elevenlabs import ElevenLabsProvider
+
+        secret = "sk_live_0123456789abcdef"
+        client = MagicMock()
+        client.voices.get_all.side_effect = ApiError(
+            status_code=401,
+            headers={"xi-api-key": secret},
+            body={"detail": {"status": "invalid_api_key", "message": "bad key"}},
+        )
+        provider = ElevenLabsProvider(client=client)
+
+        def factory(*_args: object, **_kwargs: object) -> object:
+            return provider
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", factory)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await VoicesHandler()(
+                {"id": "v401", "provider": "elevenlabs"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["message"] == (
+            "provider 'elevenlabs' rejected the credentials (HTTP 401); "
+            "run `vox doctor`"
+        )
+        assert secret not in repr(ws.sent)
+        assert secret not in caplog.text

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, final
 
 from punt_lux import HubUnavailableError, LuxClient
 
-from punt_vox.lux_common import HubOutageLog
+from punt_vox.lux_common import HubOutageLog, MenuEntry
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
 from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
@@ -116,6 +116,9 @@ class _FakeOpener:
             msg = "projection blew up"
             raise RuntimeError(msg)
 
+    def frame_id(self) -> str:
+        return "vox.music"
+
     async def install(self) -> None:
         self.opens += 1
         if self._boom:
@@ -149,10 +152,10 @@ class _FakeMenu:
     """A MenuRegistrar double recording each menu registration."""
 
     def __init__(self) -> None:
-        self.registered: list[tuple[str, str]] = []
+        self.registered: list[tuple[str, str, str]] = []
 
-    async def register(self, callback_id: str, label: str) -> None:
-        self.registered.append((callback_id, label))
+    async def register(self, entry: MenuEntry) -> None:
+        self.registered.append((entry.callback_id, entry.label, entry.frame_id))
 
 
 @final
@@ -271,7 +274,7 @@ async def test_run_registers_the_menu_and_subscribes_once() -> None:
 
     await sub.run()
 
-    assert menu.registered == [("music", "Music")]
+    assert menu.registered == [("music", "Music", "vox.music")]
     assert listener.subscribed == _ALL_TOPICS  # all six topics, not just play/stop
     assert len(calls) == 1  # exactly one connection built
     assert listener.listens == 1
@@ -358,7 +361,7 @@ async def test_run_re_registers_the_menu_on_reconnect_after_expiry(
     await sub.run()
 
     # Registered once per handshake -- the swept menu is restored on reconnect.
-    assert menu.registered == [("music", "Music"), ("music", "Music")]
+    assert menu.registered == [("music", "Music", "vox.music")] * 2
 
 
 async def test_run_logs_connect_subscribe_connected_and_clean_stop(
@@ -497,7 +500,7 @@ async def test_shared_outage_is_used_by_both_subscription_and_menu(
         # Simulate a stale outage the menu tries under: re-open the window,
         # then a menu register during the same window logs at DEBUG.
         outage.note("[lux] receive leg re-opened the outage")  # WARNING
-        await menu.register("music", "Music")  # DEBUG under shared window
+        await menu.register(MenuEntry("music", "Music", "vox.music"))  # DEBUG, shared
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     debugs = [
@@ -913,7 +916,7 @@ async def test_on_connect_registers_the_menu_and_repushes_the_scene() -> None:
 
     await sub.on_connect()
 
-    assert menu.registered == [("music", "Music")]  # menu re-registered
+    assert menu.registered == [("music", "Music", "vox.music")]  # menu re-registered
     assert (opener.opens, opener.refreshes) == (1, 0)  # scene installed afresh
 
 
@@ -931,5 +934,7 @@ async def test_on_connect_survives_a_failing_scene_push(
     with caplog.at_level(logging.ERROR):
         await sub.on_connect()  # must not raise
 
-    assert menu.registered == [("music", "Music")]  # registered despite the push fault
+    assert menu.registered == [
+        ("music", "Music", "vox.music")
+    ]  # registered despite the push fault
     assert any("scene projection on connect" in r.getMessage() for r in caplog.records)

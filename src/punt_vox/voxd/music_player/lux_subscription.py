@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
 
-from punt_vox.lux_common import HubOutageLog
+from punt_vox.lux_common import HubOutageLog, MenuEntry
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.player_event_codec import (
     AnchorUnresolvedError,
@@ -227,9 +227,8 @@ class LuxSubscription:
     async def on_callback(self, callback_id: str) -> None:
         """Install the music scene when the ``Music`` menu entry is clicked.
 
-        This is one of the two sites that install rather than refresh, and the
-        reason is the whole point of the entry: the user clicked *Music* to see
-        the window, so raising its frame is the answer, not a side effect.
+        One of the two sites that install rather than refresh: the user clicked
+        *Music* to see the window, so showing the whole scene is the answer.
         """
         if callback_id != _MENU_CALLBACK_ID:
             return
@@ -252,13 +251,14 @@ class LuxSubscription:
         logs-and-continues if this raises, so the session survives regardless.
 
         The push installs rather than refreshes: this connection carries nothing
-        yet, so there is no installed tree for a patch to write onto.
+        yet to patch.
         """
         _trace.info("hub handshake complete; re-registering menu and installing scene")
-        # The handshake is the ground-truth "luxd is back" signal for both legs,
-        # so it closes the shared outage window before the menu register runs.
+        # The handshake is the ground-truth "luxd is back" signal for both legs.
         self._outage.clear()
-        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
+        await self._menu.register(
+            MenuEntry(_MENU_CALLBACK_ID, _MENU_LABEL, self._presenter.frame_id())
+        )
         try:
             await self._presenter.install()
         except Exception:

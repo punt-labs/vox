@@ -16,11 +16,9 @@ if TYPE_CHECKING:
     from punt_lux import CallbackHandler, EventHandler, LuxClient
     from punt_lux.hub_client import ConnectHandler
 
-__all__ = [
-    "HubListener",
-    "LuxClientFactory",
-    "MenuRegistrar",
-]
+    from punt_vox.lux_common import MenuEntry
+
+__all__ = ["HubListener", "LuxClientFactory", "MenuRegistrar"]
 
 
 @runtime_checkable
@@ -44,7 +42,7 @@ class HubListener(Protocol):
 class MenuRegistrar(Protocol):
     """The guarded registration of one menu callback the subscription drives."""
 
-    async def register(self, callback_id: str, label: str) -> None:
+    async def register(self, entry: MenuEntry) -> None:
         """Register the menu callback, swallowing a down or refusing luxd."""
         ...
 

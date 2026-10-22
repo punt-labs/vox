@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Self
 
@@ -27,14 +29,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ElevenLabsProvider"]
 
-# Default model. State (or an explicit ``model=`` kwarg) is the sole
-# authority; the earlier ``TTS_MODEL`` env-var probe was removed to
-# close the state-vs-env substitution one field over from the
-# provider case (design §3.9). eleven_v3 is the highest-quality
-# multilingual model and the only one that interprets bracket-style
-# expressive tags ([whisper], [serious]) natively; other models
-# strip the tags before synthesis. Users wanting a different model
-# set it in ``vox.md``.
+# Default model. State (or an explicit ``model=`` kwarg) is the sole authority;
+# the earlier ``TTS_MODEL`` env-var probe was removed to close the state-vs-env
+# substitution one field over from the provider case (design §3.9). eleven_v3 is
+# the highest-quality multilingual model and the only one that interprets
+# bracket-style expressive tags ([whisper], [serious]) natively; other models
+# strip the tags before synthesis. A different model is set in ``vox.md``.
 _DEFAULT_MODEL = "eleven_v3"
 
 # Character limits per model (from ElevenLabs docs).
@@ -290,7 +290,8 @@ class ElevenLabsProvider(TTSProvider):
         """
         fresh: dict[str, str] = {}
 
-        response: Any = self._client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        with self._auth_boundary():
+            response: Any = self._client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -341,6 +342,24 @@ class ElevenLabsProvider(TTSProvider):
             **kwargs,
         )
 
+    @staticmethod
+    @contextmanager
+    def _auth_boundary() -> Generator[None]:
+        """Turn a 401 from the SDK into a :class:`ProviderAuthError` (F3).
+
+        ``WireReply.reject_or_fault`` sends that error's sentence to the client; a
+        bare ``ApiError`` would be laundered to ``"operation failed"``, and its
+        text carries the request headers, API key included. Guards whichever call
+        meets a rejected key first -- the voice roster, then synthesis. Other
+        statuses (429, 500, 400) are not credential problems and re-raise.
+        """
+        try:
+            yield
+        except ApiError as exc:
+            if exc.status_code == 401:
+                raise ProviderAuthError("elevenlabs", 401) from exc
+            raise
+
     def _single_synthesize(
         self,
         text: str,
@@ -348,21 +367,7 @@ class ElevenLabsProvider(TTSProvider):
         voice_id: str,
         request: SynthesisRequest,
     ) -> None:
-        """Synthesize a single chunk to a file.
-
-        Wraps the ElevenLabs SDK call so an ``ApiError`` with a 401
-        status becomes a :class:`ProviderAuthError` that
-        ``WireReply.reject_or_fault`` routes verbatim to the client,
-        rather than falling through to speech_handlers' broad guard
-        and getting laundered to ``"operation failed"``. The
-        readiness gate catches the credential-absent case at F2;
-        this catches the credential-present-but-rejected case at F3.
-        Other ``ApiError`` statuses (429 rate-limit, 500 server error,
-        400 bad request) are not credential problems and re-raise
-        unchanged -- the broad guard will render them opaquely, which
-        is correct for a genuine SDK/upstream fault. Only 401 crosses
-        as a typed rejection.
-        """
+        """Synthesize a single chunk to a file, a rejected key crossing as F3."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         voice_settings = self._build_voice_settings(request)
@@ -376,12 +381,8 @@ class ElevenLabsProvider(TTSProvider):
         if voice_settings is not None:
             kwargs["voice_settings"] = voice_settings
 
-        try:
+        with self._auth_boundary():
             response: Any = self._client.text_to_speech.stream(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        except ApiError as exc:
-            if exc.status_code == 401:
-                raise ProviderAuthError("elevenlabs", 401) from exc
-            raise
 
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",
