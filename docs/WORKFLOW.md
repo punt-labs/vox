@@ -46,7 +46,7 @@ predicates over declared terms, never as bare primed flags.
 The operator owns requirements and design direction, rules on genuine design
 forks, and confirms the audio demo by ear. Claude runs everything else: the
 backlog, the missions, the review cycles, and the merges. Review of code is
-done by agents — the local review agents plus Copilot and Bugbot on the PR.
+done by agents — the local review agents plus Qodo on the PR.
 There is no human review gate. The operator reads code in the IDE, but that
 inspection is separate, feeds design discussion only, and nothing in these
 loops waits on it.
@@ -219,10 +219,12 @@ function pr_loop(unit):
 
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
     make check                            # full gate on the accumulated diff
-    repeat:
-        findings = code_reviewer + silent_failure_hunter on the full diff
-        fix every finding in this PR      # no deferrals
-    until a round produces zero findings
+    round 1: findings = code_reviewer + silent_failure_hunter on the full diff
+             fix each finding now, or dismiss it with a one-line reason
+    round 2: the same agents on the round-1 fix diff, High severity only
+             fix each High now
+    # two rounds, then the PR opens; a High still open after round 2 goes
+    # to the operator. No deferral beads: a finding is fixed or dismissed.
 
     # C. AUDIO DEMO — confirmed by ear, the one human gate
     make install; vox daemon restart      # the daemon serves old code until
@@ -238,7 +240,8 @@ function pr_loop(unit):
     # D. SHIP
     bd close the bead(s)
     push; create the PR (description carries the verification playbook)
-    request Copilot review once, on open
+        # Qodo reviews once, on open (.pr_agent.toml). A docs/chore/style
+        # title is skipped; comment /agentic_review to opt one in.
     schedule a background poll with /loop   # never gh pr checks --watch,
                                             # never foreground sleep loops
 
@@ -246,24 +249,32 @@ function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
                                                #   env -u GH_TOKEN
                                                #   -u GITHUB_PERSONAL_ACCESS_TOKEN
-    for finding in unaddressed(state):    # handled now, never on a later tick
-        delegate the fix to a bare agent  # or reply with the concrete reason
-                                          # the finding does not apply
-        make check; commit; push          # each push restarts the gate
-        resolve the thread ONLY after a landed commit closes it, one by one,
-            never in bulk — the leader resolves, not the agent
+    if CI failed: fix in this PR
+    if qodo_round(pr) == 1 and Qodo has posted its review:
+        for each High (inline thread): fix now
+        for each Medium (summary only): fix now, or reply once with the
+            finding, the reason, and file:line — never re-litigated
+        # Low findings are dropped by config. No deferral beads.
+        delegate the fixes to a bare agent; make check; commit; push once
+        comment "/agentic_review"         # round 2: incremental, fix diff only
+    elif qodo_round(pr) == 2:
+        for each new High: fix now; push   # round 3 exists only for a new High
+        new Medium findings: reply with the reason; no further round
+    if a High is still open after round 3: escalate to the operator
+    resolve each thread after a landed commit closes it, one by one —
+        the leader resolves, not the agent
     if merge_gate(state): merge (squash, --delete-branch); close_out()
 
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
-       and Copilot has reviewed the latest commit   # it re-reviews on push
-       and (Bugbot has reviewed the latest commit
-            or Bugbot never reviewed this PR and more than six minutes
-               have passed since CI went green)
-       and zero unresolved review threads
-       and the latest review round had zero material findings
-    # When this returns true: merge EXPLICITLY. No --auto. No --admin.
-    # Do not ask, do not wait.
+       and (Qodo has reviewed some commit on this PR
+            or the title is docs/chore/style and Qodo skipped it)
+       and zero unresolved review threads   # only High findings post inline
+       and every round-1 Medium has a fix or a reply
+    # A push restarts CI, not review. When this returns true: merge
+    # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
+    # Qodo silent 30 minutes after open: one local code_reviewer pass on
+    # the full diff stands in for it.
 
 function close_out():
     cancel the poll loop
@@ -288,13 +299,16 @@ EnterPR ≙ [ LoopState; unit : ℙ BEAD |
 
 ExitPR ≙ [ Δ LoopState; pr : PR |
   merged(pr)
-  ∧ localFindings(pr) = ∅                 -- held BEFORE the PR opened
+  ∧ localFindings(pr) = ∅                 -- each fixed or dismissed in the
+                                          --   two local rounds, BEFORE the
+                                          --   PR opened
   ∧ demoConfirmedByEar(pr)                -- held BEFORE the PR opened
   ∧ ciGreen(head(pr))                     -- docs + lint + test
-  ∧ reviewedByBots(head(pr))              -- Copilot + Bugbot on the latest
-                                          --   commit, per the merge_gate rules
-  ∧ unresolvedThreads(pr) = ∅
-  ∧ materialFindings(latestRound(pr)) = ∅
+  ∧ qodoReviewed(pr)                      -- some commit, per merge_gate; a
+                                          --   docs/chore/style PR is exempt
+  ∧ qodoRounds(pr) ≤ 3                    -- round 3 only for a new High
+  ∧ unresolvedThreads(pr) = ∅             -- every High fixed
+  ∧ mediumsAnswered(round1(pr))           -- each fixed or rebutted once
   ∧ beadsOf(pr) ⊆ closed′
   ∧ mergeRecapSent(pr) ]
 ```
@@ -305,10 +319,21 @@ Full-diff local review is where issues die cheaply. A local round costs
 seconds; a remote review cycle costs minutes to hours. Both `code-reviewer`
 and `silent-failure-hunter` run on the full diff — silent-failure-hunter
 matters especially in vox, where a swallowed provider error becomes silence
-the user cannot diagnose. Every finding is fixed in this PR. A dismissal
-requires the exact finding, the specific reason it does not apply, and the
-code reference. Opening a PR with unresolved local findings is a procedural
-violation.
+the user cannot diagnose. Local review runs two rounds: the full diff, then
+the fix diff with only High-severity findings reported. Every finding is
+fixed now or dismissed with the exact finding, the specific reason, and the
+code reference. Nothing is deferred to a bead. A High still open after round
+2 goes to the operator.
+
+### Remote review: Qodo only
+
+Qodo is the one remote reviewer (`.pr_agent.toml`). It reviews once when the
+PR opens and never on push. High findings post inline as threads, and
+`required_review_thread_resolution` makes each one block the merge. Medium
+findings appear in the summary; each gets a fix or one reply in round 1.
+Low findings are dropped. Round 2 is one manual `/agentic_review` after the
+fix push, scoped to the new commits. Copilot and Bugbot are off for this
+repo (pilot `vox-2q95`).
 
 ### The audio demo gate
 
@@ -416,7 +441,7 @@ bound to the same role — reviews the worker's result inside the mission before
 the leader accepts it. The pairings live in `CLAUDE.md`.
 
 **Remote review findings are the one delegation that is not a mission.** When
-Copilot or Bugbot report on the PR, the leader reads each finding and hands
+Qodo reports on the PR, the leader reads each finding and hands
 the mechanical fix to a bare `Agent()`, then pushes and resolves the thread
 itself.
 
@@ -468,13 +493,15 @@ itself.
 2. **A satisfied merge gate means merge now.** The gate is the only path to a
    merge, and nothing waits once it passes. Merge is always explicit — never
    `--auto`, never `--admin`.
-3. **Findings never wait.** Review feedback is handled the moment it arrives,
-   not on the next poll tick and never in a follow-up PR. Threads are resolved
-   only against a landed commit, one by one, never in bulk.
-4. **Every push restarts the merge gate.** Fresh CI and fresh reviews on the
-   new commit, with the single Bugbot exception stated in the gate.
+3. **Do or do not.** A finding is fixed in this PR or dismissed with a
+   reason, the moment it arrives. It is never deferred to a bead or a
+   follow-up PR. Threads are resolved only against a landed commit, one by
+   one, never in bulk.
+4. **A push restarts CI, not review.** Review rounds are bounded: two local,
+   two Qodo, and a third Qodo round only for a new High.
 5. **Defects flow inward, scope flows outward.** A defect found while a PR is
-   open is fixed in that PR. Only genuinely new lines of work become beads.
+   open is fixed in that PR. Only genuinely new lines of work become beads;
+   a review finding is never new work.
 6. **The operator gates the audio demo and direction, never diffs or
    sequencing.**
 7. **Close-out is inside the loop.** The recap email, branch hygiene, and
