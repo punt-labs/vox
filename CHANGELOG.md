@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stale session working notes (`RESUME.md`).
 
+### Security
+
+- **Four transitive dependencies are upgraded in `uv.lock`, clearing all 19
+  open Dependabot alerts (#39–#57: 2 critical, 7 high, 10 medium).** anyio
+  4.12.1 → 4.14.2 (4.15.1 on Python 3.15+), PyJWT 2.13.0 → 2.15.1, urllib3
+  2.7.0 → 2.8.0, and mcp 1.28.1 → 1.30.0. None is a direct dependency and
+  `pyproject.toml` is unchanged; no other package version moved.
+
 ## [5.0.5] - 2026-09-01
 
 ### Fixed
