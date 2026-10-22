@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alerts #58 (critical) and #59 (medium).** certifi moves 2026.2.25 →
   2026.10.19, which drops the `emSign ECC Root CA - G3` root whose eMudhra
   intermediates have compromised keys (GHSA-6q48-6c7w-9gw2); certifi is the CA
-  bundle behind vox's HTTPS calls to ElevenLabs, OpenAI, and AWS Polly.
+  bundle behind vox's HTTPS calls to ElevenLabs (through httpx) and AWS Polly
+  (through botocore). The OpenAI client uses httpx2, which verifies against
+  the operating system's trust store instead, so OpenAI calls are unaffected.
   opentelemetry-api moves 1.40.0 → 1.45.1, which fixes quadratic-time
   `tracestate` parsing (GHSA-xcq7-p3pf-p88h); it arrives through punt-lux →
   fastmcp, and vox code does not import it. The upgrade removes
