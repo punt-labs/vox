@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +14,7 @@ from elevenlabs.types import (
     SpeechToTextWordResponseModel,
 )
 
+from punt_vox.providers.elevenlabs_client import CaBundleError
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -233,25 +234,48 @@ class TestElevenLabsSTTProviderAuthFailure:
 
 
 class TestElevenLabsSTTProviderCheckHealth:
-    def test_reports_unset_key(self, mock_stt_client: MagicMock) -> None:
+    def test_reports_unset_key(
+        self, mock_stt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
         provider = ElevenLabsSTTProvider(client=mock_stt_client)
-        original = os.environ.pop("ELEVENLABS_API_KEY", None)
-        try:
-            (check,) = provider.check_health()
-            assert check.passed is False
-        finally:
-            if original is not None:
-                os.environ["ELEVENLABS_API_KEY"] = original
 
-    def test_reports_set_key(self, mock_stt_client: MagicMock) -> None:
+        (check,) = provider.check_health()
+
+        assert check.passed is False
+
+    def test_reports_set_key(
+        self, mock_stt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk_test")
         provider = ElevenLabsSTTProvider(client=mock_stt_client)
-        original = os.environ.get("ELEVENLABS_API_KEY")
-        os.environ["ELEVENLABS_API_KEY"] = "sk_test"
-        try:
-            (check,) = provider.check_health()
-            assert check.passed is True
-        finally:
-            if original is None:
-                del os.environ["ELEVENLABS_API_KEY"]
-            else:
-                os.environ["ELEVENLABS_API_KEY"] = original
+
+        (check,) = provider.check_health()
+
+        assert check.passed is True
+
+
+class TestElevenLabsSTTProviderBadCaBundle:
+    """An unloadable ``SSL_CERT_FILE`` fails the transcription, by name."""
+
+    @pytest.fixture
+    def missing_ca(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        cafile = tmp_path / "gone" / "ca-bundle.pem"
+        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+        return cafile
+
+    def test_construction_succeeds(self, missing_ca: Path) -> None:
+        provider = ElevenLabsSTTProvider()
+
+        assert provider.name == "elevenlabs"
+
+    async def test_transcribe_names_the_bundle(self, missing_ca: Path) -> None:
+        provider = ElevenLabsSTTProvider()
+
+        with pytest.raises(CaBundleError) as info:
+            async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
+                pass
+
+        assert "SSL_CERT_FILE" in str(info.value)
+        assert str(missing_ca) in str(info.value)

@@ -12,11 +12,10 @@ exactly one event to yield per call -- a single final :class:`TranscriptEvent`
 Kept out of ``elevenlabs.py`` (PY-OO-2's class-per-module limit): that module
 already houses :class:`~punt_vox.providers.elevenlabs.ElevenLabsProvider`
 (text-to-speech) plus its private helpers, and speech-to-text is a distinct
-concern with its own SDK surface, its own confidence semantics, and its own
-health check. Duplicating the small amount of client-construction and
-401-to-:class:`ProviderAuthError` logic here (rather than importing it from
-:mod:`punt_vox.providers.elevenlabs`) keeps this module's only sibling
-dependency an SDK type, not another provider's private helpers.
+concern with its own SDK surface and its own confidence semantics. What the two
+genuinely share -- building the SDK client late and reporting the API key --
+lives in :class:`~punt_vox.providers.elevenlabs_client.ElevenLabsClient`, so
+neither provider imports the other's private helpers.
 """
 
 from __future__ import annotations
@@ -24,17 +23,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 from io import BytesIO
 from typing import TYPE_CHECKING, Self, final
 
-from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 from elevenlabs.types import (
     SpeechToTextChunkResponseModel,
     SpeechToTextWordResponseModel,
 )
 
+from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -42,6 +40,8 @@ from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from elevenlabs.client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -73,17 +73,18 @@ class ElevenLabsSTTProvider:
 
     __slots__ = ("_client", "_model")
     _model: str
-    _client: ElevenLabs
+    _client: ElevenLabsClient
 
     def __new__(
         cls,
         *,
         model: str | None = None,
+        # The test seam: absent, the real SDK client is built on first use.
         client: ElevenLabs | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
-        self._client = client if client is not None else ElevenLabs()
+        self._client = ElevenLabsClient(sdk=client)
         return self
 
     @property
@@ -116,7 +117,7 @@ class ElevenLabsSTTProvider:
             # audio capture and control-request handling for the full
             # network round trip.
             response = await asyncio.to_thread(
-                self._client.speech_to_text.convert,
+                self._client.sdk().speech_to_text.convert,
                 model_id=self._model,
                 file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
                 file_format=_FILE_FORMAT,
@@ -154,19 +155,11 @@ class ElevenLabsSTTProvider:
     def check_health(self) -> list[HealthCheck]:
         """Check the ElevenLabs API key is set.
 
-        Mirrors :meth:`~punt_vox.providers.elevenlabs.ElevenLabsProvider.check_health`'s
-        key-presence check; does not repeat its subscription-quota probe,
-        which is a text-to-speech-character concern that does not apply to
-        speech-to-text's per-minute-of-audio billing.
+        Does not repeat the text-to-speech provider's subscription-quota probe:
+        that is a character-count concern, and speech-to-text bills per minute
+        of audio.
         """
-        if not os.environ.get("ELEVENLABS_API_KEY"):
-            return [
-                HealthCheck(
-                    passed=False,
-                    message=("ElevenLabs API key: not set (export ELEVENLABS_API_KEY)"),
-                )
-            ]
-        return [HealthCheck(passed=True, message="ElevenLabs API key: set")]
+        return [self._client.key_check()]
 
     @staticmethod
     def _confidence_from_words(

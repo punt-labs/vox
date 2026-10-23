@@ -74,7 +74,8 @@ class ElevenLabsClient:
             self._sdk = self._build()
         return self._sdk
 
-    def key_check(self) -> HealthCheck:
+    @staticmethod
+    def key_check() -> HealthCheck:
         """Report whether the API key is present in the environment."""
         if os.environ.get(_API_KEY_VAR):
             return HealthCheck(passed=True, message="ElevenLabs API key: set")

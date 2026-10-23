@@ -13,6 +13,7 @@ from punt_vox.providers.elevenlabs import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
     ElevenLabsProvider,
 )
+from punt_vox.providers.elevenlabs_client import CaBundleError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
@@ -564,3 +565,52 @@ class TestElevenLabsVoiceCacheTTL:
         with pytest.raises(VoiceNotFoundError):
             provider.resolve_voice("yyy_also_unknown")
         assert mock_elevenlabs_client.voices.get_all.call_count == 2
+
+
+class TestElevenLabsProviderBadCaBundle:
+    """An unloadable ``SSL_CERT_FILE`` fails the call that needs TLS, by name."""
+
+    @pytest.fixture
+    def missing_ca(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        cafile = tmp_path / "gone" / "ca-bundle.pem"
+        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+        return cafile
+
+    def test_construction_succeeds(self, missing_ca: Path) -> None:
+        provider = ElevenLabsProvider()
+
+        assert provider.name == "elevenlabs"
+
+    def test_synthesize_names_the_bundle(
+        self, missing_ca: Path, tmp_output_dir: Path
+    ) -> None:
+        provider = ElevenLabsProvider()
+        request = SynthesisRequest(text="hello", voice="matilda")
+
+        with pytest.raises(CaBundleError) as info:
+            provider.synthesize(request, tmp_output_dir / "out.mp3")
+
+        assert "SSL_CERT_FILE" in str(info.value)
+        assert str(missing_ca) in str(info.value)
+
+    def test_check_health_reports_the_bundle(self, missing_ca: Path) -> None:
+        key, subscription = ElevenLabsProvider().check_health()
+
+        assert key.passed
+        assert not subscription.passed
+        assert str(missing_ca) in subscription.message
+
+
+class TestElevenLabsProviderUnnamedVoice:
+    def test_unnamed_voice_is_skipped_by_name_lookup(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        """The SDK types ``Voice.name`` as optional; a nameless voice adds no key."""
+        unnamed = MagicMock()
+        unnamed.name = None
+        unnamed.voice_id = "AAAAAAAAAAAAAAAAAAAA"
+        mock_elevenlabs_client.voices.get_all.return_value.voices.append(unnamed)
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        assert provider.list_voices() == ["drew", "matilda"]
