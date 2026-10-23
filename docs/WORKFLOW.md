@@ -220,8 +220,8 @@ function pr_loop(unit):
 
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
     make check                            # full gate on the accumulated diff
-    local_review(full diff)               # defined after close_out
-    # the PR opens only after a local round leaves nothing to fix
+    if local_review(full diff) is blocked: stop the unit until the
+        operator rules                    # local_review: after close_out
 
     # C. AUDIO DEMO — confirmed by ear, the one human gate
     make install; vox daemon restart      # the daemon serves old code until
@@ -306,8 +306,8 @@ function poll_tick(pr):
     for each escalation the operator has ruled on:
         apply the ruling; record it in a ledger comment
     if fixes were made: delegate them to a bare agent; make check; commit
-        local_review(the fix diff)         # its own fixes are checked and
-                                           #   committed inside it
+        if local_review(the fix diff) is blocked:   # its own fixes are
+            stop; the operator rules                 #   committed inside it
         push once                          # every fix reaches the PR head
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
@@ -348,15 +348,20 @@ function local_review(diff):
     for round in 1..5:
         findings = code_reviewer + silent_failure_hunter + `qodo review`
                    on diff               # qodo review: the PR's own engine
-        if findings are empty, or every finding is dismissed with a
-                one-line reason: return clean
-        if round == 5: the open findings go to the operator; stop
-        fix each finding now, or dismiss it with a one-line reason
+        if findings are empty, or every finding is dismissed with the
+                exact finding, the specific reason, and file:line:
+            return clean
+        if round == 5: report the open findings to the operator
+            return blocked                # the caller stops; see below
+        fix each finding now, or dismiss it with the exact finding, the
+            specific reason, and file:line
         make check; commit
         diff = this round's fix diff     # every change is reviewed,
                                          #   Low fixes included
     # at most four fix rounds, plus a fifth review that only verifies the
-    # fourth round's fixes. No deferral beads.
+    # fourth round's fixes. No deferral beads. Every caller acts only on
+    # clean: on blocked, nothing opens and nothing is pushed until the
+    # operator rules and local_review then returns clean.
 ```
 
 Entry and exit for one PR iteration. `merge_gate` in the pseudocode is the
