@@ -25,6 +25,6 @@ Release management, cross-repo propagation, developer tooling.
 
 - Playbook execution (punt:auto) for repeatable multi-step processes
 - Bead-driven work tracking across sessions
-- Review cycle automation: local agents → PR → Copilot/Bugbot → fix →
-  repeat until clean
+- Review cycle automation: local agents → PR → Qodo and Bugbot →
+  fix → local rounds until clean (up to four), at most two PR rounds
 - GPG commit signing, GitHub identity management, Vercel team access

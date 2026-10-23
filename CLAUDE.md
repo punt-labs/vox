@@ -53,14 +53,14 @@ This separation means: daemon bugs are about audio, providers, caching, and syst
 |--------|---------------|
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
-| `voxd.py` | Audio daemon. WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew on macOS, FHS on Linux). |
+| `voxd/` | Audio daemon (package). WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew on macOS, FHS on Linux). |
 | `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync). Lightweight — stdlib + websockets only. |
 | `config.py` | Two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. |
 | `hooks.py` | Hook handlers for Claude Code events — per-event dispatch (`handle_stop`, `handle_notification`, `handle_vibe_nudge`, `handle_pre_compact`, `handle_user_prompt_submit`, `handle_subagent_start`/`stop`, `handle_session_end`). Thin client of `voxd` via `VoxClientSync`. |
 | `server.py` | FastMCP server (key: `mic`) — thin client of `voxd`. Session state in memory (`SessionState` dataclass). |
 | `providers/` | Provider registry + ElevenLabs, OpenAI, Polly, macOS `say`, Linux `espeak-ng`. Each provider is the only file importing its SDK. |
 | `cache.py` | MP3 cache for quip phrases. Content-addressed by (text, voice, provider) via MD5. Runs inside `voxd`. |
-| `service.py` | System daemon lifecycle. macOS: `/Library/LaunchDaemons/`. Linux: `/etc/systemd/system/`. |
+| `service/` | System daemon lifecycle (package: `installer`, `launchd`, `systemd`, `keys_env`). macOS: `/Library/LaunchDaemons/`. Linux: `/etc/systemd/system/`. |
 | `normalize.py` | Text normalization for speech: snake_case, camelCase, abbreviation expansion |
 | `quips.py` | Centralized quip registry: all hook speech phrase pools as immutable tuples |
 | `applet.py` | Lux display applet: builds element tree, connects to display server |
@@ -106,7 +106,7 @@ See `docs/architecture.tex` for the full system description.
 
 **The ratchet is tech-debt paydown — make medium-scale improvements, do not squeeze under the limit.** The ratchet exists to retire OO and complexity debt across the *whole* codebase a little at a time, the way you amortize a loan: every commit pays down some principal, no matter which file it touches. This is deliberately counterintuitive — it means taking on scope *beyond* the immediate task, and that added scope is the point, not a distraction from it. When you touch a file, make a *substantive* improvement to it — extract a class, break up a god method, replace a primitive-obsessed signature with a type, collapse a conditional forest — not the smallest metric nudge that scrapes past the "at least one metric improved" gate. Gaming the minimum is the failure mode: it burns more time (and review churn) than a real improvement, and it retires no debt. The waste to eliminate is relitigating tiny ratchet deltas and hunting for the cheapest legal change to pass; the goal is a genuine, medium-scale improvement at *every* opportunity. The test is simple: if the file you touched is meaningfully cleaner than you found it, the ratchet did its job — if you spent that time trying to change as little as possible, you used it wrong. This philosophy is org-wide; it belongs in the workspace ratchet policy (`../.claude/rules/python-oo-adoption.md`) as well. **Never game a size or complexity metric by stripping comments or docstrings** — `module_size` is retired by extracting classes and splitting modules, never by compressing prose. OO metrics are not about compressing comments.
 
-**Org standards override review tools.** Copilot, Bugbot, and Cursor are advisory. When a review suggestion conflicts with rules in `../.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
+**Org standards override review tools.** Qodo is the primary remote reviewer, with one Bugbot run per PR round (at most two rounds); their findings are triaged per `docs/WORKFLOW.md`. When a review suggestion conflicts with rules in `../.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
 
 **Verify outputs, not just metrics.** After writing a file, open it and read the content. `make check` passing does not mean the feature works — it means the code compiles and tests pass. Those are necessary but not sufficient.
 
@@ -131,7 +131,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
 
-The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test` against the installed artifact; the two local review agents (`code-reviewer` and `silent-failure-hunter`) iterated to a zero-findings round; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
+The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test` against the installed artifact; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
 ### PR boundaries
 
@@ -221,7 +221,7 @@ Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio format
 | MCP server (`server.py`) tool surface | `rmh` | `mdm` (Pike) |
 | CLI (`__main__.py`) command authoring | `mdm` | `rmh` |
 | Hook scripts (`plugin/hooks/*.sh`) — bash, signal classification | `mdm` | `rop` (McIlroy) |
-| System daemon install (`service.py`, launchd/systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
+| System daemon install (`service/`, launchd/systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
 | Provider auth / API-key handling / secrets | `djb` | `rmh` |
 | Audio playback / pydub / ffmpeg pipeline | `gvr` | `kpz` (Karpathy) |
 | Cache design (`cache.py`) — content-addressing, dedup | `rmh` | `kpz` |
@@ -232,7 +232,7 @@ Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio format
 
 ### Pipeline selection
 
-Use `standard` pipeline for new features, provider additions, daemon changes, or anything touching the hook/signal classification system. Use `quick` for single-module bugfixes that don't cross the daemon/client boundary. Review-cycle fix rounds (Copilot/Bugbot findings) use bare `Agent()`, not missions.
+Use `standard` pipeline for new features, provider additions, daemon changes, or anything touching the hook/signal classification system. Use `quick` for single-module bugfixes that don't cross the daemon/client boundary. Review-cycle fix rounds (Qodo findings) use bare `Agent()`, not missions.
 
 ### Lessons from vox-0qi (2026-04-11)
 
