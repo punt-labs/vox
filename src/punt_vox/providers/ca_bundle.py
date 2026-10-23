@@ -1,49 +1,65 @@
-"""The CA certificates a provider's TLS trusts, and the two ways they break it.
+"""The CA certificates a provider's TLS trusts, and the ways verification breaks.
 
-httpx picks its trust anchors when an SDK client is constructed, not per
-request: ``SSL_CERT_FILE`` if set, else ``SSL_CERT_DIR`` if set, else certifi's
-bundle. A bad choice surfaces in one of two places:
+An SDK's HTTP client picks its trust anchors when it is constructed, not per
+request: ``SSL_CERT_FILE`` if set, else ``SSL_CERT_DIR`` if set, else its own
+default -- certifi's bundle for httpx (the ElevenLabs SDK), the system trust
+store through ``truststore`` for httpx2 (the OpenAI SDK). A failure surfaces in
+one of two places:
 
 * **Build time.** ``SSL_CERT_FILE`` is missing or holds no certificate, and the
   SDK constructor raises a bare ``OSError`` that names neither the variable nor
   the path. (``SSL_CERT_DIR`` cannot fail here: OpenSSL reads it lazily.)
-* **Request time.** The anchors load but do not trust the provider's
-  certificate, and the request fails with ``ssl.SSLCertVerificationError``
-  buried in the SDK's exception chain.
+* **Request time.** The handshake fails with ``ssl.SSLCertVerificationError``
+  buried in the SDK's exception chain -- because the anchors do not trust the
+  certificate's issuer, or because the certificate names another host or is
+  outside its validity period, which no change of anchors fixes.
 
-Either way the operator needs to be told what TLS trusted. :class:`CaBundle`
-turns both into a :class:`CaBundleError` whose message names the variable (or
-the default bundle) and the reason -- but never the path, because the message
-crosses the wire to every client, and the path is a host detail. The path is
-logged once, at ERROR, where the failure is translated, so the operator finds
-it in ``vox.log``.
+Either way the operator needs to be told what failed. :class:`CaBundle` turns
+each into a :class:`CaBundleError` whose message names the variable (or the
+default anchors) and the fix -- but never the path, because the message crosses
+the wire to every client, and the path is a host detail. The path is logged
+once, at ERROR, where the failure is translated, so the operator finds it in
+``vox.log``.
 
-Provider-neutral: every SDK that rides on httpx fails this way, so every
-provider routes its failures through this one module rather than its own copy.
+Provider-neutral: every SDK that rides on httpx or httpx2 fails this way, so
+every provider routes its failures through this one module.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Final, Literal, Self, final
 
 if TYPE_CHECKING:
     import ssl
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CaBundle", "CaBundleError"]
+__all__ = ["CaBundle", "CaBundleError", "TrustDefault"]
 
 _CA_FILE_VAR: Final = "SSL_CERT_FILE"
 _CA_DIR_VAR: Final = "SSL_CERT_DIR"
 
-# What each variable names, in the order httpx consults them.
+# What each variable names, in the order the HTTP clients consult them.
 _NOUNS: Final = {_CA_FILE_VAR: "CA bundle", _CA_DIR_VAR: "CA directory"}
+
+# Whose default anchors a client trusts when neither variable is set: httpx's
+# (certifi) or httpx2's (the system store, through truststore).
+type TrustDefault = Literal["certifi", "system"]
+_DEFAULT_ANCHORS: Final[dict[TrustDefault, str]] = {
+    "certifi": "the default CA bundle (certifi)",
+    "system": "the system trust store (truststore)",
+}
+
+# OpenSSL's X509_V_ERR codes for the failures no change of trust anchors fixes,
+# as ``ssl`` reports them in ``verify_code``.
+_HOSTNAME_MISMATCH: Final = 62
+_OUTSIDE_VALIDITY: Final = frozenset({9, 10})  # not yet valid, expired
 
 
 class CaBundleError(ValueError):
-    """The CA certificates TLS used cannot verify the provider.
+    """TLS verification of the provider's certificate failed.
 
     A ``ValueError`` because it is a configuration fault, not a transient I/O
     one: retrying with the same environment fails the same way, and the wire
@@ -55,16 +71,24 @@ class CaBundleError(ValueError):
 class CaBundle:
     """The trust anchors one variable names, describing its own failures."""
 
-    __slots__ = ("_path", "_var")
+    __slots__ = ("_default", "_path", "_var")
     _path: str
-    # None: neither variable is set, so httpx trusts certifi's bundle -- no
-    # variable to name, and no path of ours to log.
+    # None: neither variable is set, so the client trusts its default anchors
+    # -- no variable to name, and no path of ours to log.
     _var: str | None
+    _default: TrustDefault
 
-    def __new__(cls, path: str, *, var: str | None = _CA_FILE_VAR) -> Self:
+    def __new__(
+        cls,
+        path: str,
+        *,
+        var: str | None = _CA_FILE_VAR,
+        default: TrustDefault = "certifi",
+    ) -> Self:
         self = super().__new__(cls)
         self._path = path
         self._var = var
+        self._default = default
         return self
 
     @classmethod
@@ -79,12 +103,13 @@ class CaBundle:
         return cls(path) if path else None
 
     @classmethod
-    def in_effect(cls) -> Self:
-        """Return the trust anchors httpx used: the file, else the dir, else certifi."""
+    def in_effect(cls, *, default: TrustDefault) -> Self:
+        """Return the trust anchors the client used: the file, else the dir,
+        else *default* -- the anchors that client falls back to."""
         for var in _NOUNS:
             if path := os.environ.get(var):
-                return cls(path, var=var)
-        return cls("", var=None)
+                return cls(path, var=var, default=default)
+        return cls("", var=None, default=default)
 
     def unloadable(self, cause: OSError) -> CaBundleError:
         """Describe a bundle that could not be loaded when the client was built."""
@@ -99,17 +124,44 @@ class CaBundle:
         )
 
     def untrusted(self, cause: ssl.SSLCertVerificationError) -> CaBundleError:
-        """Describe trust anchors that loaded but do not trust the provider."""
+        """Describe a failed verification of the provider's certificate.
+
+        Worded by OpenSSL's ``verify_code``: a certificate for another host, or
+        one outside its validity period, is not the trust anchors' fault and
+        gets its own fix; everything else -- an unknown or self-signed issuer
+        -- is.
+        """
+        # None: a hand-built error without the attribute; treated as distrust.
+        code: int | None = getattr(cause, "verify_code", None)
         reason = self._verify_reason(cause)
+        if code == _HOSTNAME_MISMATCH:
+            logger.error("provider certificate does not match the host: %s", reason)
+            # No reason in the message: OpenSSL's names the host, which may be
+            # an internal base URL.
+            return CaBundleError(
+                "the provider's TLS certificate does not match the host it was "
+                "reached at; check the provider base URL and the proxy settings "
+                "(HTTPS_PROXY, ALL_PROXY)"
+            )
+        if code in _OUTSIDE_VALIDITY:
+            logger.error("provider certificate is outside its validity: %s", reason)
+            return CaBundleError(
+                f"the provider's TLS certificate is outside its validity period "
+                f"({reason}); check this host's clock, or the server's certificate"
+            )
+        return self._distrusted(reason)
+
+    def _distrusted(self, reason: str) -> CaBundleError:
+        """Describe trust anchors that loaded but do not trust the issuer."""
         if self._var is None:
+            anchors = _DEFAULT_ANCHORS[self._default]
             logger.error(
-                "the default CA bundle does not trust the provider's certificate: %s",
-                reason,
+                "%s does not trust the provider's certificate: %s", anchors, reason
             )
             return CaBundleError(
-                "the default CA bundle (certifi) does not trust the provider's "
-                f"certificate ({reason}); behind a TLS-inspecting proxy, set "
-                f"{_CA_FILE_VAR} to a bundle that holds its CA"
+                f"{anchors} does not trust the provider's certificate ({reason}); "
+                f"behind a TLS-inspecting proxy, set {_CA_FILE_VAR} to a bundle "
+                "that holds its CA"
             )
         noun = _NOUNS[self._var]
         logger.error(

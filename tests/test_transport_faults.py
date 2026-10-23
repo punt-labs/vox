@@ -101,6 +101,24 @@ class TestVerifyFailure:
 
         assert isinstance(translated, CaBundleError)
 
+    @pytest.mark.usefixtures("bundle_unset")
+    def test_httpx_failure_names_certifi(self) -> None:
+        """The ElevenLabs SDK's httpx falls back to certifi's bundle."""
+        message = str(TransportFaults.translate(_chained(2)))
+
+        assert "(certifi)" in message
+
+    @pytest.mark.usefixtures("bundle_unset")
+    def test_httpx2_failure_names_the_system_trust_store(self) -> None:
+        """The OpenAI SDK's httpx2 falls back to the system store (truststore)."""
+        connect = httpx2.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+        connect.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+
+        message = str(TransportFaults.translate(_wrapped(connect)))
+
+        assert "system trust store" in message
+        assert "(certifi)" not in message
+
 
 class TestConfigurationFault:
     """A request httpx refuses to send is configuration, not the network."""

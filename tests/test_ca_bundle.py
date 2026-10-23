@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import ssl
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -18,17 +18,29 @@ _DIR = "/etc/private/certs"
 
 
 def _verify_error(
-    strerror: str = "certificate verify failed", verify_message: str | None = None
+    strerror: str = "certificate verify failed",
+    verify_message: str | None = None,
+    verify_code: int | None = None,
 ) -> ssl.SSLCertVerificationError:
     """Return a verify failure shaped like the one ``ssl`` raises.
 
-    The ``ssl`` module sets ``verify_message`` on the errors it raises; one built
-    by hand has it only when the caller sets it.
+    The ``ssl`` module sets ``verify_code`` and ``verify_message`` on the errors
+    it raises; one built by hand has them only when the caller sets them.
     """
     error = ssl.SSLCertVerificationError(1, strerror)
     if verify_message is not None:
         error.verify_message = verify_message
+    if verify_code is not None:
+        error.verify_code = verify_code
     return error
+
+
+# OpenSSL's X509_V_ERR codes, as ``ssl`` reports them in ``verify_code``.
+_SELF_SIGNED_IN_CHAIN = 19
+_UNABLE_TO_GET_ISSUER_LOCALLY = 20
+_NOT_YET_VALID = 9
+_EXPIRED = 10
+_HOSTNAME_MISMATCH = 62
 
 
 @pytest.fixture
@@ -71,7 +83,7 @@ class TestInEffect:
         monkeypatch.setenv("SSL_CERT_FILE", _PATH)
         monkeypatch.setenv("SSL_CERT_DIR", _DIR)
 
-        message = str(CaBundle.in_effect().untrusted(_verify_error()))
+        message = str(CaBundle.in_effect(default="certifi").untrusted(_verify_error()))
 
         assert "SSL_CERT_FILE" in message
         assert _PATH not in message
@@ -82,7 +94,7 @@ class TestInEffect:
         monkeypatch.delenv("SSL_CERT_FILE", raising=False)
         monkeypatch.setenv("SSL_CERT_DIR", _DIR)
 
-        message = str(CaBundle.in_effect().untrusted(_verify_error()))
+        message = str(CaBundle.in_effect(default="certifi").untrusted(_verify_error()))
 
         assert "SSL_CERT_DIR" in message
         assert "unset SSL_CERT_DIR" in message
@@ -91,10 +103,91 @@ class TestInEffect:
     @pytest.mark.usefixtures("no_trust_vars")
     def test_names_the_default_bundle_when_neither_is_set(self) -> None:
         """No variable to blame: say whose trust failed and how to add a CA."""
-        message = str(CaBundle.in_effect().untrusted(_verify_error()))
+        message = str(CaBundle.in_effect(default="certifi").untrusted(_verify_error()))
 
-        assert "default CA bundle" in message
+        assert "default CA bundle (certifi)" in message
         assert "set SSL_CERT_FILE" in message
+
+    @pytest.mark.usefixtures("no_trust_vars")
+    def test_names_the_system_trust_store_for_an_sdk_that_uses_it(self) -> None:
+        """httpx2 -- the OpenAI SDK's -- trusts the system store, not certifi."""
+        message = str(CaBundle.in_effect(default="system").untrusted(_verify_error()))
+
+        assert "system trust store" in message
+        assert "(certifi)" not in message
+        assert "set SSL_CERT_FILE" in message
+
+
+class TestVerifyFailureKind:
+    """Only an untrusted issuer is the trust anchors' fault; say what else failed."""
+
+    @pytest.mark.usefixtures("no_trust_vars")
+    @pytest.mark.parametrize(
+        "code", [_SELF_SIGNED_IN_CHAIN, _UNABLE_TO_GET_ISSUER_LOCALLY, None]
+    )
+    @pytest.mark.parametrize("default", ["certifi", "system"])
+    def test_untrusted_issuer_blames_the_trust_anchors(
+        self, code: int | None, default: Literal["certifi", "system"]
+    ) -> None:
+        cause = _verify_error(verify_code=code)
+
+        message = str(CaBundle.in_effect(default=default).untrusted(cause))
+
+        assert "does not trust the provider's certificate" in message
+
+    @pytest.mark.parametrize("set_bundle", [False, True])
+    def test_hostname_mismatch_points_at_the_base_url_and_proxy(
+        self, set_bundle: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bundle cannot fix a certificate issued for another host."""
+        monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+        if set_bundle:
+            monkeypatch.setenv("SSL_CERT_FILE", _PATH)
+        else:
+            monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        cause = _verify_error(
+            verify_message="Hostname mismatch, certificate is not valid for "
+            "'internal.example'.",
+            verify_code=_HOSTNAME_MISMATCH,
+        )
+
+        error = CaBundle.in_effect(default="certifi").untrusted(cause)
+
+        assert isinstance(error, CaBundleError)
+        assert "does not match" in str(error)
+        assert "base URL" in str(error)
+        assert "SSL_CERT_FILE" not in str(error)
+        assert "internal.example" not in str(error)
+
+    @pytest.mark.usefixtures("no_trust_vars")
+    @pytest.mark.parametrize("code", [_EXPIRED, _NOT_YET_VALID])
+    def test_validity_failure_points_at_the_clock_or_the_server(
+        self, code: int
+    ) -> None:
+        cause = _verify_error(
+            verify_message="certificate has expired", verify_code=code
+        )
+
+        error = CaBundle.in_effect(default="system").untrusted(cause)
+
+        assert isinstance(error, CaBundleError)
+        assert "validity period" in str(error)
+        assert "clock" in str(error)
+        assert "trust store" not in str(error)
+
+    @pytest.mark.usefixtures("no_trust_vars")
+    def test_hostname_mismatch_is_logged_with_its_reason(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cause = _verify_error(
+            verify_message="Hostname mismatch for 'internal.example'.",
+            verify_code=_HOSTNAME_MISMATCH,
+        )
+
+        with caplog.at_level(logging.ERROR, logger="punt_vox.providers.ca_bundle"):
+            CaBundle.in_effect(default="certifi").untrusted(cause)
+
+        assert "internal.example" in caplog.text
 
 
 def test_bundle_error_is_a_value_error() -> None:
@@ -178,6 +271,6 @@ def test_default_bundle_failure_is_logged_at_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.ERROR, logger="punt_vox.providers.ca_bundle"):
-        CaBundle.in_effect().untrusted(_verify_error())
+        CaBundle.in_effect(default="certifi").untrusted(_verify_error())
 
     assert [r.levelno for r in caplog.records] == [logging.ERROR]

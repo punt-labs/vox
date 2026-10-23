@@ -7,9 +7,10 @@ failure through :meth:`TransportFaults.translate`, which answers one of three
 errors (:mod:`punt_vox.providers.provider_faults`), each chaining the original:
 
 * :class:`~punt_vox.providers.ca_bundle.CaBundleError` -- permanent -- when TLS
-  certificate verification failed: the CA certificates in effect (whether
-  ``SSL_CERT_FILE``, ``SSL_CERT_DIR``, or the default bundle) do not trust the
-  provider, and retrying cannot help.
+  certificate verification failed: the CA certificates in effect
+  (``SSL_CERT_FILE``, ``SSL_CERT_DIR``, or the client's default anchors) do not
+  trust the provider, or its certificate names another host or has expired,
+  and retrying cannot help.
 * :class:`ProviderConfigError` -- permanent -- when the request cannot be sent
   as the host configured it: a base URL with no usable scheme, a proxy that
   refuses the credentials it was given, a header httpx will not put on the wire
@@ -28,7 +29,7 @@ from typing import Final, Self, final
 import httpx
 import httpx2
 
-from punt_vox.providers.ca_bundle import CaBundle, CaBundleError
+from punt_vox.providers.ca_bundle import CaBundle, CaBundleError, TrustDefault
 from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
@@ -84,7 +85,7 @@ class TransportFaults:
         chain = _FaultChain(exc)
         cert = chain.first(ssl.SSLCertVerificationError)
         if isinstance(cert, ssl.SSLCertVerificationError):
-            return CaBundle.in_effect().untrusted(cert)
+            return CaBundle.in_effect(default=chain.trust_default).untrusted(cert)
         if (fault := chain.first(_HEADER_FAULTS)) is not None:
             return cls._unsendable_header(fault)
         if (fault := chain.first(_PROXY_FAULTS)) is not None:
@@ -174,6 +175,16 @@ class _FaultChain:
         did.
         """
         return self._links[-1]
+
+    @property
+    def trust_default(self) -> TrustDefault:
+        """Return the anchors the failing client falls back to with neither
+        ``SSL_CERT_FILE`` nor ``SSL_CERT_DIR`` set.
+
+        An httpx2 link means the OpenAI SDK's client, which trusts the system
+        store; otherwise it was httpx, which trusts certifi.
+        """
+        return "system" if self.first(httpx2.HTTPError) else "certifi"
 
     def first(
         self, kinds: type[BaseException] | tuple[type[BaseException], ...]
