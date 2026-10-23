@@ -266,6 +266,18 @@ def test_existing_constructs_score_unchanged(source: str, expected: int) -> None
             (2, 1.5),
             id="nested-def-default-runs-in-outer",
         ),
+        pytest.param(
+            """
+            def outer(flag: bool) -> object:
+                class Local:
+                    attr = 1 if flag else 2
+                    def method(self) -> int:
+                        return 0
+                return Local
+            """,
+            (2, 1.5),
+            id="nested-class-attribute-runs-in-outer",
+        ),
     ],
 )
 def test_nested_scope_body_scores_only_on_its_own(
@@ -273,13 +285,40 @@ def test_nested_scope_body_scores_only_on_its_own(
 ) -> None:
     """A nested def's body is charged to the nested def, never to its encloser.
 
-    Each module holds two scored functions and one ``if``, so the right answer
-    is max 2, avg 1.5; charging the ``if`` to both functions scores avg 2.0. In
-    the first three cases the ``if`` is in the nested body and belongs to the
-    nested function. A default value runs when the outer function executes the
-    ``def``, so in the last case the ``if`` belongs to the outer one.
+    Each module holds two scored functions and one decision, so the right
+    answer is max 2, avg 1.5; charging it to both functions scores avg 2.0, and
+    charging it to neither scores max 1. In the first three cases the ``if`` is
+    in the nested def's body and belongs to the nested function. A default
+    value runs when the outer function executes the ``def``, and a class body
+    runs when the outer function executes the ``class``, so in the last two
+    cases the decision belongs to the outer one.
     """
     assert _max_and_avg(source) == expected
+
+
+def test_nested_class_charges_all_but_method_bodies_to_its_encloser() -> None:
+    """Of six decisions, only the one inside the method body leaves ``outer``.
+
+    The class attribute, the comprehension, the class-level ``if``, the method
+    decorator, and the method default all run when ``outer`` executes the
+    ``class`` statement: outer scores 1 + 5 = 6. The ``if`` in the method body
+    runs when the method is called: method scores 2. Max 6, avg 4.0.
+    """
+    source = """
+    def outer(flag: bool, xs: list[int]) -> object:
+        class Local:
+            attr = 1 if flag else 2
+            squares = [x * x for x in xs]
+            if flag:
+                extra = 1
+            @pick(1 if flag else 0)
+            def method(self, x: int = 1 if flag else 0) -> int:
+                if x:
+                    return 1
+                return 0
+        return Local
+    """
+    assert _max_and_avg(source) == (6, 4.0)
 
 
 def test_lambda_body_counts_in_its_enclosing_function() -> None:
