@@ -1314,6 +1314,7 @@ call = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "cryptography" },
     { name = "mypy" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1344,6 +1345,7 @@ provides-extras = ["call"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "cryptography", specifier = ">=46.0.0" },
     { name = "mypy", specifier = ">=1.18.1" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "pytest", specifier = ">=8.4.2" },

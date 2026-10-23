@@ -53,8 +53,11 @@ _DEFAULT_ANCHORS: Final[dict[TrustDefault, str]] = {
 }
 
 # OpenSSL's X509_V_ERR codes for the failures no change of trust anchors fixes,
-# as ``ssl`` reports them in ``verify_code``.
-_HOSTNAME_MISMATCH: Final = 62
+# as ``ssl`` reports them in ``verify_code``. A certificate for another host
+# (62) or another IP address (64) is named by what it fails to match: OpenSSL's
+# reason for either quotes the host or address dialed, which may be internal.
+# Keyed by int | None: a hand-built error may carry no verify_code at all.
+_ADDRESS_MISMATCH: Final[dict[int | None, str]] = {62: "host", 64: "IP address"}
 _OUTSIDE_VALIDITY: Final = frozenset({9, 10})  # not yet valid, expired
 
 
@@ -126,20 +129,22 @@ class CaBundle:
     def untrusted(self, cause: ssl.SSLCertVerificationError) -> CaBundleError:
         """Describe a failed verification of the provider's certificate.
 
-        Worded by OpenSSL's ``verify_code``: a certificate for another host, or
-        one outside its validity period, is not the trust anchors' fault and
-        gets its own fix; everything else -- an unknown or self-signed issuer
-        -- is.
+        Worded by OpenSSL's ``verify_code``: a certificate for another host or
+        IP address, or one outside its validity period, is not the trust
+        anchors' fault and gets its own fix; everything else -- an unknown or
+        self-signed issuer -- is.
         """
         # None: a hand-built error without the attribute; treated as distrust.
         code: int | None = getattr(cause, "verify_code", None)
         reason = self._verify_reason(cause)
-        if code == _HOSTNAME_MISMATCH:
-            logger.error("provider certificate does not match the host: %s", reason)
-            # No reason in the message: OpenSSL's names the host, which may be
-            # an internal base URL.
+        if (target := _ADDRESS_MISMATCH.get(code)) is not None:
+            logger.error(
+                "provider certificate does not match the %s: %s", target, reason
+            )
+            # No reason in the message: OpenSSL's names the host or address
+            # dialed, which may be an internal base URL.
             return CaBundleError(
-                "the provider's TLS certificate does not match the host it was "
+                f"the provider's TLS certificate does not match the {target} it was "
                 "reached at; check the provider base URL and the proxy settings "
                 "(HTTPS_PROXY, ALL_PROXY)"
             )
