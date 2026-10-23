@@ -27,6 +27,10 @@ dependencies = [
     "boto3-stubs[polly]>=1.35.0",
     "botocore-stubs>=1.35.0",
     "elevenlabs>=2.0.0",
+    # Imported directly, not just through the SDKs: the providers classify
+    # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
+    # that the ElevenLabs SDK lets escape raw. Floor is the locked version.
+    "httpx>=0.28.1",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
     "mcp>=1.30.0",
