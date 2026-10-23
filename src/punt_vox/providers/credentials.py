@@ -1,13 +1,13 @@
 """One home for "can this provider run here".
 
-Four partial copies used to live in ``providers/__init__.py`` (the probe),
-``voxd/synthesis.py`` (``_PROVIDER_API_KEY_VAR``), ``desktop_install.py``
-(``_PROVIDER_KEY_VARS``), and ``keys.py`` (``PROVIDER_KEY_NAMES``). Each
-covered a different subset of the five providers, and keeping them in step
-by hand was the shape of a defect. This module owns the question. Its
-answers reach the daemon gate (:meth:`ProviderCredentials.require`), the
-status/enable proposal path (:meth:`report_all`, :meth:`preferred`), and
-the ``keys.env`` writer (:data:`PROVIDER_KEY_NAMES`) through one object.
+This module owns the question, so no caller keeps its own partial table of
+providers and key variables: separate copies cover different subsets of the
+five providers and drift apart. Its answers reach the daemon gate
+(:meth:`ProviderCredentials.require`), the status/enable proposal path
+(:meth:`report_all`, :meth:`preferred`), the ``keys.env`` writer
+(:data:`PROVIDER_KEY_NAMES`), and the per-call key injection in
+``voxd/api_key_env.py`` (``_KEY_VARS``, from :meth:`api_key_env_vars`, read
+through ``ApiKeyEnv``) through one object.
 
 The per-provider requirement is behaviour, not a row in a table --
 an API key for two providers, an AWS credential chain for one, an

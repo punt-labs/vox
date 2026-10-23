@@ -898,7 +898,7 @@ class TestSynthesizeFailFast:
         provider = MagicMock()
         provider.name = "elevenlabs"
         with (
-            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.temp_synthesis"),
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
@@ -943,7 +943,7 @@ class TestSynthesizeFailFast:
         provider = MagicMock()
         provider.name = "elevenlabs"
         with (
-            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.temp_synthesis"),
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,

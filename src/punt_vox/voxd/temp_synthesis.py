@@ -3,23 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.core import TTSClient
 from punt_vox.log_sanitize import SANITIZER
+from punt_vox.voxd.output_discard import OutputDiscard
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from punt_vox.types import AudioRequest, AudioResult, TTSProvider
+    from punt_vox.types import AudioRequest, TTSProvider
     from punt_vox.types_synthesis import SynthesisSpec
 
 __all__ = ["TempFileSynthesis"]
-
-logger = logging.getLogger(__name__)
 
 
 @final
@@ -68,37 +64,12 @@ class TempFileSynthesis:
             await asyncio.shield(work)
             self._require_nonempty(output_path)
         except asyncio.CancelledError:
-            work.add_done_callback(self._discard_when_done(output_path))
+            work.add_done_callback(OutputDiscard(output_path))
             raise
         except BaseException:
             output_path.unlink(missing_ok=True)
             raise
         return output_path
-
-    @staticmethod
-    def _discard_when_done(
-        output_path: Path,
-    ) -> Callable[[asyncio.Future[AudioResult]], None]:
-        """Return a done-callback that removes *output_path* after its writer.
-
-        The callback also retrieves the abandoned thread's exception, so a
-        provider failure after the cancel is not reported as never retrieved.
-        It logs the type and message, never the repr: an encoding error's repr
-        quotes the value it could not encode, which can be the API key. The
-        message is escaped onto one line: it can carry caller text, such as a
-        voice name, and a raw newline there would forge a log record.
-        """
-
-        def _discard(done: asyncio.Future[AudioResult]) -> None:
-            if not done.cancelled() and (error := done.exception()) is not None:
-                logger.debug(
-                    "cancelled synthesis then failed: %s: %s",
-                    type(error).__name__,
-                    SANITIZER.escape(str(error)),
-                )
-            output_path.unlink(missing_ok=True)
-
-        return _discard
 
     def _require_nonempty(self, output_path: Path) -> None:
         """Reject a missing or empty synthesis output; caching it would poison
@@ -111,9 +82,13 @@ class TempFileSynthesis:
             synth_size = -1
         if synth_size > 0:
             return
+        # Provider and voice are caller text, and the daemon logs this message;
+        # escaped, a newline in either cannot start a forged record.
+        provider = SANITIZER.escape(self._spec.provider or "")
+        voice = SANITIZER.escape(self._spec.voice or "")
         msg = (
             f"synthesis produced missing or empty output file: {output_path} "
-            f"(provider={self._spec.provider or ''}, voice={self._spec.voice or ''}, "
+            f"(provider={provider}, voice={voice}, "
             f"size={synth_size}, chars_in={self._chars_in})"
         )
         raise RuntimeError(msg)
