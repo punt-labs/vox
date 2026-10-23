@@ -202,9 +202,10 @@ cached. And because the roster path and the synthesis path share it,
 provider can run.
 
 It must sit *inside* the API-key context, not outside it:
-`_api_key_context` injects a per-call `api_key` into `os.environ` around the
-provider construction (`voxd/synthesis.py:59–74`, applied at
-`voxd/synthesis.py:308` and `voxd/synthesis.py:124`). Putting the check inside
+`ApiKeyEnv.applied()` (`voxd/api_key_env.py`) injects a per-call `api_key`
+into `os.environ` around the provider construction, in both the playback and
+the temp-file synthesis paths (`voxd/synthesis.py`, `voxd/temp_synthesis.py`).
+Putting the check inside
 `get_provider` — which is called within that context — means a caller who
 supplies `api_key=` for a provider with no ambient credential is correctly
 allowed through.
@@ -856,7 +857,7 @@ Named cases. Each is a test that fails before the change.
    different provider changes nothing.
 3. `per_call_api_key_satisfies_the_requirement` — no ambient
    `ELEVENLABS_API_KEY`, `api_key=` supplied on the call, synthesis proceeds.
-   Guards the check's placement inside `_api_key_context`.
+   Guards the check's placement inside `ApiKeyEnv.applied()`.
 4. One case per requirement: missing `ELEVENLABS_API_KEY`, missing
    `OPENAI_API_KEY`, unresolvable AWS chain, `say` absent from `PATH`,
    neither espeak binary present. Each asserts the exact message and that the
