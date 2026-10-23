@@ -304,6 +304,73 @@ class TestOpenAIProviderSynthesize:
         assert exc_info.value.provider_name == "openai"
         assert exc_info.value.status_code == 401
 
+    def test_synthesize_translates_permission_denied_to_provider_auth_error(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A 403 -- a key whose project or org has no TTS access -- is the same
+        credential rejection as a 401, and crosses the wire as F3 with its own
+        status."""
+        import openai
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_openai_client.audio.speech.create.side_effect = (
+            openai.PermissionDeniedError(
+                message="project has no access to tts-1",
+                response=MagicMock(status_code=403),
+                body=None,
+            )
+        )
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        request = SynthesisRequest(text="hello", voice="alloy")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "denied.mp3")
+
+        assert exc_info.value.status_code == 403
+
+    def test_synthesize_rejects_empty_audio(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """An empty response body is no audio; caching it would poison the key."""
+        mock_openai_client.audio.speech.create.side_effect = None
+        mock_openai_client.audio.speech.create.return_value = MagicMock(content=b"")
+        out = tmp_output_dir / "empty.mp3"
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        with pytest.raises(RuntimeError, match="no audio"):
+            provider.synthesize(SynthesisRequest(text="hello", voice="alloy"), out)
+
+        assert list(tmp_output_dir.iterdir()) == []
+
+    def test_synthesize_writes_through_a_temp_file(
+        self,
+        openai_provider: OpenAIProvider,
+        tmp_output_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The target appears whole or not at all: the bytes land beside it and
+        are renamed into place, so a crash mid-write cannot leave a torn file."""
+        out = tmp_output_dir / "atomic.mp3"
+        landed: list[tuple[Path, Path]] = []
+        real_replace = Path.replace
+
+        def _spy(self: Path, target: Path) -> Path:
+            landed.append((self, target))
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _spy)
+
+        openai_provider.synthesize(SynthesisRequest(text="hello", voice="alloy"), out)
+
+        assert [target for _, target in landed] == [out]
+        assert landed[0][0].parent == out.parent
+        assert out.stat().st_size > 0
+
 
 class TestOpenAIProviderDefaultModel:
     def test_default_model(self) -> None:
@@ -395,6 +462,31 @@ class TestOpenAIProviderCheckHealth:
         assert checks[0].passed
         assert not checks[1].passed
         assert "not found" in checks[1].message
+
+    @pytest.mark.parametrize(
+        ("error_cls", "status"),
+        [
+            (openai.PermissionDeniedError, 403),
+            (openai.RateLimitError, 429),
+            (openai.InternalServerError, 500),
+        ],
+    )
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_any_status_error_is_a_failed_line_with_its_status(
+        self,
+        mock_openai_client: MagicMock,
+        error_cls: type[openai.APIStatusError],
+        status: int,
+    ) -> None:
+        """The server answered with an error: report it, never raise out."""
+        mock_openai_client.models.retrieve.side_effect = error_cls(
+            message="nope", response=MagicMock(status_code=status), body=None
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert not checks[1].passed
+        assert checks[1].message == f"OpenAI model access: HTTP {status}"
 
 
 class TestOpenAIProviderLanguageSupport:

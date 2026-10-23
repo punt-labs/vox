@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 import openai
 
@@ -13,6 +13,7 @@ from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.stream_file import StreamFile
 from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import (
     AudioProviderId,
@@ -152,10 +153,8 @@ class OpenAIProvider(TTSProvider):
         """Report whether the configured model is reachable with this key."""
         try:
             self._client.call(lambda sdk: sdk.models.retrieve(self._model))
-        except openai.AuthenticationError:
-            reason = "invalid API key"
-        except openai.NotFoundError:
-            reason = f"model '{self._model}' not found"
+        except openai.APIStatusError as exc:
+            reason = self._refusal(exc)
         except TRANSPORT_ERRORS as exc:
             reason = str(exc)
         else:
@@ -163,6 +162,14 @@ class OpenAIProvider(TTSProvider):
                 passed=True, message=f"OpenAI model access: {self._model}"
             )
         return HealthCheck(passed=False, message=f"OpenAI model access: {reason}")
+
+    def _refusal(self, exc: openai.APIStatusError) -> str:
+        """Say why the server refused the model lookup -- any status, never raised."""
+        if isinstance(exc, openai.AuthenticationError):
+            return "invalid API key"
+        if isinstance(exc, openai.NotFoundError):
+            return f"model '{self._model}' not found"
+        return f"HTTP {exc.status_code}"
 
     def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default OpenAI voice for a language.
@@ -211,23 +218,23 @@ class OpenAIProvider(TTSProvider):
         voice: str,
         speed: float,
     ) -> None:
-        """Synthesize a single chunk to a file.
+        """Synthesize a single chunk to a file, all of it or nothing.
 
-        Wraps the OpenAI SDK call so an ``AuthenticationError`` at
-        synthesis-time (a revoked key, a wrong project, an org that
-        does not have TTS access) becomes a :class:`ProviderAuthError`
-        that ``WireReply.reject_or_fault`` routes verbatim to the
-        client, rather than falling through to speech_handlers' broad
-        guard and getting laundered to ``"operation failed"``. The
+        A rejected credential at synthesis time -- 401 for a revoked or wrong
+        key, 403 for a key whose project or org has no TTS access -- becomes a
+        :class:`ProviderAuthError` that ``WireReply.reject_or_fault`` routes
+        verbatim to the client, rather than falling through to speech_handlers'
+        broad guard and getting laundered to ``"operation failed"``. The
         readiness gate (:class:`ProviderCredentials`) catches the
         credential-absent case at F2; this catches the
-        credential-present-but-rejected case at F3, and both cross
-        the wire with a message the caller can act on.
+        credential-present-but-rejected case at F3.
+
+        The audio lands through :class:`StreamFile`: renamed into place only
+        once whole, and an empty body is rejected rather than cached.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            response: Any = self._client.call(
-                lambda sdk: sdk.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
+            response = self._client.call(
+                lambda sdk: sdk.audio.speech.create(
                     model=self._model,
                     voice=voice,  # pyright: ignore[reportArgumentType]
                     input=text,
@@ -235,13 +242,12 @@ class OpenAIProvider(TTSProvider):
                     response_format="mp3",
                 )
             )
-        except openai.AuthenticationError as exc:
-            # The SDK types AuthenticationError.status_code as Literal[401]: a
-            # response always arrived, so the status is never missing.
+        except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
+            # A response arrived, so the SDK's status_code is always set.
             raise ProviderAuthError("openai", exc.status_code) from exc
+        StreamFile(output_path).write((response.content,))
         logger.info(
             "API call: provider=openai, voice=%s, chars=%d",
             voice,
             len(text),
         )
-        output_path.write_bytes(response.content)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
