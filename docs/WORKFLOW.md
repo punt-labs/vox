@@ -46,8 +46,8 @@ predicates over declared terms, never as bare primed flags.
 The operator owns requirements and design direction, rules on genuine design
 forks, and confirms the audio demo by ear. Claude runs everything else: the
 backlog, the missions, the review cycles, and the merges. Review of code is
-done by agents — the local review agents, plus Qodo and one Bugbot run on
-the PR.
+done by agents — the local review agents, plus Qodo and Bugbot (one run per
+PR round) on the PR.
 There is no human review gate. The operator reads code in the IDE, but that
 inspection is separate, feeds design discussion only, and nothing in these
 loops waits on it.
@@ -556,7 +556,7 @@ bound to the same role — reviews the worker's result inside the mission before
 the leader accepts it. The pairings live in `CLAUDE.md`.
 
 **Remote review findings are the one delegation that is not a mission.** When
-Qodo reports on the PR, the leader reads each finding and hands
+Qodo or Bugbot reports on the PR, the leader reads each finding and hands
 the mechanical fix to a bare `Agent()`, then pushes and resolves the thread
 itself.
 
@@ -610,8 +610,9 @@ itself.
    `--auto`, never `--admin`.
 3. **Do or do not.** A finding is fixed in this PR or dismissed with a
    reason, the moment it arrives. It is never deferred to a bead or a
-   follow-up PR. Threads are resolved only against a landed commit, one by
-   one, never in bulk.
+   follow-up PR. A thread is resolved only once it is answered — against a
+   landed commit, or by a Qodo CLI dismissal or a ledger reason per
+   `answered(f)` — one by one, never in bulk.
 4. **A push restarts CI, not review.** Local rounds run until clean (at most
    four fix rounds plus a verifying review) before the PR opens and before
    every fix push. PR rounds are at
