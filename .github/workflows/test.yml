@@ -9,56 +9,131 @@ on:
 permissions:
   contents: read
 
+env:
+  # ffmpeg (pydub's codec backend) and espeak-ng (the Linux provider). The
+  # apt cache key hashes this string, so editing it starts a fresh cache.
+  VOX_APT_PACKAGES: ffmpeg espeak-ng
+  # Runner-owned apt state (archives + package lists) that actions/cache can
+  # tar and untar without root. The default /var/cache/apt/archives and
+  # /var/lib/apt/lists hold root-only lock files and a 0700 _apt partial/
+  # directory that the cache action, running as `runner`, cannot read.
+  VOX_APT_DIR: /var/cache/vox-ci-apt
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 15m = the apt step's 10m ceiling + the rest of the job. Healthy runs
-    # take 3-5 min end to end (October 2026: 182-282 s), of which the two
-    # pytest invocations (default tier, then slow/subprocess -- see
-    # TESTING.md, "Why the Suite Takes as Long as It Does") are ~3.5 min.
-    timeout-minutes: 15
+    # 18m = the apt ceilings (2m restore + 10m install + 2m save) + the rest
+    # of the job. Healthy runs take 3-5 min end to end (October 2026:
+    # 182-282 s), of which the two pytest invocations (default tier, then
+    # slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long as It
+    # Does") are ~3.5 min.
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      # ffmpeg (pydub's codec backend) and espeak-ng (the Linux provider).
-      # Defined once here and aliased into packaging-e2e, so both jobs install
-      # the same set the same way.
+      # Install $VOX_APT_PACKAGES: four steps, defined once here and aliased
+      # into packaging-e2e, so both jobs install the same set the same way.
       #
-      # Why bounded and retried: a healthy run of this step takes 16-62 s,
-      # but in 13 of 78 job runs (October 2026) azure.archive.ubuntu.com
-      # served the ~100 MB of .debs at ~40 KB/s, and the step either crawled
-      # to 2-19 min or was killed by the job timeout at 20/30 min. The
-      # index fetch (`apt-get update`) stayed fast; the package download is
-      # what stalls, and it is per-runner, not global -- the other job in the
-      # same run usually finished normally.
+      # Why: a healthy install takes 16-62 s, but in 13 of 78 job runs
+      # (October 2026) azure.archive.ubuntu.com served the ~70 MB of .debs at
+      # ~40 KB/s, and the step crawled to 2-19 min or was killed by the job
+      # timeout. The slow mirror is per-runner, not global -- the other job
+      # in the same run usually finished normally.
       #
-      # The download (network, safe to kill) is split from the install
-      # (dpkg, local, never killed mid-unpack, so a retry cannot hit an
-      # interrupted dpkg database). Each download attempt is capped at 60 s
-      # (update) + 90 s (fetch); apt keeps finished and partial .debs in
-      # /var/cache/apt/archives, so a retry resumes rather than restarts.
-      # Three attempts with 10 s / 20 s backoff bound the step at ~8 min
-      # worst case; timeout-minutes is the backstop for the dpkg phase.
+      # 1. apt-prepare: create $VOX_APT_DIR (runner-owned), point apt at it
+      #    for both archives and lists, and compute the cache key
+      #      apt-v1-<ImageOS>-<arch>-<sha256(packages, flags)[:16]>-<ImageVersion>
+      #    The runner image is in the key because the lists and .debs must
+      #    resolve against that image's installed package set.
+      # 2. apt-restore: warm cache (exact key) restores the lists and every
+      #    .deb, so the install below skips `apt-get update` and apt reports
+      #    "Need to get 0 B" -- no mirror contact at all. A new runner image
+      #    misses the exact key and falls back to the newest cache for the
+      #    same package set (restore-keys); apt then refreshes the lists and
+      #    downloads only the .debs whose version changed.
+      # 3. apt-install: bounded, retried download + local install. The
+      #    download (network, safe to kill) is split from the install (dpkg,
+      #    local, never killed mid-unpack, so a retry cannot hit an
+      #    interrupted dpkg database). Each attempt is capped at 60 s (update)
+      #    + 90 s (fetch); finished and partial .debs survive in
+      #    $VOX_APT_DIR, so a retry resumes. Three attempts with 10 s / 20 s
+      #    backoff bound a cold or stale cache at ~8 min.
+      # 4. apt-save: on any non-exact hit, save the refreshed lists + .debs
+      #    under the exact key right away, so a later failing test step does
+      #    not cost the next run its cache. When test and packaging-e2e both
+      #    miss, one save wins and the other logs a non-fatal warning.
+      #
+      # The cache steps are best-effort: restore and save are bounded at 2
+      # min and continue-on-error, so a cache-service outage degrades to the
+      # cold path instead of failing the job.
       #
       # --no-install-recommends drops ~31 MB of the ~99 MB download
       # (pocketsphinx-en-us at 27 MB, plus VA-API/VDPAU GPU drivers) that
       # neither ffmpeg's audio path nor espeak-ng uses.
-      - &apt-install
-        name: Install ffmpeg and espeak-ng (bounded, retried)
-        timeout-minutes: 10
+      - &apt-prepare
+        name: Prepare apt cache directory and key
+        id: apt-prepare
+        timeout-minutes: 1
         run: |
           set -euo pipefail
-          packages=(ffmpeg espeak-ng)
+          : "${ImageOS:?runner image name unset}" "${ImageVersion:?runner image version unset}"
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 \
+            "$VOX_APT_DIR" "$VOX_APT_DIR/archives" "$VOX_APT_DIR/lists"
+          # Every apt-get invocation in this job reads its state from here.
+          # Keep-Downloaded-Packages is apt-get's default; stated because the
+          # cache depends on it.
+          printf '%s\n' \
+            "Dir::Cache::Archives \"$VOX_APT_DIR/archives\";" \
+            "Dir::State::Lists \"$VOX_APT_DIR/lists\";" \
+            'APT::Keep-Downloaded-Packages "true";' |
+            sudo tee /etc/apt/apt.conf.d/99vox-ci-cache >/dev/null
+          pkg_hash=$(printf '%s\n' "$VOX_APT_PACKAGES" --no-install-recommends |
+            sha256sum | cut -c1-16)
+          prefix="apt-v1-${ImageOS}-${RUNNER_ARCH}-${pkg_hash}-"
+          echo "restore-prefix=${prefix}" >>"$GITHUB_OUTPUT"
+          echo "key=${prefix}${ImageVersion}" >>"$GITHUB_OUTPUT"
+          echo "apt cache key: ${prefix}${ImageVersion}"
+      - &apt-restore
+        name: Restore apt cache
+        id: apt-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        env:
+          # The action's default per-segment download timeout is 10 min.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+        with:
+          # Globs skip apt's root-only lock files and the _apt partial/ dirs.
+          path: |
+            ${{ env.VOX_APT_DIR }}/archives/*.deb
+            ${{ env.VOX_APT_DIR }}/lists/*_*
+          key: ${{ steps.apt-prepare.outputs.key }}
+          restore-keys: ${{ steps.apt-prepare.outputs.restore-prefix }}
+      - &apt-install
+        name: Install ffmpeg and espeak-ng (cached, bounded, retried)
+        timeout-minutes: 10
+        env:
+          APT_CACHE_HIT: ${{ steps.apt-restore.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          read -ra packages <<<"$VOX_APT_PACKAGES"
           # Idle-connection timeout 30 s (apt default 120 s); per-item retries.
           apt_opts=(-o Acquire::http::Timeout=30 -o Acquire::Retries=3)
           attempts=3
           for attempt in $(seq 1 "$attempts"); do
             echo "apt download attempt ${attempt}/${attempts}"
             rc=0
-            sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update || rc=$?
+            # Exact cache hit: the restored lists match this runner image, so
+            # the first attempt goes straight to the (0 B) download. A failed
+            # attempt refreshes the lists like a cold cache.
+            if [ "$APT_CACHE_HIT" = "true" ] && [ "$attempt" -eq 1 ]; then
+              echo "apt cache hit: skipping apt-get update"
+            else
+              sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update || rc=$?
+            fi
             if [ "$rc" -eq 0 ]; then
               sudo timeout -k 10 90 apt-get "${apt_opts[@]}" install -y \
                 --no-install-recommends --download-only "${packages[@]}" || rc=$?
@@ -75,6 +150,20 @@ jobs:
             sleep "$delay"
           done
           sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          # Drop .debs the current lists no longer reference, so a cache
+          # carried across runner images does not accumulate old versions.
+          sudo apt-get autoclean
+      - &apt-save
+        name: Save apt cache
+        if: steps.apt-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.VOX_APT_DIR }}/archives/*.deb
+            ${{ env.VOX_APT_DIR }}/lists/*_*
+          key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
       # slow + subprocess were folded into the unmarked default run before
@@ -94,19 +183,23 @@ jobs:
   # human-judged testing. This is installed-wheel packaging smoke.
   packaging-e2e:
     runs-on: ubuntu-latest
-    # 12m = the apt step's 10m ceiling + the rest of the job; healthy runs
-    # take under 1.5 min end to end (October 2026: 37-75 s).
-    timeout-minutes: 12
+    # 15m = the apt ceilings (2m restore + 10m install + 2m save) + the rest
+    # of the job; healthy runs take under 1.5 min end to end (October 2026:
+    # 37-75 s).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      # The same apt step as the unit job (YAML alias), so `vox doctor`
+      # The same apt steps as the unit job (YAML aliases), so `vox doctor`
       # reports the same environment the packaged binary is expected to run
-      # against.
+      # against. Both jobs share one cache key.
+      - *apt-prepare
+      - *apt-restore
       - *apt-install
+      - *apt-save
       - run: uv sync --frozen --all-extras
       # `make install` builds the wheel and does `uv tool install --force
       # dist/*.whl`; uv drops the console script in `$HOME/.local/bin` by
