@@ -14,12 +14,7 @@ from typing import Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from punt_vox.types_errors import VoiceNotFoundError
-from punt_vox.types_provider_errors import (
-    ProviderAuthError,
-    ProviderUnavailableError,
-    UnknownProviderError,
-)
+from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
@@ -235,11 +230,10 @@ class SynthesizeHandler(MessageHandler):
         )
         if result is None:
             return False
-        if isinstance(result, ProviderUnavailableError | VoiceNotFoundError):
-            # Diagnosable, caller-side: the provider has no credentials
-            # on this host, or the voice is not in its roster. Route
-            # verbatim through error() so the sentence crosses the wire
-            # rather than getting laundered to "operation failed" by
+        if isinstance(result, CALLER_ERRORS):
+            # Diagnosable, caller-side -- the same closed set the file path
+            # rejects: route verbatim through error() so the sentence crosses
+            # the wire rather than getting laundered to "operation failed" by
             # fault(). See design §3.5, F2/F5.
             self._rollback(req, dedup_recorded=dedup_recorded)
             await req.reject(str(result))
@@ -259,21 +253,14 @@ class SynthesizeHandler(MessageHandler):
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
         try:
             outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
-        except (
-            ProviderUnavailableError,
-            ProviderAuthError,
-            UnknownProviderError,
-            VoiceNotFoundError,
-        ) as exc:
-            # Diagnosable, caller-side (design §4): route verbatim
-            # through error() so the sentence naming the missing
-            # credential (F2), the rejected credential (F3), the
-            # unknown provider name (F4), or the unrecognised voice
-            # (F5) crosses the wire, instead of being laundered by
-            # the broad guard below into "operation failed". Only
-            # these four typed errors qualify -- widening to every
-            # ValueError would swallow genuine daemon-side bugs and
-            # report them as caller rejections.
+        except CALLER_ERRORS as exc:
+            # Diagnosable, caller-side (design §4): route verbatim through
+            # error() so the sentence naming the missing credential (F2), the
+            # rejected credential (F3), the unknown provider name (F4), the
+            # unrecognised voice (F5), or the SSL_CERT_FILE TLS cannot use
+            # crosses the wire, instead of being laundered by the broad guard
+            # below into "operation failed". CALLER_ERRORS says why the set
+            # is closed rather than every ValueError.
             #
             # The rejected reasons that DO NOT reach this catch, for
             # the record: F1 (state has no provider) is caught by

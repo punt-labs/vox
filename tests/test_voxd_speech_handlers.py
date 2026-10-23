@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types_errors import VoiceNotFoundError
 from punt_vox.types_provider_errors import (
     ProviderAuthError,
@@ -577,6 +578,25 @@ class TestSynthesizeHandlerTypedErrorRouting:
             f.get("type") == "fault" or f.get("message") == "operation failed"
             for f in sent
         ), "F5 must never route through fault()"
+
+    @pytest.mark.asyncio
+    async def test_unusable_ca_bundle_crosses_verbatim_via_error(self) -> None:
+        # An unloadable SSL_CERT_FILE is configuration the caller's operator
+        # can fix; laundered to "operation failed" it is undiagnosable.
+        message = (
+            "SSL_CERT_FILE names a CA bundle that cannot be loaded "
+            "(No such file or directory); fix the path or unset SSL_CERT_FILE"
+        )
+        handler, _ = self._handler_that_raises(CaBundleError(message))
+
+        sent = await self._drive(handler)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"] == message
+        assert not any(
+            f.get("type") == "fault" or f.get("message") == "operation failed"
+            for f in sent
+        ), "a CA bundle failure must never route through fault()"
 
     @pytest.mark.asyncio
     async def test_reject_log_escapes_newlines_in_caller_supplied_strings(
