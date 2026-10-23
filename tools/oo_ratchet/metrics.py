@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
-from typing import Self
+from typing import ClassVar, Self
 
 
 class ModuleMetrics:
     """Compute OO quality metrics for one parsed module."""
+
+    # Nodes that each add exactly one path, whatever their contents.
+    _ONE_WAY_BRANCHES: ClassVar[tuple[type[ast.AST], ...]] = (
+        ast.If,
+        ast.IfExp,
+        ast.While,
+        ast.For,
+        ast.AsyncFor,
+        ast.ExceptHandler,
+        ast.Assert,
+    )
 
     _path: str
     _tree: ast.Module
@@ -175,24 +186,64 @@ class ModuleMetrics:
             return 0.0
         return round(sum(complexities) / len(complexities), 2)
 
-    @staticmethod
+    @classmethod
     def _cyclomatic_complexity(
+        cls,
         func_node: ast.FunctionDef | ast.AsyncFunctionDef,
     ) -> int:
-        cc = 1
-        for node in ast.walk(func_node):
-            if isinstance(
-                node,
-                (ast.If, ast.While, ast.For, ast.AsyncFor, ast.ExceptHandler),
-            ):
-                cc += 1
-            elif isinstance(node, ast.BoolOp):
-                cc += len(node.values) - 1
-            elif isinstance(node, ast.Assert):
-                cc += 1
-            elif isinstance(node, ast.comprehension):
-                cc += 1 + len(node.ifs)
-        return cc
+        """Return 1 plus the decision points of the code *func_node* runs.
+
+        The module's functions are every ``def`` and ``async def`` in the tree,
+        nested ones and methods of nested classes included, and each is scored
+        on its own. So a nested ``def`` or ``async def`` body is not charged
+        here; its header is, because its decorators and defaults run when this
+        function executes the statement. For the same reason this function's
+        own header belongs to the scope that defines it. A nested ``class``
+        body is not a scored function: it runs once, when this function
+        executes the ``class`` statement, so its bases, decorators, attributes,
+        comprehensions, and ``if`` blocks count here, as do its methods'
+        headers; only its methods' bodies are cut. A lambda is not scored on
+        its own, so its body counts here.
+        """
+        return 1 + sum(map(cls._decision_points, cls._own_scope(func_node)))
+
+    @staticmethod
+    def _own_scope(
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> Iterator[ast.AST]:
+        """Yield every node *func_node*'s body runs, stopping at nested def bodies."""
+        pending: list[ast.AST] = list(func_node.body)
+        while pending:
+            node = pending.pop()
+            yield node
+            children = ast.iter_child_nodes(node)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nested_body = {id(stmt) for stmt in node.body}
+                children = (c for c in children if id(c) not in nested_body)
+            pending.extend(children)
+
+    @classmethod
+    def _decision_points(cls, node: ast.AST) -> int:
+        """Return how many paths *node* adds to the function that contains it.
+
+        Every ``case`` arm counts, ``case _`` included, and a guard is one more
+        test on top of its pattern, the way ``and`` is in an ``if``. A match
+        without a catch-all scores what its ``if``/``elif`` ladder scores; a
+        ``case _`` costs one more than the ladder's ``else``, which counts 0.
+        An or-pattern ``case A() | B()`` is the pattern form of ``or`` and adds
+        one per alternative after the first, as a ``BoolOp`` does.
+        """
+        if isinstance(node, cls._ONE_WAY_BRANCHES):
+            return 1
+        match node:
+            case ast.BoolOp(values=alternatives) | ast.MatchOr(patterns=alternatives):
+                return len(alternatives) - 1
+            case ast.comprehension(ifs=ifs):
+                return 1 + len(ifs)
+            case ast.match_case(guard=guard):
+                return 1 + (guard is not None)
+            case _:
+                return 0
 
     @staticmethod
     def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
