@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Self, final
 
 from punt_vox.keys import HEADER_CARRIED_KEY_NAMES, PROVIDER_KEY_NAMES, parse_keys_env
 from punt_vox.service.key_value_policy import ValuePolicy
-from punt_vox.service.keys_env_report import KeyNotice
+from punt_vox.service.keys_env_report import KeyNotice, KeysEnvReport
 
 # Values sent as HTTP header content (HEADER_CARRIED_KEY_NAMES) must be
 # printable non-space ASCII, which also rejects a pasted smart quote. The AWS
@@ -18,6 +19,11 @@ from punt_vox.service.keys_env_report import KeyNotice
 _POLICIES = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, ValuePolicy.header_safe())
 _SETTING_POLICY = ValuePolicy.printable()
 _EMPTY = "empty in the environment"
+_HEADER = (
+    "# vox provider keys — loaded by voxd at startup\n"
+    "# Written by: vox daemon install\n"
+    "# Edit with your normal editor — no sudo required.\n\n"
+)
 
 
 @final
@@ -58,6 +64,15 @@ class KeysEnvMerge:
     def notices(self) -> tuple[KeyNotice, ...]:
         """Return one notice per environment key that was not written."""
         return tuple(self._notices)
+
+    def text(self) -> str:
+        """Return the keys.env content: the header, then sorted ``key=value`` lines."""
+        body = "\n".join(f"{k}={v}" for k, v in sorted(self._merged.items()))
+        return f"{_HEADER}{body}\n"
+
+    def report(self, path: Path) -> KeysEnvReport:
+        """Return the operator-facing account of this merge written to *path*."""
+        return KeysEnvReport(path, self.notices)
 
     def _take(self, key: str, value: str) -> None:
         """Write *value* for *key*, or note why not and leave the stored value."""

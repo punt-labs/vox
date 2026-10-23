@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import final
 
 
@@ -25,3 +26,16 @@ class KeyNotice:
             else "nothing stored, so its provider has no credential"
         )
         return f"{self.key}: {self.reason}; {outcome}"
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class KeysEnvReport:
+    """Where one ``keys.env`` write went and every key it did not take."""
+
+    path: Path
+    notices: tuple[KeyNotice, ...]
+
+    def notice_lines(self) -> tuple[str, ...]:
+        """Return one indented status line per notice, for the install output."""
+        return tuple(f"    ! {notice}" for notice in self.notices)

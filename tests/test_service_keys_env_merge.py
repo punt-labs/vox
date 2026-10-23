@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from punt_vox.service.keys_env_merge import KeysEnvMerge
 from punt_vox.service.keys_env_report import KeyNotice
 
@@ -61,3 +63,17 @@ def test_over_text_parses_the_stored_file() -> None:
     text = "# header\nAWS_PROFILE=dev\nOPENAI_API_KEY=sk-old\n"
     merge = KeysEnvMerge.over_text(text, {"OPENAI_API_KEY": "sk-new"})
     assert merge.merged == {"AWS_PROFILE": "dev", "OPENAI_API_KEY": "sk-new"}
+
+
+def test_text_is_the_header_then_sorted_lines() -> None:
+    merge = KeysEnvMerge({"TTS_PROVIDER": "say"}, {"AWS_PROFILE": "dev"})
+    header, _, body = merge.text().partition("\n\n")
+    assert header.startswith("# vox provider keys")
+    assert body == "AWS_PROFILE=dev\nTTS_PROVIDER=say\n"
+
+
+def test_report_carries_the_path_and_the_notices() -> None:
+    merge = KeysEnvMerge({}, {"OPENAI_API_KEY": ""})
+    report = merge.report(Path("/k/keys.env"))
+    assert report.path == Path("/k/keys.env")
+    assert report.notices == merge.notices

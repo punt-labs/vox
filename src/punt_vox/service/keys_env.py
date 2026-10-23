@@ -5,18 +5,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.service.keys_env_merge import KeysEnvMerge
 
+if TYPE_CHECKING:
+    from punt_vox.service.keys_env_report import KeysEnvReport
+
 logger = logging.getLogger(__name__)
 
-_HEADER = (
-    "# vox provider keys — loaded by voxd at startup\n"
-    "# Written by: vox daemon install\n"
-    "# Edit with your normal editor — no sudo required.\n\n"
-)
 _REPAIR = "so its stored keys cannot be kept. Fix or remove it, then re-run install."
 
 
@@ -28,7 +26,7 @@ class KeysEnvWriter:
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
-    def write(self, env: Mapping[str, str], keys_path: Path) -> Path:
+    def write(self, env: Mapping[str, str], keys_path: Path) -> KeysEnvReport:
         """Write ``keys.env`` at *keys_path* (mode 0600), merging existing keys.
 
         Preserves stored keys the caller did not override; an empty value never
@@ -36,17 +34,19 @@ class KeysEnvWriter:
         be read raises ``SystemExit`` instead of being overwritten. The write is
         atomic (0600 temp file + fsync + ``os.replace``), so a crash leaves no
         partial file and the secret is never wider than 0600.
+
+        Return the report of every environment key not written, by name and
+        reason; each one is also logged.
         """
         self._harden_parent(keys_path)
         self._reject_irregular(keys_path)
         merge = KeysEnvMerge.over_text(self._stored_text(keys_path), env)
         for notice in merge.notices:
             logger.warning("%s", notice)  # names and reasons only, never values
-        content = _HEADER + self._render(merge.merged)
         # mode=0o600 forces the secret's perms even over an existing wider file;
         # AtomicFile's default would preserve an existing mode (a leak risk here).
-        AtomicFile(keys_path).replace(content, mode=0o600)
-        return keys_path
+        AtomicFile(keys_path).replace(merge.text(), mode=0o600)
+        return merge.report(keys_path)
 
     def _harden_parent(self, keys_path: Path) -> None:
         """Create the parent directory at mode 0700, or tighten it if present."""
@@ -77,14 +77,13 @@ class KeysEnvWriter:
             return ""
         try:
             return keys_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            # The decoder's message quotes the offending bytes; name the path only.
-            msg = f"{keys_path} is not valid UTF-8 text, {_REPAIR}"
+        except (UnicodeDecodeError, OSError) as exc:
+            msg = f"{keys_path} {self._why_unreadable(exc)}, {_REPAIR}"
             raise SystemExit(msg) from None
-        except OSError as exc:
-            msg = f"Cannot read {keys_path} ({exc.strerror}), {_REPAIR}"
-            raise SystemExit(msg) from exc
 
-    def _render(self, merged: Mapping[str, str]) -> str:
-        """Return the file body: sorted ``key=value`` lines with a trailing newline."""
-        return "\n".join(f"{k}={v}" for k, v in sorted(merged.items())) + "\n"
+    @staticmethod
+    def _why_unreadable(exc: UnicodeDecodeError | OSError) -> str:
+        """Describe *exc* without its text: a decode error's text quotes the bytes."""
+        if isinstance(exc, UnicodeDecodeError):
+            return "is not valid UTF-8 text"
+        return f"cannot be read ({exc.strerror})"

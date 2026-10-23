@@ -47,7 +47,7 @@ def test_write_keys_env_creates_file_at_target_path(
         "TTS_PROVIDER": "elevenlabs",
     }
     result = writer.write(env, keys_path)
-    assert result == keys_path
+    assert result.path == keys_path
     assert keys_path.exists()
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY=sk-eleven-test" in content
@@ -207,6 +207,42 @@ def test_write_keys_env_empty_value_for_absent_key_is_reported(
     (message,) = [r.getMessage() for r in caplog.records]
     assert message.startswith("ELEVENLABS_API_KEY: empty in the environment")
     assert "its provider has no credential" in message
+
+
+def test_write_keys_env_returns_every_skip_by_name_and_reason(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """The result carries each kept, refused, and empty key, never a value."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-stored-eleven\n")
+    report = writer.write(
+        {
+            "ELEVENLABS_API_KEY": "",
+            "OPENAI_API_KEY": "sk bad",
+            "AWS_PROFILE": "",
+            "TTS_PROVIDER": "openai",
+        },
+        keys_path,
+    )
+    unkept = "nothing stored, so its provider has no credential"
+    refused = "refused: a space at position 3 (no HTTP header may carry it)"
+    assert [str(n) for n in report.notices] == [
+        f"AWS_PROFILE: empty in the environment; {unkept}",
+        "ELEVENLABS_API_KEY: empty in the environment; kept the stored value",
+        f"OPENAI_API_KEY: {refused}; {unkept}",
+    ]
+    rendered = "\n".join(report.notice_lines())
+    assert "sk-stored-eleven" not in rendered
+    assert "sk bad" not in rendered
+
+
+def test_write_keys_env_clean_write_reports_no_notices(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """A write that takes every value reports nothing to the operator."""
+    report = writer.write({"OPENAI_API_KEY": "sk-ok"}, tmp_path / "keys.env")
+    assert report.notices == ()
+    assert report.notice_lines() == ()
 
 
 def test_write_keys_env_override_and_absent_keys_log_nothing(
