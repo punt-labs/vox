@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import (
+    PERMANENT_ERRORS,
     TRANSPORT_ERRORS,
     ProviderConfigError,
     ProviderTransportError,
     UnsendableHeaderError,
 )
+from punt_vox.types_provider_errors import ProviderAuthError
 
 
 def test_transport_error_is_a_connection_error() -> None:
@@ -32,3 +34,17 @@ def test_transport_errors_is_the_closed_set() -> None:
         ProviderConfigError,
         ProviderTransportError,
     }
+
+
+def test_permanent_errors_is_the_closed_set() -> None:
+    """What no retry with the same host settings can fix: music stops filling
+    and a call ends on these, and nothing else."""
+    assert set(PERMANENT_ERRORS) == {
+        ProviderAuthError,
+        CaBundleError,
+        ProviderConfigError,
+    }
+
+
+def test_no_transient_error_is_permanent() -> None:
+    assert not issubclass(ProviderTransportError, PERMANENT_ERRORS)

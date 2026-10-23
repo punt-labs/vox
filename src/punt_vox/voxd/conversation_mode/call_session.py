@@ -21,7 +21,7 @@ import logging
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.provider_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -60,31 +60,36 @@ _STT_AUTH_FAILED = (
     "were rejected. Ending the call now."
 )
 
-# CA certificates that cannot verify the provider are configuration, as
-# permanent as a rejected key. Whether SSL_CERT_FILE, SSL_CERT_DIR, or the
-# default bundle was in effect, the fix is in SSL_CERT_FILE; vox.log names which
-# applied and the path.
+# A failed certificate verification is configuration, as permanent as a
+# rejected key: the trust anchors (SSL_CERT_FILE, SSL_CERT_DIR, or the client's
+# default) distrust the issuer, or the certificate names another host or has
+# expired. vox.log says which, and what to change.
 _STT_TLS_FAILED = (
     "Sorry, this call can't continue -- speech recognition can't verify the "
-    "provider's TLS certificate. Check SSL_CERT_FILE; vox.log has the details. "
-    "Ending the call now."
+    "provider's TLS certificate. Check SSL_CERT_FILE and the provider address; "
+    "vox.log has the details. Ending the call now."
 )
 
-# A proxy or base URL httpx refuses is host configuration too.
+# A request httpx will not send -- a proxy it cannot use, a key with a stray
+# newline -- is host configuration too.
 _STT_CONFIG_FAILED = (
     "Sorry, this call can't continue -- speech recognition can't send its "
-    "request as this host is configured. Check the proxy settings; vox.log has "
-    "the details. Ending the call now."
+    "request as this host is configured. Check the proxy settings and the API "
+    "key; vox.log has the details. Ending the call now."
 )
 
-# What the call says before ending on each permanent STT failure.
+# For a PERMANENT_ERRORS member with no sentence below: still an ending.
+_STT_FAILED = (
+    "Sorry, this call can't continue -- speech recognition failed in a way a "
+    "retry won't fix; vox.log has the details. Ending the call now."
+)
+
+# What the call says before ending on each permanent STT failure. Which
+# failures are permanent is PERMANENT_ERRORS's call, not this table's.
 _ENDING: Final[tuple[tuple[type[ValueError], str], ...]] = (
     (ProviderAuthError, _STT_AUTH_FAILED),
     (CaBundleError, _STT_TLS_FAILED),
     (ProviderConfigError, _STT_CONFIG_FAILED),
-)
-_PERMANENT_STT_ERRORS: Final[tuple[type[ValueError], ...]] = tuple(
-    kind for kind, _ in _ENDING
 )
 
 
@@ -257,7 +262,7 @@ class CallSession:
             )
         # Certain and permanent, unlike a transient transcribe failure -- see
         # TurnTranscriber's own re-raise.
-        except _PERMANENT_STT_ERRORS as exc:
+        except PERMANENT_ERRORS as exc:
             await self._end_call(exc)
             return
         if final_event is None:
@@ -313,7 +318,9 @@ class CallSession:
         call listening against a provider that will fail every turn.
         """
         logger.exception("STT cannot continue -- ending the call")
-        message = next(text for kind, text in _ENDING if isinstance(cause, kind))
+        message = next(
+            (text for kind, text in _ENDING if isinstance(cause, kind)), _STT_FAILED
+        )
         try:
             await self._speak(message)
         except Exception:

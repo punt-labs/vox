@@ -17,8 +17,10 @@ import pytest
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.provider_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -526,14 +528,11 @@ class TestSTTCaBundleFailure:
         assert session_attach.turns() == []
 
 
-class _FailingSpeak:
+class _FailingSpeak(_Recorder):
     """A ``SpeakFn`` that records every phrase, then raises -- a dead TTS path."""
 
-    def __init__(self) -> None:
-        self.said: list[str] = []
-
     async def __call__(self, text: str) -> None:
-        self.said.append(text)
+        await super().__call__(text)
         if text != "Listening.":
             raise ConnectionError("TTS unreachable")
 
@@ -550,9 +549,36 @@ def _misconfigured() -> Exception:
     return ProviderConfigError("provider request cannot be sent (ProxyError)")
 
 
+def _malformed_key() -> Exception:
+    return MalformedApiKeyError("ELEVENLABS_API_KEY contains a control character")
+
+
+def _refused() -> Exception:
+    return ProviderRefusalError.from_code("elevenlabs", 403, "quota_exceeded")
+
+
 # Factories, not instances: each test raises a fresh error with its own traceback.
-_PERMANENT_STT_FAILURES = (_rejected_key, _bad_ca_bundle, _misconfigured)
-_PERMANENT_IDS = ("rejected-key", "ca-bundle", "config")
+# The last two are subclasses: a call ends on them through their base's entry.
+_PERMANENT_STT_FAILURES = (
+    _rejected_key,
+    _bad_ca_bundle,
+    _misconfigured,
+    _malformed_key,
+    _refused,
+)
+_PERMANENT_IDS = ("rejected-key", "ca-bundle", "config", "malformed-key", "refused")
+
+# The one factory per member of PERMANENT_ERRORS.
+_PERMANENT_BY_KIND: dict[type[ValueError], Callable[[], Exception]] = {
+    ProviderAuthError: _rejected_key,
+    CaBundleError: _bad_ca_bundle,
+    ProviderConfigError: _misconfigured,
+}
+
+
+def test_every_permanent_error_is_exercised_here() -> None:
+    """A member added to PERMANENT_ERRORS fails here until it gets an ending."""
+    assert set(_PERMANENT_BY_KIND) == set(PERMANENT_ERRORS)
 
 
 class TestPermanentSTTFailureAppliesEndCall:
@@ -619,6 +645,20 @@ class TestPermanentSTTFailureAppliesEndCall:
             and r.exc_info is not None
             for r in caplog.records
         )
+
+    async def test_each_permanent_error_says_its_own_reason(self) -> None:
+        """Three kinds, three different explanations -- none the generic one."""
+        endings: list[str] = []
+        for factory in _PERMANENT_BY_KIND.values():
+            speak = _Recorder()
+            session = self._session(factory(), speak)
+            await session.start()
+            await _feed_one_turn(session)
+            endings.append(speak.said[-1])
+
+        assert len(set(endings)) == len(endings)
+        assert all("Ending the call now." in ending for ending in endings)
+        assert not any("a retry won't fix" in ending for ending in endings)
 
 
 async def test_a_configuration_fault_says_to_check_the_proxy() -> None:

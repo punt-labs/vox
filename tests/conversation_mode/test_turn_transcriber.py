@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import (
+    PERMANENT_ERRORS,
     ProviderConfigError,
     ProviderTransportError,
 )
@@ -196,6 +197,33 @@ async def test_a_configuration_fault_is_reraised_not_swallowed() -> None:
         await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
 
     assert dict(timer.marks)["stt_response_received"] == "STT request misconfigured"
+
+
+# Every member of the one permanent set, built the way its raiser builds it.
+_PERMANENT_FACTORIES: dict[type[ValueError], Callable[[], ValueError]] = {
+    ProviderAuthError: lambda: ProviderAuthError("elevenlabs", 401),
+    CaBundleError: _bad_bundle,
+    ProviderConfigError: lambda: ProviderConfigError("proxy refused"),
+}
+
+
+def test_every_permanent_error_is_exercised_here() -> None:
+    """A member added to PERMANENT_ERRORS fails here until it gets a detail."""
+    assert set(_PERMANENT_FACTORIES) == set(PERMANENT_ERRORS)
+
+
+@pytest.mark.parametrize("kind", PERMANENT_ERRORS, ids=lambda kind: kind.__name__)
+async def test_every_permanent_error_records_its_own_detail(
+    kind: type[ValueError],
+) -> None:
+    timer = _SpyTurnTimer()
+    error = _PERMANENT_FACTORIES[kind]()
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(kind):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] != "STT failed permanently"
 
 
 async def test_a_provider_transport_error_still_asks_to_repeat() -> None:

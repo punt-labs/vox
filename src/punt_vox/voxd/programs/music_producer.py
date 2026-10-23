@@ -14,12 +14,10 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
-from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import (
-    ProviderConfigError,
+    PERMANENT_ERRORS,
     ProviderTransportError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -40,17 +38,17 @@ _PLAYLIST_MAX_MS: Final = 210_000
 # HTTP statuses that mean "retrying will not help" (bad prompt, ToS, auth).
 _PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
 
-# Failures retrying with the same input cannot fix: a rejected key, or a host
-# whose CA certificates, proxy, or base URL stop every request the same way.
-_PERMANENT_ERRORS: Final = (ProviderAuthError, CaBundleError, ProviderConfigError)
-
 # The provider's transport faults -- worth a retry. Not every OSError: a local
 # PermissionError or a full disk is no network blip, and retrying it as one
 # would hide it; it escapes to the fill loop's unexpected path instead.
 _TRANSIENT_ERRORS: Final = (ProviderTransportError, TimeoutError)
 
 # Every provider failure ``produce`` maps; anything else escapes unclassified.
-_GENERATION_ERRORS: Final = (ApiError, *_PERMANENT_ERRORS, *_TRANSIENT_ERRORS)
+_GENERATION_ERRORS: Final[tuple[type[Exception], ...]] = (
+    ApiError,
+    *PERMANENT_ERRORS,
+    *_TRANSIENT_ERRORS,
+)
 
 
 @final
@@ -138,4 +136,4 @@ class MusicProducer:
         """
         if isinstance(exc, ApiError):
             return exc.status_code in _PERMANENT_STATUS
-        return isinstance(exc, _PERMANENT_ERRORS)
+        return isinstance(exc, PERMANENT_ERRORS)

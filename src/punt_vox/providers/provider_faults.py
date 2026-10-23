@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import Final
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.types_provider_errors import ProviderAuthError
 
 __all__ = [
+    "PERMANENT_ERRORS",
     "TRANSPORT_ERRORS",
     "ProviderConfigError",
     "ProviderTransportError",
@@ -49,3 +51,13 @@ class UnsendableHeaderError(ProviderConfigError):
 # Everything a request through TransportFaults can raise: what a health check
 # catches to report a failed line instead of crashing.
 TRANSPORT_ERRORS: Final = (CaBundleError, ProviderConfigError, ProviderTransportError)
+
+# The provider failures no retry with the same host settings can fix: a key the
+# provider refused, TLS that cannot verify it, a request httpx will not send.
+# The one owner of the set -- music stops filling on these and a call ends on
+# them, where a ProviderTransportError is retried or asked about again.
+PERMANENT_ERRORS: Final[tuple[type[ValueError], ...]] = (
+    ProviderAuthError,
+    CaBundleError,
+    ProviderConfigError,
+)

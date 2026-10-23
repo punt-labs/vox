@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.provider_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
@@ -37,16 +37,15 @@ logger = logging.getLogger(__name__)
 # production gate.
 CONFIDENCE_FLOOR = 0.6
 
-# The permanent STT failures transcribe re-raises, each with the detail it
-# records on the turn timer first.
-_PERMANENT: Final[tuple[tuple[type[ValueError], str], ...]] = (
+# The turn-timer detail for each permanent failure transcribe re-raises. Which
+# failures are permanent is PERMANENT_ERRORS's call, not this table's; a member
+# missing here still re-raises, recorded under the fallback.
+_TIMER_DETAIL: Final[tuple[tuple[type[ValueError], str], ...]] = (
     (ProviderAuthError, "STT auth failed"),
     (CaBundleError, "STT TLS setup failed"),
     (ProviderConfigError, "STT request misconfigured"),
 )
-_PERMANENT_ERRORS: Final[tuple[type[ValueError], ...]] = tuple(
-    kind for kind, _ in _PERMANENT
-)
+_FALLBACK_DETAIL: Final = "STT failed permanently"
 
 
 @final
@@ -83,7 +82,7 @@ class TurnTranscriber:
         """
         try:
             final_event = await self._final_event(self._provider.transcribe(chunks))
-        except _PERMANENT_ERRORS as exc:
+        except PERMANENT_ERRORS as exc:
             # A revoked key, CA certificates that cannot verify the provider, a
             # proxy or base URL httpx refuses: each is certain and permanent --
             # every later turn hits the same failure -- the asymmetry
@@ -93,7 +92,10 @@ class TurnTranscriber:
             # human to repeat", which repeats identically forever and never
             # says what is broken. Re-raised, not swallowed -- the caller
             # (CallSession) ends the call with an actionable message instead.
-            detail = next(d for kind, d in _PERMANENT if isinstance(exc, kind))
+            detail = next(
+                (d for kind, d in _TIMER_DETAIL if isinstance(exc, kind)),
+                _FALLBACK_DETAIL,
+            )
             self._turn_timer.mark("stt_response_received", detail=detail)
             raise
         except Exception:
