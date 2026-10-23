@@ -175,24 +175,43 @@ class ModuleMetrics:
             return 0.0
         return round(sum(complexities) / len(complexities), 2)
 
-    @staticmethod
+    @classmethod
     def _cyclomatic_complexity(
+        cls,
         func_node: ast.FunctionDef | ast.AsyncFunctionDef,
     ) -> int:
-        cc = 1
-        for node in ast.walk(func_node):
-            if isinstance(
-                node,
-                (ast.If, ast.While, ast.For, ast.AsyncFor, ast.ExceptHandler),
+        return 1 + sum(map(cls._decision_points, ast.walk(func_node)))
+
+    @staticmethod
+    def _decision_points(node: ast.AST) -> int:
+        """Return how many paths *node* adds to the function that contains it.
+
+        Every ``case`` arm counts, ``case _`` included, and a guard is one more
+        test on top of its pattern, the way ``and`` is in an ``if``. A match
+        without a catch-all scores what its ``if``/``elif`` ladder scores; a
+        ``case _`` costs one more than the ladder's ``else``, which counts 0.
+        """
+        match node:
+            case (
+                ast.If()
+                | ast.IfExp()
+                | ast.While()
+                | ast.For()
+                | ast.AsyncFor()
+                | ast.ExceptHandler()
+                | ast.Assert()
             ):
-                cc += 1
-            elif isinstance(node, ast.BoolOp):
-                cc += len(node.values) - 1
-            elif isinstance(node, ast.Assert):
-                cc += 1
-            elif isinstance(node, ast.comprehension):
-                cc += 1 + len(node.ifs)
-        return cc
+                return 1
+            case ast.BoolOp(values=values):
+                return len(values) - 1
+            case ast.comprehension(ifs=ifs):
+                return 1 + len(ifs)
+            case ast.match_case(guard=None):
+                return 1
+            case ast.match_case():
+                return 2
+            case _:
+                return 0
 
     @staticmethod
     def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
