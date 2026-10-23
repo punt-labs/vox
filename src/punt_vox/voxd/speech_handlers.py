@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
@@ -41,6 +42,10 @@ __all__ = ["SynthesizeHandler"]
 
 logger = logging.getLogger(__name__)
 
+# A per-request key is checked where it enters the daemon, before any provider
+# puts it in a header; the message names the wire field, never the key.
+_REQUEST_KEY = ApiKeyCheck("the request's api_key")
+
 
 @dataclass(frozen=True, slots=True)
 class _SpeechRequest:
@@ -64,7 +69,8 @@ class _SpeechRequest:
 
         A string-typed field raises ``ValueError`` on a non-string value while a
         numeric field accepts a JSON number (via the parse helpers); empty text
-        is rejected here, so both handlers share one text-validation point.
+        and an ``api_key`` holding a control character are rejected here, so
+        both handlers share one validation point.
         """
         text = parse_required_str(msg, "text")
         if not text:
@@ -88,7 +94,7 @@ class _SpeechRequest:
             speaker_boost=(
                 bool(speaker_boost_raw) if speaker_boost_raw is not None else None
             ),
-            api_key=parse_optional_str(msg, "api_key"),
+            api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
         return cls(
             text=text,

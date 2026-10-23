@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
+import traceback
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +15,7 @@ from punt_vox.core import (
     _split_at_words,  # pyright: ignore[reportPrivateUsage]
     split_text,
 )
+from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
@@ -618,3 +621,48 @@ class TestOpenAIProviderBadCaBundle:
 
         assert not access.passed
         assert "check the network" in access.message
+
+
+class TestOpenAIProviderMalformedKey:
+    """A key with a control character never reaches the SDK or the log."""
+
+    _KEY = "sk-SECRETKEY123"
+
+    @pytest.fixture
+    def bad_key(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+        monkeypatch.setenv("OPENAI_API_KEY", f"{self._KEY}\n")
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+        return built
+
+    def test_synthesis_names_the_variable_not_the_key(
+        self,
+        bad_key: list[dict[str, object]],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            pytest.raises(MalformedApiKeyError) as info,
+        ):
+            OpenAIProvider().synthesize(request, tmp_path / "out.mp3")
+
+        assert "OPENAI_API_KEY" in str(info.value)
+        assert self._KEY not in "".join(traceback.format_exception(info.value))
+        assert self._KEY not in caplog.text
+        assert bad_key == []
+
+    @pytest.mark.usefixtures("bad_key")
+    def test_health_reports_it_as_a_failed_line(self) -> None:
+        checks = OpenAIProvider().check_health()
+
+        assert len(checks) == 1
+        assert not checks[0].passed
+        assert "control character" in checks[0].message
+        assert self._KEY not in checks[0].message

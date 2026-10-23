@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import traceback
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -11,6 +12,7 @@ import httpx
 import pytest
 from elevenlabs.core import ApiError
 
+from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.providers.provider_faults import (
@@ -188,6 +190,37 @@ class TestBuild:
         assert captured["api_key"] == "explicit"
 
 
+class TestMalformedKey:
+    """A key with a control character never reaches the SDK or the log."""
+
+    _KEY = "SECRETKEY123"
+
+    def test_construction_does_not_raise(self) -> None:
+        """voxd builds the music client at boot; a bad key must not stop boot."""
+        ElevenLabsClient(api_key=f"{self._KEY}\n")
+
+    def test_first_call_names_the_variable_not_the_key(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _build)
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            pytest.raises(MalformedApiKeyError) as info,
+        ):
+            ElevenLabsClient(api_key=f"{self._KEY}\n").call(_identity)
+
+        assert "ELEVENLABS_API_KEY" in str(info.value)
+        assert self._KEY not in "".join(traceback.format_exception(info.value))
+        assert self._KEY not in caplog.text
+        assert built == []
+
+
 class TestKeyCheck:
     def test_passes_with_a_key(self) -> None:
         assert ElevenLabsClient(api_key="k", sdk=MagicMock()).key_check().passed
@@ -199,6 +232,12 @@ class TestKeyCheck:
 
         assert not check.passed
         assert "ELEVENLABS_API_KEY" in check.message
+
+    def test_fails_with_a_malformed_key(self) -> None:
+        check = ElevenLabsClient(api_key="k\n", sdk=MagicMock()).key_check()
+
+        assert not check.passed
+        assert "control character" in check.message
 
 
 # ---------------------------------------------------------------------------

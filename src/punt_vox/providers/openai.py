@@ -11,6 +11,7 @@ import openai
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
@@ -28,6 +29,9 @@ from punt_vox.types_provider_errors import ProviderAuthError
 logger = logging.getLogger(__name__)
 
 __all__ = ["OpenAIProvider"]
+
+# The variable the readiness gate names for this provider, not a second literal.
+_KEY_CHECK = ApiKeyCheck.for_provider("openai")
 
 # Maximum characters per OpenAI TTS API request.
 _MAX_CHARS = 4096
@@ -77,7 +81,7 @@ class OpenAIProvider(TTSProvider):
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = LazySdk(
-            openai.OpenAI, transport=openai.APIConnectionError, sdk=client
+            self._new_sdk, transport=openai.APIConnectionError, sdk=client
         )
         return self
 
@@ -139,14 +143,9 @@ class OpenAIProvider(TTSProvider):
 
     def check_health(self) -> list[HealthCheck]:
         """Check the OpenAI API key, then the configured model's access."""
-        if not os.environ.get("OPENAI_API_KEY"):
-            return [
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI API key: not set (export OPENAI_API_KEY)",
-                )
-            ]
-        key = HealthCheck(passed=True, message="OpenAI API key: set")
+        key = _KEY_CHECK.report("OpenAI", os.environ.get(_KEY_CHECK.source))
+        if not key.passed:
+            return [key]
         return [key, self._model_access_check()]
 
     def _model_access_check(self) -> HealthCheck:
@@ -201,6 +200,21 @@ class OpenAIProvider(TTSProvider):
         if key in VOICES:
             return VOICES[key]
         raise VoiceNotFoundError(name, sorted(VOICES))
+
+    @staticmethod
+    def _new_sdk() -> openai.OpenAI:
+        """Construct the SDK client with the key in the environment now.
+
+        Read here, as the SDK itself would, but checked first: the SDK puts the
+        key in an ``Authorization`` header, and httpx's refusal of a header
+        with a newline quotes the key.
+
+        Raises:
+            MalformedApiKeyError: The key holds a control character.
+        """
+        return openai.OpenAI(
+            api_key=_KEY_CHECK.require(os.environ.get(_KEY_CHECK.source))
+        )
 
     @staticmethod
     def _rate_to_speed(rate: int) -> float:

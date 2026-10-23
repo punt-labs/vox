@@ -119,6 +119,34 @@ class TestSynthesizeParseGuard:
         assert "text must be a string" in str(sent[-1]["message"])
         mock_synth.synthesize_to_file.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_api_key_with_a_newline_is_rejected_without_its_value(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A per-request key that cannot go in a header never reaches a provider,
+        and neither the reply nor the log quotes it."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "elevenlabs",
+            "api_key": "SECRETKEY123\n",
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert "api_key contains a control character" in str(sent[-1]["message"])
+        assert "SECRETKEY123" not in str(sent)
+        assert "SECRETKEY123" not in caplog.text
+        mock_synth.synthesize_to_file.assert_not_called()
+
 
 class TestSynthesisFaultClassification:
     """Synthesis and direct-play failures audit as faults, not client rejections.

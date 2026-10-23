@@ -17,6 +17,7 @@ import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 
+from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.stream_file import StreamFile
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 
 __all__ = ["ElevenLabsClient"]
 
-_API_KEY_VAR = "ELEVENLABS_API_KEY"
+# The variable the readiness gate names for this provider, not a second literal.
+_KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
 
 
 @final
@@ -66,7 +68,9 @@ class ElevenLabsClient:
         sdk: ElevenLabs | None = None,
     ) -> Self:
         self = super().__new__(cls)
-        self._api_key = api_key if api_key is not None else os.environ.get(_API_KEY_VAR)
+        self._api_key = (
+            api_key if api_key is not None else os.environ.get(_KEY_CHECK.source)
+        )
         # RequestError, not TransportError: httpx raises DecodingError and
         # TooManyRedirects outside TransportError, and the SDK lets both escape.
         self._sdk = LazySdk(self._new_sdk, transport=httpx.RequestError, sdk=sdk)
@@ -75,7 +79,8 @@ class ElevenLabsClient:
     def call[R](self, request: Callable[[ElevenLabs], R]) -> R:
         """Run *request* against the SDK, building the SDK on first use.
 
-        A bundle the build cannot load raises ``CaBundleError``. The SDK lets
+        A bundle the build cannot load raises ``CaBundleError``; a key holding a
+        control character raises ``MalformedApiKeyError``. The SDK lets
         httpx's errors escape raw; they leave here translated by
         :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
         ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
@@ -102,13 +107,8 @@ class ElevenLabsClient:
         return self.call(lambda sdk: StreamFile(target).write(open_stream(sdk)))
 
     def key_check(self) -> HealthCheck:
-        """Report whether this client has an API key."""
-        if self._api_key:
-            return HealthCheck(passed=True, message="ElevenLabs API key: set")
-        return HealthCheck(
-            passed=False,
-            message=f"ElevenLabs API key: not set (export {_API_KEY_VAR})",
-        )
+        """Report whether this client has an API key it can send."""
+        return _KEY_CHECK.report("ElevenLabs", self._api_key)
 
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
@@ -131,8 +131,16 @@ class ElevenLabsClient:
         return HealthCheck(passed=False, message=f"ElevenLabs subscription: {reason}")
 
     def _new_sdk(self) -> ElevenLabs:
-        """Construct the SDK client with the key this client was built with."""
-        return ElevenLabs(api_key=self._api_key)
+        """Construct the SDK client with the key this client was built with.
+
+        The key is checked here, at the first use, not at construction: voxd
+        builds the music client at boot, and a malformed key in ``keys.env``
+        must fail the request that sends it -- by name -- not stop the daemon.
+
+        Raises:
+            MalformedApiKeyError: The key holds a control character.
+        """
+        return ElevenLabs(api_key=_KEY_CHECK.require(self._api_key))
 
     @staticmethod
     def _api_error_message(exc: ApiError) -> str:
