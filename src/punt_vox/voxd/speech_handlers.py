@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -31,6 +31,11 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = ["SynthesizeHandler"]
 
@@ -92,6 +97,39 @@ class _SpeechRequest:
             websocket=websocket,
         )
 
+    async def synthesize(
+        self,
+        synthesis: SynthesisPipeline,
+        *,
+        # Runs before the error reply, so a retry the reply prompts cannot race
+        # state the failure must undo (the synthesize handler's dedup entry).
+        on_failure: Callable[[], None] = lambda: None,
+    ) -> SynthesisOutcome | None:  # None: it failed, and the caller has been told
+        """Synthesize this request to a file, replying with the error on failure.
+
+        The one failure split both handlers share: a :data:`CALLER_ERRORS`
+        member (F2-F5, or a CA bundle TLS cannot use) crosses the wire verbatim
+        through :meth:`reject`; anything else is a daemon-side fault, laundered
+        by :meth:`fault`. F1 and F7 never get here -- ``SessionSpec`` rejects
+        them on the client -- and F6 is a connection failure the client sees.
+        """
+        try:
+            return await synthesis.synthesize_to_file(self.text, self.spec)
+        except CALLER_ERRORS as exc:
+            # ``%r`` on ``str(exc)`` escapes newlines: caller-supplied strings
+            # travel inside the message (a voice name, a provider name), and an
+            # unescaped newline in one would forge a second audit line.
+            logger.warning(
+                "Rejected synthesis for id=%r: %r", self.request_id, str(exc)
+            )
+            on_failure()
+            await self.reject(str(exc))
+        except Exception as exc:
+            logger.exception("Synthesis failed for id=%r", self.request_id)
+            on_failure()
+            await self.fault(SafeFault.from_exception(exc))
+        return None
+
     async def reply(self, payload: dict[str, object]) -> None:
         """Send *payload* stamped with this request's id, safe on a gone peer.
 
@@ -132,11 +170,7 @@ class _SpeechRequest:
 class SynthesizeHandler(MessageHandler):
     """Handle 'synthesize' WebSocket messages: TTS + enqueue playback."""
 
-    __slots__ = (
-        "_once_dedup",
-        "_playback",
-        "_synthesis",
-    )
+    __slots__ = ("_once_dedup", "_playback", "_synthesis")
 
     _once_dedup: OnceDedup
     _playback: PlaybackQueue
@@ -230,20 +264,19 @@ class SynthesizeHandler(MessageHandler):
         )
         if result is None:
             return False
+        if result == 0:
+            await req.reply({"type": "done"})
+            return True
+        self._rollback(req, dedup_recorded=dedup_recorded)
         if isinstance(result, CALLER_ERRORS):
             # Diagnosable, caller-side -- the same closed set the file path
             # rejects: route verbatim through error() so the sentence crosses
             # the wire rather than getting laundered to "operation failed" by
             # fault(). See design §3.5, F2/F5.
-            self._rollback(req, dedup_recorded=dedup_recorded)
             await req.reject(str(result))
         elif isinstance(result, Exception):
-            self._rollback(req, dedup_recorded=dedup_recorded)
             await req.fault(SafeFault.from_exception(result))
-        elif result == 0:
-            await req.reply({"type": "done"})
         else:
-            self._rollback(req, dedup_recorded=dedup_recorded)
             await req.fault(SafeFault.opaque(f"play_directly failed with rc={result}"))
         return True
 
@@ -251,42 +284,11 @@ class SynthesizeHandler(MessageHandler):
         self, req: _SpeechRequest, *, dedup_recorded: bool
     ) -> None:
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
-        try:
-            outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
-        except CALLER_ERRORS as exc:
-            # Diagnosable, caller-side (design §4): route verbatim through
-            # error() so the sentence naming the missing credential (F2), the
-            # rejected credential (F3), the unknown provider name (F4), the
-            # unrecognised voice (F5), or the SSL_CERT_FILE TLS cannot use
-            # crosses the wire, instead of being laundered by the broad guard
-            # below into "operation failed". CALLER_ERRORS says why the set
-            # is closed rather than every ValueError.
-            #
-            # The rejected reasons that DO NOT reach this catch, for
-            # the record: F1 (state has no provider) is caught by
-            # SessionSpec on the client before any wire message is
-            # built; F6 (voxd unreachable) is a connection failure
-            # the client sees, never a daemon-side raise; F7
-            # (provider-alien model) is caught by SessionSpec too.
-            self._rollback(req, dedup_recorded=dedup_recorded)
-            # ``%r`` on ``str(exc)`` renders the sentence with its
-            # newlines escaped -- caller-supplied strings can travel
-            # inside the message (a voice name for F5, a provider
-            # name for F2/F3/F4), and a newline in one of those
-            # would forge a second audit line without the escape.
-            # Same discipline AwsRequirement.satisfied uses on the
-            # boto3 exception it swallows.
-            logger.warning(
-                "Rejected synthesis for id=%r: %r",
-                req.request_id,
-                str(exc),
-            )
-            await req.reject(str(exc))
-            return
-        except Exception as exc:
-            self._rollback(req, dedup_recorded=dedup_recorded)
-            logger.exception("Synthesis failed for id=%r", req.request_id)
-            await req.fault(SafeFault.from_exception(exc))
+        outcome = await req.synthesize(
+            self._synthesis,
+            on_failure=lambda: self._rollback(req, dedup_recorded=dedup_recorded),
+        )
+        if outcome is None:
             return
 
         # `cached` rides the 'playing' response (the client's terminal).

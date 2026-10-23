@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.types_provider_errors import ProviderAuthError, UnknownProviderError
 from punt_vox.voxd.record_handler import RecordHandler
 from punt_vox.voxd.record_store import RecordStore
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
@@ -189,6 +191,39 @@ class TestRecordHandler:
         # the generic verdict; the raw "boom" goes to the log via logger.exception.
         assert error["message"] == "operation failed"
         assert not store.root.exists() or not any(store.root.glob("*.mp3"))
+
+    @pytest.mark.parametrize(
+        "rejection",
+        [
+            ProviderAuthError("elevenlabs", 401),
+            CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded"),
+            UnknownProviderError("ploly", ["elevenlabs", "polly"]),
+        ],
+        ids=["auth", "ca-bundle", "unknown-provider"],
+    )
+    def test_caller_error_crosses_the_wire_verbatim(
+        self, rejection: ValueError, tmp_path: Path
+    ) -> None:
+        """A rejection the caller can act on is not laundered to a fault.
+
+        The same closed set the synthesize handler sends verbatim: a record that
+        fails for a rejected key or a bad CA bundle says so, rather than
+        "operation failed".
+        """
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock(side_effect=rejection)
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "provider": "elevenlabs",
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent[-1] == {"type": "error", "id": "r1", "message": str(rejection)}
 
     def test_empty_text_is_an_error(self, tmp_path: Path) -> None:
         src = tmp_path / "src.mp3"
