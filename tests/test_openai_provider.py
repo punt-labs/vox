@@ -19,6 +19,7 @@ from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
@@ -334,6 +335,89 @@ class TestOpenAIProviderSynthesize:
 
         assert exc_info.value.status_code == 403
 
+    @staticmethod
+    def _denied(code: str | None) -> openai.PermissionDeniedError:
+        body: dict[str, object] = {"message": "Country not supported", "code": code}
+        return openai.PermissionDeniedError(
+            message=f"Error code: 403 - {body}",
+            response=MagicMock(status_code=403),
+            body=body,
+        )
+
+    def test_rejected_key_logs_its_code_but_not_its_message(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """OpenAI's 401 message quotes the key, masked; only the code is logged."""
+        body: dict[str, object] = {
+            "message": "Incorrect API key provided: sk-proj-****WXYZ",
+            "code": "invalid_api_key",
+        }
+        mock_openai_client.audio.speech.create.side_effect = openai.AuthenticationError(
+            message=f"Error code: 401 - {body}",
+            response=MagicMock(status_code=401),
+            body=body,
+        )
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.providers.openai"),
+            pytest.raises(ProviderRefusalError) as info,
+        ):
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "rejected.mp3"
+            )
+
+        assert "HTTP 401: invalid_api_key" in str(info.value)
+        assert "invalid_api_key" in caplog.text
+        assert "WXYZ" not in caplog.text
+
+    def test_permission_denied_carries_the_server_s_reason(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A 403 is not always a bad key: the server's error code says which."""
+        mock_openai_client.audio.speech.create.side_effect = self._denied(
+            "unsupported_country_region_territory"
+        )
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="punt_vox.providers.openai"),
+            pytest.raises(ProviderRefusalError) as info,
+        ):
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "denied.mp3"
+            )
+
+        assert str(info.value) == (
+            "provider 'openai' refused the request (HTTP 403: "
+            "unsupported_country_region_territory); run `vox doctor`"
+        )
+        assert "unsupported_country_region_territory" in caplog.text
+        assert "Country not supported" in caplog.text
+
+    @pytest.mark.parametrize("code", [None, "", "bad code\nforged line", "x" * 65])
+    def test_permission_denied_without_a_usable_code_is_a_plain_rejection(
+        self, code: str | None, mock_openai_client: MagicMock, tmp_output_dir: Path
+    ) -> None:
+        """The code crosses the wire: only a plain identifier is quoted."""
+        mock_openai_client.audio.speech.create.side_effect = self._denied(code)
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with pytest.raises(ProviderRefusalError) as info:
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "denied.mp3"
+            )
+
+        assert str(info.value) == (
+            "provider 'openai' rejected the credentials (HTTP 403); run `vox doctor`"
+        )
+
     def test_synthesize_rejects_empty_audio(
         self,
         mock_openai_client: MagicMock,
@@ -469,7 +553,6 @@ class TestOpenAIProviderCheckHealth:
     @pytest.mark.parametrize(
         ("error_cls", "status"),
         [
-            (openai.PermissionDeniedError, 403),
             (openai.RateLimitError, 429),
             (openai.InternalServerError, 500),
         ],
@@ -490,6 +573,31 @@ class TestOpenAIProviderCheckHealth:
 
         assert not checks[1].passed
         assert checks[1].message == f"OpenAI model access: HTTP {status}"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_permission_denied_line_carries_the_server_s_code(
+        self, mock_openai_client: MagicMock
+    ) -> None:
+        body: dict[str, object] = {"message": "nope", "code": "model_not_allowed"}
+        mock_openai_client.models.retrieve.side_effect = openai.PermissionDeniedError(
+            message="nope", response=MagicMock(status_code=403), body=body
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert checks[1].message == "OpenAI model access: HTTP 403: model_not_allowed"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_permission_denied_line_without_a_code_is_the_bare_status(
+        self, mock_openai_client: MagicMock
+    ) -> None:
+        mock_openai_client.models.retrieve.side_effect = openai.PermissionDeniedError(
+            message="nope", response=MagicMock(status_code=403), body=None
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert checks[1].message == "OpenAI model access: HTTP 403"
 
 
 class TestOpenAIProviderLanguageSupport:

@@ -15,6 +15,7 @@ from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.providers.stream_file import StreamFile
 from punt_vox.types import (
     AudioProviderId,
@@ -24,7 +25,6 @@ from punt_vox.types import (
     TTSProvider,
     VoiceNotFoundError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,32 @@ class OpenAIProvider(TTSProvider):
             return "invalid API key"
         if isinstance(exc, openai.NotFoundError):
             return f"model '{self._model}' not found"
+        if isinstance(exc, openai.PermissionDeniedError):
+            reason = self._refused(exc).reason
+            return f"HTTP 403: {reason}" if reason else "HTTP 403"
         return f"HTTP {exc.status_code}"
+
+    @staticmethod
+    def _refused(
+        exc: openai.AuthenticationError | openai.PermissionDeniedError,
+    ) -> ProviderRefusalError:
+        """Return the refusal the caller sees, with the server's error code.
+
+        A 403 is not always the key -- the project or the region can be at
+        fault, and the code says which -- so its body, which never holds the
+        key, is logged whole. A 401's message can quote a masked key, so only
+        its code is.
+        """
+        if isinstance(exc, openai.PermissionDeniedError):
+            logger.error(
+                "openai refused the request (HTTP 403): code=%r message=%r",
+                exc.code,
+                exc.message,
+            )
+        else:
+            logger.error("openai rejected the key (HTTP 401): code=%r", exc.code)
+        # A response arrived, so the SDK's status_code is always set.
+        return ProviderRefusalError.from_code("openai", exc.status_code, exc.code)
 
     def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default OpenAI voice for a language.
@@ -257,8 +282,7 @@ class OpenAIProvider(TTSProvider):
                 )
             )
         except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
-            # A response arrived, so the SDK's status_code is always set.
-            raise ProviderAuthError("openai", exc.status_code) from exc
+            raise self._refused(exc) from exc
         StreamFile(output_path).write((response.content,))
         logger.info(
             "API call: provider=openai, voice=%s, chars=%d",
