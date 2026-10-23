@@ -49,6 +49,10 @@ __all__ = [
 _PREFERRED_ORDER: tuple[str, ...] = ("elevenlabs", "openai", "polly", "say", "espeak")
 
 
+# The AWS credential-chain variables whose values are sent in request headers.
+_AWS_HEADER_VARS: frozenset[str] = frozenset({"AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"})
+
+
 @runtime_checkable
 class CredentialRequirement(Protocol):
     """The check one provider's credentials must pass to be considered ready.
@@ -166,6 +170,23 @@ class ProviderCredentials:
             if isinstance(req, ApiKeyRequirement)
         }
 
+    def header_carried_env_vars(self) -> frozenset[str]:
+        """Return the ``keys.env`` names whose values travel as HTTP header content.
+
+        Every API-key requirement's variable, plus the SigV4 access key id
+        (inside the ``Authorization`` header) and the session token
+        (``X-Amz-Security-Token``). Derived from the requirement map, so a new
+        API-key provider is covered the moment it is registered. The AWS secret
+        key signs requests but is never sent; the profile, region, and provider
+        name are settings, not header values.
+        """
+        api_keys = (
+            req.env_var
+            for req in self._requirements.values()
+            if isinstance(req, ApiKeyRequirement)
+        )
+        return frozenset(api_keys) | _AWS_HEADER_VARS
+
     def preferred(self) -> str | None:
         """Return the provider a fresh repo should adopt, or ``None`` if none.
 
@@ -205,30 +226,18 @@ def _default_requirements() -> dict[str, CredentialRequirement]:
     }
 
 
-def _api_key_env_vars() -> frozenset[str]:
-    """Return every env var an :class:`ApiKeyRequirement` in the default map reads."""
-    return frozenset(
-        req.env_var
-        for req in _default_requirements().values()
-        if isinstance(req, ApiKeyRequirement)
-    )
-
-
 # The names ``vox daemon install`` may snapshot into ``keys.env`` and voxd
 # loads at startup. Derived from the same requirement dispatch that answers
 # the gate and the status probe, so ``keys.env`` cannot list a variable
-# no requirement reads or omit one that does. AWS variables are enumerated
-# separately (:class:`AwsRequirement` consults the whole chain rather than
-# one variable, so the write-side has to know the full set boto3 can pick
-# up). ``TTS_PROVIDER`` remains an input to :meth:`ProviderCredentials.preferred`
-# per the operator's D2 ruling -- it can propose, never override at run time.
-PROVIDER_KEY_NAMES: frozenset[str] = _api_key_env_vars() | frozenset(
-    {
-        "AWS_PROFILE",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_DEFAULT_REGION",
-        "TTS_PROVIDER",
-    }
-)
+# no requirement reads or omit one that does: every header-carried value
+# (the API keys plus the AWS access key id and session token), then the rest
+# of the AWS chain boto3 can pick up (:class:`AwsRequirement` consults the
+# whole chain rather than one variable). ``TTS_PROVIDER`` is an input to
+# :meth:`ProviderCredentials.preferred` -- it can propose, never override at
+# run time.
+PROVIDER_KEY_NAMES: frozenset[str] = ProviderCredentials().header_carried_env_vars() | {
+    "AWS_PROFILE",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_DEFAULT_REGION",
+    "TTS_PROVIDER",
+}

@@ -297,6 +297,47 @@ def test_write_keys_env_refuses_value_no_header_can_carry(
     assert all(bad_value.strip() not in m for m in messages)
 
 
+def test_write_keys_env_lines_are_sorted_after_the_header(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """The body is one ``key=value`` line per key, sorted by key name."""
+    keys_path = tmp_path / "keys.env"
+    writer.write({"TTS_PROVIDER": "say", "AWS_PROFILE": "dev"}, keys_path)
+    lines = keys_path.read_text().splitlines()
+    data = [line for line in lines if line and not line.startswith("#")]
+    assert data == ["AWS_PROFILE=dev", "TTS_PROVIDER=say"]
+
+
+def test_write_keys_env_starts_with_the_header(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """The file opens with the explanatory header comment."""
+    keys_path = tmp_path / "keys.env"
+    writer.write({"TTS_PROVIDER": "say"}, keys_path)
+    assert keys_path.read_text().startswith("# vox provider keys")
+
+
+def test_write_keys_env_ends_with_a_newline(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """The last line is newline-terminated, as POSIX text files are."""
+    keys_path = tmp_path / "keys.env"
+    writer.write({"TTS_PROVIDER": "say"}, keys_path)
+    assert keys_path.read_text().endswith("=say\n")
+
+
+def test_write_keys_env_drops_a_stored_empty_line(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """A ``KEY=`` line already in the file is not rewritten."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("AWS_PROFILE=\nTTS_PROVIDER=say\n")
+    writer.write({}, keys_path)
+    content = keys_path.read_text()
+    assert "AWS_PROFILE" not in content
+    assert "TTS_PROVIDER=say" in content
+
+
 def test_write_keys_env_no_sudo_required_note(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:

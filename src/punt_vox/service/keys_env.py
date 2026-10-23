@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Self
 
 from punt_vox.atomic_file import AtomicFile
-from punt_vox.keys import PROVIDER_KEY_NAMES, parse_keys_env
+from punt_vox.keys import HEADER_CARRIED_KEY_NAMES, PROVIDER_KEY_NAMES, parse_keys_env
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +16,15 @@ _HEADER = (
     "# Written by: vox daemon install\n"
     "# Edit with your normal editor — no sudo required.\n\n"
 )
-# Values sent as HTTP header content (both API keys, the SigV4 access key id,
-# X-Amz-Security-Token) must be printable non-space ASCII, 0x21-0x7E, which also
-# rejects a pasted smart quote. The AWS secret key never goes on the wire, so it
-# and plain settings (profile, region, provider) get the line-break check alone.
+# Values sent as HTTP header content (HEADER_CARRIED_KEY_NAMES) must be
+# printable non-space ASCII, 0x21-0x7E, which also rejects a pasted smart quote.
+# The AWS secret key only signs and never goes on the wire. The region does reach
+# the wire, as part of the endpoint host name, but botocore validates it against
+# its own host-label pattern before building a request, so it, the secret key,
+# and the plain settings (profile, provider) get the line-break check alone.
 _HEADER_SAFE = frozenset(map(chr, range(0x21, 0x7F)))
 _CONTROL_CHARS = frozenset("\x00\n\r")
-_HEADER_CARRIED: frozenset[str] = frozenset(
-    {"ELEVENLABS_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"}
-)
-_VALUE_CHECK = dict.fromkeys(_HEADER_CARRIED, _HEADER_SAFE.issuperset)
+_VALUE_CHECK = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, _HEADER_SAFE.issuperset)
 _KEPT = "Ignoring empty %s; keeping its keys.env value (edit the file to remove it)"
 _REFUSED = "Refusing to write %s: value contains a character no HTTP header may carry"
 _CONTROL = "Refusing to write %s: value contains control characters"
@@ -114,7 +113,7 @@ class KeysEnvWriter:
 
     def _warn_refused(self, key: str) -> None:
         """Log, by name only, that *key* was refused; a stored value is kept."""
-        logger.warning(_REFUSED if key in _HEADER_CARRIED else _CONTROL, key)
+        logger.warning(_REFUSED if key in HEADER_CARRIED_KEY_NAMES else _CONTROL, key)
 
     def _render(self, merged: dict[str, str]) -> str:
         """Return the file body: sorted ``key=value`` lines with a trailing newline."""

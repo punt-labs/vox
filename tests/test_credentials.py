@@ -316,6 +316,34 @@ class TestProviderKeyNames:
         assert "TTS_MODEL" not in PROVIDER_KEY_NAMES
 
 
+class TestHeaderCarriedEnvVars:
+    """The values sent as HTTP header content, derived from the requirement map."""
+
+    def test_includes_every_api_key_requirement(self) -> None:
+        creds = ProviderCredentials()
+        api_keys = set(creds.api_key_env_vars().values())
+        assert api_keys <= creds.header_carried_env_vars()
+
+    def test_is_api_keys_plus_aws_header_values(self) -> None:
+        creds = ProviderCredentials()
+        api_keys = frozenset(creds.api_key_env_vars().values())
+        aws_headers = {"AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"}
+        assert api_keys | aws_headers == creds.header_carried_env_vars()
+
+    def test_follows_a_new_api_key_requirement(self) -> None:
+        creds = ProviderCredentials({"acme": ApiKeyRequirement("ACME_API_KEY")})
+        assert "ACME_API_KEY" in creds.header_carried_env_vars()
+
+    def test_is_a_subset_of_the_keys_env_names(self) -> None:
+        assert ProviderCredentials().header_carried_env_vars() <= PROVIDER_KEY_NAMES
+
+    @pytest.mark.parametrize(
+        "name", ["AWS_SECRET_ACCESS_KEY", "AWS_PROFILE", "AWS_DEFAULT_REGION"]
+    )
+    def test_excludes_values_never_sent_as_a_header(self, name: str) -> None:
+        assert name not in ProviderCredentials().header_carried_env_vars()
+
+
 # --- Helper doubles ---------------------------------------------------------
 
 
