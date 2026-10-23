@@ -226,8 +226,9 @@ def test_write_keys_env_returns_every_skip_by_name_and_reason(
     )
     unkept = "nothing stored, so its provider has no credential"
     refused = "refused: a space at position 3 (no HTTP header may carry it)"
+    no_profile = "not written; boto3 uses the default profile"
     assert [str(n) for n in report.notices] == [
-        "AWS_PROFILE: empty in the environment; not written; vox uses its default",
+        f"AWS_PROFILE: empty in the environment; {no_profile}",
         "ELEVENLABS_API_KEY: empty in the environment; kept the stored value",
         f"OPENAI_API_KEY: {refused}; {unkept}",
     ]
@@ -369,6 +370,27 @@ def test_write_keys_env_refuses_an_unreadable_file_and_keeps_it(
     assert str(keys_path) in message
     assert "Permission denied" in message
     assert keys_path.read_text() == "OPENAI_API_KEY=sk-stored\n"
+
+
+def test_write_keys_env_names_an_errno_less_read_failure_by_type(
+    writer: KeysEnvWriter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ``OSError`` with no ``strerror`` reports its type, never ``(None)``."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("OPENAI_API_KEY=sk-stored\n")
+
+    def refuse(*_args: object, **_kwargs: object) -> str:
+        msg = "sk-leaked-detail"
+        raise OSError(msg)
+
+    monkeypatch.setattr(Path, "read_text", refuse)
+    with pytest.raises(SystemExit) as excinfo:
+        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+
+    message = str(excinfo.value)
+    assert "cannot be read (OSError)" in message
+    assert "None" not in message
+    assert "sk-leaked-detail" not in message
 
 
 def test_write_keys_env_never_exposes_world_readable_state(

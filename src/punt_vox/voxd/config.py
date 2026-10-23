@@ -1,6 +1,6 @@
 """Daemon configuration: paths, keys, auth tokens, port files (logging is elsewhere)."""
 # pyright: reportUnusedFunction=false
-# All functions here are re-exported via __init__.py and used by _monolith.py.
+# The private helpers here are imported by daemon.py and the tests.
 
 from __future__ import annotations
 
@@ -192,7 +192,8 @@ class DaemonConfig:
             logger.warning(_KEYS_UNREADABLE, keys_file, "not valid UTF-8")
             return frozenset()
         except OSError as exc:
-            logger.warning(_KEYS_UNREADABLE, keys_file, exc.strerror)
+            reason = exc.strerror or type(exc).__name__  # errno-less: no strerror
+            logger.warning(_KEYS_UNREADABLE, keys_file, reason)
             return frozenset()
         stored = parse_keys_env(text)
         loaded = {

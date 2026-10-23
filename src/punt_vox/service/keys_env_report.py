@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import final
 
-# What a skipped key with nothing stored means. A credential leaves its provider
-# unusable; a setting just falls back to vox's own default.
+# A skipped credential leaves its provider unusable; a setting has a stand-in.
 _NO_CREDENTIAL = "nothing stored, so its provider has no credential"
-_UNKEPT: dict[str, str] = dict.fromkeys(
-    ("TTS_PROVIDER", "AWS_DEFAULT_REGION", "AWS_PROFILE"),
-    "not written; vox uses its default",
-)
+_STAND_INS: dict[str, str] = {
+    "TTS_PROVIDER": "vox picks the first ready provider",
+    "AWS_DEFAULT_REGION": "boto3 falls back to AWS_REGION or ~/.aws/config",
+    "AWS_PROFILE": "boto3 uses the default profile",
+}
+_UNKEPT = {key: f"not written; {stand_in}" for key, stand_in in _STAND_INS.items()}
 
 
 @final

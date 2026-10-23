@@ -73,7 +73,7 @@ class ValuePolicy:
         ``str.isprintable`` is false for every line break ``str.splitlines``
         honours, so a printable value cannot end its own line.
         """
-        return cls(str.isprintable, "it could start a new keys.env line")
+        return cls(str.isprintable, "keys.env values must be printable")
 
     def refusal(self, value: str) -> Refusal | None:
         """Return why *value* is refused, or ``None`` when it may be written.

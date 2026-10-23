@@ -24,12 +24,29 @@ def test_unkept_notice_says_the_provider_has_no_credential() -> None:
     )
 
 
-@pytest.mark.parametrize("key", ["TTS_PROVIDER", "AWS_DEFAULT_REGION", "AWS_PROFILE"])
-def test_unkept_setting_says_vox_uses_its_default(key: str) -> None:
+@pytest.mark.parametrize(
+    ("key", "fallback"),
+    [
+        pytest.param(
+            "TTS_PROVIDER",
+            "not written; vox picks the first ready provider",
+            id="provider",
+        ),
+        pytest.param(
+            "AWS_DEFAULT_REGION",
+            "not written; boto3 falls back to AWS_REGION or ~/.aws/config",
+            id="region",
+        ),
+        pytest.param(
+            "AWS_PROFILE",
+            "not written; boto3 uses the default profile",
+            id="profile",
+        ),
+    ],
+)
+def test_unkept_setting_names_what_takes_its_place(key: str, fallback: str) -> None:
     notice = KeyNotice(key, "empty in the environment", kept=False)
-    assert str(notice) == (
-        f"{key}: empty in the environment; not written; vox uses its default"
-    )
+    assert str(notice) == f"{key}: empty in the environment; {fallback}"
 
 
 @pytest.mark.parametrize(

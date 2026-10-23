@@ -51,7 +51,7 @@ def test_printable_refuses_line_breaks_and_controls(
     value: str, char_class: str
 ) -> None:
     refusal = ValuePolicy.printable().refusal(value)
-    assert refusal == Refusal(char_class, 2, "it could start a new keys.env line")
+    assert refusal == Refusal(char_class, 2, "keys.env values must be printable")
 
 
 def test_refusal_renders_class_position_and_rule() -> None:

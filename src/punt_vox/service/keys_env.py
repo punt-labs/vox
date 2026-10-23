@@ -86,4 +86,4 @@ class KeysEnvWriter:
         """Describe *exc* without its text: a decode error's text quotes the bytes."""
         if isinstance(exc, UnicodeDecodeError):
             return "is not valid UTF-8 text"
-        return f"cannot be read ({exc.strerror})"
+        return f"cannot be read ({exc.strerror or type(exc).__name__})"
