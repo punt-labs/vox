@@ -17,6 +17,7 @@ from punt_vox.providers.transport_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -217,14 +218,23 @@ class TestSubscriptionCheck:
         assert check.passed
         assert "creator" in check.message
 
-    def test_api_error_is_a_failed_line(self) -> None:
+    def test_rejected_key_is_a_failed_line(self) -> None:
         sdk = MagicMock()
         sdk.user.subscription.get.side_effect = ApiError(status_code=401)
 
         check = ElevenLabsClient(sdk=sdk).subscription_check()
 
         assert not check.passed
-        assert "HTTP 401" in check.message
+        assert check.message == "ElevenLabs subscription: API key rejected (HTTP 401)"
+
+    def test_api_error_is_a_failed_line(self) -> None:
+        sdk = MagicMock()
+        sdk.user.subscription.get.side_effect = ApiError(status_code=500)
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert not check.passed
+        assert "HTTP 500" in check.message
 
     def test_transport_error_is_a_failed_line(
         self, monkeypatch: pytest.MonkeyPatch
@@ -324,6 +334,18 @@ class TestCall:
 
         assert info.value.__cause__ is fault
 
+    def test_rejected_key_is_a_provider_auth_error(self) -> None:
+        """Every ElevenLabs call site -- TTS, voices, STT, music, health -- gets
+        the 401 translated here, once."""
+        cause = ApiError(status_code=401)
+
+        with pytest.raises(ProviderAuthError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        assert info.value.provider_name == "elevenlabs"
+        assert info.value.status_code == 401
+        assert info.value.__cause__ is cause
+
     def test_api_error_passes_through(self) -> None:
         """The server answered: the provider, not the client, interprets it."""
         with pytest.raises(ApiError):
@@ -354,5 +376,21 @@ class TestStreamTo:
 
         with pytest.raises(ProviderTransportError):
             ElevenLabsClient(sdk=MagicMock()).stream_to(tmp_path / "o.mp3", _dropping)
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_rejected_key_while_draining_is_a_provider_auth_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A lazy stream sends its request on the first pull; the 401 lands there."""
+
+        def _rejected(_sdk: object) -> Iterator[bytes]:
+            error = ApiError(status_code=401)
+            if error.status_code:  # always: the branch keeps this a generator
+                raise error
+            yield b""  # pragma: no cover
+
+        with pytest.raises(ProviderAuthError):
+            ElevenLabsClient(sdk=MagicMock()).stream_to(tmp_path / "o.mp3", _rejected)
 
         assert list(tmp_path.iterdir()) == []

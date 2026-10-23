@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Final, Self, final
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.transport_faults import (
+    ProviderConfigError,
+    ProviderTransportError,
+)
+from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -35,9 +40,17 @@ _PLAYLIST_MAX_MS: Final = 210_000
 # HTTP statuses that mean "retrying will not help" (bad prompt, ToS, auth).
 _PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
 
-# Every provider failure ``produce`` maps; anything else is a bug and escapes.
-# OSError already covers TimeoutError and ConnectionError (its subclasses).
-_GENERATION_ERRORS: Final = (ApiError, CaBundleError, OSError)
+# Failures retrying with the same input cannot fix: a rejected key, or a host
+# whose CA certificates, proxy, or base URL stop every request the same way.
+_PERMANENT_ERRORS: Final = (ProviderAuthError, CaBundleError, ProviderConfigError)
+
+# The provider's transport faults -- worth a retry. Not every OSError: a local
+# PermissionError or a full disk is no network blip, and retrying it as one
+# would hide it; it escapes to the fill loop's unexpected path instead.
+_TRANSIENT_ERRORS: Final = (ProviderTransportError, TimeoutError)
+
+# Every provider failure ``produce`` maps; anything else escapes unclassified.
+_GENERATION_ERRORS: Final = (ApiError, *_PERMANENT_ERRORS, *_TRANSIENT_ERRORS)
 
 
 @final
@@ -119,10 +132,10 @@ class MusicProducer:
     def _is_permanent(exc: Exception) -> bool:
         """Return whether retrying ``exc`` with the same input cannot succeed.
 
-        A permanent HTTP status (bad prompt, ToS, auth) is permanent; so is an
-        unloadable CA bundle -- configuration, which fails the same way on every
-        retry. Rate limits, 5xx, and network faults are not.
+        A permanent HTTP status (bad prompt, ToS, auth) is permanent; so is a
+        rejected key or a host misconfiguration, which fails the same way on
+        every retry. Rate limits, 5xx, and network faults are not.
         """
         if isinstance(exc, ApiError):
             return exc.status_code in _PERMANENT_STATUS
-        return isinstance(exc, CaBundleError)
+        return isinstance(exc, _PERMANENT_ERRORS)

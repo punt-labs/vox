@@ -26,7 +26,6 @@ import math
 from io import BytesIO
 from typing import TYPE_CHECKING, Self, final
 
-from elevenlabs.core import ApiError
 from elevenlabs.types import (
     SpeechToTextChunkResponseModel,
     SpeechToTextWordResponseModel,
@@ -34,7 +33,6 @@ from elevenlabs.types import (
 
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 
@@ -110,22 +108,18 @@ class ElevenLabsSTTProvider:
         if not pcm:
             return TranscriptEvent(text="", confidence=0.0, is_final=True)
 
-        try:
-            # On a worker thread: the SDK's first build reads the CA bundle and
-            # convert() is a blocking round trip; either would stall the call's
-            # single event loop -- audio capture and control requests with it.
-            response = await asyncio.to_thread(
-                self._client.call,
-                lambda sdk: sdk.speech_to_text.convert(
-                    model_id=self._model,
-                    file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
-                    file_format=_FILE_FORMAT,
-                ),
-            )
-        except ApiError as exc:
-            if exc.status_code == 401:
-                raise ProviderAuthError("elevenlabs", 401) from exc
-            raise
+        # On a worker thread: the SDK's first build reads the CA bundle and
+        # convert() is a blocking round trip; either would stall the call's
+        # single event loop -- audio capture and control requests with it. A
+        # rejected key leaves the client as ProviderAuthError.
+        response = await asyncio.to_thread(
+            self._client.call,
+            lambda sdk: sdk.speech_to_text.convert(
+                model_id=self._model,
+                file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
+                file_format=_FILE_FORMAT,
+            ),
+        )
 
         # The multichannel and webhook response variants of the SDK's return
         # union don't apply here -- this call passes neither

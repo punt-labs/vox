@@ -21,6 +21,7 @@ from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.stream_file import StreamFile
 from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import HealthCheck
+from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -35,13 +36,19 @@ _API_KEY_VAR = "ELEVENLABS_API_KEY"
 class ElevenLabsClient:
     """Own one ElevenLabs SDK client: build it on first use, report its health.
 
-    The key is fixed when this object is constructed, not when the SDK is
-    built. voxd swaps ``ELEVENLABS_API_KEY`` in the environment for the length
-    of a request that carries its own key; a long-lived client whose first
-    build landed inside that window would keep the caller's key for every
-    later use. Reading the key at construction -- after voxd has loaded its
-    keys file, and outside any request -- means a client only ever holds the
-    key its owner was built with.
+    The key is the one in effect when this client's owner was constructed, not
+    when the SDK is first built. voxd swaps ``ELEVENLABS_API_KEY`` in the
+    environment for the length of a request that carries its own key: a
+    provider built inside that window is built for that request and holds that
+    caller's key, while the music provider, built at boot, holds the daemon's.
+    Reading the key at the first SDK build instead would let a long-lived
+    client's build land inside some request's window and keep that caller's
+    key for every later use.
+
+    A 401 is translated here, once, for every call site that goes through
+    :meth:`call` -- text-to-speech, the voice list, speech-to-text, music, and
+    the subscription check -- into the :class:`ProviderAuthError` the wire
+    sends the caller verbatim.
     """
 
     __slots__ = ("_api_key", "_sdk")
@@ -72,10 +79,16 @@ class ElevenLabsClient:
         httpx's errors escape raw; they leave here translated by
         :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
         ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
-        ``ProviderTransportError`` (transient). ``ApiError`` -- the server
-        answered -- passes through for the provider to interpret.
+        ``ProviderTransportError`` (transient). A 401 -- the server rejected the
+        key -- becomes ``ProviderAuthError``; any other ``ApiError`` passes
+        through for the provider to interpret.
         """
-        return self._sdk.call(request)
+        try:
+            return self._sdk.call(request)
+        except ApiError as exc:
+            if exc.status_code == 401:
+                raise ProviderAuthError("elevenlabs", 401) from exc
+            raise
 
     def stream_to(
         self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
@@ -86,7 +99,7 @@ class ElevenLabsClient:
         arrives, only as chunks are pulled -- so the whole drain runs inside the
         translation, not just the call that returns the generator.
         """
-        return self._sdk.call(lambda sdk: StreamFile(target).write(open_stream(sdk)))
+        return self.call(lambda sdk: StreamFile(target).write(open_stream(sdk)))
 
     def key_check(self) -> HealthCheck:
         """Report whether this client has an API key."""
@@ -100,7 +113,9 @@ class ElevenLabsClient:
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
         try:
-            sub = self._sdk.call(lambda sdk: sdk.user.subscription.get())
+            sub = self.call(lambda sdk: sdk.user.subscription.get())
+        except ProviderAuthError as exc:
+            reason = f"API key rejected (HTTP {exc.status_code})"
         except ApiError as exc:
             reason = self._api_error_message(exc)
         except TRANSPORT_ERRORS as exc:

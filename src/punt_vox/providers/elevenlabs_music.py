@@ -113,8 +113,11 @@ class ElevenLabsMusicProvider(MusicProvider):
             The path to the generated file.
 
         Raises:
-            ApiError: On ElevenLabs API failure.
-            CaBundleError: When ``SSL_CERT_FILE`` names a CA bundle TLS cannot use.
+            ProviderAuthError: When ElevenLabs rejects the API key (401).
+            ApiError: On any other ElevenLabs API failure.
+            CaBundleError: When the CA certificates in effect do not trust
+                ElevenLabs, or ``SSL_CERT_FILE`` cannot be loaded.
+            ProviderConfigError: When httpx refuses to send the request.
             ProviderTransportError: When the request fails in transport.
             RuntimeError: When the API returns no audio data.
         """

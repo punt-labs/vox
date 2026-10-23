@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 from typing import Self, final
 
@@ -10,6 +11,12 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from mutagen.id3 import ID3
 
+from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.transport_faults import (
+    ProviderConfigError,
+    ProviderTransportError,
+)
+from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.part_tags import PartTags
@@ -128,3 +135,44 @@ class TestMusicProducer:
         producer = _producer(TimeoutError("slow"))
         with pytest.raises(ProducerTransientError):
             await producer.produce(_spec(), tmp_path / "1.mp3")
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ProviderAuthError("elevenlabs", 401),
+            CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded"),
+            ProviderConfigError("provider request cannot be sent (ProxyError)"),
+        ],
+        ids=["rejected-key", "ca-bundle", "config"],
+    )
+    async def test_configuration_failure_is_bad_input(
+        self, tmp_path: Path, error: Exception
+    ) -> None:
+        """A rejected key or a host misconfiguration fails every retry the same."""
+        producer = _producer(error)
+        with pytest.raises(ProducerBadInputError):
+            await producer.produce(_spec(), tmp_path / "1.mp3")
+
+    async def test_provider_transport_error_is_transient(self, tmp_path: Path) -> None:
+        producer = _producer(ProviderTransportError("provider unreachable"))
+        with pytest.raises(ProducerTransientError):
+            await producer.produce(_spec(), tmp_path / "1.mp3")
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            PermissionError(errno.EACCES, "Permission denied"),
+            OSError(errno.ENOSPC, "No space left on device"),
+        ],
+        ids=["permission", "disk-full"],
+    )
+    async def test_local_filesystem_error_escapes_unclassified(
+        self, tmp_path: Path, error: OSError
+    ) -> None:
+        """A local disk fault is not the provider's transport: it must not be
+        retried as transient, so it escapes to the filler's unexpected path."""
+        producer = _producer(error)
+        with pytest.raises(OSError) as info:
+            await producer.produce(_spec(), tmp_path / "1.mp3")
+
+        assert info.value is error

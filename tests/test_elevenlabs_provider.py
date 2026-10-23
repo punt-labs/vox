@@ -80,6 +80,21 @@ class TestElevenLabsProviderResolveVoice:
         assert isinstance(exc_info.value.available, list)
         assert len(exc_info.value.available) > 0
 
+    def test_rejected_key_on_voice_lookup_is_provider_auth_error(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        """The voice fetch is the first API call a synthesis makes; a revoked key
+        must cross as F3 there too, not as a raw ApiError laundered to a fault."""
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        mock_elevenlabs_client.voices.get_all.side_effect = ApiError(status_code=401)
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.resolve_voice("matilda")
+
+        assert exc_info.value.status_code == 401
+
 
 class TestElevenLabsProviderSynthesize:
     def test_synthesize_creates_file(

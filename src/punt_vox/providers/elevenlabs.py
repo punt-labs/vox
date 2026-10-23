@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from elevenlabs.types import VoiceSettings
 
 from punt_vox.normalize import strip_vibe_tags
@@ -22,7 +21,6 @@ from punt_vox.types import (
     SynthesisResult,
     TTSProvider,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
     from elevenlabs.client import ElevenLabs
@@ -293,16 +291,13 @@ class ElevenLabsProvider(TTSProvider):
         voice_id: str,
         request: SynthesisRequest,
     ) -> None:
-        """Synthesize a single chunk to a file, translating what the SDK raises.
+        """Synthesize a single chunk to a file.
 
-        An ``ApiError`` with a 401 status becomes a :class:`ProviderAuthError`,
-        which ``WireReply.reject_or_fault`` routes verbatim to the client: the
-        key was present but rejected, and the caller can act on that. Other
-        statuses (429, 500, 400) are upstream faults, not credential problems,
-        and re-raise unchanged for the opaque fault path. A transport failure
-        becomes a transient :class:`ProviderTransportError`, or a
-        :class:`CaBundleError` naming ``SSL_CERT_FILE`` when that bundle is
-        why TLS verification failed.
+        :class:`ElevenLabsClient` translates what the SDK raises: a 401 becomes
+        the :class:`ProviderAuthError` the wire sends the caller verbatim, a
+        transport failure one of the errors ``TransportFaults`` answers. Other
+        statuses (429, 500, 400) are upstream faults and pass through for the
+        opaque fault path.
         """
         voice_settings = self._build_voice_settings(request)
 
@@ -315,14 +310,9 @@ class ElevenLabsProvider(TTSProvider):
         if voice_settings is not None:
             kwargs["voice_settings"] = voice_settings
 
-        try:
-            self._client.stream_to(
-                output_path, lambda sdk: sdk.text_to_speech.stream(**kwargs)
-            )
-        except ApiError as exc:
-            if exc.status_code == 401:
-                raise ProviderAuthError("elevenlabs", 401) from exc
-            raise
+        self._client.stream_to(
+            output_path, lambda sdk: sdk.text_to_speech.stream(**kwargs)
+        )
 
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",
