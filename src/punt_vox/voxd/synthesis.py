@@ -170,28 +170,18 @@ class SynthesisPipeline:
         return False
 
     @staticmethod
-    def _build_audio_request(
-        normalized_text: str,
-        voice: str | None,
-        language: str | None,
-        rate: int | None,
-        stability: float | None,
-        similarity: float | None,
-        style: float | None,
-        *,
-        speaker_boost: bool | None,
-        provider_id: str,
-    ) -> AudioRequest:
-        """Build an AudioRequest from parsed message fields."""
+    def _build_audio_request(normalized_text: str, spec: SynthesisSpec) -> AudioRequest:
+        """Build the provider's AudioRequest: *spec*'s fields over normalized text."""
+        provider_id = spec.provider or ""
         return AudioRequest(
             text=normalized_text,
-            voice=voice,
-            language=language,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
+            voice=spec.voice,
+            language=spec.language,
+            rate=spec.rate,
+            stability=spec.stability,
+            similarity=spec.similarity,
+            style=spec.style,
+            speaker_boost=spec.speaker_boost,
             provider=AudioProviderId(provider_id)
             if provider_id in AudioProviderId.__members__
             else None,
@@ -275,11 +265,9 @@ class SynthesisPipeline:
         cache on lookup and store (billing isolation); the anonymous path
         uses the MD5-keyed cache. See ``punt_vox.cache``.
         """
-        voice = spec.voice
         provider_name = spec.provider or ""
         model = spec.model
         api_key = spec.api_key
-        resolved_voice = voice or ""
 
         # apply_vibe_for_synthesis takes RAW text: it normalizes the body
         # after splitting off bracket tags that normalization would eat.
@@ -289,7 +277,7 @@ class SynthesisPipeline:
 
         # Cache lookup on the anonymous path only; per-call api_key scopes
         # bypass it (billing isolation + CodeQL sensitive-hash avoidance).
-        key = CacheKey(normalized, resolved_voice, provider_name)
+        key = CacheKey(normalized, spec.voice or "", provider_name)
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
@@ -308,24 +296,10 @@ class SynthesisPipeline:
         async with self._env_lock:
             with _api_key_context(api_key, provider_name):
                 provider = get_provider(provider_name, model=model)
-                request = self._build_audio_request(
-                    normalized,
-                    voice,
-                    spec.language,
-                    spec.rate,
-                    spec.stability,
-                    spec.similarity,
-                    spec.style,
-                    speaker_boost=spec.speaker_boost,
-                    provider_id=provider_name,
+                request = self._build_audio_request(normalized, spec)
+                output_path = await self._synthesize_fresh(
+                    TTSClient(provider), request, spec, len(text)
                 )
-                client = TTSClient(provider)
-
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                    output_path = Path(tmp.name)
-
-                await asyncio.to_thread(client.synthesize, request, output_path)
-                self._require_nonempty_output(output_path, spec, len(text))
 
                 # Anonymous path only; log the real cache_put path, never a
                 # CACHE_DIR snapshot and never file= when the bytes weren't cached
@@ -339,12 +313,39 @@ class SynthesisPipeline:
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
 
+    @classmethod
+    async def _synthesize_fresh(
+        cls,
+        client: TTSClient,
+        request: AudioRequest,
+        spec: SynthesisSpec,
+        chars_in: int,
+    ) -> Path:
+        """Synthesize *request* into a new temp file and return its path.
+
+        The file is created before the provider runs, so any failure -- the
+        provider raising, or the output coming back empty -- removes it before
+        the error propagates; otherwise every failed request strands a file in
+        the temp directory.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            output_path = Path(tmp.name)
+        try:
+            await asyncio.to_thread(client.synthesize, request, output_path)
+            cls._require_nonempty_output(output_path, spec, chars_in)
+        except BaseException:
+            # BaseException: a cancelled request must not strand the file either.
+            output_path.unlink(missing_ok=True)
+            raise
+        return output_path
+
+    @staticmethod
     def _require_nonempty_output(
-        self, output_path: Path, spec: SynthesisSpec, chars_in: int
+        output_path: Path, spec: SynthesisSpec, chars_in: int
     ) -> None:
-        """Delete and reject a missing or empty synthesis output; caching it would
-        poison every identical request, so it fails fast. The caller logs the
-        exception (traceback + fields) -- no separate log here.
+        """Reject a missing or empty synthesis output; caching it would poison
+        every identical request, so it fails fast. The caller removes the file
+        and logs the exception (traceback + fields) -- no separate log here.
         """
         try:
             synth_size = output_path.stat().st_size
@@ -352,7 +353,6 @@ class SynthesisPipeline:
             synth_size = -1
         if synth_size > 0:
             return
-        output_path.unlink(missing_ok=True)
         msg = (
             f"synthesis produced missing or empty output file: {output_path} "
             f"(provider={spec.provider or ''}, voice={spec.voice or ''}, "
@@ -380,7 +380,6 @@ class SynthesisPipeline:
         injected. Local providers (espeak, say) take a fast path with no
         cross-request blocking. Audio playback never holds the lock.
         """
-        voice = spec.voice
         provider_name = spec.provider or ""
         model = spec.model
 
@@ -391,17 +390,7 @@ class SynthesisPipeline:
             text, spec.vibe_tags, provider_name, model
         )
 
-        request = self._build_audio_request(
-            normalized,
-            voice,
-            spec.language,
-            spec.rate,
-            spec.stability,
-            spec.similarity,
-            spec.style,
-            speaker_boost=spec.speaker_boost,
-            provider_id=provider_name,
-        )
+        request = self._build_audio_request(normalized, spec)
 
         def _factory() -> TTSProvider:
             return get_provider(provider_name, model=model)
@@ -436,7 +425,7 @@ class SynthesisPipeline:
             logger.error(
                 "Direct-play FAILED: provider=%r voice=%r elapsed=%.3fs rc=%d",
                 provider_name,
-                voice or "",
+                spec.voice or "",
                 elapsed,
                 rc,
             )

@@ -787,6 +787,39 @@ class TestSynthesizeFailFast:
         assert "path" in captured_temp
         assert not captured_temp["path"].exists()
 
+    @pytest.mark.parametrize(
+        "error",
+        [ValueError("provider rejected"), ConnectionError("unreachable")],
+        ids=["caller-error", "transport-error"],
+    )
+    def test_failed_synthesis_leaves_no_temp_file(
+        self,
+        error: Exception,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A provider that raises after the temp file exists must not strand it."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            output_path.write_bytes(b"partial")
+            raise error
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            with pytest.raises(type(error)):
+                asyncio.run(pipeline.synthesize_to_file("hello", _default_spec()))
+
+        assert list(tmp_path.iterdir()) == []
+
 
 class TestSynthesizeCacheObservability:
     """synthesize_to_file reports cache hit/miss via SynthesisOutcome.cached."""
