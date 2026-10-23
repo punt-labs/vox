@@ -12,18 +12,69 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # This job now runs two pytest invocations in sequence (default tier,
-    # then slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long
-    # as It Does"); 30m gives headroom for both rather than the 20m ceiling
-    # sized for the single unmarked run that preceded this taxonomy.
-    timeout-minutes: 30
+    # 15m = the apt step's 10m ceiling + the rest of the job. Healthy runs
+    # take 3-5 min end to end (October 2026: 182-282 s), of which the two
+    # pytest invocations (default tier, then slow/subprocess -- see
+    # TESTING.md, "Why the Suite Takes as Long as It Does") are ~3.5 min.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      # ffmpeg (pydub's codec backend) and espeak-ng (the Linux provider).
+      # Defined once here and aliased into packaging-e2e, so both jobs install
+      # the same set the same way.
+      #
+      # Why bounded and retried: a healthy run of this step takes 16-62 s,
+      # but in 13 of 78 job runs (October 2026) azure.archive.ubuntu.com
+      # served the ~100 MB of .debs at ~40 KB/s, and the step either crawled
+      # to 2-19 min or was killed by the job timeout at 20/30 min. The
+      # index fetch (`apt-get update`) stayed fast; the package download is
+      # what stalls, and it is per-runner, not global -- the other job in the
+      # same run usually finished normally.
+      #
+      # The download (network, safe to kill) is split from the install
+      # (dpkg, local, never killed mid-unpack, so a retry cannot hit an
+      # interrupted dpkg database). Each download attempt is capped at 60 s
+      # (update) + 90 s (fetch); apt keeps finished and partial .debs in
+      # /var/cache/apt/archives, so a retry resumes rather than restarts.
+      # Three attempts with 10 s / 20 s backoff bound the step at ~8 min
+      # worst case; timeout-minutes is the backstop for the dpkg phase.
+      #
+      # --no-install-recommends drops ~31 MB of the ~99 MB download
+      # (pocketsphinx-en-us at 27 MB, plus VA-API/VDPAU GPU drivers) that
+      # neither ffmpeg's audio path nor espeak-ng uses.
+      - &apt-install
+        name: Install ffmpeg and espeak-ng (bounded, retried)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          packages=(ffmpeg espeak-ng)
+          # Idle-connection timeout 30 s (apt default 120 s); per-item retries.
+          apt_opts=(-o Acquire::http::Timeout=30 -o Acquire::Retries=3)
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            echo "apt download attempt ${attempt}/${attempts}"
+            rc=0
+            sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              sudo timeout -k 10 90 apt-get "${apt_opts[@]}" install -y \
+                --no-install-recommends --download-only "${packages[@]}" || rc=$?
+            fi
+            if [ "$rc" -eq 0 ]; then
+              break
+            fi
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "::error::apt download failed after ${attempts} attempts (last exit ${rc}; 124 = timed out)"
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "::warning::apt download attempt ${attempt}/${attempts} failed (exit ${rc}; 124 = timed out); retrying in ${delay}s"
+            sleep "$delay"
+          done
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
       # slow + subprocess were folded into the unmarked default run before
@@ -43,16 +94,19 @@ jobs:
   # human-judged testing. This is installed-wheel packaging smoke.
   packaging-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 12m = the apt step's 10m ceiling + the rest of the job; healthy runs
+    # take under 1.5 min end to end (October 2026: 37-75 s).
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      # ffmpeg + espeak-ng match the unit job so `vox doctor` reports the same
-      # environment the packaged binary is expected to run against.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      # The same apt step as the unit job (YAML alias), so `vox doctor`
+      # reports the same environment the packaged binary is expected to run
+      # against.
+      - *apt-install
       - run: uv sync --frozen --all-extras
       # `make install` builds the wheel and does `uv tool install --force
       # dist/*.whl`; uv drops the console script in `$HOME/.local/bin` by
