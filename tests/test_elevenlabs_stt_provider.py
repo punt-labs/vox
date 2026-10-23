@@ -14,7 +14,7 @@ from elevenlabs.types import (
     SpeechToTextWordResponseModel,
 )
 
-from punt_vox.providers.elevenlabs_client import CaBundleError
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -278,4 +278,4 @@ class TestElevenLabsSTTProviderBadCaBundle:
                 pass
 
         assert "SSL_CERT_FILE" in str(info.value)
-        assert str(missing_ca) in str(info.value)
+        assert str(missing_ca) not in str(info.value)

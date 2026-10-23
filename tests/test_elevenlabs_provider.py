@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
     ElevenLabsProvider,
 )
-from punt_vox.providers.elevenlabs_client import CaBundleError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
@@ -592,14 +592,15 @@ class TestElevenLabsProviderBadCaBundle:
             provider.synthesize(request, tmp_output_dir / "out.mp3")
 
         assert "SSL_CERT_FILE" in str(info.value)
-        assert str(missing_ca) in str(info.value)
+        assert str(missing_ca) not in str(info.value)
 
     def test_check_health_reports_the_bundle(self, missing_ca: Path) -> None:
         key, subscription = ElevenLabsProvider().check_health()
 
         assert key.passed
         assert not subscription.passed
-        assert str(missing_ca) in subscription.message
+        assert "SSL_CERT_FILE" in subscription.message
+        assert str(missing_ca) not in subscription.message
 
 
 class TestElevenLabsProviderUnnamedVoice:

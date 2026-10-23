@@ -1403,6 +1403,19 @@
     "module_size": 136.0,
     "public_attr_violations": 0.0
   },
+  "src/punt_vox/providers/ca_bundle.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.75,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.5,
+    "module_size": 76.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/providers/chunked.py": {
     "avg_complexity": 2.0,
     "avg_params": 5.0,
@@ -1471,11 +1484,11 @@
   "src/punt_vox/providers/elevenlabs_client.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.57,
+    "avg_params": 0.33,
     "max_complexity": 5.0,
-    "avg_complexity": 2.57,
-    "module_size": 107.0,
-    "classes_per_module": 2.0,
+    "avg_complexity": 2.33,
+    "module_size": 83.0,
+    "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
@@ -1519,6 +1532,19 @@
     "method_ratio": 0.875,
     "module_size": 302.0,
     "public_attr_violations": 0.0
+  },
+  "src/punt_vox/providers/lazy_sdk.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.67,
+    "max_complexity": 3.0,
+    "avg_complexity": 2.0,
+    "module_size": 44.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/providers/local_play.py": {
     "avg_complexity": 2.5,
@@ -1571,6 +1597,19 @@
     "method_ratio": 0.923,
     "module_size": 257.0,
     "public_attr_violations": 0.0
+  },
+  "src/punt_vox/providers/transport_faults.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 4.0,
+    "module_size": 51.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/providers/voice_resolver.py": {
     "avg_complexity": 2.12,

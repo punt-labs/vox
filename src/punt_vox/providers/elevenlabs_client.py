@@ -1,17 +1,11 @@
 """The ElevenLabs SDK client every ElevenLabs provider shares, built on first use.
 
-Constructing the SDK client is not inert: it builds an httpx transport, and
-httpx loads ``SSL_CERT_FILE`` into a TLS context right then, not per request. A
-stale or wrong CA path therefore fails *construction* with a bare
-``FileNotFoundError`` that names neither the variable nor the path. Two rules
-follow, and this module is where both live:
-
-* **Build late.** A provider holds an :class:`ElevenLabsClient` and asks it for
-  the SDK only when it is about to call the API, so composing the daemon never
-  touches the TLS stack and a bad bundle cannot stop voxd from booting.
-* **Name the cause.** When the build fails while ``SSL_CERT_FILE`` is set, the
-  failure is re-raised as :class:`CaBundleError`, which carries the variable and
-  the path -- the two things the operator who set it needs to see.
+A provider holds an :class:`ElevenLabsClient` and asks it for the SDK only when
+it is about to call the API, so composing the daemon never touches the TLS
+stack and a bad ``SSL_CERT_FILE`` cannot stop voxd from booting. The deferral
+and the naming of a bad bundle live in
+:class:`~punt_vox.providers.lazy_sdk.LazySdk`; this class adds what is
+ElevenLabs-specific -- the key and the account's health.
 """
 
 from __future__ import annotations
@@ -19,33 +13,18 @@ from __future__ import annotations
 import os
 from typing import Self, cast, final
 
+import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 
+from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.transport_faults import TransportFaults
 from punt_vox.types import HealthCheck
 
-__all__ = ["CaBundleError", "ElevenLabsClient"]
+__all__ = ["ElevenLabsClient"]
 
 _API_KEY_VAR = "ELEVENLABS_API_KEY"
-_CA_BUNDLE_VAR = "SSL_CERT_FILE"
-
-
-class CaBundleError(ValueError):
-    """``SSL_CERT_FILE`` names a CA bundle the TLS stack cannot load.
-
-    A ``ValueError`` because it is a bad configuration value, not a transient
-    I/O fault: retrying with the same environment fails the same way, and the
-    wire reply routes a ``ValueError`` message to the caller verbatim.
-    """
-
-    @classmethod
-    def unloadable(cls, cafile: str, cause: OSError) -> Self:
-        """Describe why *cafile* could not be loaded, naming the variable."""
-        reason = cause.strerror or str(cause)
-        return cls(
-            f"{_CA_BUNDLE_VAR}={cafile} is not a loadable CA bundle ({reason}); "
-            f"fix the path or unset {_CA_BUNDLE_VAR}"
-        )
 
 
 @final
@@ -53,26 +32,21 @@ class ElevenLabsClient:
     """Own one ElevenLabs SDK client: build it on first use, report its health."""
 
     __slots__ = ("_sdk",)
-    # None until first use -- deferring the build is the point of this class.
-    _sdk: ElevenLabs | None
+    _sdk: LazySdk[ElevenLabs]
 
     def __new__(cls, *, sdk: ElevenLabs | None = None) -> Self:
         # ``sdk`` is the test seam: absent, the real client is built lazily.
         self = super().__new__(cls)
-        self._sdk = sdk
+        self._sdk = LazySdk(self._new_sdk, sdk=sdk)
         return self
 
     def sdk(self) -> ElevenLabs:
         """Return the SDK client, building it on first use.
 
-        A failed build is not remembered, so the next call tries again.
-
         Raises:
             CaBundleError: ``SSL_CERT_FILE`` is set and cannot be loaded.
         """
-        if self._sdk is None:
-            self._sdk = self._build()
-        return self._sdk
+        return self._sdk.get()
 
     @staticmethod
     def key_check() -> HealthCheck:
@@ -90,6 +64,8 @@ class ElevenLabsClient:
             sub = self.sdk().user.subscription.get()
         except ApiError as exc:
             reason = self._api_error_message(exc)
+        except httpx.TransportError as exc:
+            reason = str(TransportFaults.translate(exc))
         except (CaBundleError, OSError) as exc:
             reason = str(exc)
         else:
@@ -103,20 +79,14 @@ class ElevenLabsClient:
         return HealthCheck(passed=False, message=f"ElevenLabs subscription: {reason}")
 
     @staticmethod
-    def _build() -> ElevenLabs:
-        """Construct the SDK client, translating a bad CA bundle into its name.
+    def _new_sdk() -> ElevenLabs:
+        """Construct the SDK client.
 
         The key is read here rather than left to the SDK: the SDK's ``api_key``
         default is evaluated when its module is imported, before voxd has loaded
         its keys file into the environment.
         """
-        try:
-            return ElevenLabs(api_key=os.environ.get(_API_KEY_VAR))
-        except OSError as exc:
-            cafile = os.environ.get(_CA_BUNDLE_VAR)
-            if not cafile:
-                raise
-            raise CaBundleError.unloadable(cafile, exc) from exc
+        return ElevenLabs(api_key=os.environ.get(_API_KEY_VAR))
 
     @staticmethod
     def _api_error_message(exc: ApiError) -> str:
