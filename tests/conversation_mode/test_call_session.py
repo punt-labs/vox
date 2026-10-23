@@ -78,6 +78,13 @@ async def _feed_one_turn(session: CallSession) -> None:
         await session.process_chunk(_silence_chunk())
 
 
+def _record_transitions(session: CallSession) -> list[tuple[Mode, Mode]]:
+    """Return a list that fills with every ``(before, after)`` mode change."""
+    seen: list[tuple[Mode, Mode]] = []
+    session.actor.on_transition(lambda before, after: seen.append((before, after)))
+    return seen
+
+
 async def test_full_round_trip_speaks_the_agent_s_reply() -> None:
     speak = _Recorder()
     stt = FakeSTTProvider(
@@ -617,19 +624,13 @@ class TestPermanentSTTFailureAppliesEndCall:
             speak=speak,
         )
 
-    @staticmethod
-    def _transitions(session: CallSession) -> list[tuple[Mode, Mode]]:
-        seen: list[tuple[Mode, Mode]] = []
-        session.actor.on_transition(lambda before, after: seen.append((before, after)))
-        return seen
-
     @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
     async def test_end_call_takes_listening_to_idle(
         self, error: Callable[[], Exception]
     ) -> None:
         session = self._session(error(), _Recorder())
         await session.start()
-        transitions = self._transitions(session)
+        transitions = _record_transitions(session)
 
         await _feed_one_turn(session)
 
@@ -644,7 +645,7 @@ class TestPermanentSTTFailureAppliesEndCall:
         speak = _FailingSpeak()
         session = self._session(error(), speak)
         await session.start()
-        transitions = self._transitions(session)
+        transitions = _record_transitions(session)
 
         await _feed_one_turn(session)  # must not raise
 
@@ -698,38 +699,58 @@ async def test_a_configuration_fault_says_to_check_the_proxy() -> None:
     assert not any("repeat" in phrase.lower() for phrase in speak.said)
 
 
-class TestRefusedStatus:
-    """An answered refusal no retry changes ends the call; a rate limit or a
-    5xx asks the human to repeat, as any transient fault does."""
+def _status_session(status: int | None, speak: _Recorder) -> CallSession:
+    """Build a session whose STT answers every turn with HTTP ``status``."""
+    error = ProviderStatusError("elevenlabs", status, "server's reason")
+    return CallSession(
+        turn_detector=_detector(),
+        stt_provider=_RaisingSTTProvider(error),
+        session_attach=FakeSessionAttach(),
+        speak=speak,
+    )
 
-    @staticmethod
-    def _session(status: int | None, speak: _Recorder) -> CallSession:
-        error = ProviderStatusError("elevenlabs", status, "server's reason")
-        return CallSession(
-            turn_detector=_detector(),
-            stt_provider=_RaisingSTTProvider(error),
-            session_attach=FakeSessionAttach(),
-            speak=speak,
-        )
 
-    @pytest.mark.parametrize("status", [400, 403, 404, 422])
-    async def test_a_permanent_status_ends_the_call(self, status: int) -> None:
-        speak = _Recorder()
-        session = self._session(status, speak)
+_PERMANENT_STATUSES = (400, 403, 404, 422)
+
+
+class TestPermanentStatusAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: an answered refusal no
+    retry changes takes the call from listening to idle, with no pending
+    addendum, saying why."""
+
+    @pytest.mark.parametrize("status", _PERMANENT_STATUSES)
+    async def test_end_call_takes_listening_to_idle(self, status: int) -> None:
+        session = _status_session(status, _Recorder())
         await session.start()
+        transitions = _record_transitions(session)
 
         await _feed_one_turn(session)  # must not raise
 
-        assert session.actor.mode is Mode.IDLE
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+
+    @pytest.mark.parametrize("status", _PERMANENT_STATUSES)
+    async def test_the_ending_names_the_status(self, status: int) -> None:
+        speak = _Recorder()
+        session = _status_session(status, speak)
+        await session.start()
+
+        await _feed_one_turn(session)
+
         assert speak.said[-1] == (
             "Sorry, this call can't continue -- speech recognition was refused "
             f"(HTTP {status}); vox.log has the server's reason. Ending the call now."
         )
 
+
+class TestRefusedStatus:
+    """The server's reason reaches the log; a rate limit or a 5xx asks the
+    human to repeat, as any transient fault does."""
+
     async def test_the_server_s_reason_goes_to_the_log(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        session = self._session(422, _Recorder())
+        session = _status_session(422, _Recorder())
         await session.start()
 
         with caplog.at_level(logging.ERROR):
@@ -740,7 +761,7 @@ class TestRefusedStatus:
     @pytest.mark.parametrize("status", [429, 500, 502, 503, None])
     async def test_a_transient_status_asks_to_repeat(self, status: int | None) -> None:
         speak = _Recorder()
-        session = self._session(status, speak)
+        session = _status_session(status, speak)
         await session.start()
 
         await _feed_one_turn(session)
@@ -1097,9 +1118,11 @@ async def test_reply_containing_a_secret_is_redacted_before_speaking(
     assert any(secret in record.message for record in caplog.records)
 
 
-class TestUnsendableApiKeyEndsTheCall:
-    """A pasted key httpx cannot send fails every turn the same way: the call
-    ends saying so, rather than asking the human to repeat forever."""
+class TestUnsendableApiKeyAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: a key httpx cannot
+    send, or no key at all, fails every turn the same way, so the call goes
+    from listening to idle with no pending addendum, saying so, rather than
+    asking the human to repeat forever."""
 
     @pytest.mark.parametrize(
         "key",
@@ -1121,11 +1144,13 @@ class TestUnsendableApiKeyEndsTheCall:
             speak=speak,
         )
         await session.start()
+        transitions = _record_transitions(session)
 
         with caplog.at_level(logging.DEBUG):
             await _feed_one_turn(session)
 
-        assert session.actor.mode is Mode.IDLE
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
         assert "API key" in speak.said[-1]
         assert "Ending the call now." in speak.said[-1]
         assert "SECRET" not in caplog.text
@@ -1145,11 +1170,13 @@ class TestUnsendableApiKeyEndsTheCall:
             speak=speak,
         )
         await session.start()
+        transitions = _record_transitions(session)
 
         with caplog.at_level(logging.ERROR):
             await _feed_one_turn(session)
 
-        assert session.actor.mode is Mode.IDLE
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
         assert "no API key" in speak.said[-1]
         assert "Ending the call now." in speak.said[-1]
         assert not any("repeat" in phrase.lower() for phrase in speak.said)
