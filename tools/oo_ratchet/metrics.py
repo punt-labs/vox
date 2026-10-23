@@ -191,7 +191,32 @@ class ModuleMetrics:
         cls,
         func_node: ast.FunctionDef | ast.AsyncFunctionDef,
     ) -> int:
-        return 1 + sum(map(cls._decision_points, ast.walk(func_node)))
+        """Return 1 plus the decision points of the code *func_node* runs.
+
+        The module's functions are every ``def`` and ``async def`` in the tree,
+        nested ones and methods of nested classes included, and each is scored
+        on its own. So a nested ``def``, ``async def``, or ``class`` body is not
+        charged here; its header is, because its decorators, defaults, and bases
+        run when this function executes the statement. For the same reason this
+        function's own header belongs to the scope that defines it. A lambda is
+        not scored on its own, so its body counts here.
+        """
+        return 1 + sum(map(cls._decision_points, cls._own_scope(func_node)))
+
+    @staticmethod
+    def _own_scope(
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> Iterator[ast.AST]:
+        """Yield every node *func_node*'s body runs, stopping at nested bodies."""
+        pending: list[ast.AST] = list(func_node.body)
+        while pending:
+            node = pending.pop()
+            yield node
+            children = ast.iter_child_nodes(node)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                nested_body = {id(stmt) for stmt in node.body}
+                children = (c for c in children if id(c) not in nested_body)
+            pending.extend(children)
 
     @classmethod
     def _decision_points(cls, node: ast.AST) -> int:

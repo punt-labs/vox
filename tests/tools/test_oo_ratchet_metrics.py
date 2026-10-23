@@ -70,6 +70,15 @@ def _complexity(source: str) -> int:
     return score
 
 
+def _max_and_avg(source: str) -> tuple[int, float]:
+    """Return the (max_complexity, avg_complexity) pair the ratchet records."""
+    scores = ModuleMetrics("m.py", textwrap.dedent(source)).compute()
+    highest, mean = scores["max_complexity"], scores["avg_complexity"]
+    assert isinstance(highest, int)
+    assert isinstance(mean, float)
+    return highest, mean
+
+
 def _match_with_cases(count: int) -> str:
     """Return a function whose only branching is a match of *count* plain cases."""
     arms = "".join(
@@ -205,3 +214,78 @@ def test_match_scores_like_its_if_ladder(match_source: str, ladder_source: str) 
 def test_existing_constructs_score_unchanged(source: str, expected: int) -> None:
     """Branches the ratchet already counted keep their scores."""
     assert _complexity(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            """
+            def outer() -> int:
+                def inner(x: int) -> int:
+                    if x:
+                        return 1
+                    return 0
+                return inner(1)
+            """,
+            (2, 1.5),
+            id="nested-def",
+        ),
+        pytest.param(
+            """
+            async def outer() -> int:
+                async def inner(x: int) -> int:
+                    if x:
+                        return 1
+                    return 0
+                return await inner(1)
+            """,
+            (2, 1.5),
+            id="nested-async-def",
+        ),
+        pytest.param(
+            """
+            def outer() -> object:
+                class Local:
+                    def method(self, x: int) -> int:
+                        if x:
+                            return 1
+                        return 0
+                return Local
+            """,
+            (2, 1.5),
+            id="nested-class-method",
+        ),
+        pytest.param(
+            """
+            def outer(flag: bool) -> int:
+                def inner(x: int = 1 if flag else 0) -> int:
+                    return x
+                return inner()
+            """,
+            (2, 1.5),
+            id="nested-def-default-runs-in-outer",
+        ),
+    ],
+)
+def test_nested_scope_body_scores_only_on_its_own(
+    source: str, expected: tuple[int, float]
+) -> None:
+    """A nested def's body is charged to the nested def, never to its encloser.
+
+    Each module holds two scored functions and one ``if``, so the right answer
+    is max 2, avg 1.5; charging the ``if`` to both functions scores avg 2.0. In
+    the first three cases the ``if`` is in the nested body and belongs to the
+    nested function. A default value runs when the outer function executes the
+    ``def``, so in the last case the ``if`` belongs to the outer one.
+    """
+    assert _max_and_avg(source) == expected
+
+
+def test_lambda_body_counts_in_its_enclosing_function() -> None:
+    """A lambda is not scored on its own, so its decisions stay with its encloser."""
+    source = """
+    def f(xs: list[int]) -> list[int]:
+        return sorted(xs, key=lambda x: -x if x < 0 else x)
+    """
+    assert _complexity(source) == _complexity(_STRAIGHT_LINE) + 1
