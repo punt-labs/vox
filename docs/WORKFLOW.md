@@ -46,7 +46,8 @@ predicates over declared terms, never as bare primed flags.
 The operator owns requirements and design direction, rules on genuine design
 forks, and confirms the audio demo by ear. Claude runs everything else: the
 backlog, the missions, the review cycles, and the merges. Review of code is
-done by agents — the local review agents plus Qodo on the PR.
+done by agents — the local review agents, plus Qodo and one Bugbot run on
+the PR.
 There is no human review gate. The operator reads code in the IDE, but that
 inspection is separate, feeds design discussion only, and nothing in these
 loops waits on it.
@@ -242,6 +243,7 @@ function pr_loop(unit):
     bd close the bead(s)
     push; create the PR (description carries the verification playbook)
         # Qodo reviews once, on open (.pr_agent.toml)
+    unless skipped(pr): comment "bugbot run"   # Bugbot's one run per PR
     schedule a background poll with /loop   # never gh pr checks --watch,
                                             # never foreground sleep loops
 
@@ -251,7 +253,9 @@ function pr_loop(unit):
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
 #                  "/agentic_review" comment for N > 1
 #   reviewed(N)  = a Qodo review or "Code Review by Qodo" comment created
-#                  after trigger(N)
+#                  after trigger(N); for N = 1, also a cursor[bot] Bugbot
+#                  review after the "bugbot run" comment, or 30 minutes
+#                  of Bugbot silence. Bugbot findings join round 1 only.
 #   ledger(N)    = the leader's round-N ledger comment: each finding of the
 #                  round as "fixed in <sha>" or "<reason> <file:line>"
 #   skipped(pr)  = the PR matches a [config] skip in .pr_agent.toml: title
@@ -264,7 +268,7 @@ function poll_tick(pr):
                                                #   env -u GH_TOKEN
                                                #   -u GITHUB_PERSONAL_ACCESS_TOKEN
     if CI failed: fix in this PR
-    for each unresolved thread not from Qodo:  # a human, or any other app
+    for each unresolved thread not from Qodo or Bugbot:  # a human, any app
         fix it, or reply with the reason and file:line; then resolve it
     N = round(pr)
     if not skipped(pr) and not ledger(N):
@@ -276,13 +280,15 @@ function poll_tick(pr):
             for each High: fix now
             for each Medium: fix now, or answer it in the ledger — round 1
                 and new Mediums in round 2 only; never re-litigated
-            # Lows are dropped by comments_routing. No deferral beads.
+            for each Bugbot finding (round 1): fix now, or answer it in the
+                ledger
+            # Qodo Lows are dropped by comments_routing. No deferral beads.
             delegate the fixes to a bare agent; make check; commit
             post ledger(N)
             if a fix landed and N < 3 and (N == 1 or a new High was fixed):
                 push once; comment "/agentic_review"   # opens round N+1
-    resolve each Qodo thread once the commit that fixes it has landed,
-        one by one — the leader resolves, not the agent
+    resolve each Qodo or Bugbot thread once its fix has landed or the
+        ledger answers it, one by one — the leader resolves, not the agent
     if merge_gate(state): merge (squash, --delete-branch); close_out()
 
 function merge_gate(state) -> bool:
@@ -343,15 +349,21 @@ code reference. Nothing is deferred to a bead. In this repo the two-round cap
 replaces the "re-run until zero findings" sequence in the deposited
 `.punt-labs/ethos/CLAUDE.md` guide.
 
-### Remote review: Qodo only
+### Remote review: Qodo, plus one Bugbot run
 
-Qodo is the one remote reviewer (`.pr_agent.toml`). It reviews once when the
-PR opens and never on push. High findings post inline as threads, and the
-`required_review_thread_resolution` rule in ruleset 13252005 makes each one
-block the merge. Medium findings appear in the summary and are answered in
-the ledger comment. Lows are dropped by `comments_routing`. Round 2 is one
-manual `/agentic_review` after the fix push. At most three rounds run, and
-the third only for a new High.
+Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews once when
+the PR opens and never on push. High findings post inline as threads, and
+the `required_review_thread_resolution` rule in ruleset 13252005 makes each
+one block the merge. Medium findings appear in the summary and are answered
+in the ledger comment. Lows are dropped by `comments_routing`. Round 2 is
+one manual `/agentic_review` after the fix push. At most three rounds run,
+and the third only for a new High.
+
+Bugbot runs once per PR, on the leader's `bugbot run` comment at open, and
+its findings join round 1. It never runs again on that PR. It stays because
+it had the highest real-bug rate of the three bots in the 2026 sample (28%
+of its comments, against 20% for Qodo and 12% for Copilot). Copilot is off:
+66% of its comments were nits, and it drove the most extra pushes.
 
 This holds only when four settings are in place (pilot `vox-2q95`):
 
@@ -359,13 +371,14 @@ This holds only when four settings are in place (pilot `vox-2q95`):
   a PR opened before it merged runs on the portal defaults.
 - The `copilot_code_review` rule is gone from ruleset 13252005 (removed
   2026-10-22).
-- Bugbot is disabled for this repo in the Cursor dashboard.
+- Bugbot runs only when mentioned for this repo (Cursor dashboard), so a
+  push does not re-run it.
 - "Review every push" is set to Disable in the Qodo portal; the portal
   default is Enable.
 
 The first PR opened after the pilot merges checks the claims: a push
-draws no new Qodo review, no Low finding appears, and a manual round reviews
-only the new commits. Record what it shows here.
+draws no new Qodo or Bugbot review, no Low finding appears, and a manual
+round reviews only the new commits. Record what it shows here.
 
 ### The audio demo gate
 
