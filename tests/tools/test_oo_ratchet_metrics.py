@@ -1,4 +1,4 @@
-"""Cyclomatic complexity counts match arms, case guards, and conditional expressions."""
+"""Cyclomatic complexity as the OO ratchet's ModuleMetrics measures it."""
 
 from __future__ import annotations
 
@@ -145,6 +145,30 @@ def test_match_scores_like_its_if_ladder(match_source: str, ladder_source: str) 
             """,
             4,
             id="assert-while-except",
+        ),
+        pytest.param(
+            """
+            def f(xs: list[int]) -> int:
+                total = 0
+                for x in xs:
+                    total += x
+                return total
+            """,
+            2,
+            id="for",
+        ),
+        pytest.param(
+            """
+            from collections.abc import AsyncIterator
+
+            async def f(xs: AsyncIterator[int]) -> int:
+                total = 0
+                async for x in xs:
+                    total += x
+                return total
+            """,
+            2,
+            id="async-for",
         ),
     ],
 )
