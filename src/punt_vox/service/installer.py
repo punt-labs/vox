@@ -157,9 +157,8 @@ class ServiceInstaller:
 
         state_root = self._ensure_user_dirs()
 
-        keys_path = _paths_keys_env_file()
-        self._keys_writer.write(dict(os.environ), keys_path)
-        logger.info("Wrote provider keys to %s", keys_path)
+        keys = self._keys_writer.write(os.environ, _paths_keys_env_file())
+        logger.info("Wrote provider keys to %s", keys.path)
 
         if plat == "macos":
             running = self._install_darwin()
@@ -182,7 +181,8 @@ class ServiceInstaller:
         lines = [
             f"voxd daemon {status} on port {DEFAULT_PORT}.",
             f"  Service: {service_path}",
-            f"  Keys:    {keys_path}",
+            f"  Keys:    {keys.path}",
+            *keys.notice_lines(),
             f"  State:   {state_root}",
             f"  Command: {exec_display}",
             f"  User:    {user}",

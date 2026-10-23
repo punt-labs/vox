@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stale session working notes (`RESUME.md`).
 
+### Fixed
+
+- **`vox daemon install` no longer silently wipes a stored API key.** An
+  empty or whitespace-only provider variable in the installing shell used to
+  delete that key from `keys.env` with no message. The stored value is now
+  kept, and the install status names the key and says so. Values are
+  stripped of surrounding whitespace before they are written. A value an
+  HTTP header cannot carry, or one containing a line break, is refused. The
+  refusal names the key, the character class, and its position, and says
+  whether a stored value was kept or the provider has no credential. The
+  value itself is never shown. An unreadable `keys.env` stops the install
+  with the path and the reason instead of being overwritten. The daemon
+  now reads `keys.env` with the same parser the installer uses.
+
 ### Security
 
 - **Four dependencies are upgraded, clearing all 19 open Dependabot alerts

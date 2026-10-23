@@ -141,6 +141,39 @@ def test_install_runs_as_user_creates_keys_env(
     assert "TTS_PROVIDER=openai" in content
 
 
+@patch.object(LaunchdBackend, "status", return_value=True)
+@patch.object(LaunchdBackend, "install")
+@patch.object(LaunchdBackend, "stop")
+@patch.object(ProcessManager, "ensure_port_free")
+@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
+def test_install_status_reports_skipped_keys_by_name_only(
+    _mock_platform: MagicMock,
+    _mock_port: MagicMock,
+    _mock_ld_stop: MagicMock,
+    _mock_ld_install: MagicMock,
+    _mock_ld_status: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kept, refused, and empty keys reach the operator in the status output."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
+    keys_path.parent.mkdir(parents=True)
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-stored-eleven\n")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk bad")
+
+    result = ServiceInstaller().install()
+
+    assert (
+        "ELEVENLABS_API_KEY: empty in the environment; kept the stored value" in result
+    )
+    assert "OPENAI_API_KEY: refused: a space at position 3" in result
+    assert "its provider has no credential" in result
+    assert "sk-stored-eleven" not in result
+    assert "sk bad" not in result
+
+
 @patch.object(LaunchdBackend, "status", return_value=False)
 @patch.object(LaunchdBackend, "install")
 @patch.object(LaunchdBackend, "stop")
