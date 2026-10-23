@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -817,6 +818,46 @@ class TestSynthesizeFailFast:
             mock_client_cls.return_value.synthesize = failing_synth
             with pytest.raises(type(error)):
                 asyncio.run(pipeline.synthesize_to_file("hello", _default_spec()))
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_cancelled_synthesis_leaves_no_temp_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cancelled request cannot stop its worker thread, which writes the
+        file after the cancel lands; the file goes once the thread is done."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            output_path.write_bytes(b"written after the cancel")
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):  # the thread finishes, then the loop cleans up
+                if not list(tmp_path.iterdir()):
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = slow_synth
+            asyncio.run(_drive())
 
         assert list(tmp_path.iterdir()) == []
 

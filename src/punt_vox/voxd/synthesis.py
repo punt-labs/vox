@@ -23,6 +23,7 @@ from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
+    AudioResult,
     DirectPlayProvider,
     TTSProvider,
 )
@@ -326,18 +327,44 @@ class SynthesisPipeline:
         The file is created before the provider runs, so any failure -- the
         provider raising, or the output coming back empty -- removes it before
         the error propagates; otherwise every failed request strands a file in
-        the temp directory.
+        the temp directory. A cancelled request removes it too, but only once
+        the worker thread is done: the thread cannot be stopped, and it may
+        write the file after the cancel lands.
         """
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             output_path = Path(tmp.name)
+        work = asyncio.ensure_future(
+            asyncio.to_thread(client.synthesize, request, output_path)
+        )
         try:
-            await asyncio.to_thread(client.synthesize, request, output_path)
+            # Shielded, so a cancel reaches this await and not the thread's
+            # future, which then still completes when the thread does.
+            await asyncio.shield(work)
             cls._require_nonempty_output(output_path, spec, chars_in)
+        except asyncio.CancelledError:
+            work.add_done_callback(cls._discard_when_done(output_path))
+            raise
         except BaseException:
-            # BaseException: a cancelled request must not strand the file either.
             output_path.unlink(missing_ok=True)
             raise
         return output_path
+
+    @staticmethod
+    def _discard_when_done(
+        output_path: Path,
+    ) -> Callable[[asyncio.Future[AudioResult]], None]:
+        """Return a done-callback that removes *output_path* after its writer.
+
+        The callback also retrieves the abandoned thread's exception, so a
+        provider failure after the cancel is not reported as never retrieved.
+        """
+
+        def _discard(done: asyncio.Future[AudioResult]) -> None:
+            if not done.cancelled() and (error := done.exception()) is not None:
+                logger.debug("cancelled synthesis then failed: %r", error)
+            output_path.unlink(missing_ok=True)
+
+        return _discard
 
     @staticmethod
     def _require_nonempty_output(

@@ -4537,12 +4537,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/synthesis.py": {
-    "method_ratio": 0.818,
+    "method_ratio": 0.833,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.5,
+    "avg_params": 2.29,
     "max_complexity": 7.0,
-    "avg_complexity": 4.17,
-    "module_size": 391.0,
+    "avg_complexity": 4.07,
+    "module_size": 414.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.333,
     "init_violations": 0.0,
