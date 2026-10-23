@@ -179,8 +179,7 @@ class OpenAIProvider(TTSProvider):
         if isinstance(exc, openai.NotFoundError):
             return f"model '{self._model}' not found"
         if isinstance(exc, openai.PermissionDeniedError):
-            reason = self._refused(exc).reason
-            return f"HTTP 403: {reason}" if reason else "HTTP 403"
+            return self._refused(exc).answer
         return f"HTTP {exc.status_code}"
 
     @staticmethod

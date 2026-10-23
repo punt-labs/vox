@@ -15,9 +15,8 @@ leaves as a vox type, so nothing past the providers knows the SDK exists.
 
 from __future__ import annotations
 
-import logging
 import os
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 import httpx
 from elevenlabs.client import ElevenLabs
@@ -29,7 +28,7 @@ from elevenlabs.types import (
 )
 
 from punt_vox.providers.api_key import ApiKeyCheck
-from punt_vox.providers.error_body import ErrorBody
+from punt_vox.providers.elevenlabs_answer import ElevenLabsAnswer
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.provider_refusal import ProviderRefusalError
@@ -52,13 +51,6 @@ __all__ = [
 # The variable the readiness gate names for this provider, not a second literal.
 _KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
 
-logger = logging.getLogger(__name__)
-
-# The statuses an ApiError carries only when a success body failed to decode.
-_SUCCESS: Final = range(200, 300)
-# The statuses that refuse the credentials -- a bad key, or an account barred.
-_REFUSED: Final = (401, 403)
-
 
 @final
 class ElevenLabsClient:
@@ -75,10 +67,11 @@ class ElevenLabsClient:
 
     An answered failure is translated here, once, for every call site that goes
     through :meth:`call` -- text-to-speech, the voice list, speech-to-text,
-    music, and the subscription check: a 401 or 403 into the
-    :class:`ProviderRefusalError` the wire sends the caller verbatim, carrying
-    the server's code for the refusal; any other status into a
-    :class:`ProviderStatusError` the caller routes on.
+    music, and the subscription check -- by
+    :class:`~punt_vox.providers.elevenlabs_answer.ElevenLabsAnswer`: a 401 or
+    403 into the :class:`ProviderRefusalError` the wire sends the caller
+    verbatim, carrying the server's code for the refusal; any other status into
+    a :class:`ProviderStatusError` the caller routes on.
     """
 
     __slots__ = ("_api_key", "_sdk")
@@ -121,9 +114,9 @@ class ElevenLabsClient:
         try:
             return self._sdk.call(request)
         except ApiError as exc:
-            raise self._answered(exc) from exc
+            raise ElevenLabsAnswer(exc.status_code, exc.body).error() from exc
         except ParsingError as exc:
-            raise self._unparsed(exc) from exc
+            raise ElevenLabsAnswer(exc.status_code, exc.body).off_schema() from exc
 
     def stream_to(
         self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
@@ -145,8 +138,10 @@ class ElevenLabsClient:
         try:
             sub = self.call(lambda sdk: sdk.user.subscription.get())
         except ProviderRefusalError as exc:
-            code = f": {exc.reason}" if exc.reason else ""
-            reason = f"API key rejected (HTTP {exc.status_code}{code})"
+            # A coded refusal is not always the key: a key scoped away from
+            # this endpoint, or an exhausted quota, still speaks.
+            verdict = "API key rejected" if exc.reason is None else "refused"
+            reason = f"{verdict} ({exc.answer})"
         except ProviderStatusError as exc:
             reason = exc.reason
         except TRANSPORT_ERRORS as exc:
@@ -174,46 +169,3 @@ class ElevenLabsClient:
                 built; a request without one would only be refused.
         """
         return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
-
-    @staticmethod
-    def _unparsed(exc: ParsingError) -> ProviderStatusError:
-        """Return the vox error for an answer that failed the SDK's validation.
-
-        The body decoded but does not fit the response model; it is not echoed.
-        """
-        return ProviderStatusError(
-            "elevenlabs", exc.status_code, "response did not match the expected schema"
-        )
-
-    @classmethod
-    def _answered(cls, exc: ApiError) -> ProviderRefusalError | ProviderStatusError:
-        """Return the vox error for the server's failed answer *exc*.
-
-        The SDK raises ``ApiError`` on a 2xx too, when the body will not decode
-        as JSON; its body is then the raw text, which is never echoed.
-        """
-        status: int | None = exc.status_code  # None: the SDK reported no status
-        body = ErrorBody(exc.body)
-        if status in _REFUSED:
-            return cls._refused(status, body)
-        detail: str | None  # None: the body gives no reason
-        if status in _SUCCESS:
-            detail = (
-                f"answered HTTP {status} with a response that is not the expected JSON"
-            )
-        else:
-            detail = body.message
-        return ProviderStatusError("elevenlabs", status, detail)
-
-    @staticmethod
-    def _refused(status: int, body: ErrorBody) -> ProviderRefusalError:
-        """Return the refusal the caller sees, logging the server's code for it.
-
-        ElevenLabs names why it refused in ``detail.status`` -- an invalid key,
-        unusual activity on the account, an exhausted quota -- and each wants a
-        different fix, so the code reaches both the log and the caller. Only an
-        identifier is taken (``ErrorBody.status``), never the free text.
-        """
-        if (code := body.status) is not None:
-            logger.error("ElevenLabs refused (HTTP %d, status %s)", status, code)
-        return ProviderRefusalError.from_code("elevenlabs", status, code)

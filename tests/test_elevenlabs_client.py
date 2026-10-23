@@ -315,16 +315,20 @@ class TestSubscriptionCheck:
             f"ElevenLabs subscription: API key rejected (HTTP {status})"
         )
 
-    def test_rejected_key_line_carries_the_server_s_code(self) -> None:
+    @pytest.mark.parametrize("code", ["quota_exceeded", "missing_permissions"])
+    def test_a_refusal_with_a_code_is_not_called_a_rejected_key(
+        self, code: str
+    ) -> None:
+        """A key scoped away from the user endpoint still speaks; the line says
+        the server refused, and why, not that the key is bad."""
         sdk = MagicMock()
-        body = {"detail": {"status": "quota_exceeded"}}
+        body = {"detail": {"status": code}}
         sdk.user.subscription.get.side_effect = ApiError(status_code=403, body=body)
 
         check = ElevenLabsClient(sdk=sdk).subscription_check()
 
-        assert check.message == (
-            "ElevenLabs subscription: API key rejected (HTTP 403: quota_exceeded)"
-        )
+        assert not check.passed
+        assert check.message == f"ElevenLabs subscription: refused (HTTP 403: {code})"
 
     def test_api_error_is_a_failed_line(self) -> None:
         sdk = MagicMock()
@@ -513,9 +517,10 @@ class TestCall:
         [None, "Unauthorized", {"detail": {"status": "sk-abc 123\n"}}],
         ids=["no-body", "raw-text", "not-an-identifier"],
     )
-    def test_a_refusal_logs_and_carries_no_code_it_cannot_trust(
+    def test_a_refusal_with_no_code_it_can_trust_logs_only_its_status(
         self, status: int, body: object, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """A raw-text or HTML 403 still leaves a trace, but none of its text."""
         cause = ApiError(status_code=status, body=body)
 
         with (
@@ -524,7 +529,9 @@ class TestCall:
         ):
             ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
 
-        assert caplog.records == []
+        assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+            (logging.ERROR, f"ElevenLabs refused (HTTP {status}) with no error code")
+        ]
         assert info.value.reason is None
 
     def test_api_error_becomes_a_provider_status_error(self) -> None:

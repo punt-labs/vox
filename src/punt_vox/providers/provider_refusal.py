@@ -47,10 +47,17 @@ class ProviderRefusalError(ProviderAuthError):
             return super().__str__()
         return (
             f"provider {self.provider_name!r} refused the request "
-            f"(HTTP {self.status_code}: {self._reason}); run `vox doctor`"
+            f"({self.answer}); run `vox doctor`"
         )
 
     @property
     def reason(self) -> str | None:  # None: the server gave no usable code
         """Return the server's error code."""
         return self._reason
+
+    @property
+    def answer(self) -> str:
+        """Return the answer as a phrase: ``HTTP 403: quota_exceeded``, or
+        ``HTTP 401`` when the server gave no usable code."""
+        status = f"HTTP {self.status_code}"
+        return status if self._reason is None else f"{status}: {self._reason}"

@@ -14,6 +14,7 @@ from typing import Final, Self, final
 from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
@@ -63,26 +64,35 @@ class PermanentSttFailure:
     def of(cls, exc: Exception) -> PermanentSttFailure:
         """Return the wording for *exc*: its own row, or the generic one.
 
-        First match wins, so a subclass's row precedes its base's. A refusal
-        is worded with its status, so it has no fixed row.
+        An answered failure is worded with its status, and a refusal that names
+        its code with that code, so neither has a fixed row: a 403 for an
+        exhausted quota or a flagged account is not a bad key, and saying
+        "credentials were rejected" would send the caller to fix the wrong
+        thing. A refusal with no code falls to ``ProviderAuthError``'s row.
+        Otherwise first match wins, so a subclass's row precedes its base's.
         """
-        if isinstance(exc, ProviderStatusError):
-            return cls.refused(exc)
-        return cls._row_for(exc)
+        match exc:
+            case ProviderStatusError(status_code=status):
+                return cls._refused(f"HTTP {status}")
+            case ProviderRefusalError(reason=str(), answer=answer):
+                return cls._refused(answer)
+            case _:
+                return cls._row_for(exc)
 
     @classmethod
-    def refused(cls, exc: ProviderStatusError) -> PermanentSttFailure:
-        """Return the wording for a refusal no retry changes, naming its status.
+    def _refused(cls, answer: str) -> PermanentSttFailure:
+        """Return the wording for a refusal no retry changes, naming *answer*.
 
-        The server's own message stays in vox.log: it is the provider's text,
-        not a sentence to speak to the caller.
+        *answer* is the status, and the server's code when it is a plain
+        identifier. The server's own message stays in vox.log: it is the
+        provider's text, not a sentence to speak to the caller.
         """
-        status = exc.status_code
         return cls(
-            ProviderStatusError,
-            f"STT refused (HTTP {status})",
+            # Only the fixed rows are looked up by kind; this one never is.
+            Exception,
+            f"STT refused ({answer})",
             f"Sorry, this call can't continue -- speech recognition was refused "
-            f"(HTTP {status}); vox.log has the server's reason. Ending the call now.",
+            f"({answer}); vox.log has the server's reason. Ending the call now.",
         )
 
     @staticmethod

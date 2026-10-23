@@ -35,3 +35,18 @@ def test_unusable_code_falls_back_to_the_plain_rejection(code: str | None) -> No
     assert str(error) == (
         "provider 'openai' rejected the credentials (HTTP 403); run `vox doctor`"
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "answer"),
+    [
+        (403, "quota_exceeded", "HTTP 403: quota_exceeded"),
+        (401, "invalid_api_key", "HTTP 401: invalid_api_key"),
+        (403, None, "HTTP 403"),
+        (401, "line\nforged", "HTTP 401"),
+    ],
+)
+def test_answer_names_the_status_and_any_usable_code(
+    status: int, code: str | None, answer: str
+) -> None:
+    assert ProviderRefusalError.from_code("elevenlabs", status, code).answer == answer

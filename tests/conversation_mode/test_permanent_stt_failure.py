@@ -13,6 +13,7 @@ from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.permanent_stt_failure import (
@@ -92,14 +93,42 @@ class TestWording:
         assert wording.ending != self._GENERIC.ending
         assert wording.ending.endswith("Ending the call now.")
 
-    def test_a_refusal_is_worded_with_its_status(self) -> None:
-        wording = PermanentSttFailure.of(ProviderStatusError("elevenlabs", 403, "x"))
+    def test_an_answered_failure_is_worded_with_its_status(self) -> None:
+        wording = PermanentSttFailure.of(ProviderStatusError("openai", 422, "x"))
 
-        assert wording.detail == "STT refused (HTTP 403)"
+        assert wording.detail == "STT refused (HTTP 422)"
         assert wording.ending == (
             "Sorry, this call can't continue -- speech recognition was refused "
-            "(HTTP 403); vox.log has the server's reason. Ending the call now."
+            "(HTTP 422); vox.log has the server's reason. Ending the call now."
         )
+
+    @pytest.mark.parametrize("status", [401, 403])
+    @pytest.mark.parametrize("code", ["quota_exceeded", "detected_unusual_activity"])
+    def test_a_refusal_with_a_code_names_the_status_and_code(
+        self, status: int, code: str
+    ) -> None:
+        """A quota or an account flag is not a bad key; the code says which."""
+        refusal = ProviderRefusalError.from_code("elevenlabs", status, code)
+
+        wording = PermanentSttFailure.of(refusal)
+
+        assert wording.detail == f"STT refused (HTTP {status}: {code})"
+        assert wording.ending == (
+            "Sorry, this call can't continue -- speech recognition was refused "
+            f"(HTTP {status}: {code}); vox.log has the server's reason. "
+            "Ending the call now."
+        )
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_refusal_without_a_code_is_rejected_credentials(
+        self, status: int
+    ) -> None:
+        refusal = ProviderRefusalError.from_code("elevenlabs", status, None)
+
+        wording = PermanentSttFailure.of(refusal)
+
+        assert wording.detail == "STT auth failed"
+        assert "credentials were rejected" in wording.ending
 
     def test_a_refusal_never_speaks_the_server_s_text(self) -> None:
         """The server's message is for vox.log, not the caller's ear."""
