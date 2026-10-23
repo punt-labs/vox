@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
+from punt_vox.providers.elevenlabs_client import CaBundleError
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -33,6 +34,10 @@ _PLAYLIST_MAX_MS: Final = 210_000
 
 # HTTP statuses that mean "retrying will not help" (bad prompt, ToS, auth).
 _PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
+
+# Every provider failure ``produce`` maps; anything else is a bug and escapes.
+# OSError already covers TimeoutError and ConnectionError (its subclasses).
+_GENERATION_ERRORS: Final = (ApiError, CaBundleError, OSError)
 
 
 @final
@@ -96,22 +101,28 @@ class MusicProducer:
         duration_ms = self._length.sample()
         try:
             await self._provider.generate_track(spec.prompt, duration_ms, target)
-        except ApiError as exc:
+        except _GENERATION_ERRORS as exc:
             raise self._classify(exc) from exc
-        except (TimeoutError, ConnectionError, OSError) as exc:
-            raise ProducerTransientError(str(exc)) from exc
         spec.tags.write_to(target)
         return Part(target.name, spec.index)
 
-    @staticmethod
-    def _classify(exc: ApiError) -> ProducerBadInputError | ProducerTransientError:
-        """Route an ElevenLabs ``ApiError`` to the right Producer error type.
-
-        ``ApiError`` ships from an untyped SDK path, so ``status_code`` is read
-        defensively (PY-TS-9 exception): a permanent HTTP status becomes
-        ``ProducerBadInputError``; everything else (429, 5xx, unknown) is transient.
-        """
-        status: object = getattr(exc, "status_code", None)
-        if isinstance(status, int) and status in _PERMANENT_STATUS:
+    @classmethod
+    def _classify(
+        cls, exc: Exception
+    ) -> ProducerBadInputError | ProducerTransientError:
+        """Route a generation failure to the Producer error the fill loop expects."""
+        if cls._is_permanent(exc):
             return ProducerBadInputError(str(exc))
         return ProducerTransientError(str(exc))
+
+    @staticmethod
+    def _is_permanent(exc: Exception) -> bool:
+        """Return whether retrying ``exc`` with the same input cannot succeed.
+
+        A permanent HTTP status (bad prompt, ToS, auth) is permanent; so is an
+        unloadable CA bundle -- configuration, which fails the same way on every
+        retry. Rate limits, 5xx, and network faults are not.
+        """
+        if isinstance(exc, ApiError):
+            return exc.status_code in _PERMANENT_STATUS
+        return isinstance(exc, CaBundleError)

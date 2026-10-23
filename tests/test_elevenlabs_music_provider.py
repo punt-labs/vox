@@ -294,43 +294,56 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# Constructor — api_key handling
+# Constructor — the SDK client is deferred to first use
 # ---------------------------------------------------------------------------
 
 
 class TestConstructor:
     def test_accepts_injected_client(self, mock_music_client: MagicMock) -> None:
         provider = ElevenLabsMusicProvider(client=mock_music_client)
-        assert provider._client is mock_music_client  # pyright: ignore[reportPrivateUsage]
+        assert provider._client.sdk() is mock_music_client  # pyright: ignore[reportPrivateUsage]
 
-    def test_api_key_fallback_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key-123")
-        captured: dict[str, Any] = {}
-
-        def fake_elevenlabs(**kwargs: Any) -> MagicMock:  # pyright: ignore[reportExplicitAny]
-            captured.update(kwargs)
-            return MagicMock()
-
-        # ElevenLabs is imported lazily inside __init__; patch the SDK class.
-        monkeypatch.setattr("elevenlabs.ElevenLabs", fake_elevenlabs)
-
-        ElevenLabsMusicProvider()
-        assert captured.get("api_key") == "test-key-123"
-
-    def test_explicit_api_key_overrides_env(
+    def test_construction_does_not_build_the_sdk(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "env-key")
+        """The daemon builds this provider at boot; the SDK must wait for music."""
+        built: list[dict[str, Any]] = []
+
+        def fake_elevenlabs(**kwargs: Any) -> MagicMock:  # pyright: ignore[reportExplicitAny]
+            built.append(kwargs)
+            return MagicMock()
+
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs", fake_elevenlabs
+        )
+
+        ElevenLabsMusicProvider()
+
+        assert built == []
+
+    @pytest.mark.asyncio
+    async def test_first_generation_builds_the_sdk_with_the_env_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key-123")
         captured: dict[str, Any] = {}
+        client = MagicMock()
+        client.music.stream.side_effect = (
+            lambda **kwargs: _make_music_stream_response()  # pyright: ignore[reportUnknownLambdaType]
+        )
 
         def fake_elevenlabs(**kwargs: Any) -> MagicMock:  # pyright: ignore[reportExplicitAny]
             captured.update(kwargs)
-            return MagicMock()
+            return client
 
-        monkeypatch.setattr("elevenlabs.ElevenLabs", fake_elevenlabs)
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs", fake_elevenlabs
+        )
+        provider = ElevenLabsMusicProvider()
 
-        ElevenLabsMusicProvider(api_key="explicit-key")
-        assert captured.get("api_key") == "explicit-key"
+        await provider.generate_track("ambient", 60_000, tmp_path / "t.mp3")
+
+        assert captured.get("api_key") == "test-key-123"
 
 
 # ---------------------------------------------------------------------------

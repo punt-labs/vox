@@ -8,11 +8,15 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Self
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
+from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import MusicProvider
+
+if TYPE_CHECKING:
+    from elevenlabs.client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -30,27 +34,27 @@ class ElevenLabsMusicProvider(MusicProvider):
 
     Always passes force_instrumental=True — background music should
     never have vocals.
+
+    The SDK client is built on the first generation, not here: the daemon
+    constructs this provider while composing its subsystems, and a client
+    built then would load ``SSL_CERT_FILE`` at boot, so a bad CA path would
+    stop voxd from speaking at all instead of failing only the music.
     """
 
+    __slots__ = ("_client", "_output_format")
     _output_format: str
-    _client: Any  # pyright: ignore[reportExplicitAny]
+    _client: ElevenLabsClient
 
     def __new__(
         cls,
         *,
-        api_key: str | None = None,
-        client: Any | None = None,  # pyright: ignore[reportExplicitAny]
+        # The test seam: absent, the real SDK client is built on first use.
+        client: ElevenLabs | None = None,
         output_format: str = _DEFAULT_OUTPUT_FORMAT,
     ) -> Self:
         self = super().__new__(cls)
         self._output_format = output_format
-        if client is not None:
-            self._client = client
-        else:
-            from elevenlabs import ElevenLabs  # pyright: ignore[reportMissingTypeStubs]
-
-            key = api_key or os.environ.get("ELEVENLABS_API_KEY")
-            self._client = ElevenLabs(api_key=key)  # pyright: ignore[reportUnknownMemberType]
+        self._client = ElevenLabsClient(sdk=client)
         return self
 
     def _generate_sync(self, prompt: str, duration_ms: int, output_path: Path) -> Path:
@@ -76,7 +80,7 @@ class ElevenLabsMusicProvider(MusicProvider):
         logger.debug("music prompt (sha %s): %r", prompt_sha, prompt)
 
         try:
-            response: Any = self._client.music.stream(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            response = self._client.sdk().music.stream(
                 prompt=prompt,
                 music_length_ms=duration_ms,
                 force_instrumental=True,
@@ -94,9 +98,9 @@ class ElevenLabsMusicProvider(MusicProvider):
         try:
             os.close(fd)  # close mkstemp fd; reopen via pathlib below
             with tmp_path.open("wb") as f:
-                for chunk in response:  # pyright: ignore[reportUnknownVariableType]
-                    f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]
-                    bytes_written += len(chunk)  # pyright: ignore[reportUnknownArgumentType]
+                for chunk in response:
+                    f.write(chunk)
+                    bytes_written += len(chunk)
 
             if bytes_written == 0:
                 msg = "ElevenLabs music API returned no audio data"
@@ -129,6 +133,7 @@ class ElevenLabsMusicProvider(MusicProvider):
 
         Raises:
             ApiError: On ElevenLabs API failure.
+            CaBundleError: When ``SSL_CERT_FILE`` names an unloadable CA bundle.
             RuntimeError: When the API returns no audio data.
         """
         return await asyncio.to_thread(
