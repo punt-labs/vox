@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import final
 
+# What a skipped key with nothing stored means. A credential leaves its provider
+# unusable; a setting just falls back to vox's own default.
+_NO_CREDENTIAL = "nothing stored, so its provider has no credential"
+_UNKEPT: dict[str, str] = dict.fromkeys(
+    ("TTS_PROVIDER", "AWS_DEFAULT_REGION", "AWS_PROFILE"),
+    "not written; vox uses its default",
+)
+
 
 @final
 @dataclass(frozen=True, slots=True)
@@ -23,7 +31,7 @@ class KeyNotice:
         outcome = (
             "kept the stored value"
             if self.kept
-            else "nothing stored, so its provider has no credential"
+            else _UNKEPT.get(self.key, _NO_CREDENTIAL)
         )
         return f"{self.key}: {self.reason}; {outcome}"
 

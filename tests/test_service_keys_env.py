@@ -227,7 +227,7 @@ def test_write_keys_env_returns_every_skip_by_name_and_reason(
     unkept = "nothing stored, so its provider has no credential"
     refused = "refused: a space at position 3 (no HTTP header may carry it)"
     assert [str(n) for n in report.notices] == [
-        f"AWS_PROFILE: empty in the environment; {unkept}",
+        "AWS_PROFILE: empty in the environment; not written; vox uses its default",
         "ELEVENLABS_API_KEY: empty in the environment; kept the stored value",
         f"OPENAI_API_KEY: {refused}; {unkept}",
     ]
