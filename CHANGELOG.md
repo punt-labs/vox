@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stale session working notes (`RESUME.md`).
 
+### Fixed
+
+- voxd no longer dies at boot when `SSL_CERT_FILE` points at a missing or
+  unusable bundle. The ElevenLabs and OpenAI clients are built on first use,
+  so a bad bundle surfaces only on the path that needs it, as a permanent
+  error naming `SSL_CERT_FILE` (or `SSL_CERT_DIR`, or the default trust
+  store) and the reason — never the path, which is logged once.
+- Provider failures are classified consistently: a rejected key is a
+  credential error everywhere (including the voice lookup), a certificate
+  verification failure is permanent, proxy and network blips are transient,
+  and configuration faults (bad scheme, proxy auth) are permanent. Music no
+  longer retries permanent failures forever, and a conversation call ends
+  with a spoken reason instead of asking the caller to repeat.
+- Speech and record requests return the specific failure instead of
+  "operation failed"; a failed synthesis no longer leaves an empty `.mp3` in
+  the temp directory; provider writes are atomic.
+- An API key containing whitespace, a newline, or a non-ASCII character is
+  rejected where it enters, and no key text reaches a log, message, or
+  traceback. A long-lived client keeps the key in effect when it was built.
+
 ### Security
 
 - **Four dependencies are upgraded, clearing all 19 open Dependabot alerts
