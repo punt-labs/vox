@@ -10,16 +10,22 @@ SDK's transport failures for every request made through :meth:`LazySdk.call`.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.ca_bundle import CaBundle
-from punt_vox.providers.provider_faults import UnsendableHeaderError
+from punt_vox.providers.ca_bundle import CaBundle, CaBundleError
+from punt_vox.providers.provider_faults import (
+    ProviderConfigError,
+    UnsendableHeaderError,
+)
 from punt_vox.providers.transport_faults import TransportFaults
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = ["LazySdk"]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -59,6 +65,8 @@ class LazySdk[T]:
 
         Raises:
             CaBundleError: ``SSL_CERT_FILE`` is set and cannot be loaded.
+            ProviderConfigError: The constructor refused the host's proxy or
+                base URL, or the factory refused the key.
         """
         if self._sdk is None:
             self._sdk = self._build()
@@ -85,8 +93,48 @@ class LazySdk[T]:
     def _build(self) -> T:
         try:
             return self._factory()
-        except OSError as exc:
-            bundle = CaBundle.configured()
-            if bundle is None:
+        except ProviderConfigError:
+            raise  # the factory already named the fault -- a malformed key
+        except (OSError, ValueError, ImportError) as exc:
+            renamed = self._renamed(exc)
+            if renamed is None:
                 raise
-            raise bundle.unloadable(exc) from exc
+            raise renamed from exc
+
+    @classmethod
+    def _renamed(
+        cls, exc: OSError | ValueError | ImportError
+    ) -> CaBundleError | ProviderConfigError | None:  # None: not ours to rename
+        """Name the host setting a failed construction points at, if any.
+
+        An ``OSError`` is ``SSL_CERT_FILE`` only when it is set; a ``ValueError``
+        is httpx refusing the proxy or base URL; an ``ImportError`` is ours only
+        in httpx's words for a SOCKS proxy without socksio -- any other is a
+        broken install.
+        """
+        if isinstance(exc, OSError):
+            bundle = CaBundle.configured()
+            return bundle.unloadable(exc) if bundle is not None else None
+        if isinstance(exc, ImportError):
+            if "socksio" not in str(exc):
+                return None
+            logger.error("provider client cannot be built: %r", exc)
+            return ProviderConfigError(
+                "a SOCKS proxy is set (HTTPS_PROXY or ALL_PROXY) but SOCKS support "
+                "is not installed; use an HTTP proxy or unset it"
+            )
+        return cls._unbuildable(exc)
+
+    @staticmethod
+    def _unbuildable(fault: ValueError) -> ProviderConfigError:
+        """Describe a client the constructor refused, without the fault's text.
+
+        httpx rejects an unusable proxy URL here, quoting it; its repr masks a
+        password, so the full fault goes to the log, but the URL still names the
+        proxy host and user, and this message crosses the wire.
+        """
+        logger.error("provider client cannot be built: %r", fault)
+        return ProviderConfigError(
+            f"provider client cannot be built ({type(fault).__name__}); check the "
+            "proxy settings (HTTPS_PROXY, ALL_PROXY) and the provider base URL"
+        )

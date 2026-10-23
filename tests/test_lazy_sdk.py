@@ -6,11 +6,15 @@ import logging
 import traceback
 
 import httpx
+import openai
 import pytest
+from elevenlabs.client import ElevenLabs
 
+from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import (
+    ProviderConfigError,
     ProviderTransportError,
     UnsendableHeaderError,
 )
@@ -171,3 +175,75 @@ class TestHeaderFaultChain:
                 log.exception("request failed")
 
         assert self._KEY not in caplog.text
+
+
+class TestUnbuildableClient:
+    """A constructor that rejects the host's proxy or base URL is configuration."""
+
+    @staticmethod
+    def _real_sdks() -> tuple[LazySdk[object], ...]:
+        return (
+            LazySdk(lambda: ElevenLabs(api_key="k"), transport=httpx.RequestError),
+            LazySdk(
+                lambda: openai.OpenAI(api_key="k"), transport=openai.APIConnectionError
+            ),
+        )
+
+    @pytest.fixture
+    def clean_proxy_env(self, monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+        for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        return monkeypatch
+
+    def test_unknown_proxy_scheme_is_a_config_error(
+        self, clean_proxy_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Both real SDKs refuse ``socks9://`` at construction with a ValueError."""
+        clean_proxy_env.setenv("HTTPS_PROXY", "socks9://user:s3cret@proxyhost:1")
+
+        for sdk in self._real_sdks():
+            with (
+                caplog.at_level(logging.ERROR),
+                pytest.raises(ProviderConfigError) as info,
+            ):
+                sdk.get()
+
+            assert "HTTPS_PROXY" in str(info.value)
+            assert "proxyhost" not in str(info.value)
+            assert isinstance(info.value.__cause__, ValueError)
+        assert "socks9" in caplog.text
+        assert "s3cret" not in caplog.text
+
+    def test_socks_proxy_without_socks_support_is_a_config_error(
+        self, clean_proxy_env: pytest.MonkeyPatch
+    ) -> None:
+        """httpx raises ImportError for a SOCKS proxy when socksio is absent."""
+        clean_proxy_env.setenv("ALL_PROXY", "socks5://proxyhost:1080")
+
+        def _no_socksio() -> object:
+            raise ImportError(
+                "Using SOCKS proxy, but the 'socksio' package is not installed."
+            )
+
+        with pytest.raises(ProviderConfigError, match="SOCKS"):
+            LazySdk(_no_socksio, transport=_TransportError).get()
+
+    def test_other_import_error_propagates(self) -> None:
+        def _broken() -> object:
+            raise ImportError("No module named 'h2'")
+
+        with pytest.raises(ImportError):
+            LazySdk(_broken, transport=_TransportError).get()
+
+    def test_config_error_from_the_factory_passes_unchanged(self) -> None:
+        """A factory that already named the fault (a malformed key) is not re-worded."""
+        error = MalformedApiKeyError("OPENAI_API_KEY contains a control character")
+
+        def _malformed() -> object:
+            raise error
+
+        with pytest.raises(MalformedApiKeyError) as info:
+            LazySdk(_malformed, transport=_TransportError).get()
+
+        assert info.value is error
