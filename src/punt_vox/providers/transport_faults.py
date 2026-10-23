@@ -45,7 +45,7 @@ class TransportFaults:
         if bundle is not None and verify is not None:
             return bundle.untrusted(verify)
         return ProviderTransportError(
-            f"provider request failed in transport ({type(exc).__name__}: {exc})"
+            f"provider unreachable ({type(exc).__name__}: {exc}); check the network"
         )
 
     @staticmethod

@@ -20,7 +20,6 @@ from elevenlabs.core import ApiError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.stream_file import StreamFile
-from punt_vox.providers.transport_faults import TransportFaults
 from punt_vox.types import HealthCheck
 
 if TYPE_CHECKING:
@@ -61,7 +60,7 @@ class ElevenLabsClient:
     ) -> Self:
         self = super().__new__(cls)
         self._api_key = api_key if api_key is not None else os.environ.get(_API_KEY_VAR)
-        self._sdk = LazySdk(self._new_sdk, sdk=sdk)
+        self._sdk = LazySdk(self._new_sdk, transport=httpx.TransportError, sdk=sdk)
         return self
 
     def sdk(self) -> ElevenLabs:
@@ -80,10 +79,7 @@ class ElevenLabsClient:
         ``SSL_CERT_FILE`` is why TLS verification failed. ``ApiError`` -- the
         server answered -- passes through for the provider to interpret.
         """
-        try:
-            return request(self._sdk.get())
-        except httpx.TransportError as exc:
-            raise TransportFaults.translate(exc) from exc
+        return self._sdk.call(request)
 
     def stream_to(
         self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
@@ -91,13 +87,10 @@ class ElevenLabsClient:
         """Drain the stream *open_stream* starts into *target*, all or nothing.
 
         The SDK's ``stream()`` is lazy: the request goes out, and every failure
-        arrives, only as chunks are pulled -- so the whole drain sits inside the
+        arrives, only as chunks are pulled -- so the whole drain runs inside the
         translation, not just the call that returns the generator.
         """
-        try:
-            return StreamFile(target).write(open_stream(self._sdk.get()))
-        except httpx.TransportError as exc:
-            raise TransportFaults.translate(exc) from exc
+        return self._sdk.call(lambda sdk: StreamFile(target).write(open_stream(sdk)))
 
     def key_check(self) -> HealthCheck:
         """Report whether this client has an API key."""
@@ -111,12 +104,11 @@ class ElevenLabsClient:
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
         try:
-            sub = self._sdk.get().user.subscription.get()
+            sub = self._sdk.call(lambda sdk: sdk.user.subscription.get())
         except ApiError as exc:
             reason = self._api_error_message(exc)
-        except httpx.TransportError as exc:
-            reason = str(TransportFaults.translate(exc))
         except (CaBundleError, OSError) as exc:
+            # OSError covers ProviderTransportError, a ConnectionError.
             reason = str(exc)
         else:
             return HealthCheck(

@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import ssl
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
 
 from punt_vox.core import (
     _split_at_words,  # pyright: ignore[reportPrivateUsage]
     split_text,
 )
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.providers.transport_faults import ProviderTransportError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
@@ -437,3 +441,88 @@ class TestOpenAIProviderLanguageSupport:
         request = SynthesisRequest(text="hello", voice="nova")
         result = openai_provider.synthesize(request, tmp_output_dir / "test.mp3")
         assert result.language is None
+
+
+class TestOpenAIProviderBadCaBundle:
+    """The OpenAI SDK loads SSL_CERT_FILE when its client is built, like ElevenLabs."""
+
+    @pytest.fixture
+    def missing_ca(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        cafile = tmp_path / "gone" / "ca-bundle.pem"
+        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        return cafile
+
+    def test_construction_never_builds_the_sdk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built: list[object] = []
+        monkeypatch.setattr(
+            "punt_vox.providers.openai.openai.OpenAI",
+            lambda **_kwargs: built.append(object()),  # pyright: ignore[reportUnknownLambdaType]
+        )
+
+        OpenAIProvider()
+
+        assert built == []
+
+    def test_construction_survives_a_missing_bundle(self, missing_ca: Path) -> None:
+        assert OpenAIProvider().name == "openai"
+
+    def test_synthesize_names_the_variable_not_the_path(
+        self, missing_ca: Path, tmp_path: Path
+    ) -> None:
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE") as info:
+            OpenAIProvider().synthesize(request, tmp_path / "out.mp3")
+
+        assert str(missing_ca) not in str(info.value)
+
+    def test_check_health_reports_the_bundle(self, missing_ca: Path) -> None:
+        key, access = OpenAIProvider().check_health()
+
+        assert key.passed
+        assert not access.passed
+        assert "SSL_CERT_FILE" in access.message
+
+    def test_tls_verify_failure_with_bundle_set_names_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = openai.APIConnectionError(request=MagicMock())
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        client = MagicMock()
+        client.audio.speech.create.side_effect = error
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
+            OpenAIProvider(client=client).synthesize(request, tmp_path / "out.mp3")
+
+    def test_connection_error_is_transient(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        client = MagicMock()
+        client.audio.speech.create.side_effect = openai.APIConnectionError(
+            request=MagicMock()
+        )
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(ProviderTransportError):
+            OpenAIProvider(client=client).synthesize(request, tmp_path / "out.mp3")
+
+    def test_check_health_reports_an_unreachable_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        client = MagicMock()
+        client.models.retrieve.side_effect = openai.APIConnectionError(
+            request=MagicMock()
+        )
+
+        _, access = OpenAIProvider(client=client).check_health()
+
+        assert not access.passed
+        assert "check the network" in access.message

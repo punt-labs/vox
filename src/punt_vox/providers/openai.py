@@ -11,7 +11,9 @@ import openai
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.chunked import chunked_synthesize
+from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -55,20 +57,27 @@ class OpenAIProvider(TTSProvider):
 
     Implements the TTSProvider protocol using the OpenAI audio API.
     Supports tts-1 and tts-1-hd models with 9 built-in voices.
+
+    The SDK client is built on first use, not here: constructing it loads
+    ``SSL_CERT_FILE``, and a bad bundle should fail the request that needs
+    TLS -- by name -- rather than the code that merely composes a provider.
     """
 
     _model: str
-    _client: openai.OpenAI
+    _client: LazySdk[openai.OpenAI]
 
     def __new__(
         cls,
         *,
         model: str | None = None,
+        # The test seam: absent, the real SDK client is built on first use.
         client: openai.OpenAI | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
-        self._client = client or openai.OpenAI()
+        self._client = LazySdk(
+            openai.OpenAI, transport=openai.APIConnectionError, sdk=client
+        )
         return self
 
     @property
@@ -128,54 +137,33 @@ class OpenAIProvider(TTSProvider):
         return self._resolve_voice_name(name)
 
     def check_health(self) -> list[HealthCheck]:
-        """Check OpenAI API key and model access."""
-        checks: list[HealthCheck] = []
-
-        # Check OPENAI_API_KEY env var.
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            checks.append(
+        """Check the OpenAI API key, then the configured model's access."""
+        if not os.environ.get("OPENAI_API_KEY"):
+            return [
                 HealthCheck(
                     passed=False,
                     message="OpenAI API key: not set (export OPENAI_API_KEY)",
                 )
-            )
-            return checks
+            ]
+        key = HealthCheck(passed=True, message="OpenAI API key: set")
+        return [key, self._model_access_check()]
 
-        checks.append(HealthCheck(passed=True, message="OpenAI API key: set"))
-
-        # Verify model access.
+    def _model_access_check(self) -> HealthCheck:
+        """Report whether the configured model is reachable with this key."""
         try:
-            self._client.models.retrieve(self._model)
-            checks.append(
-                HealthCheck(
-                    passed=True,
-                    message=f"OpenAI model access: {self._model}",
-                )
-            )
+            self._client.call(lambda sdk: sdk.models.retrieve(self._model))
         except openai.AuthenticationError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI model access: invalid API key",
-                )
-            )
+            reason = "invalid API key"
         except openai.NotFoundError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message=f"OpenAI model access: model '{self._model}' not found",
-                )
+            reason = f"model '{self._model}' not found"
+        except (CaBundleError, OSError) as exc:
+            # OSError covers ProviderTransportError, a ConnectionError.
+            reason = str(exc)
+        else:
+            return HealthCheck(
+                passed=True, message=f"OpenAI model access: {self._model}"
             )
-        except openai.APIConnectionError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI model access: cannot reach API (check network)",
-                )
-            )
-
-        return checks
+        return HealthCheck(passed=False, message=f"OpenAI model access: {reason}")
 
     def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default OpenAI voice for a language.
@@ -239,19 +227,19 @@ class OpenAIProvider(TTSProvider):
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            response: Any = self._client.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
-                model=self._model,
-                voice=voice,  # pyright: ignore[reportArgumentType]
-                input=text,
-                speed=speed,
-                response_format="mp3",
+            response: Any = self._client.call(
+                lambda sdk: sdk.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
+                    model=self._model,
+                    voice=voice,  # pyright: ignore[reportArgumentType]
+                    input=text,
+                    speed=speed,
+                    response_format="mp3",
+                )
             )
         except openai.AuthenticationError as exc:
-            # 401 for a rejected key; status_code is nullable on the
-            # SDK's exception when the transport never got a response
-            # (e.g. an outbound proxy dropped the connection).
-            status = getattr(exc, "status_code", None)
-            raise ProviderAuthError("openai", status) from exc
+            # The SDK types AuthenticationError.status_code as Literal[401]: a
+            # response always arrived, so the status is never missing.
+            raise ProviderAuthError("openai", exc.status_code) from exc
         logger.info(
             "API call: provider=openai, voice=%s, chars=%d",
             voice,

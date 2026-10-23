@@ -84,3 +84,10 @@ def test_cyclic_chain_terminates() -> None:
     second.__cause__ = first
 
     assert isinstance(TransportFaults.translate(first), ProviderTransportError)
+
+
+@pytest.mark.usefixtures("bundle_unset")
+def test_transient_message_points_at_the_network() -> None:
+    assert "check the network" in str(
+        TransportFaults.translate(httpx.ConnectError("refused"))
+    )
