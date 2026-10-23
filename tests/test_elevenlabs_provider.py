@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
     ElevenLabsProvider,
 )
+from punt_vox.providers.transport_faults import ProviderTransportError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.types_provider_errors import ProviderAuthError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class TestElevenLabsProviderName:
@@ -615,3 +624,118 @@ class TestElevenLabsProviderUnnamedVoice:
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
 
         assert provider.list_voices() == ["drew", "matilda"]
+
+
+def _raising_stream(error: Exception, *chunks: bytes) -> Iterator[bytes]:
+    """Mimic the SDK's lazy ``stream()``: nothing happens until iterated."""
+    yield from chunks
+    raise error
+
+
+class TestElevenLabsProviderStreamFailures:
+    """The SDK's ``stream()`` is a generator: its errors arrive on iteration."""
+
+    @pytest.fixture
+    def provider(self, mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
+        return ElevenLabsProvider(client=mock_elevenlabs_client)
+
+    @staticmethod
+    def _fail_with(client: MagicMock, error: Exception, *chunks: bytes) -> None:
+        client.text_to_speech.stream.side_effect = (
+            lambda **_kwargs: _raising_stream(error, *chunks)  # pyright: ignore[reportUnknownLambdaType]
+        )
+
+    def test_401_on_first_chunk_is_provider_auth_error(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        self._fail_with(mock_elevenlabs_client, ApiError(status_code=401))
+        request = SynthesisRequest(text="hello", voice="matilda")
+
+        with pytest.raises(ProviderAuthError):
+            provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+    def test_other_api_error_on_first_chunk_re_raises(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        self._fail_with(mock_elevenlabs_client, ApiError(status_code=500))
+        request = SynthesisRequest(text="hello", voice="matilda")
+
+        with pytest.raises(ApiError):
+            provider.synthesize(request, tmp_output_dir / "fault.mp3")
+
+    def test_mid_stream_failure_leaves_no_partial_file(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        self._fail_with(
+            mock_elevenlabs_client, httpx.ReadError("dropped"), b"\xff\xfb" * 64
+        )
+        out = tmp_output_dir / "partial.mp3"
+
+        with pytest.raises(ProviderTransportError):
+            provider.synthesize(SynthesisRequest(text="hello", voice="matilda"), out)
+
+        assert list(tmp_output_dir.iterdir()) == []
+
+    def test_transport_error_is_transient_and_chained(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        cause = httpx.ConnectError("refused")
+        self._fail_with(mock_elevenlabs_client, cause)
+
+        with pytest.raises(ProviderTransportError) as info:
+            provider.synthesize(
+                SynthesisRequest(text="hello", voice="matilda"),
+                tmp_output_dir / "net.mp3",
+            )
+
+        assert info.value.__cause__ is cause
+
+    def test_tls_verify_failure_with_bundle_set_names_the_variable(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        self._fail_with(mock_elevenlabs_client, error)
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE") as info:
+            provider.synthesize(
+                SynthesisRequest(text="hello", voice="matilda"),
+                tmp_output_dir / "tls.mp3",
+            )
+
+        assert "/etc/private/ca.pem" not in str(info.value)
+
+    def test_success_writes_the_whole_stream(
+        self,
+        provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        mock_elevenlabs_client.text_to_speech.stream.side_effect = (
+            lambda **_kwargs: iter([b"ab", b"cd"])  # pyright: ignore[reportUnknownLambdaType]
+        )
+        out = tmp_output_dir / "whole.mp3"
+
+        provider.synthesize(SynthesisRequest(text="hello", voice="matilda"), out)
+
+        assert out.read_bytes() == b"abcd"
+        assert list(tmp_output_dir.iterdir()) == [out]

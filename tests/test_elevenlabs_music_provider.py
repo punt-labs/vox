@@ -3,15 +3,31 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any
+import ssl
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
+from punt_vox.providers.transport_faults import ProviderTransportError
 from punt_vox.types import MusicProvider
+from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
+from punt_vox.voxd.programs.part_tags import PartTags
+from punt_vox.voxd.programs.producer import (
+    PartSpec,
+    ProducerBadInputError,
+    ProducerTransientError,
+)
+from punt_vox.voxd.synthesis import (
+    _api_key_context,  # pyright: ignore[reportPrivateUsage]
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -345,6 +361,59 @@ class TestConstructor:
 
         assert captured.get("api_key") == "test-key-123"
 
+    @pytest.mark.asyncio
+    async def test_a_per_call_key_never_reaches_the_long_lived_client(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The music client outlives every synthesis request, so it keeps the
+        daemon's own key even when its first build lands inside a per-call
+        ``api_key`` context that has swapped the environment.
+        """
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "daemon-key-A")
+        captured: dict[str, Any] = {}
+        client = MagicMock()
+        client.music.stream.side_effect = (
+            lambda **kwargs: _make_music_stream_response()  # pyright: ignore[reportUnknownLambdaType]
+        )
+
+        def fake_elevenlabs(**kwargs: Any) -> MagicMock:  # pyright: ignore[reportExplicitAny]
+            captured.update(kwargs)
+            return client
+
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs", fake_elevenlabs
+        )
+        provider = ElevenLabsMusicProvider()
+
+        with _api_key_context("caller-key-B", "elevenlabs"):
+            await provider.generate_track("ambient", 60_000, tmp_path / "t.mp3")
+
+        assert captured.get("api_key") == "daemon-key-A"
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_key_wins_over_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "env-key")
+        captured: dict[str, Any] = {}
+        client = MagicMock()
+        client.music.stream.side_effect = (
+            lambda **kwargs: _make_music_stream_response()  # pyright: ignore[reportUnknownLambdaType]
+        )
+
+        def fake_elevenlabs(**kwargs: Any) -> MagicMock:  # pyright: ignore[reportExplicitAny]
+            captured.update(kwargs)
+            return client
+
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs", fake_elevenlabs
+        )
+        provider = ElevenLabsMusicProvider(api_key="explicit-key")
+
+        await provider.generate_track("ambient", 60_000, tmp_path / "t.mp3")
+
+        assert captured.get("api_key") == "explicit-key"
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -420,3 +489,82 @@ class TestLogging:
 
         assert "Wrote music track" in caplog.text
         assert "log_done.mp3" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Failures raised while iterating the SDK's lazy stream
+# ---------------------------------------------------------------------------
+
+
+def _raising_stream(error: Exception, *chunks: bytes) -> Iterator[bytes]:
+    """Mimic the SDK's lazy ``stream()``: nothing happens until iterated."""
+    yield from chunks
+    raise error
+
+
+def _client_failing_with(error: Exception, *chunks: bytes) -> MagicMock:
+    client = MagicMock()
+    client.music.stream.side_effect = (
+        lambda **_kwargs: _raising_stream(error, *chunks)  # pyright: ignore[reportUnknownLambdaType]
+    )
+    return client
+
+
+class TestStreamFailures:
+    @pytest.mark.asyncio
+    async def test_api_error_on_first_chunk_is_logged_and_raised(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        provider = ElevenLabsMusicProvider(
+            client=_client_failing_with(ApiError(status_code=422))
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ApiError):
+            await provider.generate_track("test", 60_000, tmp_path / "t.mp3")
+
+        assert "music API call failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_failure_leaves_no_partial_file(
+        self, tmp_path: Path
+    ) -> None:
+        provider = ElevenLabsMusicProvider(
+            client=_client_failing_with(httpx.ReadError("dropped"), b"\xff" * 64)
+        )
+
+        with pytest.raises(ProviderTransportError):
+            await provider.generate_track("test", 60_000, tmp_path / "t.mp3")
+
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_transport_error_is_transient_to_the_producer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        provider = ElevenLabsMusicProvider(
+            client=_client_failing_with(httpx.ConnectError("refused"))
+        )
+        producer = MusicProducer(provider, LengthPolicy())
+
+        with pytest.raises(ProducerTransientError):
+            await producer.produce(_spec(), tmp_path / "t.mp3")
+
+    @pytest.mark.asyncio
+    async def test_tls_verify_failure_with_bundle_set_is_permanent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        producer = MusicProducer(
+            ElevenLabsMusicProvider(client=_client_failing_with(error)), LengthPolicy()
+        )
+
+        with pytest.raises(ProducerBadInputError, match="SSL_CERT_FILE"):
+            await producer.produce(_spec(), tmp_path / "t.mp3")
+
+
+def _spec() -> PartSpec:
+    tags = PartTags(title="calm", album="mix", genre="ambient", index=1, total=12)
+    return PartSpec(prompt="calm", index=1, tags=tags)

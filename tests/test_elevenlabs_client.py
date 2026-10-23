@@ -13,8 +13,10 @@ from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
+from punt_vox.providers.transport_faults import ProviderTransportError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -143,10 +145,10 @@ class TestBuild:
 
         assert ElevenLabsClient(sdk=sdk).sdk() is sdk
 
-    def test_reads_the_api_key_at_build_time(
+    def test_reads_the_api_key_at_construction(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The SDK's own default is read at import, before voxd loads its keys."""
+        """A key swapped into the environment after construction is not used."""
         captured: dict[str, object] = {}
 
         def _fake(**kwargs: object) -> object:
@@ -154,13 +156,40 @@ class TestBuild:
             return object()
 
         monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _fake)
-        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "at-construction")
         client = ElevenLabsClient()
-        monkeypatch.setenv("ELEVENLABS_API_KEY", "loaded-late")
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "swapped-later")
 
         client.sdk()
 
-        assert captured["api_key"] == "loaded-late"
+        assert captured["api_key"] == "at-construction"
+
+    def test_explicit_api_key_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake(**kwargs: object) -> object:
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _fake)
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "env-key")
+
+        ElevenLabsClient(api_key="explicit").sdk()
+
+        assert captured["api_key"] == "explicit"
+
+
+class TestKeyCheck:
+    def test_passes_with_a_key(self) -> None:
+        assert ElevenLabsClient(api_key="k", sdk=MagicMock()).key_check().passed
+
+    def test_fails_without_a_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        check = ElevenLabsClient(sdk=MagicMock()).key_check()
+
+        assert not check.passed
+        assert "ELEVENLABS_API_KEY" in check.message
 
 
 # ---------------------------------------------------------------------------
@@ -217,3 +246,69 @@ class TestSubscriptionCheck:
 
         assert not check.passed
         assert "SSL_CERT_FILE" in check.message
+
+
+# ---------------------------------------------------------------------------
+# Calling the SDK
+# ---------------------------------------------------------------------------
+
+
+def _raise(error: Exception) -> object:
+    raise error
+
+
+class TestCall:
+    def test_returns_the_request_result(self) -> None:
+        sdk = MagicMock()
+
+        assert ElevenLabsClient(sdk=sdk).call(lambda s: s is sdk) is True
+
+    def test_transport_error_is_transient_and_chained(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        cause = httpx.ConnectError("refused")
+
+        with pytest.raises(ProviderTransportError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        assert info.value.__cause__ is cause
+
+    def test_tls_verify_failure_names_the_variable(self, garbage_ca: Path) -> None:
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(_verify_failure())
+            )
+
+    def test_api_error_passes_through(self) -> None:
+        """The server answered: the provider, not the client, interprets it."""
+        with pytest.raises(ApiError):
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=429))
+            )
+
+
+class TestStreamTo:
+    def test_writes_the_stream(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.mp3"
+
+        written = ElevenLabsClient(sdk=MagicMock()).stream_to(
+            target, lambda _sdk: iter([b"ab", b"c"])
+        )
+
+        assert written == 3
+        assert target.read_bytes() == b"abc"
+
+    def test_transport_error_while_draining_is_translated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+
+        def _dropping(_sdk: object) -> Iterator[bytes]:
+            yield b"partial"
+            raise httpx.ReadError("dropped")
+
+        with pytest.raises(ProviderTransportError):
+            ElevenLabsClient(sdk=MagicMock()).stream_to(tmp_path / "o.mp3", _dropping)
+
+        assert list(tmp_path.iterdir()) == []

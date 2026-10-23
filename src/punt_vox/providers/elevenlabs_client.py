@@ -11,7 +11,7 @@ ElevenLabs-specific -- the key and the account's health.
 from __future__ import annotations
 
 import os
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import httpx
 from elevenlabs.client import ElevenLabs
@@ -19,8 +19,13 @@ from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.stream_file import StreamFile
 from punt_vox.providers.transport_faults import TransportFaults
 from punt_vox.types import HealthCheck
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+    from pathlib import Path
 
 __all__ = ["ElevenLabsClient"]
 
@@ -29,14 +34,33 @@ _API_KEY_VAR = "ELEVENLABS_API_KEY"
 
 @final
 class ElevenLabsClient:
-    """Own one ElevenLabs SDK client: build it on first use, report its health."""
+    """Own one ElevenLabs SDK client: build it on first use, report its health.
 
-    __slots__ = ("_sdk",)
+    The key is fixed when this object is constructed, not when the SDK is
+    built. voxd swaps ``ELEVENLABS_API_KEY`` in the environment for the length
+    of a request that carries its own key; a long-lived client whose first
+    build landed inside that window would keep the caller's key for every
+    later use. Reading the key at construction -- after voxd has loaded its
+    keys file, and outside any request -- means a client only ever holds the
+    key its owner was built with.
+    """
+
+    __slots__ = ("_api_key", "_sdk")
+    # None: no key was given and none is in the environment; key_check says so.
+    _api_key: str | None
     _sdk: LazySdk[ElevenLabs]
 
-    def __new__(cls, *, sdk: ElevenLabs | None = None) -> Self:
-        # ``sdk`` is the test seam: absent, the real client is built lazily.
+    def __new__(
+        cls,
+        *,
+        # Absent: read ELEVENLABS_API_KEY now. Never left to the SDK, whose own
+        # default is read when its module is imported, before voxd loads keys.
+        api_key: str | None = None,
+        # The test seam: absent, the real client is built lazily.
+        sdk: ElevenLabs | None = None,
+    ) -> Self:
         self = super().__new__(cls)
+        self._api_key = api_key if api_key is not None else os.environ.get(_API_KEY_VAR)
         self._sdk = LazySdk(self._new_sdk, sdk=sdk)
         return self
 
@@ -48,10 +72,36 @@ class ElevenLabsClient:
         """
         return self._sdk.get()
 
-    @staticmethod
-    def key_check() -> HealthCheck:
-        """Report whether the API key is present in the environment."""
-        if os.environ.get(_API_KEY_VAR):
+    def call[R](self, request: Callable[[ElevenLabs], R]) -> R:
+        """Run *request* against the SDK, translating a transport failure.
+
+        The SDK lets httpx's errors escape raw; they leave here as a transient
+        ``ProviderTransportError``, or as a ``CaBundleError`` when
+        ``SSL_CERT_FILE`` is why TLS verification failed. ``ApiError`` -- the
+        server answered -- passes through for the provider to interpret.
+        """
+        try:
+            return request(self._sdk.get())
+        except httpx.TransportError as exc:
+            raise TransportFaults.translate(exc) from exc
+
+    def stream_to(
+        self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
+    ) -> int:
+        """Drain the stream *open_stream* starts into *target*, all or nothing.
+
+        The SDK's ``stream()`` is lazy: the request goes out, and every failure
+        arrives, only as chunks are pulled -- so the whole drain sits inside the
+        translation, not just the call that returns the generator.
+        """
+        try:
+            return StreamFile(target).write(open_stream(self._sdk.get()))
+        except httpx.TransportError as exc:
+            raise TransportFaults.translate(exc) from exc
+
+    def key_check(self) -> HealthCheck:
+        """Report whether this client has an API key."""
+        if self._api_key:
             return HealthCheck(passed=True, message="ElevenLabs API key: set")
         return HealthCheck(
             passed=False,
@@ -61,7 +111,7 @@ class ElevenLabsClient:
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
         try:
-            sub = self.sdk().user.subscription.get()
+            sub = self._sdk.get().user.subscription.get()
         except ApiError as exc:
             reason = self._api_error_message(exc)
         except httpx.TransportError as exc:
@@ -78,15 +128,9 @@ class ElevenLabsClient:
             )
         return HealthCheck(passed=False, message=f"ElevenLabs subscription: {reason}")
 
-    @staticmethod
-    def _new_sdk() -> ElevenLabs:
-        """Construct the SDK client.
-
-        The key is read here rather than left to the SDK: the SDK's ``api_key``
-        default is evaluated when its module is imported, before voxd has loaded
-        its keys file into the environment.
-        """
-        return ElevenLabs(api_key=os.environ.get(_API_KEY_VAR))
+    def _new_sdk(self) -> ElevenLabs:
+        """Construct the SDK client with the key this client was built with."""
+        return ElevenLabs(api_key=self._api_key)
 
     @staticmethod
     def _api_error_message(exc: ApiError) -> str:

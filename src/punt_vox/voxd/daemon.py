@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -205,16 +206,6 @@ class VoxDaemon:
             logger.info("voxd stopped")
 
     @staticmethod
-    def read_port_file() -> int | None:
-        """Read the daemon port from the port file."""
-        return DaemonConfig.read_port_file(_run_dir())
-
-    @staticmethod
-    def read_token_file() -> str | None:
-        """Read the daemon auth token."""
-        return DaemonConfig.read_token_file(_run_dir())
-
-    @staticmethod
     def _programs_root() -> Path:
         """Return the root directory under which saved Programs live.
 
@@ -233,8 +224,14 @@ class VoxDaemon:
         The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
         drive the subsystem with a fake; the ElevenLabs default is applied here, at
         the daemon composition root.
+
+        The key is read here and passed explicitly. Boot calls this after the
+        keys file is loaded and before any request runs, so the long-lived music
+        client holds the daemon's own key -- never one a synthesis request has
+        swapped into the environment for its own duration.
         """
-        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
+        music = ElevenLabsMusicProvider(api_key=os.environ.get("ELEVENLABS_API_KEY"))
+        producer = MusicProducer(music, LengthPolicy())
         mpv_socket = _run_dir() / "mpv.sock"
         return ProgramSubsystem(VoxDaemon._programs_root(), producer, mpv_socket)
 

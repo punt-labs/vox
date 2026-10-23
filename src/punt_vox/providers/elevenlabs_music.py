@@ -5,9 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
@@ -16,6 +13,8 @@ from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import MusicProvider
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from elevenlabs.client import ElevenLabs
 
 logger = logging.getLogger(__name__)
@@ -48,13 +47,16 @@ class ElevenLabsMusicProvider(MusicProvider):
     def __new__(
         cls,
         *,
+        # Absent: read ELEVENLABS_API_KEY now -- see ElevenLabsClient for why the
+        # key is fixed at construction rather than at the first generation.
+        api_key: str | None = None,
         # The test seam: absent, the real SDK client is built on first use.
         client: ElevenLabs | None = None,
         output_format: str = _DEFAULT_OUTPUT_FORMAT,
     ) -> Self:
         self = super().__new__(cls)
         self._output_format = output_format
-        self._client = ElevenLabsClient(sdk=client)
+        self._client = ElevenLabsClient(api_key=api_key, sdk=client)
         return self
 
     def _generate_sync(self, prompt: str, duration_ms: int, output_path: Path) -> Path:
@@ -63,8 +65,6 @@ class ElevenLabsMusicProvider(MusicProvider):
         Extracted so ``generate_track`` can delegate to a thread via
         ``asyncio.to_thread``, keeping the event loop unblocked.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
         # The prompt is agent-authored content sent to ElevenLabs: never at INFO
         # (the durable file). INFO gets length + a short hash; full text at DEBUG.
         prompt_sha = hashlib.sha256(prompt.encode()).hexdigest()[:12]
@@ -80,36 +80,17 @@ class ElevenLabsMusicProvider(MusicProvider):
         logger.debug("music prompt (sha %s): %r", prompt_sha, prompt)
 
         try:
-            response = self._client.sdk().music.stream(
-                prompt=prompt,
-                music_length_ms=duration_ms,
-                force_instrumental=True,
-                output_format=self._output_format,
+            bytes_written = self._client.stream_to(
+                output_path,
+                lambda sdk: sdk.music.stream(
+                    prompt=prompt,
+                    music_length_ms=duration_ms,
+                    force_instrumental=True,
+                    output_format=self._output_format,
+                ),
             )
         except ApiError:
             logger.exception("ElevenLabs music API call failed")
-            raise
-
-        # Stream to a temp file alongside the target, rename on success.
-        fd, tmp_name = tempfile.mkstemp(dir=output_path.parent, suffix=".tmp")
-        tmp_path = Path(tmp_name)
-        bytes_written = 0
-
-        try:
-            os.close(fd)  # close mkstemp fd; reopen via pathlib below
-            with tmp_path.open("wb") as f:
-                for chunk in response:
-                    f.write(chunk)
-                    bytes_written += len(chunk)
-
-            if bytes_written == 0:
-                msg = "ElevenLabs music API returned no audio data"
-                raise RuntimeError(msg)
-
-            tmp_path.rename(output_path)
-        except BaseException:
-            # Clean up the temp file on any failure (including KeyboardInterrupt).
-            tmp_path.unlink(missing_ok=True)
             raise
 
         logger.info("Wrote music track: %s (%d bytes)", output_path, bytes_written)
@@ -133,7 +114,8 @@ class ElevenLabsMusicProvider(MusicProvider):
 
         Raises:
             ApiError: On ElevenLabs API failure.
-            CaBundleError: When ``SSL_CERT_FILE`` names an unloadable CA bundle.
+            CaBundleError: When ``SSL_CERT_FILE`` names a CA bundle TLS cannot use.
+            ProviderTransportError: When the request fails in transport.
             RuntimeError: When the API returns no audio data.
         """
         return await asyncio.to_thread(

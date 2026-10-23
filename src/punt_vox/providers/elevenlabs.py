@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+from elevenlabs.types import VoiceSettings
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
@@ -281,10 +282,6 @@ class ElevenLabsProvider(TTSProvider):
         if not kwargs:
             return None
 
-        from elevenlabs.types import (
-            VoiceSettings,  # pyright: ignore[reportMissingTypeStubs]
-        )
-
         return VoiceSettings(  # pyright: ignore[reportUnknownVariableType, reportCallIssue]
             **kwargs,
         )
@@ -296,23 +293,17 @@ class ElevenLabsProvider(TTSProvider):
         voice_id: str,
         request: SynthesisRequest,
     ) -> None:
-        """Synthesize a single chunk to a file.
+        """Synthesize a single chunk to a file, translating what the SDK raises.
 
-        Wraps the ElevenLabs SDK call so an ``ApiError`` with a 401
-        status becomes a :class:`ProviderAuthError` that
-        ``WireReply.reject_or_fault`` routes verbatim to the client,
-        rather than falling through to speech_handlers' broad guard
-        and getting laundered to ``"operation failed"``. The
-        readiness gate catches the credential-absent case at F2;
-        this catches the credential-present-but-rejected case at F3.
-        Other ``ApiError`` statuses (429 rate-limit, 500 server error,
-        400 bad request) are not credential problems and re-raise
-        unchanged -- the broad guard will render them opaquely, which
-        is correct for a genuine SDK/upstream fault. Only 401 crosses
-        as a typed rejection.
+        An ``ApiError`` with a 401 status becomes a :class:`ProviderAuthError`,
+        which ``WireReply.reject_or_fault`` routes verbatim to the client: the
+        key was present but rejected, and the caller can act on that. Other
+        statuses (429, 500, 400) are upstream faults, not credential problems,
+        and re-raise unchanged for the opaque fault path. A transport failure
+        becomes a transient :class:`ProviderTransportError`, or a
+        :class:`CaBundleError` naming ``SSL_CERT_FILE`` when that bundle is
+        why TLS verification failed.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
         voice_settings = self._build_voice_settings(request)
 
         kwargs: dict[str, Any] = {
@@ -325,7 +316,9 @@ class ElevenLabsProvider(TTSProvider):
             kwargs["voice_settings"] = voice_settings
 
         try:
-            response = self._client.sdk().text_to_speech.stream(**kwargs)
+            self._client.stream_to(
+                output_path, lambda sdk: sdk.text_to_speech.stream(**kwargs)
+            )
         except ApiError as exc:
             if exc.status_code == 401:
                 raise ProviderAuthError("elevenlabs", 401) from exc
@@ -336,6 +329,3 @@ class ElevenLabsProvider(TTSProvider):
             voice_id,
             len(text),
         )
-        with output_path.open("wb") as f:
-            for chunk in response:
-                f.write(chunk)
