@@ -59,11 +59,14 @@ _STT_AUTH_FAILED = (
     "were rejected. Ending the call now."
 )
 
-# A CA bundle TLS cannot use is configuration, as permanent as a rejected key.
-# Names the variable, never its path: the operator finds the path in vox.log.
+# CA certificates that cannot verify the provider are configuration, as
+# permanent as a rejected key. Whether SSL_CERT_FILE, SSL_CERT_DIR, or the
+# default bundle was in effect, the fix is in SSL_CERT_FILE; vox.log names which
+# applied and the path.
 _STT_TLS_FAILED = (
-    "Sorry, this call can't continue -- speech recognition can't use the CA "
-    "bundle SSL_CERT_FILE names. Ending the call now."
+    "Sorry, this call can't continue -- speech recognition can't verify the "
+    "provider's TLS certificate. Check SSL_CERT_FILE; vox.log has the details. "
+    "Ending the call now."
 )
 
 
@@ -290,8 +293,15 @@ class CallSession:
 
         Called from an ``except`` block, so the log carries the traceback. Mode
         is still LISTENING here, so EndCall's "any active mode" precondition
-        holds without routing through speaking first.
+        holds without routing through speaking first. EndCall applies even when
+        the explanation cannot be spoken: a dead TTS path must not leave the
+        call listening against a provider that will fail every turn.
         """
         logger.exception("STT cannot continue -- ending the call")
-        await self._speak(message)
+        try:
+            await self._speak(message)
+        except Exception:
+            # Broad on purpose: speaking is best-effort here, and any failure --
+            # a provider error, a dead daemon socket -- must still end the call.
+            logger.exception("could not say why the call is ending")
         self._actor.apply(EndCall())

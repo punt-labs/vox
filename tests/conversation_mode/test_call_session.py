@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 import struct
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Callable
+
+import pytest
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
@@ -20,7 +21,7 @@ from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
-from punt_vox.voxd.conversation_mode.call_session import CallSession
+from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
@@ -28,9 +29,6 @@ from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
-
-if TYPE_CHECKING:
-    import pytest
 
 _CHUNK_S = 0.02
 
@@ -525,6 +523,97 @@ class TestSTTCaBundleFailure:
         await _feed_one_turn(session)
 
         assert session_attach.turns() == []
+
+
+class _FailingSpeak:
+    """A ``SpeakFn`` that records every phrase, then raises -- a dead TTS path."""
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    async def __call__(self, text: str) -> None:
+        self.said.append(text)
+        if text != "Listening.":
+            raise ConnectionError("TTS unreachable")
+
+
+def _rejected_key() -> Exception:
+    return ProviderAuthError("elevenlabs", 401)
+
+
+def _bad_ca_bundle() -> Exception:
+    return CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded")
+
+
+# Factories, not instances: each test raises a fresh error with its own traceback.
+_PERMANENT_STT_FAILURES = (_rejected_key, _bad_ca_bundle)
+_PERMANENT_IDS = ("rejected-key", "ca-bundle")
+
+
+class TestPermanentSTTFailureAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: from an active mode to
+    idle, with no pending addendum -- the transition a permanent STT failure
+    must take, whether or not the explanation could be spoken.
+    """
+
+    @staticmethod
+    def _session(error: Exception, speak: SpeakFn) -> CallSession:
+        return CallSession(
+            turn_detector=_detector(),
+            stt_provider=_RaisingSTTProvider(error),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+
+    @staticmethod
+    def _transitions(session: CallSession) -> list[tuple[Mode, Mode]]:
+        seen: list[tuple[Mode, Mode]] = []
+        session.actor.on_transition(lambda before, after: seen.append((before, after)))
+        return seen
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_end_call_takes_listening_to_idle(
+        self, error: Callable[[], Exception]
+    ) -> None:
+        session = self._session(error(), _Recorder())
+        await session.start()
+        transitions = self._transitions(session)
+
+        await _feed_one_turn(session)
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_end_call_applies_when_the_explanation_cannot_be_spoken(
+        self, error: Callable[[], Exception]
+    ) -> None:
+        """A TTS failure must not strand the call in listening, retrying forever."""
+        speak = _FailingSpeak()
+        session = self._session(error(), speak)
+        await session.start()
+        transitions = self._transitions(session)
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert len(speak.said) == 2  # "Listening.", then the failed explanation
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_a_failed_explanation_is_logged(
+        self, error: Callable[[], Exception], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = self._session(error(), _FailingSpeak())
+        await session.start()
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert any(
+            "could not say why the call is ending" in r.getMessage()
+            and r.exc_info is not None
+            for r in caplog.records
+        )
 
 
 class TestCaptureDuringWait:

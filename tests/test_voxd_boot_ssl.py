@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.daemon import VoxDaemon
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
@@ -80,6 +81,34 @@ def test_build_programs_survives_a_missing_ca_bundle(
     programs = VoxDaemon.build_programs()
 
     assert programs.service is not None
+
+
+def test_build_programs_reads_the_key_variable_credentials_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The music key comes from the variable ProviderCredentials maps
+    ElevenLabs to -- one source of truth with the readiness gate -- not a
+    literal of its own."""
+    monkeypatch.setattr(VoxDaemon, "_programs_root", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr("punt_vox.voxd.daemon._run_dir", lambda: tmp_path)
+
+    def _renamed(_self: ProviderCredentials) -> dict[str, str]:
+        return {"elevenlabs": "VOX_TEST_ELEVENLABS_KEY"}
+
+    monkeypatch.setattr(ProviderCredentials, "api_key_env_vars", _renamed)
+    monkeypatch.setenv("VOX_TEST_ELEVENLABS_KEY", "from-credentials")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "from-literal")
+    keys: list[str | None] = []
+
+    def _record(*, api_key: str | None = None) -> ElevenLabsMusicProvider:
+        keys.append(api_key)
+        return ElevenLabsMusicProvider(api_key=api_key)
+
+    monkeypatch.setattr("punt_vox.voxd.daemon.ElevenLabsMusicProvider", _record)
+
+    VoxDaemon.build_programs()
+
+    assert keys == ["from-credentials"]
 
 
 def test_music_provider_construction_never_constructs_the_sdk(

@@ -25,6 +25,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
+from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import (
@@ -225,12 +226,14 @@ class VoxDaemon:
         drive the subsystem with a fake; the ElevenLabs default is applied here, at
         the daemon composition root.
 
-        The key is read here and passed explicitly. Boot calls this after the
-        keys file is loaded and before any request runs, so the long-lived music
-        client holds the daemon's own key -- never one a synthesis request has
-        swapped into the environment for its own duration.
+        The key is read here, from the variable the readiness gate names, and
+        passed explicitly. Boot calls this after the keys file is loaded and
+        before any request runs, so the long-lived music client holds the
+        daemon's own key -- never one a synthesis request has swapped into the
+        environment for its own duration.
         """
-        music = ElevenLabsMusicProvider(api_key=os.environ.get("ELEVENLABS_API_KEY"))
+        key_var = ProviderCredentials().api_key_env_vars()["elevenlabs"]
+        music = ElevenLabsMusicProvider(api_key=os.environ.get(key_var))
         producer = MusicProducer(music, LengthPolicy())
         mpv_socket = _run_dir() / "mpv.sock"
         return ProgramSubsystem(VoxDaemon._programs_root(), producer, mpv_socket)
@@ -257,11 +260,7 @@ class VoxDaemon:
     ) -> Starlette:
         """Build a Starlette app from pre-wired components."""
         routes: list[Route | WebSocketRoute] = [
-            Route(
-                "/health",
-                VoxDaemon._health_handler(health),
-                methods=["GET"],
-            ),
+            Route("/health", VoxDaemon._health_handler(health), methods=["GET"]),
             WebSocketRoute("/ws", router.handle_connection),
         ]
         return Starlette(routes=routes, lifespan=lifespan)
@@ -298,10 +297,7 @@ class VoxDaemon:
                 programs=progs,
                 health=hlth,
             ).build()
-            router = WebSocketRouter(
-                handlers=handlers,
-                auth_token=auth_token,
-            )
+            router = WebSocketRouter(handlers=handlers, auth_token=auth_token)
 
         return VoxDaemon._starlette(health=hlth, router=router)
 
