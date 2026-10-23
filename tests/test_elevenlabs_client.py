@@ -437,6 +437,35 @@ class TestCall:
         assert info.value.status_code == 401
         assert info.value.__cause__ is cause
 
+    def test_a_rejected_key_logs_the_server_s_status_code(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ElevenLabs says why it refused a key (invalid, unusual activity); the
+        log keeps that identifier, and the error stays a ProviderAuthError."""
+        body = {"detail": {"status": "detected_unusual_activity", "message": "m"}}
+        cause = ApiError(status_code=401, body=body)
+
+        with caplog.at_level(logging.ERROR), pytest.raises(ProviderAuthError):
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        hits = [r for r in caplog.records if "detected_unusual_activity" in r.message]
+        assert [r.levelno for r in hits] == [logging.ERROR]
+
+    @pytest.mark.parametrize(
+        "body",
+        [None, "Unauthorized", {"detail": {"status": "sk-abc 123\n"}}],
+        ids=["no-body", "raw-text", "not-an-identifier"],
+    )
+    def test_a_rejected_key_logs_no_status_it_cannot_trust(
+        self, body: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cause = ApiError(status_code=401, body=body)
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(ProviderAuthError):
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        assert caplog.records == []
+
     def test_api_error_becomes_a_provider_status_error(self) -> None:
         """The server answered: the status leaves as a vox type, so no caller
         outside this module needs the SDK's error class to interpret it."""

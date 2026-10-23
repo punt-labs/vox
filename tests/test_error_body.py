@@ -73,3 +73,52 @@ def test_message_is_the_server_s_reason(body: object, expected: str) -> None:
 def test_a_body_with_no_reason_has_no_message(body: object) -> None:
     """Raw text is never echoed: it can be an HTML page or a proxy's banner."""
     assert ErrorBody(body).message is None
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"detail": {"status": "invalid_api_key"}}, "invalid_api_key"),
+        (
+            {"detail": {"status": "detected_unusual_activity"}},
+            "detected_unusual_activity",
+        ),
+        ({"detail": {"status": "quota-exceeded.v2"}}, "quota-exceeded.v2"),
+        ({"detail": {"status": "x" * 64}}, "x" * 64),
+    ],
+    ids=["snake", "long-snake", "dash-dot", "longest"],
+)
+def test_status_is_the_server_s_identifier(body: object, expected: str) -> None:
+    assert ErrorBody(body).status == expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        "invalid_api_key",
+        {"detail": "invalid_api_key"},
+        {"detail": {"message": "Invalid API key"}},
+        {"detail": {"status": ""}},
+        {"detail": {"status": "has a space"}},
+        {"detail": {"status": "key sk-abc123\nleaked"}},
+        {"detail": {"status": "invalid_api_key\n"}},
+        {"detail": {"status": "x" * 65}},
+        {"detail": {"status": 401}},
+    ],
+    ids=[
+        "none",
+        "raw-text",
+        "detail-str",
+        "message-only",
+        "empty",
+        "space",
+        "newline",
+        "trailing-newline",
+        "too-long",
+        "non-str",
+    ],
+)
+def test_a_status_that_is_not_an_identifier_is_withheld(body: object) -> None:
+    """The status goes to the log; only an identifier is safe to write there."""
+    assert ErrorBody(body).status is None

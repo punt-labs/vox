@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Self, cast, final
+import re
+from typing import Final, Self, cast, final
 
 __all__ = ["ErrorBody"]
+
+_IDENTIFIER: Final = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
 @final
@@ -43,6 +46,20 @@ class ErrorBody:
                 return text
             case list():
                 return self._first_msg()
+            case _:
+                return None
+
+    @property
+    def status(self) -> str | None:  # None: no status, or one unsafe to log
+        """Return the server's machine-readable code under ``detail.status``.
+
+        Only an identifier -- letters, digits, ``_``, ``.``, ``-``, at most 64
+        of them -- is returned: the code is written to the log, and anything
+        else could carry a newline into it or echo a credential.
+        """
+        match self._detail:
+            case {"status": str() as code} if _IDENTIFIER.fullmatch(code):
+                return code
             case _:
                 return None
 

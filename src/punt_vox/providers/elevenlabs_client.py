@@ -15,6 +15,7 @@ leaves as a vox type, so nothing past the providers knows the SDK exists.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Final, Self, final
 
@@ -50,6 +51,8 @@ __all__ = [
 
 # The variable the readiness gate names for this provider, not a second literal.
 _KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
+
+logger = logging.getLogger(__name__)
 
 # The statuses an ApiError carries only when a success body failed to decode.
 _SUCCESS: Final = range(200, 300)
@@ -177,21 +180,34 @@ class ElevenLabsClient:
             "elevenlabs", exc.status_code, "response did not match the expected schema"
         )
 
-    @staticmethod
-    def _answered(exc: ApiError) -> ProviderAuthError | ProviderStatusError:
+    @classmethod
+    def _answered(cls, exc: ApiError) -> ProviderAuthError | ProviderStatusError:
         """Return the vox error for the server's failed answer *exc*.
 
         The SDK raises ``ApiError`` on a 2xx too, when the body will not decode
         as JSON; its body is then the raw text, which is never echoed.
         """
         status: int | None = exc.status_code  # None: the SDK reported no status
+        body = ErrorBody(exc.body)
         if status == 401:
-            return ProviderAuthError("elevenlabs", 401)
+            return cls._rejected(body)
         detail: str | None  # None: the body gives no reason
         if status in _SUCCESS:
             detail = (
                 f"answered HTTP {status} with a response that is not the expected JSON"
             )
         else:
-            detail = ErrorBody(exc.body).message
+            detail = body.message
         return ProviderStatusError("elevenlabs", status, detail)
+
+    @staticmethod
+    def _rejected(body: ErrorBody) -> ProviderAuthError:
+        """Return the error for a rejected key, logging the server's code for it.
+
+        ElevenLabs names why it refused the key in ``detail.status`` (an invalid
+        key, unusual activity on the account); the operator needs that, and the
+        caller gets the same ``ProviderAuthError`` either way.
+        """
+        if (code := body.status) is not None:
+            logger.error("ElevenLabs rejected the API key (HTTP 401, status %s)", code)
+        return ProviderAuthError("elevenlabs", 401)
