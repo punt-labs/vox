@@ -26,12 +26,11 @@ import math
 from io import BytesIO
 from typing import TYPE_CHECKING, Self, final
 
-from elevenlabs.types import (
+from punt_vox.providers.elevenlabs_client import (
+    ElevenLabsClient,
     SpeechToTextChunkResponseModel,
     SpeechToTextWordResponseModel,
 )
-
-from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import HealthCheck
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
@@ -39,7 +38,7 @@ from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from elevenlabs.client import ElevenLabs
+    from punt_vox.providers.elevenlabs_client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 

@@ -19,6 +19,7 @@ from punt_vox.providers.elevenlabs import (
     ElevenLabsProvider,
 )
 from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 from punt_vox.types_provider_errors import ProviderAuthError
 
@@ -222,14 +223,16 @@ class TestElevenLabsProviderSynthesize:
         assert exc_info.value.provider_name == "elevenlabs"
         assert exc_info.value.status_code == 401
 
-    def test_synthesize_non_401_api_error_re_raises_unchanged(
+    def test_synthesize_non_401_api_error_is_a_provider_status_error(
         self,
         mock_elevenlabs_client: MagicMock,
         tmp_output_dir: Path,
     ) -> None:
-        """A rate-limit or upstream 500 is NOT an auth problem; re-raise.
+        """A rate-limit or upstream 500 is NOT an auth problem.
 
-        The translation is 401-only. A 429/500/400 is a genuine SDK or
+        It leaves as a ProviderStatusError -- not a ValueError, so it stays on
+        the fault path the SDK's ApiError took. The auth translation is
+        401-only. A 429/500/400 is a genuine SDK or
         upstream fault and belongs on the fault() path (rendered as
         ``"operation failed"`` to the client with the detail in the
         log) -- not on the reject() path with a caller-facing message.
@@ -246,9 +249,10 @@ class TestElevenLabsProviderSynthesize:
         )
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
         request = SynthesisRequest(text="hello", voice="matilda", rate=100)
-        with pytest.raises(ApiError) as exc_info:
+        with pytest.raises(ProviderStatusError) as exc_info:
             provider.synthesize(request, tmp_output_dir / "rate.mp3")
         assert exc_info.value.status_code == 429
+        assert exc_info.value.detail == "rate limited"
 
 
 class TestElevenLabsProviderCheckHealth:
@@ -672,7 +676,7 @@ class TestElevenLabsProviderStreamFailures:
         with pytest.raises(ProviderAuthError):
             provider.synthesize(request, tmp_output_dir / "auth.mp3")
 
-    def test_other_api_error_on_first_chunk_re_raises(
+    def test_other_api_error_on_first_chunk_is_a_provider_status_error(
         self,
         provider: ElevenLabsProvider,
         mock_elevenlabs_client: MagicMock,
@@ -681,7 +685,7 @@ class TestElevenLabsProviderStreamFailures:
         self._fail_with(mock_elevenlabs_client, ApiError(status_code=500))
         request = SynthesisRequest(text="hello", voice="matilda")
 
-        with pytest.raises(ApiError):
+        with pytest.raises(ProviderStatusError):
             provider.synthesize(request, tmp_output_dir / "fault.mp3")
 
     def test_mid_stream_failure_leaves_no_partial_file(

@@ -8,7 +8,6 @@ from typing import Self, final
 
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from mutagen.id3 import ID3
 
 from punt_vox.providers.ca_bundle import CaBundleError
@@ -17,6 +16,7 @@ from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
@@ -115,7 +115,7 @@ class TestMusicProducer:
     async def test_permanent_status_is_bad_input(
         self, tmp_path: Path, status: int
     ) -> None:
-        producer = _producer(ApiError(status_code=status, body="nope"))
+        producer = _producer(ProviderStatusError("elevenlabs", status, "nope"))
         with pytest.raises(ProducerBadInputError):
             await producer.produce(_spec(), tmp_path / "1.mp3")
 
@@ -123,12 +123,12 @@ class TestMusicProducer:
     async def test_transient_status_is_transient(
         self, tmp_path: Path, status: int
     ) -> None:
-        producer = _producer(ApiError(status_code=status, body="later"))
+        producer = _producer(ProviderStatusError("elevenlabs", status, "later"))
         with pytest.raises(ProducerTransientError):
             await producer.produce(_spec(), tmp_path / "1.mp3")
 
     async def test_unknown_status_is_transient(self, tmp_path: Path) -> None:
-        producer = _producer(ApiError(status_code=None, body="?"))
+        producer = _producer(ProviderStatusError("elevenlabs", None, None))
         with pytest.raises(ProducerTransientError):
             await producer.produce(_spec(), tmp_path / "1.mp3")
 

@@ -19,6 +19,7 @@ from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
 if TYPE_CHECKING:
@@ -297,6 +298,16 @@ class TestSubscriptionCheck:
         assert not check.passed
         assert "HTTP 500" in check.message
 
+    def test_api_error_line_carries_the_server_s_message(self) -> None:
+        sdk = MagicMock()
+        sdk.user.subscription.get.side_effect = ApiError(
+            status_code=402, body={"detail": {"message": "payment required"}}
+        )
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert check.message == "ElevenLabs subscription: payment required"
+
     def test_transport_error_is_a_failed_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -415,12 +426,41 @@ class TestCall:
         assert info.value.status_code == 401
         assert info.value.__cause__ is cause
 
-    def test_api_error_passes_through(self) -> None:
-        """The server answered: the provider, not the client, interprets it."""
-        with pytest.raises(ApiError):
+    def test_api_error_becomes_a_provider_status_error(self) -> None:
+        """The server answered: the status leaves as a vox type, so no caller
+        outside this module needs the SDK's error class to interpret it."""
+        cause = ApiError(status_code=429)
+
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        assert info.value.provider_name == "elevenlabs"
+        assert info.value.status_code == 429
+        assert info.value.detail is None
+        assert info.value.__cause__ is cause
+
+    def test_the_server_s_message_is_the_detail(self) -> None:
+        body = {"detail": {"status": "bad_prompt", "message": "names an artist"}}
+
+        with pytest.raises(ProviderStatusError) as info:
             ElevenLabsClient(sdk=MagicMock()).call(
-                lambda _sdk: _raise(ApiError(status_code=429))
+                lambda _sdk: _raise(ApiError(status_code=400, body=body))
             )
+
+        assert info.value.detail == "names an artist"
+
+    @pytest.mark.parametrize(
+        "body",
+        [None, "plain text", {"detail": "flat"}, {"detail": {"message": ""}}],
+        ids=["none", "text", "flat-detail", "empty-message"],
+    )
+    def test_a_body_without_a_message_leaves_no_detail(self, body: object) -> None:
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=500, body=body))
+            )
+
+        assert info.value.detail is None
 
 
 class TestStreamTo:

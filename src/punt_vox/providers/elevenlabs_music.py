@@ -7,15 +7,14 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Self
 
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
-
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import MusicProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from elevenlabs.client import ElevenLabs
+    from punt_vox.providers.elevenlabs_client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,7 @@ class ElevenLabsMusicProvider(MusicProvider):
                     output_format=self._output_format,
                 ),
             )
-        except ApiError:
+        except ProviderStatusError:
             logger.exception("ElevenLabs music API call failed")
             raise
 
@@ -114,7 +113,8 @@ class ElevenLabsMusicProvider(MusicProvider):
 
         Raises:
             ProviderAuthError: When ElevenLabs rejects the API key (401).
-            ApiError: On any other ElevenLabs API failure.
+            ProviderUnavailableError: When no API key was set at construction.
+            ProviderStatusError: On any other failure ElevenLabs answers with.
             CaBundleError: When the CA certificates in effect do not trust
                 ElevenLabs, or ``SSL_CERT_FILE`` cannot be loaded.
             ProviderConfigError: When httpx refuses to send the request.

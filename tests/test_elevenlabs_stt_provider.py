@@ -20,6 +20,7 @@ from elevenlabs.types import (
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 
@@ -227,11 +228,11 @@ class TestElevenLabsSTTProviderAuthFailure:
             async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
                 pass
 
-    async def test_non_401_api_error_propagates_unchanged(self) -> None:
+    async def test_non_401_api_error_is_a_provider_status_error(self) -> None:
         client = MagicMock()
         client.speech_to_text.convert.side_effect = ApiError(status_code=500)
         provider = ElevenLabsSTTProvider(client=client)
-        with pytest.raises(ApiError) as exc_info:
+        with pytest.raises(ProviderStatusError) as exc_info:
             async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
                 pass
         assert exc_info.value.status_code == 500

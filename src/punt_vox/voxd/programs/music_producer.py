@@ -12,12 +12,11 @@ from __future__ import annotations
 import secrets
 from typing import TYPE_CHECKING, Final, Self, final
 
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
-
 from punt_vox.providers.provider_faults import (
     PERMANENT_ERRORS,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -45,7 +44,7 @@ _TRANSIENT_ERRORS: Final = (ProviderTransportError, TimeoutError)
 
 # Every provider failure ``produce`` maps; anything else escapes unclassified.
 _GENERATION_ERRORS: Final[tuple[type[Exception], ...]] = (
-    ApiError,
+    ProviderStatusError,
     *PERMANENT_ERRORS,
     *_TRANSIENT_ERRORS,
 )
@@ -134,6 +133,6 @@ class MusicProducer:
         rejected or missing key or a host misconfiguration, which fails the
         same way on every retry. Rate limits, 5xx, and network faults are not.
         """
-        if isinstance(exc, ApiError):
+        if isinstance(exc, ProviderStatusError):
             return exc.status_code in _PERMANENT_STATUS
         return isinstance(exc, PERMANENT_ERRORS)

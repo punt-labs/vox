@@ -13,6 +13,7 @@ from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import MusicProvider
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.part_tags import PartTags
@@ -239,7 +240,7 @@ class TestTempFileCleanup:
         provider = ElevenLabsMusicProvider(client=mock_music_client)
         out = tmp_path / "fail.mp3"
 
-        with pytest.raises(ApiError):
+        with pytest.raises(ProviderStatusError):
             await provider.generate_track("test", 60_000, out)
 
         # No temp files left behind.
@@ -281,7 +282,7 @@ class TestErrorHandling:
         provider = ElevenLabsMusicProvider(client=mock_music_client)
         out = tmp_path / "rate_limit.mp3"
 
-        with pytest.raises(ApiError):
+        with pytest.raises(ProviderStatusError):
             await provider.generate_track("test", 60_000, out)
 
     @pytest.mark.asyncio
@@ -308,7 +309,7 @@ class TestErrorHandling:
         provider = ElevenLabsMusicProvider(client=mock_music_client)
         out = tmp_path / "logged.mp3"
 
-        with caplog.at_level(logging.ERROR), pytest.raises(ApiError):
+        with caplog.at_level(logging.ERROR), pytest.raises(ProviderStatusError):
             await provider.generate_track("test", 60_000, out)
 
         assert "music API call failed" in caplog.text
@@ -524,7 +525,7 @@ class TestStreamFailures:
             client=_client_failing_with(ApiError(status_code=422))
         )
 
-        with caplog.at_level(logging.ERROR), pytest.raises(ApiError):
+        with caplog.at_level(logging.ERROR), pytest.raises(ProviderStatusError):
             await provider.generate_track("test", 60_000, tmp_path / "t.mp3")
 
         assert "music API call failed" in caplog.text
@@ -553,6 +554,29 @@ class TestStreamFailures:
         producer = MusicProducer(provider, LengthPolicy())
 
         with pytest.raises(ProducerTransientError):
+            await producer.produce(_spec(), tmp_path / "t.mp3")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [(422, ProducerBadInputError), (429, ProducerTransientError)],
+        ids=["bad-prompt", "rate-limited"],
+    )
+    async def test_an_answered_status_reaches_the_producer_classified(
+        self,
+        tmp_path: Path,
+        status: int,
+        expected: type[Exception],
+    ) -> None:
+        """The real provider's translated error routes by status in the producer
+        exactly as the SDK's ApiError did."""
+        body = {"detail": {"message": "server says no"}}
+        provider = ElevenLabsMusicProvider(
+            client=_client_failing_with(ApiError(status_code=status, body=body))
+        )
+        producer = MusicProducer(provider, LengthPolicy())
+
+        with pytest.raises(expected, match="server says no"):
             await producer.produce(_spec(), tmp_path / "t.mp3")
 
     @pytest.mark.asyncio

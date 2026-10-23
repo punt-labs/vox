@@ -6,6 +6,11 @@ stack and a bad ``SSL_CERT_FILE`` cannot stop voxd from booting. The deferral
 and the naming of a bad bundle live in
 :class:`~punt_vox.providers.lazy_sdk.LazySdk`; this class adds what is
 ElevenLabs-specific -- the key and the account's health.
+
+This is the one module that imports the ElevenLabs SDK. What the providers need
+of it -- the client type their test seam takes, the request and response models
+they build and read -- is re-exported here, and every error the SDK raises
+leaves as a vox type, so nothing past the providers knows the SDK exists.
 """
 
 from __future__ import annotations
@@ -16,10 +21,16 @@ from typing import TYPE_CHECKING, Self, cast, final
 import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
+from elevenlabs.types import (
+    SpeechToTextChunkResponseModel,
+    SpeechToTextWordResponseModel,
+    VoiceSettings,
+)
 
 from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.providers.stream_file import StreamFile
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
@@ -28,7 +39,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from pathlib import Path
 
-__all__ = ["ElevenLabsClient"]
+__all__ = [
+    "ElevenLabs",
+    "ElevenLabsClient",
+    "SpeechToTextChunkResponseModel",
+    "SpeechToTextWordResponseModel",
+    "VoiceSettings",
+]
 
 # The variable the readiness gate names for this provider, not a second literal.
 _KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
@@ -47,10 +64,11 @@ class ElevenLabsClient:
     client's build land inside some request's window and keep that caller's
     key for every later use.
 
-    A 401 is translated here, once, for every call site that goes through
-    :meth:`call` -- text-to-speech, the voice list, speech-to-text, music, and
-    the subscription check -- into the :class:`ProviderAuthError` the wire
-    sends the caller verbatim.
+    An answered failure is translated here, once, for every call site that goes
+    through :meth:`call` -- text-to-speech, the voice list, speech-to-text,
+    music, and the subscription check: a 401 into the :class:`ProviderAuthError`
+    the wire sends the caller verbatim, any other status into a
+    :class:`ProviderStatusError` the caller routes on.
     """
 
     __slots__ = ("_api_key", "_sdk")
@@ -85,15 +103,13 @@ class ElevenLabsClient:
         :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
         ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
         ``ProviderTransportError`` (transient). A 401 -- the server rejected the
-        key -- becomes ``ProviderAuthError``; any other ``ApiError`` passes
-        through for the provider to interpret.
+        key -- becomes ``ProviderAuthError``; any other answered failure becomes
+        ``ProviderStatusError``, carrying the status and the server's message.
         """
         try:
             return self._sdk.call(request)
         except ApiError as exc:
-            if exc.status_code == 401:
-                raise ProviderAuthError("elevenlabs", 401) from exc
-            raise
+            raise self._answered(exc) from exc
 
     def stream_to(
         self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
@@ -116,8 +132,8 @@ class ElevenLabsClient:
             sub = self.call(lambda sdk: sdk.user.subscription.get())
         except ProviderAuthError as exc:
             reason = f"API key rejected (HTTP {exc.status_code})"
-        except ApiError as exc:
-            reason = self._api_error_message(exc)
+        except ProviderStatusError as exc:
+            reason = exc.reason
         except TRANSPORT_ERRORS as exc:
             reason = str(exc)
         else:
@@ -144,8 +160,19 @@ class ElevenLabsClient:
         """
         return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
 
+    @classmethod
+    def _answered(cls, exc: ApiError) -> ProviderAuthError | ProviderStatusError:
+        """Return the vox error for the server's failed answer *exc*."""
+        if exc.status_code == 401:
+            return ProviderAuthError("elevenlabs", 401)
+        return ProviderStatusError(
+            "elevenlabs", exc.status_code, cls._api_error_message(exc)
+        )
+
     @staticmethod
-    def _api_error_message(exc: ApiError) -> str:
+    def _api_error_message(
+        exc: ApiError,
+    ) -> str | None:  # None: the body carried no message
         """Extract the human-readable message from an ``ApiError`` body."""
         body: object = exc.body
         if isinstance(body, dict):
@@ -154,4 +181,4 @@ class ElevenLabsClient:
                 message = cast("dict[str, object]", detail).get("message")
                 if isinstance(message, str) and message:
                     return message
-        return f"HTTP {exc.status_code}"
+        return None

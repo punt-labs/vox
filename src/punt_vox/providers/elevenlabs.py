@@ -7,12 +7,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
-from elevenlabs.types import VoiceSettings
-
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
-from punt_vox.providers.elevenlabs_client import ElevenLabsClient
+from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
 from punt_vox.providers.voice_resolver import VoiceResolver
 from punt_vox.types import (
     AudioProviderId,
@@ -23,7 +21,7 @@ from punt_vox.types import (
 )
 
 if TYPE_CHECKING:
-    from elevenlabs.client import ElevenLabs
+    from punt_vox.providers.elevenlabs_client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -296,8 +294,8 @@ class ElevenLabsProvider(TTSProvider):
         :class:`ElevenLabsClient` translates what the SDK raises: a 401 becomes
         the :class:`ProviderAuthError` the wire sends the caller verbatim, a
         transport failure one of the errors ``TransportFaults`` answers. Other
-        statuses (429, 500, 400) are upstream faults and pass through for the
-        opaque fault path.
+        statuses (429, 500, 400) are upstream faults: a ``ProviderStatusError``,
+        which the wire keeps on the opaque fault path.
         """
         voice_settings = self._build_voice_settings(request)
 
