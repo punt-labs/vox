@@ -11,9 +11,10 @@ three different recovery paths a caller would otherwise have to know about.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.transport_faults import ProviderConfigError
 from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
@@ -35,6 +36,17 @@ logger = logging.getLogger(__name__)
 # (tests/conversation_mode/test_stt_provider.py), stated once here as the
 # production gate.
 CONFIDENCE_FLOOR = 0.6
+
+# The permanent STT failures transcribe re-raises, each with the detail it
+# records on the turn timer first.
+_PERMANENT: Final[tuple[tuple[type[ValueError], str], ...]] = (
+    (ProviderAuthError, "STT auth failed"),
+    (CaBundleError, "STT TLS setup failed"),
+    (ProviderConfigError, "STT request misconfigured"),
+)
+_PERMANENT_ERRORS: Final[tuple[type[ValueError], ...]] = tuple(
+    kind for kind, _ in _PERMANENT
+)
 
 
 @final
@@ -64,28 +76,25 @@ class TurnTranscriber:
 
         Raises:
             ProviderAuthError: The provider rejected its credentials.
-            CaBundleError: ``SSL_CERT_FILE`` names a bundle TLS cannot use.
+            CaBundleError: The CA certificates in effect cannot verify the
+                provider, or ``SSL_CERT_FILE`` cannot be loaded.
+            ProviderConfigError: httpx refuses to send the request as the host
+                configured it (proxy, base URL).
         """
         try:
             final_event = await self._final_event(self._provider.transcribe(chunks))
-        except ProviderAuthError:
-            # A revoked/expired STT credential is certain and permanent --
-            # every subsequent turn would hit exactly the same rejection,
-            # the same asymmetry :class:`~.session_attach.BareAuthMissingError`
-            # already draws against a transient session-attach fault. Folding
-            # this into the broad ``except Exception`` below would launder
-            # it into "ask the human to repeat", which repeats identically
-            # forever and never tells the human their STT credentials are
-            # broken. Re-raised, not swallowed -- the caller (CallSession)
-            # ends the call with an actionable message instead.
-            self._turn_timer.mark("stt_response_received", detail="STT auth failed")
-            raise
-        except CaBundleError:
-            # The same asymmetry for TLS: an SSL_CERT_FILE the provider cannot
-            # use fails every turn identically, so it ends the call too.
-            self._turn_timer.mark(
-                "stt_response_received", detail="STT TLS setup failed"
-            )
+        except _PERMANENT_ERRORS as exc:
+            # A revoked key, CA certificates that cannot verify the provider, a
+            # proxy or base URL httpx refuses: each is certain and permanent --
+            # every later turn hits the same failure -- the asymmetry
+            # :class:`~.session_attach.BareAuthMissingError` already draws
+            # against a transient session-attach fault. Folding these into the
+            # broad ``except Exception`` below would launder them into "ask the
+            # human to repeat", which repeats identically forever and never
+            # says what is broken. Re-raised, not swallowed -- the caller
+            # (CallSession) ends the call with an actionable message instead.
+            detail = next(d for kind, d in _PERMANENT if isinstance(exc, kind))
+            self._turn_timer.mark("stt_response_received", detail=detail)
             raise
         except Exception:
             logger.exception("STT transcribe failed mid-turn")

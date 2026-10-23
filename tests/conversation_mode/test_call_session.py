@@ -18,6 +18,7 @@ import pytest
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.transport_faults import ProviderConfigError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -545,9 +546,13 @@ def _bad_ca_bundle() -> Exception:
     return CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded")
 
 
+def _misconfigured() -> Exception:
+    return ProviderConfigError("provider request cannot be sent (ProxyError)")
+
+
 # Factories, not instances: each test raises a fresh error with its own traceback.
-_PERMANENT_STT_FAILURES = (_rejected_key, _bad_ca_bundle)
-_PERMANENT_IDS = ("rejected-key", "ca-bundle")
+_PERMANENT_STT_FAILURES = (_rejected_key, _bad_ca_bundle, _misconfigured)
+_PERMANENT_IDS = ("rejected-key", "ca-bundle", "config")
 
 
 class TestPermanentSTTFailureAppliesEndCall:
@@ -614,6 +619,22 @@ class TestPermanentSTTFailureAppliesEndCall:
             and r.exc_info is not None
             for r in caplog.records
         )
+
+
+async def test_a_configuration_fault_says_to_check_the_proxy() -> None:
+    speak = _Recorder()
+    session = CallSession(
+        turn_detector=_detector(),
+        stt_provider=_RaisingSTTProvider(_misconfigured()),
+        session_attach=FakeSessionAttach(),
+        speak=speak,
+    )
+    await session.start()
+
+    await _feed_one_turn(session)
+
+    assert [phrase for phrase in speak.said if "proxy" in phrase] != []
+    assert not any("repeat" in phrase.lower() for phrase in speak.said)
 
 
 class TestCaptureDuringWait:

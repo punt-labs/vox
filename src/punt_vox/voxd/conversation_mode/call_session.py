@@ -18,9 +18,10 @@ scripted fakes' production counterparts for demos, tests, and CI.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.transport_faults import ProviderConfigError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -67,6 +68,23 @@ _STT_TLS_FAILED = (
     "Sorry, this call can't continue -- speech recognition can't verify the "
     "provider's TLS certificate. Check SSL_CERT_FILE; vox.log has the details. "
     "Ending the call now."
+)
+
+# A proxy or base URL httpx refuses is host configuration too.
+_STT_CONFIG_FAILED = (
+    "Sorry, this call can't continue -- speech recognition can't send its "
+    "request as this host is configured. Check the proxy settings; vox.log has "
+    "the details. Ending the call now."
+)
+
+# What the call says before ending on each permanent STT failure.
+_ENDING: Final[tuple[tuple[type[ValueError], str], ...]] = (
+    (ProviderAuthError, _STT_AUTH_FAILED),
+    (CaBundleError, _STT_TLS_FAILED),
+    (ProviderConfigError, _STT_CONFIG_FAILED),
+)
+_PERMANENT_STT_ERRORS: Final[tuple[type[ValueError], ...]] = tuple(
+    kind for kind, _ in _ENDING
 )
 
 
@@ -237,13 +255,10 @@ class CallSession:
             final_event = await self._transcriber.transcribe(
                 AudioChunk.as_async_iter(chunks)
             )
-        # Both are certain and permanent, unlike a transient transcribe
-        # failure -- see TurnTranscriber's own re-raise.
-        except ProviderAuthError:
-            await self._end_call(_STT_AUTH_FAILED)
-            return
-        except CaBundleError:
-            await self._end_call(_STT_TLS_FAILED)
+        # Certain and permanent, unlike a transient transcribe failure -- see
+        # TurnTranscriber's own re-raise.
+        except _PERMANENT_STT_ERRORS as exc:
+            await self._end_call(exc)
             return
         if final_event is None:
             # FR-19: never fabricate on ambiguous or failed capture -- no
@@ -288,8 +303,8 @@ class CallSession:
             return turn
         return TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
 
-    async def _end_call(self, message: str) -> None:
-        """Say why speech recognition cannot go on, then end the call.
+    async def _end_call(self, cause: ValueError) -> None:
+        """Say why speech recognition cannot go on (*cause*), then end the call.
 
         Called from an ``except`` block, so the log carries the traceback. Mode
         is still LISTENING here, so EndCall's "any active mode" precondition
@@ -298,6 +313,7 @@ class CallSession:
         call listening against a provider that will fail every turn.
         """
         logger.exception("STT cannot continue -- ending the call")
+        message = next(text for kind, text in _ENDING if isinstance(cause, kind))
         try:
             await self._speak(message)
         except Exception:

@@ -8,7 +8,10 @@ import pytest
 
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.transport_faults import (
+    ProviderConfigError,
+    ProviderTransportError,
+)
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -180,6 +183,19 @@ async def test_an_unloadable_ca_bundle_is_reraised_not_swallowed() -> None:
         await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
 
     assert dict(timer.marks)["stt_response_received"] == "STT TLS setup failed"
+
+
+async def test_a_configuration_fault_is_reraised_not_swallowed() -> None:
+    """A proxy or base URL httpx refuses fails every turn identically, like a
+    bad bundle -- it must end the call, not loop on "ask to repeat"."""
+    timer = _SpyTurnTimer()
+    error = ProviderConfigError("provider request cannot be sent (ProxyError)")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(ProviderConfigError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT request misconfigured"
 
 
 async def test_a_provider_transport_error_still_asks_to_repeat() -> None:
