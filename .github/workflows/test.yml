@@ -58,7 +58,10 @@ jobs:
       #    every apt-get call in the job to Ubuntu's sources means a broken
       #    third-party repo cannot fail `update --error-on=any` below, and
       #    the lists, the download, the install, and autoclean all read the
-      #    same source set. A missing Ubuntu sources file fails the step.
+      #    same source set. A missing Ubuntu sources file, or one with no
+      #    deb822 URIs: line to rewrite, fails the step. The image's
+      #    original is kept beside the copy; the key hashes the original,
+      #    so a mirror rewrite (step 3) never changes the key.
       # 2. apt-restore: warm cache (exact key) restores the lists and every
       #    .deb, so the install below skips `apt-get update` and apt reports
       #    "Need to get 0 B" -- no mirror contact at all. A new runner image
@@ -75,10 +78,24 @@ jobs:
       #    grace; finished and partial .debs survive in $VOX_APT_DIR, so a
       #    retry resumes. Worst case for the download loop:
       #      3 x ((60 + 10) + (90 + 10)) + 10 + 20 (backoff) = 540 s = 9 min
-      #    The final install runs with --no-download, so it can only use
-      #    the local .debs and fails at once on any gap. If the restore step
-      #    failed or timed out, whatever it half-extracted is discarded
-      #    first. The step then checks that ffmpeg and espeak-ng run.
+      #    Attempt 1 uses the image's sources verbatim. The image points them
+      #    at mirror+file:/etc/apt/apt-mirrors.txt (azure.archive first) and
+      #    bounds retries and timeouts in apt.conf.d/zz-retries so a hung or
+      #    refusing mirror fails over within seconds; this job does not
+      #    override those values. The mirror method fails over only on
+      #    errors, never on a slow transfer: in run 39946518738 three 90 s
+      #    attempts on azure.archive at ~50 KB/s fetched ~7 MB of 68 MB.
+      #    So attempts 2 and 3 rewrite
+      #    the Ubuntu-only copy (never /etc) to archive.ubuntu.com for the
+      #    archive pockets and security.ubuntu.com for -security
+      #    (ports.ubuntu.com off amd64/i386). The mirror the lists came from
+      #    is recorded in lists/vox-ci_mirror and cached with them, so an
+      #    exact hit reads the lists through the same sources that fetched
+      #    them. The final install runs with --no-download, so it can only
+      #    use the local .debs and fails at once on any gap. If the restore
+      #    step failed, timed out, or restored nothing (cache-hit unset),
+      #    whatever is in the cache directories is discarded first. The step
+      #    then checks that ffmpeg and espeak-ng run.
       # 4. apt-save: on any non-exact hit, save the refreshed lists + .debs
       #    under the exact key right away, so a later failing test step does
       #    not cost the next run its cache. When test and packaging-e2e both
@@ -105,10 +122,18 @@ jobs:
             echo "::error::${ubuntu_sources} is missing or empty; cannot confine apt to the Ubuntu sources"
             exit 1
           fi
+          # apt-install's mirror fallback rewrites deb822 URIs: lines.
+          if ! grep -q '^URIs:' "$ubuntu_sources"; then
+            echo "::error::${ubuntu_sources} has no deb822 URIs: line; cannot rewrite it to a fallback mirror"
+            exit 1
+          fi
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 \
             "$VOX_APT_DIR" "$VOX_APT_DIR/archives" "$VOX_APT_DIR/lists" \
             "$VOX_APT_DIR/sources.list.d"
-          # Not cached: rebuilt from the image every run.
+          # Not cached: rebuilt from the image every run. ubuntu.sources.image
+          # is the pristine original apt-install rewrites from; it sits
+          # outside sources.list.d, so apt never reads it directly.
+          install -m 0644 "$ubuntu_sources" "$VOX_APT_DIR/ubuntu.sources.image"
           install -m 0644 "$ubuntu_sources" "$VOX_APT_DIR/sources.list.d/ubuntu.sources"
           # Every apt-get invocation in this job reads its state from here.
           # SourceList /dev/null drops the one-line sources.list; SourceParts
@@ -174,23 +199,103 @@ jobs:
               *) echo "exit $1" ;;
             esac
           }
+          image_sources="$VOX_APT_DIR/ubuntu.sources.image"
+          active_sources="$VOX_APT_DIR/sources.list.d/ubuntu.sources"
+          mirror_marker="$VOX_APT_DIR/lists/vox-ci_mirror"
+          case "$(dpkg --print-architecture)" in
+            amd64 | i386)
+              fallback_archive=http://archive.ubuntu.com/ubuntu/
+              fallback_security=http://security.ubuntu.com/ubuntu/
+              ;;
+            *)
+              fallback_archive=http://ports.ubuntu.com/ubuntu-ports/
+              fallback_security=$fallback_archive
+              ;;
+          esac
+          # Rewrite the Ubuntu-only copy apt reads; /etc/apt is never edited.
+          # image = the image's own sources; fallback = every URIs: line
+          # replaced, per deb822 stanza, by the security or archive mirror.
+          use_mirror() {
+            case "$1" in
+              image) install -m 0644 "$image_sources" "$active_sources" ;;
+              fallback)
+                awk -v archive="$fallback_archive" -v security="$fallback_security" '
+                  BEGIN { RS = ""; FS = "\n"; ORS = "\n\n" }
+                  {
+                    uri = archive
+                    for (i = 1; i <= NF; i++)
+                      if ($i ~ /^Suites:/ && $i ~ /-security/) uri = security
+                    out = ""
+                    for (i = 1; i <= NF; i++) {
+                      line = ($i ~ /^URIs:/) ? "URIs: " uri : $i
+                      out = out (i > 1 ? "\n" : "") line
+                    }
+                    print out
+                  }' "$image_sources" >"$active_sources"
+                if ! awk -v a="URIs: $fallback_archive" -v s="URIs: $fallback_security" '
+                  /^URIs:/ && $0 != a && $0 != s { bad = 1 }
+                  END { exit bad }' "$active_sources"; then
+                  echo "::error::fallback rewrite left a non-fallback URIs: line in ${active_sources}"
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::unknown apt mirror '$1'"
+                exit 1
+                ;;
+            esac
+            mirror=$1
+            echo "apt mirror: ${mirror} ($(sed -n 's/^URIs:[[:space:]]*//p' "$active_sources" | sort -u | paste -sd ' '))"
+          }
           skip_update=false
-          if [ "$APT_RESTORE_OUTCOME" != "success" ]; then
+          start_mirror=image
+          if [ "$APT_RESTORE_OUTCOME" != "success" ] || [ -z "$APT_CACHE_HIT" ]; then
             # A restore killed mid-extract can leave truncated .debs and
-            # lists; apt would trust them. Start from an empty cache.
-            echo "::warning::apt cache restore ended '${APT_RESTORE_OUTCOME}'; discarding restored .debs and lists"
+            # lists; apt would trust them. actions/cache can also swallow an
+            # extraction error and report success with cache-hit unset --
+            # the same output as a true miss, which restores nothing. Exact
+            # hits set cache-hit=true and restore-key hits false, so an
+            # unset cache-hit means nothing here is trustworthy: start empty.
+            if [ "$APT_RESTORE_OUTCOME" != "success" ]; then
+              echo "::warning::apt cache restore ended '${APT_RESTORE_OUTCOME}'; discarding restored .debs and lists"
+            else
+              echo "apt cache miss (cache-hit unset): discarding any partially restored .debs and lists"
+            fi
             find "$VOX_APT_DIR/archives" -maxdepth 1 -type f -name '*.deb' -delete
             find "$VOX_APT_DIR/lists" -maxdepth 1 -type f -name '*_*' -delete
           elif [ "$APT_CACHE_HIT" = "true" ]; then
             # Exact cache hit: the restored lists match this runner image, so
-            # the first attempt goes straight to the (0 B) download.
+            # the first attempt goes straight to the (0 B) download, through
+            # the mirror that fetched those lists (apt names list files by
+            # source URI, so other sources would not see them).
             skip_update=true
+            if [ -f "$mirror_marker" ]; then
+              start_mirror=$(<"$mirror_marker")
+            fi
+            case "$start_mirror" in
+              image | fallback) ;;
+              *)
+                echo "::warning::unrecognized apt mirror marker '${start_mirror}'; refreshing the lists from the image's sources"
+                start_mirror=image
+                skip_update=false
+                ;;
+            esac
           fi
-          # Idle-connection timeout 30 s (apt default 120 s); per-item retries.
-          apt_opts=(-o Acquire::http::Timeout=30 -o Acquire::Retries=3)
+          use_mirror "$start_mirror"
+          # No Acquire::Retries / Timeout overrides: the image sets them in
+          # /etc/apt/apt.conf.d/zz-retries (x64: 1 retry, 15 s) so that
+          # mirror+file fails over to the next mirror within seconds. A
+          # command-line -o beats that file, and 3 retries x 30 s on a hung
+          # URI outlast the 60 s update cap before failover ever happens.
+          apt-config dump Acquire::Retries Acquire::http::Timeout Acquire::https::Timeout
           attempts=3
           for attempt in $(seq 1 "$attempts"); do
-            echo "apt download attempt ${attempt}/${attempts}"
+            # Retrying the mirror that just failed or crawled cannot finish
+            # a cold cache; attempts 2 and 3 go to the fallback mirror.
+            if [ "$attempt" -ge 2 ] && [ "$mirror" != "fallback" ]; then
+              use_mirror fallback
+            fi
+            echo "apt download attempt ${attempt}/${attempts} via ${mirror} mirror"
             rc=0
             # A failed attempt refreshes the lists like a cold cache.
             if [ "$skip_update" = "true" ] && [ "$attempt" -eq 1 ]; then
@@ -199,10 +304,10 @@ jobs:
               # --error-on=any: a failed index fetch is an error, not a
               # warning over the old lists. Only the Ubuntu sources are
               # configured (apt-prepare), so only they can fail it.
-              sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update --error-on=any || rc=$?
+              sudo timeout -k 10 60 apt-get update --error-on=any || rc=$?
             fi
             if [ "$rc" -eq 0 ]; then
-              sudo timeout -k 10 90 apt-get "${apt_opts[@]}" install -y \
+              sudo timeout -k 10 90 apt-get install -y \
                 --no-install-recommends --download-only "${packages[@]}" || rc=$?
             fi
             if [ "$rc" -eq 0 ]; then
@@ -216,6 +321,10 @@ jobs:
             echo "::warning::apt download attempt ${attempt}/${attempts} failed ($(describe_rc "$rc")); retrying in ${delay}s"
             sleep "$delay"
           done
+          # Record which sources fetched the lists; apt-save caches it with
+          # them (it matches lists/*_*). Written after the loop because
+          # `apt-get update` deletes unknown files from the lists directory.
+          echo "$mirror" >"$mirror_marker"
           # --no-download: install only from the .debs fetched above; a
           # missing one fails here with apt's own message instead of a
           # silent, unbounded fetch from the mirror.
