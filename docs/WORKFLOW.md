@@ -253,10 +253,12 @@ function pr_loop(unit):
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
 #                  "/agentic_review" comment for N > 1
 #   head(N)      = the PR head commit when trigger(N) happened
-#   qodo_in(N)   = a Qodo review whose commit is head(N), or a "Code Review
-#                  by Qodo" comment updated after trigger(N) whose code links
-#                  cite head(N); or the outage fallback ran for round N.
-#                  A late reply to an earlier round never completes round N.
+#   qodo_in(N)   = `qodo read pr-review-session findings --pr-url <url>`
+#                  reports review_session.status "completed" with a
+#                  commit_sha that is head(N) or a later commit on the
+#                  branch; or the outage fallback ran for
+#                  round N. A late reply to an earlier round never completes
+#                  round N, and a clean review counts like any other.
 #   bugbot_in    = a cursor[bot] review after the "bugbot run" comment, or
 #                  30 minutes since that comment. Bugbot has its own timer.
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
@@ -264,7 +266,11 @@ function pr_loop(unit):
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
-#   answered(f)  = f is fixed by a commit on the PR head, or a ledger
+#   answered(f)  = for a Qodo finding: its attribution_status in the same
+#                  CLI read is closed (implemented, dismissed, outdated);
+#                  close it with `qodo pr-review-session mark-implemented` or
+#                  `dismiss` plus the reason and file:line. For any other
+#                  finding: fixed by a commit on the PR head, or a ledger
 #                  comment from the leader gives the reason and file:line.
 #                  A finding repeated from an earlier round keeps its answer.
 #   new High     = a High not raised in an earlier round; a manual review
@@ -283,7 +289,7 @@ function poll_tick(pr):
                                                #   -u GITHUB_PERSONAL_ACCESS_TOKEN
     N = round(pr)
     if CI failed: fix in this PR
-    if not skipped(pr) and no Qodo review since trigger(N)
+    if not skipped(pr) and not qodo_in(N)
             and 30 minutes have passed since trigger(N)
             and the fallback has not yet run for round N:
         run code_reviewer locally on the diff Qodo was asked to review;
