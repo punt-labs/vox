@@ -305,7 +305,8 @@ function demo(pr):
 #                  dependency, or an install change can change what the
 #                  operator hears
 #   bugbot_open  = a Cursor Bugbot check run on the head whose status is
-#                  not completed and that started under 30 minutes ago
+#                  not completed (queued or in progress) and that was
+#                  created under 30 minutes ago
 #   demoed_head  = the commit named in the leader's latest "demo confirmed:"
 #                  comment, newer than any "demo failed:" comment
 #   demo_ok(pr)  = not audible(pr), or demoed_head exists, is the head or
@@ -371,7 +372,7 @@ function merge_gate(state) -> bool:
        and not bugbot_open                 # a push-started run's findings
                                            #   land before the merge; its 30
                                            #   minutes run from the run's
-                                           #   start, as it has no comment
+                                           #   creation, as it has no comment
        and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
