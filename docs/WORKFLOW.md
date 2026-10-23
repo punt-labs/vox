@@ -220,20 +220,8 @@ function pr_loop(unit):
 
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
     make check                            # full gate on the accumulated diff
-    local_review(full diff)               # defined below; up to 4 rounds
+    local_review(full diff)               # defined after close_out
     # the PR opens only after a local round reports no High or Medium
-
-function local_review(diff):
-    # Local rounds are cheap and bugs die here; the PR gate is kept short.
-    for round in 1..4:
-        findings = code_reviewer + silent_failure_hunter + `qodo review`
-                   on diff               # qodo review: the PR's own engine
-        if no High or Medium in findings: return clean
-        fix each finding now, or dismiss it with a one-line reason
-        diff = this round's fix diff
-    a High or Medium still open after round 4 goes to the operator
-    # Lows are fixed or dismissed in place and never start a round.
-    # No deferral beads.
 
     # C. AUDIO DEMO — confirmed by ear, the one human gate
     make install; vox daemon restart      # the daemon serves old code until
@@ -317,8 +305,9 @@ function poll_tick(pr):
             # no deferral beads
     for each escalation the operator has ruled on:
         apply the ruling; record it in a ledger comment
-    if fixes were made: delegate them to a bare agent; make check; commit;
-        local_review(the fix diff)         # before it reaches the PR
+    if fixes were made: delegate them to a bare agent; make check; commit
+        local_review(the fix diff)         # its own fixes are checked and
+                                           #   committed inside it
         push once                          # every fix reaches the PR head
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
@@ -353,6 +342,22 @@ function close_out():
                                           # unprompted — a permanent record in
                                           # the 8-part recap structure
     start the next unit immediately       # no stopping to report
+
+function local_review(diff):
+    # Local rounds are cheap and bugs die here; the PR gate is kept short.
+    for round in 1..5:
+        findings = code_reviewer + silent_failure_hunter + `qodo review`
+                   on diff               # qodo review: the PR's own engine
+        fix each Low now, or dismiss it with a one-line reason
+                                         # Lows never start a round
+        if no High or Medium in findings:
+            make check; commit any Low fixes; return clean
+        if round == 5: the open Highs and Mediums go to the operator; stop
+        fix each High and Medium now, or dismiss it with a one-line reason
+        make check; commit
+        diff = this round's fix diff
+    # at most four fix rounds; review 5 only verifies round 4's fixes.
+    # No deferral beads.
 ```
 
 Entry and exit for one PR iteration. `merge_gate` in the pseudocode is the
