@@ -14,13 +14,13 @@ from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_transcriber import (
     CONFIDENCE_FLOOR,
-    PermanentSttFailure,
     TurnTranscriber,
 )
 
@@ -260,6 +260,32 @@ async def test_every_permanent_error_records_its_own_detail(
     assert dict(timer.marks)["stt_response_received"] != "STT failed permanently"
 
 
+@pytest.mark.parametrize("status", [400, 403, 404, 422])
+async def test_a_permanent_status_is_reraised_with_its_status(status: int) -> None:
+    """A refusal no retry changes fails every turn identically; it must end
+    the call, never loop on "ask to repeat"."""
+    timer = _SpyTurnTimer()
+    error = ProviderStatusError("elevenlabs", status, "server's reason")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(ProviderStatusError) as info:
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert info.value is error
+    assert dict(timer.marks)["stt_response_received"] == f"STT refused (HTTP {status})"
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, None])
+async def test_a_transient_status_still_asks_to_repeat(status: int | None) -> None:
+    """A rate limit or a 5xx may clear by the next turn."""
+    timer = _SpyTurnTimer()
+    error = ProviderStatusError("elevenlabs", status, None)
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    assert await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk())) is None
+    assert dict(timer.marks)["stt_response_received"] == "transcribe failed"
+
+
 async def test_a_provider_transport_error_still_asks_to_repeat() -> None:
     """A dropped connection is transient: the next turn may succeed."""
     timer = _SpyTurnTimer()
@@ -267,28 +293,3 @@ async def test_a_provider_transport_error_still_asks_to_repeat() -> None:
     transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
 
     assert await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk())) is None
-
-
-class TestPermanentSttFailure:
-    """One row per permanent kind: the timer detail and the spoken ending."""
-
-    _GENERIC = PermanentSttFailure.of(ValueError("not a provider fault"))
-
-    @pytest.mark.parametrize("kind", PERMANENT_ERRORS, ids=lambda kind: kind.__name__)
-    def test_every_permanent_kind_has_its_own_wording(
-        self, kind: type[ValueError]
-    ) -> None:
-        wording = PermanentSttFailure.of(_PERMANENT_FACTORIES[kind]())
-
-        assert wording.detail != self._GENERIC.detail
-        assert wording.ending != self._GENERIC.ending
-        assert wording.ending.endswith("Ending the call now.")
-
-    def test_a_malformed_key_is_worded_apart_from_its_base(self) -> None:
-        """The subclass's row precedes ProviderConfigError's, so it is reached."""
-        key = PermanentSttFailure.of(MalformedApiKeyError("OPENAI_API_KEY ..."))
-        config = PermanentSttFailure.of(ProviderConfigError("proxy refused"))
-
-        assert key.detail == "STT API key unsendable"
-        assert "API key" in key.ending
-        assert key.ending != config.ending

@@ -34,9 +34,6 @@ __all__ = ["LengthPolicy", "MusicProducer"]
 _PLAYLIST_MIN_MS: Final = 90_000
 _PLAYLIST_MAX_MS: Final = 210_000
 
-# HTTP statuses that mean "retrying will not help" (bad prompt, ToS, auth).
-_PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
-
 # The provider's transport faults -- worth a retry. Not every OSError: a local
 # PermissionError or a full disk is no network blip, and retrying it as one
 # would hide it; it escapes to the fill loop's unexpected path instead.
@@ -129,10 +126,11 @@ class MusicProducer:
     def _is_permanent(exc: Exception) -> bool:
         """Return whether retrying ``exc`` with the same input cannot succeed.
 
-        A permanent HTTP status (bad prompt, ToS, auth) is permanent; so is a
-        rejected or missing key or a host misconfiguration, which fails the
-        same way on every retry. Rate limits, 5xx, and network faults are not.
+        An answered failure knows whether it is permanent (bad prompt, ToS,
+        auth). A rejected or missing key or a host misconfiguration is permanent
+        too: it fails the same way on every retry. Rate limits, 5xx, and network
+        faults are not.
         """
         if isinstance(exc, ProviderStatusError):
-            return exc.status_code in _PERMANENT_STATUS
+            return exc.is_permanent
         return isinstance(exc, PERMANENT_ERRORS)

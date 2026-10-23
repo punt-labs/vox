@@ -51,3 +51,17 @@ def test_reason_is_the_message_or_else_the_status(
     status: int | None, detail: str | None, expected: str
 ) -> None:
     assert ProviderStatusError("elevenlabs", status, detail).reason == expected
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_a_refusal_no_retry_can_change_is_permanent(status: int) -> None:
+    """A bad request, a rejected key, a forbidden or missing resource, an
+    unprocessable body: the same request fails the same way every time."""
+    assert ProviderStatusError("elevenlabs", status, None).is_permanent
+
+
+@pytest.mark.parametrize("status", [200, 402, 408, 409, 429, 500, 502, 503, None])
+def test_every_other_answer_is_transient(status: int | None) -> None:
+    """A rate limit, a 5xx, an undecodable success, or no status at all may
+    clear on a later try."""
+    assert not ProviderStatusError("elevenlabs", status, None).is_permanent

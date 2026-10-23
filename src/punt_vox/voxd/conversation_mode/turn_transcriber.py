@@ -11,12 +11,9 @@ three different recovery paths a caller would otherwise have to know about.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.api_key import MalformedApiKeyError
-from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
-from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
+from punt_vox.voxd.conversation_mode.permanent_stt_failure import PermanentSttFailure
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -28,7 +25,7 @@ if TYPE_CHECKING:
     )
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
 
-__all__ = ["CONFIDENCE_FLOOR", "PermanentSttFailure", "TurnTranscriber"]
+__all__ = ["CONFIDENCE_FLOOR", "TurnTranscriber"]
 
 logger = logging.getLogger(__name__)
 
@@ -37,104 +34,6 @@ logger = logging.getLogger(__name__)
 # (tests/conversation_mode/test_stt_provider.py), stated once here as the
 # production gate.
 CONFIDENCE_FLOOR = 0.6
-
-
-@final
-class PermanentSttFailure:
-    """What a call records and says when recognition fails for good.
-
-    Which failures are permanent is ``PERMANENT_ERRORS``'s call; this class
-    only words each one -- the turn-timer detail :class:`TurnTranscriber`
-    marks, and the sentence ``CallSession`` speaks before it ends the call.
-    One row per kind keeps the two from drifting apart.
-    """
-
-    __slots__ = ("_detail", "_ending", "_kind")
-    _kind: type[ValueError]
-    _detail: str
-    _ending: str
-
-    def __new__(cls, kind: type[ValueError], detail: str, ending: str) -> Self:
-        self = super().__new__(cls)
-        self._kind = kind
-        self._detail = detail
-        self._ending = ending
-        return self
-
-    @classmethod
-    def of(cls, exc: ValueError) -> PermanentSttFailure:
-        """Return the wording for *exc*: its own row, or the generic one.
-
-        First match wins, so a subclass's row precedes its base's.
-        """
-        return next((row for row in _KNOWN if isinstance(exc, row._kind)), _UNKNOWN)
-
-    @property
-    def detail(self) -> str:
-        """Return the turn-timer detail for this failure."""
-        return self._detail
-
-    @property
-    def ending(self) -> str:
-        """Return what the call says before it ends on this failure."""
-        return self._ending
-
-
-_KNOWN: Final = (
-    # Certain and permanent, unlike "ask to repeat" -- mirrors reply_recovery's
-    # _BARE_AUTH_MISSING sentence.
-    PermanentSttFailure(
-        ProviderAuthError,
-        "STT auth failed",
-        "Sorry, this call can't continue -- the speech-recognition credentials "
-        "were rejected. Ending the call now.",
-    ),
-    # No key was set when the provider was built, so every turn finds none; the
-    # logged ProviderUnavailableError names the variable voxd reads.
-    PermanentSttFailure(
-        ProviderUnavailableError,
-        "STT API key missing",
-        "Sorry, this call can't continue -- speech recognition has no API key "
-        "to send. Set the key and restart voxd; vox.log names the variable. "
-        "Ending the call now.",
-    ),
-    # The trust anchors (SSL_CERT_FILE, SSL_CERT_DIR, or the client's default)
-    # distrust the issuer, or the certificate names another host or has
-    # expired. vox.log says which, and what to change.
-    PermanentSttFailure(
-        CaBundleError,
-        "STT TLS setup failed",
-        "Sorry, this call can't continue -- speech recognition can't verify the "
-        "provider's TLS certificate. Check SSL_CERT_FILE and the provider "
-        "address; vox.log has the details. Ending the call now.",
-    ),
-    # A pasted key with a space, a newline, or a non-ASCII character (a smart
-    # quote, a non-breaking space) can never be sent; the log names the variable.
-    PermanentSttFailure(
-        MalformedApiKeyError,
-        "STT API key unsendable",
-        "Sorry, this call can't continue -- the speech recognition API key holds "
-        "a character no request can carry: a space, a newline, or a pasted "
-        "non-ASCII character. Re-enter the key; vox.log names the variable. "
-        "Ending the call now.",
-    ),
-    # A proxy or base URL httpx will not use is host configuration too.
-    PermanentSttFailure(
-        ProviderConfigError,
-        "STT request misconfigured",
-        "Sorry, this call can't continue -- speech recognition can't send its "
-        "request as this host is configured. Check the proxy settings and the "
-        "API key; vox.log has the details. Ending the call now.",
-    ),
-)
-
-# A PERMANENT_ERRORS member with no row above is still an ending.
-_UNKNOWN: Final = PermanentSttFailure(
-    ValueError,
-    "STT failed permanently",
-    "Sorry, this call can't continue -- speech recognition failed in a way a "
-    "retry won't fix; vox.log has the details. Ending the call now.",
-)
 
 
 @final
@@ -170,24 +69,21 @@ class TurnTranscriber:
             ProviderConfigError: httpx refuses to send the request as the host
                 configured it (proxy, base URL), or the API key holds a
                 character no header may carry.
+            ProviderStatusError: The provider refused the request in a way no
+                retry changes (``is_permanent``); a rate limit or a 5xx is
+                transient and resolves to ``None``.
         """
         try:
             final_event = await self._final_event(self._provider.transcribe(chunks))
-        except PERMANENT_ERRORS as exc:
-            # A revoked or missing key, CA certificates that cannot verify the
-            # provider, a proxy or base URL httpx refuses: each is certain and
-            # permanent -- every later turn hits the same failure -- the
-            # asymmetry :class:`~.session_attach.BareAuthMissingError` already
-            # draws against a transient session-attach fault. Folding these into
-            # the broad ``except Exception`` below would launder them into "ask
-            # the human to repeat", which repeats identically forever and never
-            # says what is broken. Re-raised, not swallowed -- the caller
-            # (CallSession) ends the call with an actionable message instead.
-            self._turn_timer.mark(
-                "stt_response_received", detail=PermanentSttFailure.of(exc).detail
-            )
-            raise
-        except Exception:
+        except Exception as exc:
+            if PermanentSttFailure.ends_call(exc):
+                # Re-raised, not swallowed: every later turn would fail the same
+                # way, so the caller (CallSession) ends the call with an
+                # actionable message instead of asking the human to repeat.
+                self._turn_timer.mark(
+                    "stt_response_received", detail=PermanentSttFailure.of(exc).detail
+                )
+                raise
             logger.exception("STT transcribe failed mid-turn")
             self._turn_timer.mark("stt_response_received", detail="transcribe failed")
             return None

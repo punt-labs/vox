@@ -512,6 +512,7 @@ class TestCall:
             f"answered HTTP {status} with a response that is not the expected JSON"
         )
         assert "captive portal" not in str(info.value)
+        assert not info.value.is_permanent
 
     @pytest.mark.parametrize("status", [200, None], ids=["status", "no-status"])
     def test_a_response_off_the_schema_is_a_provider_status_error(

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Self
+from typing import Final, Self
 
 __all__ = ["ProviderStatusError"]
+
+# The answers no retry of the same request can change: a bad request, a rejected
+# key, a forbidden or missing resource, a body the server cannot process.
+_PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
 
 
 class ProviderStatusError(Exception):
@@ -55,6 +59,15 @@ class ProviderStatusError(Exception):
     def detail(self) -> str | None:  # None: the body carried no message
         """Return the server's human-readable message."""
         return self._detail
+
+    @property
+    def is_permanent(self) -> bool:
+        """Return whether retrying the same request cannot succeed.
+
+        A rate limit, a 5xx, an undecodable success, or no status at all may
+        clear on a later try; a refusal of the request itself will not.
+        """
+        return self._status_code in _PERMANENT_STATUS
 
     @property
     def reason(self) -> str:

@@ -20,13 +20,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.provider_faults import PERMANENT_ERRORS
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
 from punt_vox.voxd.conversation_mode.end_call import EndCall
 from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 from punt_vox.voxd.conversation_mode.pending_capture import PendingCapture
+from punt_vox.voxd.conversation_mode.permanent_stt_failure import (
+    CALL_ENDING_ERRORS,
+    PermanentSttFailure,
+)
 from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
 from punt_vox.voxd.conversation_mode.speak_fn import SpeakFn
 from punt_vox.voxd.conversation_mode.start_call import StartCall
@@ -35,10 +38,7 @@ from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
-from punt_vox.voxd.conversation_mode.turn_transcriber import (
-    PermanentSttFailure,
-    TurnTranscriber,
-)
+from punt_vox.voxd.conversation_mode.turn_transcriber import TurnTranscriber
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
@@ -223,7 +223,7 @@ class CallSession:
             )
         # Certain and permanent, unlike a transient transcribe failure -- see
         # TurnTranscriber's own re-raise.
-        except PERMANENT_ERRORS as exc:
+        except CALL_ENDING_ERRORS as exc:
             await self._end_call(exc)
             return
         if final_event is None:
@@ -269,7 +269,7 @@ class CallSession:
             return turn
         return TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
 
-    async def _end_call(self, cause: ValueError) -> None:
+    async def _end_call(self, cause: Exception) -> None:
         """Say why speech recognition cannot go on (*cause*), then end the call.
 
         Called from an ``except`` block, so the log carries the traceback. Mode

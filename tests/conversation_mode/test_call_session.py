@@ -22,6 +22,7 @@ from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 from punt_vox.providers.provider_refusal import ProviderRefusalError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -695,6 +696,57 @@ async def test_a_configuration_fault_says_to_check_the_proxy() -> None:
 
     assert [phrase for phrase in speak.said if "proxy" in phrase] != []
     assert not any("repeat" in phrase.lower() for phrase in speak.said)
+
+
+class TestRefusedStatus:
+    """An answered refusal no retry changes ends the call; a rate limit or a
+    5xx asks the human to repeat, as any transient fault does."""
+
+    @staticmethod
+    def _session(status: int | None, speak: _Recorder) -> CallSession:
+        error = ProviderStatusError("elevenlabs", status, "server's reason")
+        return CallSession(
+            turn_detector=_detector(),
+            stt_provider=_RaisingSTTProvider(error),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+
+    @pytest.mark.parametrize("status", [400, 403, 404, 422])
+    async def test_a_permanent_status_ends_the_call(self, status: int) -> None:
+        speak = _Recorder()
+        session = self._session(status, speak)
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.IDLE
+        assert speak.said[-1] == (
+            "Sorry, this call can't continue -- speech recognition was refused "
+            f"(HTTP {status}); vox.log has the server's reason. Ending the call now."
+        )
+
+    async def test_the_server_s_reason_goes_to_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = self._session(422, _Recorder())
+        await session.start()
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert "server's reason" in caplog.text
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, None])
+    async def test_a_transient_status_asks_to_repeat(self, status: int | None) -> None:
+        speak = _Recorder()
+        session = self._session(status, speak)
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        assert session.actor.mode is Mode.LISTENING
+        assert speak.said[-1] == "Sorry, I didn't catch that -- could you repeat it?"
 
 
 class TestCaptureDuringWait:
