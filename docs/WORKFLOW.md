@@ -225,18 +225,21 @@ function pr_loop(unit):
 
     # C. SHIP — the PR opens before the demo, so remote review runs while
     #    the operator is away; the merge waits for the demo (merge_gate)
-    bd close the bead(s)
     push; create the PR (description carries the verification playbook)
         # Qodo reviews once, on open (.pr_agent.toml)
     unless skipped(pr): comment "bugbot run"   # Bugbot runs once per round
-    schedule a background poll with /loop   # never gh pr checks --watch,
-                                            # never foreground sleep loops;
-                                            # every 3 min while a review is
-                                            # pending, every 15 min once only
-                                            # the demo is outstanding
+    schedule a background poll with /loop 3m  # never gh pr checks --watch,
+                                              # never foreground sleep loops
 
     # D. AUDIO DEMO — confirmed by ear, the one human gate
-    make install; vox daemon restart      # the daemon serves old code until
+    if audible(pr): demo(pr)              # a docs- or tests-only PR has
+                                          #   nothing to demo; poll_tick re-runs
+                                          #   the demo after an audible push
+
+function demo(pr):
+    no push to the branch while the demo runs
+    from a clean worktree at the PR head H:
+        make install; vox daemon restart  # the daemon serves old code until
                                           #   restarted; a stale daemon demos
                                           #   the old build
     write down the expected outcome, then drive the real entry point
@@ -245,8 +248,10 @@ function pr_loop(unit):
     run the canonical flight in docs/testing/manual-tests.md and ask the
         operator after EACH audible step — a log cannot judge whether the
         audio sounded right; only the operator's ear can
-    a fix pushed after the demo that changes an audible path is demoed
-        again before the merge
+    if the operator confirms: comment "demo confirmed: H"   # demoed_head
+    else: comment "demo failed: H" with what the operator heard; the
+        failure is a finding like any other (fixed, local_review on the
+        fix diff, pushed), and the next tick demos the new head
 
 # Terms, all read from GitHub (Qodo's login is qodo-code-review[bot]):
 #   round(pr)    = 1 + the number of "/agentic_review" comments the leader
@@ -292,6 +297,16 @@ function pr_loop(unit):
 #                  .pr_agent.toml); no title or label lets an author skip
 #   reviewed_head = the newest commit covered by a Qodo review, the outage
 #                  fallback, or the local delta review below
+#   audible(x)   = the PR or the commit range x changes a file under src/
+#                  or plugin/ — code that can change what the operator
+#                  hears. docs/, tests/, CI, and the ratchet files are not
+#                  audible
+#   demoed_head  = the commit named in the leader's latest "demo confirmed:"
+#                  comment, newer than any "demo failed:" comment
+#   demo_ok(pr)  = not audible(pr), or demoed_head exists and
+#                  not audible(demoed_head..head)
+#   finding also = the leader's latest "demo failed:" comment, until a
+#                  later "demo confirmed:" comment
 
 function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
@@ -317,7 +332,8 @@ function poll_tick(pr):
     if fixes were made: delegate them to a bare agent; make check; commit
         if local_review(the fix diff) is blocked:   # its own fixes are
             stop; the operator rules                 #   committed inside it
-        push once                          # every fix reaches the PR head
+        push once                          # every fix reaches the PR head;
+                                           #   never while demo(pr) runs
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
     if not skipped(pr) and not pending(pr) and N == 1
@@ -329,6 +345,13 @@ function poll_tick(pr):
         run code_reviewer locally on the reviewed_head..head delta; its
             findings are findings like any other   # bounded rounds, but
                                                    #   no unreviewed merge
+    if audible(pr) and not demo_ok(pr) and no fix is in flight:
+        demo(pr)                           # first demo, a re-demo after an
+                                           #   audible push, or after a fix for
+                                           #   a failed demo
+    if not pending(pr) and no finding is unanswered:
+        reschedule the poll at /loop 15m   # only the demo, CI, or a late
+                                           #   thread can change state now
     re-read state                          # the gate must see this tick's
                                            #   push and comment
     if merge_gate(state): merge (squash, --delete-branch); close_out()
@@ -341,12 +364,15 @@ function merge_gate(state) -> bool:
        and zero unresolved review threads
        and round(pr) ≤ 2
        and no escalation is open
-       and the operator confirmed the audio demo on the code being merged
+       and demo_ok(pr)                     # demoed, and nothing audible
+                                           #   landed after the demo
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
 
 function close_out():
     cancel the poll loop
+    bd close the bead(s)                  # at merge, not at PR open: a failed
+                                          #   demo leaves the bead open
     delete the branch; checkout main; pull
     send the merge recap via beadle-email # to jim@punt-labs.com, every merge,
                                           # unprompted — a permanent record in
@@ -356,30 +382,34 @@ function close_out():
 function local_review(diff):
     # Local rounds are cheap and bugs die here; the PR gate is kept short.
     for round in 1..5:
-        reviewers = code_reviewer + silent_failure_hunter + `qodo review`
-                                         # in parallel; qodo review: the
-                                         #   PR's own engine, run from the
-                                         #   worktree against the pushed base
+        if this is the unit's first full diff or diff is 20 lines or more:
+            reviewers = code_reviewer + silent_failure_hunter + `qodo review`
+        else:
+            reviewers = `qodo review`    # a small fix diff
         if diff touches credentials, secrets, or caller text that reaches
                 a file, a log line, or a header:
-            reviewers += djb             # the only reviewer that found the
-                                         #   injection bugs in the pilot
+            reviewers += djb             # whatever the diff's size
         if this is not the unit's first full diff:
-            if diff is under 20 lines: reviewers = `qodo review` only
             scope: regressions this diff introduces, and High findings
                 inside it — nothing outside the diff, no Medium or Low on
                 unchanged behaviour
-        findings = reviewers on diff
-        if findings are empty, or every finding is dismissed with the
-                exact finding, the specific reason, and file:line:
-            return clean
-        if round == 5: report the open findings to the operator
-            return blocked                # the caller stops; see below
-        fix each finding now, or dismiss it with the exact finding, the
-            specific reason, and file:line
+        run reviewers in parallel        # qodo review from the worktree,
+                                         #   against the pushed base
+        if `qodo review` did not complete (CLI error, outage):
+            run code_reviewer in its place   # an empty result from a
+                                             #   review that never ran is
+                                             #   not clean
+        findings = every completed reviewer's findings
+        if round == 5 and a finding needs a fix:
+            report the open findings to the operator
+            return blocked               # the caller stops; see below
+        answer each finding: fix it, or dismiss it with the exact finding,
+            the specific reason, and file:line
         close each local Qodo finding through the Qodo CLI
             (mark-implemented or dismiss, with its local_review_id) —
             an unclosed one comes back as still_open in every later run
+        if no finding was fixed:
+            return clean                 # nothing found, or all dismissed
         make check; commit
         diff = this round's fix diff     # every change is reviewed,
                                          #   Low fixes included
@@ -406,8 +436,9 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
   ∧ localReviewClean(pr)                  -- a local round that left nothing
                                           --   to fix, BEFORE the PR opened and
                                           --   before every fix push
-  ∧ demoConfirmedByEar(pr)                -- held BEFORE the merge, on the
-                                          --   audible code being merged
+  ∧ demoOk(pr)                            -- demo_ok: an audible PR was
+                                          --   confirmed by ear on demoed_head,
+                                          --   and nothing audible landed after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
   ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
@@ -443,10 +474,12 @@ that local review of each fix diff now covers.
 
 From the second round on, the review is scoped to what the diff changed:
 regressions it introduces and Highs inside it. Without that boundary a
-failure-focused reviewer walks outward each round (11, then 15 findings on
-`vox-eo00`); with it, every Claude reviewer converged in one round of
-39–68 seconds. The three reviewers are not substitutes — on every full
-round each found something the other two did not — so none is dropped.
+failure-focused reviewer walks outward into code the diff never touched,
+and the rounds do not converge. The three reviewers are not substitutes —
+in the pilot each one found defects the other two missed — so every full
+diff and every fix diff of 20 lines or more gets all three. A fix diff
+under 20 lines gets `qodo review` alone, and `djb` joins any diff in its
+domain whatever its size.
 
 ### Remote review: Qodo and Bugbot, at most two rounds
 
@@ -479,17 +512,21 @@ This holds only when four settings are in place (pilot `vox-2q95`):
 - "Review every push" is set to Disable in the Qodo portal; the portal
   default is Enable.
 
+Until the Bugbot setting is in effect, a push also starts a Bugbot run.
+Its findings are findings like any other, but it does not count toward
+`bugbot_in(N)` unless it started after round N's `bugbot run` comment, so
+the leader still posts that comment for each round.
+
 The first two PRs after the pilot (#523, #524) checked the claims:
 
 - No Low finding appeared, and a push drew no new Qodo review. Qodo still
   marks a finding implemented when a push fixes it.
 - `/agentic_review` reviewed the new commits; its two new findings were
   both in round-1 fix code.
-- Bugbot still ran on a push with no `bugbot run` comment, so its
-  mention-only setting is not yet in effect for this repo.
-- #524, after three local rounds, drew zero remote findings and was
-  merge-ready 7 minutes after it opened. #523 used both rounds; round 2
-  raised no new High, so nothing was escalated.
+- Bugbot ran on a push with no `bugbot run` comment, so its mention-only
+  setting is not yet in effect for this repo.
+- #524 drew no remote findings in its one round. #523 used both rounds,
+  and round 2 raised no new High.
 
 ### The audio demo gate
 
