@@ -63,18 +63,11 @@ class ElevenLabsClient:
         self._sdk = LazySdk(self._new_sdk, transport=httpx.TransportError, sdk=sdk)
         return self
 
-    def sdk(self) -> ElevenLabs:
-        """Return the SDK client, building it on first use.
-
-        Raises:
-            CaBundleError: ``SSL_CERT_FILE`` is set and cannot be loaded.
-        """
-        return self._sdk.get()
-
     def call[R](self, request: Callable[[ElevenLabs], R]) -> R:
-        """Run *request* against the SDK, translating a transport failure.
+        """Run *request* against the SDK, building the SDK on first use.
 
-        The SDK lets httpx's errors escape raw; they leave here as a transient
+        A bundle the build cannot load raises ``CaBundleError``. The SDK lets
+        httpx's errors escape raw; they leave here as a transient
         ``ProviderTransportError``, or as a ``CaBundleError`` when
         ``SSL_CERT_FILE`` is why TLS verification failed. ``ApiError`` -- the
         server answered -- passes through for the provider to interpret.

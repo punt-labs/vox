@@ -739,3 +739,37 @@ class TestElevenLabsProviderStreamFailures:
 
         assert out.read_bytes() == b"abcd"
         assert list(tmp_output_dir.iterdir()) == [out]
+
+
+class TestElevenLabsProviderVoiceFetchTransport:
+    """Resolving a voice name fetches the roster: the same request, the same rules."""
+
+    def test_tls_verify_failure_names_the_variable(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        mock_elevenlabs_client.voices.get_all.side_effect = error
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
+            provider.synthesize(
+                SynthesisRequest(text="hello", voice="matilda"),
+                tmp_output_dir / "out.mp3",
+            )
+
+    def test_connection_failure_is_transient(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        mock_elevenlabs_client.voices.get_all.side_effect = httpx.ConnectError("no")
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(ProviderTransportError):
+            provider.list_voices()

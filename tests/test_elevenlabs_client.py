@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _identity(sdk: object) -> object:
+    """Return the SDK itself -- builds it, through the client's one door."""
+    return sdk
+
+
 @pytest.fixture
 def missing_ca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point ``SSL_CERT_FILE`` at a CA bundle that does not exist."""
@@ -54,24 +59,24 @@ def _verify_failure() -> httpx.ConnectError:
 class TestBuild:
     def test_names_the_variable_for_a_missing_bundle(self, missing_ca: Path) -> None:
         with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
     def test_message_omits_the_path(self, missing_ca: Path) -> None:
         """The message crosses the wire; the path is a host detail."""
         with pytest.raises(CaBundleError) as info:
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
         assert str(missing_ca) not in str(info.value)
 
     def test_message_carries_the_reason(self, missing_ca: Path) -> None:
         with pytest.raises(CaBundleError, match="No such file or directory"):
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
     def test_logs_the_path_once_at_error(
         self, missing_ca: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.ERROR), pytest.raises(CaBundleError):
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
         hits = [r for r in caplog.records if str(missing_ca) in r.getMessage()]
         assert [r.levelno for r in hits] == [logging.ERROR]
@@ -79,11 +84,11 @@ class TestBuild:
     def test_names_a_bundle_with_no_certificate(self, garbage_ca: Path) -> None:
         """An unparseable bundle is the same operator mistake as a missing one."""
         with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
     def test_bundle_error_chains_the_tls_cause(self, missing_ca: Path) -> None:
         with pytest.raises(CaBundleError) as info:
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
         assert isinstance(info.value.__cause__, OSError)
 
@@ -100,7 +105,7 @@ class TestBuild:
         monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _raise)
 
         with pytest.raises(PermissionError) as info:
-            ElevenLabsClient().sdk()
+            ElevenLabsClient().call(_identity)
 
         assert info.value is cause
 
@@ -110,11 +115,11 @@ class TestBuild:
         """A failed build is not cached: fixing the bundle lets the next use succeed."""
         client = ElevenLabsClient()
         with pytest.raises(CaBundleError):
-            client.sdk()
+            client.call(_identity)
 
         monkeypatch.delenv("SSL_CERT_FILE")
 
-        assert client.sdk() is not None
+        assert client.call(_identity) is not None
 
     def test_builds_the_sdk_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         built: list[object] = []
@@ -126,8 +131,8 @@ class TestBuild:
         monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _fake)
         client = ElevenLabsClient()
 
-        first = client.sdk()
-        second = client.sdk()
+        first = client.call(_identity)
+        second = client.call(_identity)
 
         assert first is second
         assert len(built) == 1
@@ -143,7 +148,7 @@ class TestBuild:
         )
         sdk = MagicMock()
 
-        assert ElevenLabsClient(sdk=sdk).sdk() is sdk
+        assert ElevenLabsClient(sdk=sdk).call(_identity) is sdk
 
     def test_reads_the_api_key_at_construction(
         self, monkeypatch: pytest.MonkeyPatch
@@ -160,7 +165,7 @@ class TestBuild:
         client = ElevenLabsClient()
         monkeypatch.setenv("ELEVENLABS_API_KEY", "swapped-later")
 
-        client.sdk()
+        client.call(_identity)
 
         assert captured["api_key"] == "at-construction"
 
@@ -174,7 +179,7 @@ class TestBuild:
         monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _fake)
         monkeypatch.setenv("ELEVENLABS_API_KEY", "env-key")
 
-        ElevenLabsClient(api_key="explicit").sdk()
+        ElevenLabsClient(api_key="explicit").call(_identity)
 
         assert captured["api_key"] == "explicit"
 

@@ -34,6 +34,11 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def _identity(sdk: object) -> object:
+    """Return the SDK itself -- builds it, through the client's one door."""
+    return sdk
+
+
 def _make_music_stream_response(
     chunks: list[bytes] | None = None,
 ) -> list[bytes]:
@@ -317,7 +322,7 @@ class TestErrorHandling:
 class TestConstructor:
     def test_accepts_injected_client(self, mock_music_client: MagicMock) -> None:
         provider = ElevenLabsMusicProvider(client=mock_music_client)
-        assert provider._client.sdk() is mock_music_client  # pyright: ignore[reportPrivateUsage]
+        assert provider._client.call(_identity) is mock_music_client  # pyright: ignore[reportPrivateUsage]
 
     def test_construction_does_not_build_the_sdk(
         self, monkeypatch: pytest.MonkeyPatch

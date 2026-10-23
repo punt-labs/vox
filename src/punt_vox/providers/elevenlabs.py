@@ -237,7 +237,7 @@ class ElevenLabsProvider(TTSProvider):
         """
         fresh: dict[str, str] = {}
 
-        response = self._client.sdk().voices.get_all()
+        response = self._client.call(lambda sdk: sdk.voices.get_all())
         for voice in response.voices:
             if voice.name is None:  # unnamed voices are reachable by raw id only
                 continue
