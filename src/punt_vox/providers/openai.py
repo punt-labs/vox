@@ -66,9 +66,18 @@ class OpenAIProvider(TTSProvider):
     The SDK client is built on first use, not here: constructing it loads
     ``SSL_CERT_FILE``, and a bad bundle should fail the request that needs
     TLS -- by name -- rather than the code that merely composes a provider.
+
+    The key is read here, though. voxd swaps ``OPENAI_API_KEY`` in for the
+    length of a request that carries its own key and builds the provider
+    inside that window; the first SDK build can run later, on a worker thread
+    that outlived a cancelled request, after the swap is undone. Reading the
+    key then would send whatever key is in the environment at that moment --
+    possibly another caller's.
     """
 
     _model: str
+    # None: no key in the environment at construction; check_health says so.
+    _api_key: str | None
     _client: LazySdk[openai.OpenAI]
 
     def __new__(
@@ -80,6 +89,7 @@ class OpenAIProvider(TTSProvider):
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
+        self._api_key = os.environ.get(_KEY_CHECK.source)
         self._client = LazySdk(
             self._new_sdk, transport=openai.APIConnectionError, sdk=client
         )
@@ -143,7 +153,7 @@ class OpenAIProvider(TTSProvider):
 
     def check_health(self) -> list[HealthCheck]:
         """Check the OpenAI API key, then the configured model's access."""
-        key = _KEY_CHECK.report("OpenAI", os.environ.get(_KEY_CHECK.source))
+        key = _KEY_CHECK.report("OpenAI", self._api_key)
         if not key.passed:
             return [key]
         return [key, self._model_access_check()]
@@ -226,20 +236,20 @@ class OpenAIProvider(TTSProvider):
             return VOICES[key]
         raise VoiceNotFoundError(name, sorted(VOICES))
 
-    @staticmethod
-    def _new_sdk() -> openai.OpenAI:
-        """Construct the SDK client with the key in the environment now.
+    def _new_sdk(self) -> openai.OpenAI:
+        """Construct the SDK client with the key this provider was built with.
 
-        Read here, as the SDK itself would, but checked first: the SDK puts the
-        key in an ``Authorization`` header, and httpx's refusal of a header
-        it cannot encode quotes the key.
+        Passed explicitly, so the SDK never reads ``OPENAI_API_KEY`` itself --
+        given no key, it would -- and checked first: the SDK puts the key in an
+        ``Authorization`` header, and httpx's refusal of a header it cannot
+        encode quotes the key.
 
         Raises:
             MalformedApiKeyError: The key cannot be sent as a header value.
+            ProviderUnavailableError: No key was set when this provider was
+                built.
         """
-        return openai.OpenAI(
-            api_key=_KEY_CHECK.require(os.environ.get(_KEY_CHECK.source))
-        )
+        return openai.OpenAI(api_key=_KEY_CHECK.require_set(self._api_key, self.name))
 
     @staticmethod
     def _rate_to_speed(rate: int) -> float:

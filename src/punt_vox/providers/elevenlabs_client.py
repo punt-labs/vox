@@ -139,8 +139,10 @@ class ElevenLabsClient:
 
         Raises:
             MalformedApiKeyError: The key cannot be sent as a header value.
+            ProviderUnavailableError: No key was set when this client was
+                built; a request without one would only be refused.
         """
-        return ElevenLabs(api_key=_KEY_CHECK.require(self._api_key))
+        return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
 
     @staticmethod
     def _api_error_message(exc: ApiError) -> str:

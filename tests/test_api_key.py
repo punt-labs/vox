@@ -9,6 +9,7 @@ import pytest
 from punt_vox.providers.api_key import ApiKeyCheck, MalformedApiKeyError
 from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 _KEY = "SECRETKEY123"
 
@@ -67,6 +68,31 @@ def test_is_a_permanent_caller_error() -> None:
     assert issubclass(MalformedApiKeyError, ProviderConfigError)
     assert issubclass(MalformedApiKeyError, CALLER_ERRORS)
     assert issubclass(MalformedApiKeyError, PERMANENT_ERRORS)
+
+
+class TestRequireSet:
+    """For a client that captured its key when built: no key is final.
+
+    Given no key, an SDK falls back to the environment as it is at that
+    moment -- which can hold another request's key.
+    """
+
+    _CHECK = ApiKeyCheck("OPENAI_API_KEY")
+
+    def test_absent_key_is_the_readiness_gate_s_error(self) -> None:
+        with pytest.raises(ProviderUnavailableError) as info:
+            self._CHECK.require_set(None, "openai")
+
+        assert info.value.provider_name == "openai"
+        assert "OPENAI_API_KEY" in str(info.value)
+
+    def test_good_key_is_returned(self) -> None:
+        assert self._CHECK.require_set(_KEY, "openai") == _KEY
+
+    @pytest.mark.parametrize("key", _UNSENDABLE_KEYS, ids=_UNSENDABLE_IDS)
+    def test_unsendable_key_is_rejected(self, key: str) -> None:
+        with pytest.raises(MalformedApiKeyError):
+            self._CHECK.require_set(key, "openai")
 
 
 class TestReport:

@@ -19,7 +19,7 @@ from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,6 +218,28 @@ class TestMalformedKey:
         assert "ELEVENLABS_API_KEY" in str(info.value)
         assert self._KEY not in "".join(traceback.format_exception(info.value))
         assert self._KEY not in caplog.text
+        assert built == []
+
+
+class TestAbsentKey:
+    """No key at construction is final: a key set later is never sent."""
+
+    def test_first_call_names_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _build)
+        client = ElevenLabsClient()
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "later")
+
+        with pytest.raises(ProviderUnavailableError, match="ELEVENLABS_API_KEY"):
+            client.call(_identity)
+
         assert built == []
 
 

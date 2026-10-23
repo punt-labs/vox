@@ -19,6 +19,7 @@ from punt_vox.providers.provider_faults import (
     UnsendableHeaderError,
 )
 from punt_vox.providers.transport_faults import TransportFaults
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,6 +68,7 @@ class LazySdk[T]:
             CaBundleError: ``SSL_CERT_FILE`` is set and cannot be loaded.
             ProviderConfigError: The constructor refused the host's proxy or
                 base URL, or the factory refused the key.
+            ProviderUnavailableError: The factory has no key to build with.
         """
         if self._sdk is None:
             self._sdk = self._build()
@@ -93,8 +95,8 @@ class LazySdk[T]:
     def _build(self) -> T:
         try:
             return self._factory()
-        except ProviderConfigError:
-            raise  # the factory already named the fault -- a malformed key
+        except (ProviderConfigError, ProviderUnavailableError):
+            raise  # the factory already named the fault -- the key
         except (OSError, ValueError, ImportError) as exc:
             renamed = self._renamed(exc)
             if renamed is None:

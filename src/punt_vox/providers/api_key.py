@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from typing import Self, final
 
+from punt_vox.providers.credential_requirements import ApiKeyRequirement
 from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types import HealthCheck
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 __all__ = ["ApiKeyCheck", "MalformedApiKeyError"]
 
@@ -64,9 +66,24 @@ class ApiKeyCheck:
             MalformedApiKeyError: *key* is not printable ASCII, or has leading
                 or trailing whitespace.
         """
-        if key is not None and self.is_malformed(key):
-            raise MalformedApiKeyError(self._reason())
-        return key
+        return None if key is None else self._checked(key)
+
+    def require_set(self, key: str | None, provider: str) -> str:
+        """Return *key* checked, or raise when there is no key to send.
+
+        For an SDK factory holding the key its client was built with: handed
+        no key, an SDK falls back to the environment as it is at that moment,
+        which can hold another request's key.
+
+        Raises:
+            ProviderUnavailableError: *key* is None -- *provider* has no key.
+            MalformedApiKeyError: *key* cannot go in a header.
+        """
+        if key is None:
+            raise ProviderUnavailableError(
+                provider, ApiKeyRequirement(self._source).unmet_message(provider)
+            )
+        return self._checked(key)
 
     def report(self, label: str, key: str | None) -> HealthCheck:
         """Return *label*'s API-key health line: absent, malformed, or set.
@@ -91,6 +108,12 @@ class ApiKeyCheck:
         is the paste or the file read, and the server would reject the key.
         """
         return not (key.isascii() and key.isprintable()) or key != key.strip()
+
+    def _checked(self, key: str) -> str:
+        """Return *key*, or raise when it cannot go in a header as it is."""
+        if self.is_malformed(key):
+            raise MalformedApiKeyError(self._reason())
+        return key
 
     def _reason(self) -> str:
         """Say what is wrong with the key, naming its source and never its value."""

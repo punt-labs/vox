@@ -18,6 +18,7 @@ from punt_vox.providers.provider_faults import (
     ProviderTransportError,
     UnsendableHeaderError,
 )
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 
 class _TransportError(Exception):
@@ -236,14 +237,24 @@ class TestUnbuildableClient:
         with pytest.raises(ImportError):
             LazySdk(_broken, transport=_TransportError).get()
 
-    def test_config_error_from_the_factory_passes_unchanged(self) -> None:
-        """A factory that already named the fault (a malformed key) is not re-worded."""
-        error = MalformedApiKeyError("OPENAI_API_KEY contains a control character")
+    @pytest.mark.parametrize(
+        "error",
+        [
+            MalformedApiKeyError("OPENAI_API_KEY contains a character ..."),
+            ProviderUnavailableError("openai", "voxd has no OPENAI_API_KEY"),
+        ],
+        ids=["malformed-key", "absent-key"],
+    )
+    def test_a_named_fault_from_the_factory_passes_unchanged(
+        self, error: ValueError
+    ) -> None:
+        """A factory that already named the fault (the key) is not re-worded as a
+        proxy or base-URL problem."""
 
-        def _malformed() -> object:
+        def _refuse() -> object:
             raise error
 
-        with pytest.raises(MalformedApiKeyError) as info:
-            LazySdk(_malformed, transport=_TransportError).get()
+        with pytest.raises(type(error)) as info:
+            LazySdk(_refuse, transport=_TransportError).get()
 
         assert info.value is error

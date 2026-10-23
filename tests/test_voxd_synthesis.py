@@ -15,9 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.types import SynthesisRequest
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.synthesis import SynthesisPipeline, _api_key_context
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
@@ -1247,3 +1249,46 @@ class TestApplyVibeForSynthesis:
         self._patch_expressive(monkeypatch)
         result = self._apply("hello", "[warm]", "elevenlabs", "eleven_v3")
         assert result == "[warm] hello"
+
+
+class TestOpenAIProviderKeyCapture:
+    """The key is the one in effect when the provider was built, not at first use.
+
+    voxd swaps OPENAI_API_KEY in for one request's provider construction; a
+    cancelled request's worker thread can make the first SDK build after the
+    swap is undone and another request's key is in the environment.
+    """
+
+    def test_first_build_uses_the_key_from_construction(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-A")
+        built: list[object] = []
+
+        def _build(**kwargs: object) -> MagicMock:
+            built.append(kwargs.get("api_key"))
+            client = MagicMock()
+            client.audio.speech.create.return_value.content = b"audio"
+            return client
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+
+        with _api_key_context("sk-B", "openai"):
+            provider = OpenAIProvider()
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-C")
+        provider.synthesize(
+            SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+        )
+
+        assert built == ["sk-B"]
+
+    def test_health_reports_the_key_from_construction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with _api_key_context("sk-B", "openai"):
+            provider = OpenAIProvider(client=MagicMock())
+
+        key, _ = provider.check_health()
+
+        assert key.passed

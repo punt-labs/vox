@@ -21,6 +21,7 @@ from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 
 class TestSplitText:
@@ -786,3 +787,27 @@ class TestOpenAIProviderMalformedKey:
         assert not checks[0].passed
         assert "no HTTP header may carry" in checks[0].message
         assert "SECRET" not in checks[0].message
+
+
+class TestOpenAIProviderAbsentKey:
+    """No key at construction is final: the SDK never falls back to the env."""
+
+    def test_a_key_set_after_construction_is_never_sent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+        provider = OpenAIProvider()
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-later")
+
+        with pytest.raises(ProviderUnavailableError, match="OPENAI_API_KEY"):
+            provider.synthesize(
+                SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+            )
+
+        assert built == []
