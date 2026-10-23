@@ -23,7 +23,7 @@ from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.mode import Mode
@@ -556,6 +556,14 @@ def _malformed_key() -> Exception:
     )
 
 
+def _missing_key() -> Exception:
+    return ProviderUnavailableError(
+        "elevenlabs",
+        "provider 'elevenlabs' is configured but voxd has no ELEVENLABS_API_KEY; "
+        "run `vox doctor`",
+    )
+
+
 def _refused() -> Exception:
     return ProviderRefusalError.from_code("elevenlabs", 403, "quota_exceeded")
 
@@ -564,16 +572,25 @@ def _refused() -> Exception:
 # The last two are subclasses: a call ends on them through their base's entry.
 _PERMANENT_STT_FAILURES = (
     _rejected_key,
+    _missing_key,
     _bad_ca_bundle,
     _misconfigured,
     _malformed_key,
     _refused,
 )
-_PERMANENT_IDS = ("rejected-key", "ca-bundle", "config", "malformed-key", "refused")
+_PERMANENT_IDS = (
+    "rejected-key",
+    "missing-key",
+    "ca-bundle",
+    "config",
+    "malformed-key",
+    "refused",
+)
 
 # The one factory per member of PERMANENT_ERRORS.
 _PERMANENT_BY_KIND: dict[type[ValueError], Callable[[], Exception]] = {
     ProviderAuthError: _rejected_key,
+    ProviderUnavailableError: _missing_key,
     CaBundleError: _bad_ca_bundle,
     ProviderConfigError: _misconfigured,
 }
@@ -1060,6 +1077,31 @@ class TestUnsendableApiKeyEndsTheCall:
         assert "API key" in speak.said[-1]
         assert "Ending the call now." in speak.said[-1]
         assert "SECRET" not in caplog.text
+
+    async def test_real_stt_provider_ends_the_call_with_no_key(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No key set: the SDK is never built, and the call ends saying so
+        instead of asking the human to repeat against a provider that cannot
+        be reached."""
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        speak = _Recorder()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=ElevenLabsSTTProvider(),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+        await session.start()
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert session.actor.mode is Mode.IDLE
+        assert "no API key" in speak.said[-1]
+        assert "Ending the call now." in speak.said[-1]
+        assert not any("repeat" in phrase.lower() for phrase in speak.said)
+        assert "ELEVENLABS_API_KEY" in caplog.text
 
     async def test_the_key_ending_is_not_the_generic_configuration_one(
         self,

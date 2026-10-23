@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -89,6 +89,15 @@ _KNOWN: Final = (
         "Sorry, this call can't continue -- the speech-recognition credentials "
         "were rejected. Ending the call now.",
     ),
+    # No key was set when the provider was built, so every turn finds none; the
+    # logged ProviderUnavailableError names the variable voxd reads.
+    PermanentSttFailure(
+        ProviderUnavailableError,
+        "STT API key missing",
+        "Sorry, this call can't continue -- speech recognition has no API key "
+        "to send. Set the key and restart voxd; vox.log names the variable. "
+        "Ending the call now.",
+    ),
     # The trust anchors (SSL_CERT_FILE, SSL_CERT_DIR, or the client's default)
     # distrust the issuer, or the certificate names another host or has
     # expired. vox.log says which, and what to change.
@@ -155,6 +164,7 @@ class TurnTranscriber:
 
         Raises:
             ProviderAuthError: The provider rejected its credentials.
+            ProviderUnavailableError: The provider has no API key to send.
             CaBundleError: The CA certificates in effect cannot verify the
                 provider, or ``SSL_CERT_FILE`` cannot be loaded.
             ProviderConfigError: httpx refuses to send the request as the host
@@ -164,13 +174,13 @@ class TurnTranscriber:
         try:
             final_event = await self._final_event(self._provider.transcribe(chunks))
         except PERMANENT_ERRORS as exc:
-            # A revoked key, CA certificates that cannot verify the provider, a
-            # proxy or base URL httpx refuses: each is certain and permanent --
-            # every later turn hits the same failure -- the asymmetry
-            # :class:`~.session_attach.BareAuthMissingError` already draws
-            # against a transient session-attach fault. Folding these into the
-            # broad ``except Exception`` below would launder them into "ask the
-            # human to repeat", which repeats identically forever and never
+            # A revoked or missing key, CA certificates that cannot verify the
+            # provider, a proxy or base URL httpx refuses: each is certain and
+            # permanent -- every later turn hits the same failure -- the
+            # asymmetry :class:`~.session_attach.BareAuthMissingError` already
+            # draws against a transient session-attach fault. Folding these into
+            # the broad ``except Exception`` below would launder them into "ask
+            # the human to repeat", which repeats identically forever and never
             # says what is broken. Re-raised, not swallowed -- the caller
             # (CallSession) ends the call with an actionable message instead.
             self._turn_timer.mark(

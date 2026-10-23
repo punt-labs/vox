@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Final
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
 __all__ = [
     "PERMANENT_ERRORS",
@@ -53,11 +53,14 @@ class UnsendableHeaderError(ProviderConfigError):
 TRANSPORT_ERRORS: Final = (CaBundleError, ProviderConfigError, ProviderTransportError)
 
 # The provider failures no retry with the same host settings can fix: a key the
-# provider refused, TLS that cannot verify it, a request httpx will not send.
-# The one owner of the set -- music stops filling on these and a call ends on
-# them, where a ProviderTransportError is retried or asked about again.
+# provider refused, no key at all, TLS that cannot verify the provider, a request
+# httpx will not send. The one owner of the set -- music stops filling on these
+# and a call ends on them, where a ProviderTransportError is retried or asked
+# about again. A missing key is ProviderUnavailableError whether the readiness
+# gate or the SDK factory finds it: one fact, one type, permanent everywhere.
 PERMANENT_ERRORS: Final[tuple[type[ValueError], ...]] = (
     ProviderAuthError,
+    ProviderUnavailableError,
     CaBundleError,
     ProviderConfigError,
 )

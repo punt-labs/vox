@@ -15,7 +15,7 @@ from punt_vox.providers.provider_faults import (
     ProviderTransportError,
 )
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_transcriber import (
@@ -213,9 +213,29 @@ async def test_an_unsendable_key_records_its_own_detail() -> None:
     assert dict(timer.marks)["stt_response_received"] == "STT API key unsendable"
 
 
+def _missing_key() -> ProviderUnavailableError:
+    return ProviderUnavailableError(
+        "elevenlabs",
+        "provider 'elevenlabs' is configured but voxd has no ELEVENLABS_API_KEY; "
+        "run `vox doctor`",
+    )
+
+
+async def test_a_missing_key_is_reraised_and_records_its_own_detail() -> None:
+    """No key is as permanent as a revoked one: every later turn finds none."""
+    timer = _SpyTurnTimer()
+    transcriber = TurnTranscriber(_RaisingSTTProvider(_missing_key()), timer)
+
+    with pytest.raises(ProviderUnavailableError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT API key missing"
+
+
 # Every member of the one permanent set, built the way its raiser builds it.
 _PERMANENT_FACTORIES: dict[type[ValueError], Callable[[], ValueError]] = {
     ProviderAuthError: lambda: ProviderAuthError("elevenlabs", 401),
+    ProviderUnavailableError: _missing_key,
     CaBundleError: _bad_bundle,
     ProviderConfigError: lambda: ProviderConfigError("proxy refused"),
 }

@@ -12,11 +12,12 @@ from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from mutagen.id3 import ID3
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.part_tags import PartTags
@@ -140,10 +141,11 @@ class TestMusicProducer:
         "error",
         [
             ProviderAuthError("elevenlabs", 401),
+            ProviderUnavailableError("elevenlabs", "no ELEVENLABS_API_KEY"),
             CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded"),
             ProviderConfigError("provider request cannot be sent (ProxyError)"),
         ],
-        ids=["rejected-key", "ca-bundle", "config"],
+        ids=["rejected-key", "missing-key", "ca-bundle", "config"],
     )
     async def test_configuration_failure_is_bad_input(
         self, tmp_path: Path, error: Exception
@@ -151,6 +153,17 @@ class TestMusicProducer:
         """A rejected key or a host misconfiguration fails every retry the same."""
         producer = _producer(error)
         with pytest.raises(ProducerBadInputError):
+            await producer.produce(_spec(), tmp_path / "1.mp3")
+
+    async def test_real_provider_without_a_key_is_bad_input(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No key at boot fails every part the same way: music stops filling
+        rather than retrying each part up to the cap."""
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
+
+        with pytest.raises(ProducerBadInputError, match="ELEVENLABS_API_KEY"):
             await producer.produce(_spec(), tmp_path / "1.mp3")
 
     async def test_provider_transport_error_is_transient(self, tmp_path: Path) -> None:

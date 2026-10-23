@@ -131,8 +131,8 @@ class MusicProducer:
         """Return whether retrying ``exc`` with the same input cannot succeed.
 
         A permanent HTTP status (bad prompt, ToS, auth) is permanent; so is a
-        rejected key or a host misconfiguration, which fails the same way on
-        every retry. Rate limits, 5xx, and network faults are not.
+        rejected or missing key or a host misconfiguration, which fails the
+        same way on every retry. Rate limits, 5xx, and network faults are not.
         """
         if isinstance(exc, ApiError):
             return exc.status_code in _PERMANENT_STATUS

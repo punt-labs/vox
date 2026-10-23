@@ -10,7 +10,7 @@ from punt_vox.providers.provider_faults import (
     ProviderTransportError,
     UnsendableHeaderError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
 
 def test_transport_error_is_a_connection_error() -> None:
@@ -41,6 +41,7 @@ def test_permanent_errors_is_the_closed_set() -> None:
     and a call ends on these, and nothing else."""
     assert set(PERMANENT_ERRORS) == {
         ProviderAuthError,
+        ProviderUnavailableError,
         CaBundleError,
         ProviderConfigError,
     }
