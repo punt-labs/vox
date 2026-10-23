@@ -254,10 +254,12 @@ function pr_loop(unit):
 #                  branch; or the outage fallback ran for
 #                  round N. A late reply to an earlier round never completes
 #                  round N, and a clean review counts like any other.
-#   bugbot_in(N) = a completed "Cursor Bugbot" check run after round N's
-#                  "bugbot run" comment, or 30 minutes since that comment.
-#                  Bugbot has its own timer; a clean run posts no review,
-#                  so read the check run, not reviews.
+#   bugbot_in(N) = a "Cursor Bugbot" check run on the current PR head that
+#                  started after round N's "bugbot run" comment and
+#                  completed with any conclusion except cancelled; or 30
+#                  minutes since that comment. A run a push cancelled
+#                  reviewed nothing, so it does not count. A clean run posts
+#                  no review, so read the check run, not reviews.
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
 #                  or not bugbot_in(round(pr)))
 #   finding      = any unresolved review thread, from any author, or any
@@ -281,8 +283,8 @@ function pr_loop(unit):
 #                  ruling and how it was applied
 #   skipped(pr)  = the PR author is a bot ([github_app] ignore_bot_pr in
 #                  .pr_agent.toml); no title or label lets an author skip
-#   reviewed_head = the newest commit that Qodo reviewed or that the local
-#                  delta review below covered
+#   reviewed_head = the newest commit covered by a Qodo review, the outage
+#                  fallback, or the local delta review below
 
 function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
