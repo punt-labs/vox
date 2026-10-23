@@ -1,9 +1,6 @@
 # Qodo v2 review config — vox pilot (vox-2q95). One review on open, no per-push
 # re-review, only High findings inline (they become blocking threads).
-[config]
-ignore_pr_title = ["^\\[Auto\\]", "^(docs|chore|style)(\\(.*\\))?!?:"]
-ignore_pr_labels = ["skip-ai-review"]
-
+# Only bot-authored PRs are skipped; no title or label lets an author opt out.
 [github_app]
 ignore_bot_pr = true
 pr_commands = ["/agentic_describe", "/agentic_review"]
