@@ -301,7 +301,8 @@ function poll_tick(pr):
         push once                          # every fix reaches the PR head
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
-    if not pending(pr) and N < 3 and a fix landed since trigger(N)
+    if not skipped(pr) and not pending(pr) and N < 3
+            and a fix landed since trigger(N)
             and (N == 1 or a new High was fixed since trigger(N)):
         comment "/agentic_review"          # opens round N+1
     if not pending(pr) and no review is requested and the PR head is newer
