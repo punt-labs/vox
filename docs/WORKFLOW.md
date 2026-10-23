@@ -254,12 +254,13 @@ function pr_loop(unit):
 #                  branch; or the outage fallback ran for
 #                  round N. A late reply to an earlier round never completes
 #                  round N, and a clean review counts like any other.
-#   bugbot_in(N) = a "Cursor Bugbot" check run on the current PR head that
-#                  started after round N's "bugbot run" comment and
+#   bugbot_in(N) = a "Cursor Bugbot" check run on head(N) or a later branch
+#                  commit, started after round N's "bugbot run" comment, and
 #                  completed with any conclusion except cancelled; or 30
 #                  minutes since that comment. A run a push cancelled
-#                  reviewed nothing, so it does not count. A clean run posts
-#                  no review, so read the check run, not reviews.
+#                  reviewed nothing, so it does not count; a later push
+#                  does not undo a completed run (the delta review covers
+#                  it). A clean run posts no review, so read the check run.
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
 #                  or not bugbot_in(round(pr)))
 #   finding      = any unresolved review thread, from any author, or any
