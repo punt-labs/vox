@@ -29,8 +29,11 @@ dependencies = [
     "elevenlabs>=2.0.0",
     # Imported directly, not just through the SDKs: the providers classify
     # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
-    # that the ElevenLabs SDK lets escape raw. Floor is the locked version.
+    # that the ElevenLabs SDK lets escape raw. Floors are the locked versions.
     "httpx>=0.28.1",
+    # The OpenAI SDK rides on httpx2, httpx's fork, whose error classes are
+    # distinct types: classifying OpenAI's transport faults needs them by name.
+    "httpx2>=2.14.0",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
     "mcp>=1.30.0",
@@ -83,9 +86,6 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
-    # starlette.testclient prefers httpx2; without it, TestClient emits a
-    # StarletteDeprecationWarning. Test-only — not a runtime dependency.
-    "httpx2>=2.7.0",
 ]
 
 [build-system]

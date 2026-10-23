@@ -17,9 +17,9 @@ import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 
-from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.stream_file import StreamFile
+from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import HealthCheck
 
 if TYPE_CHECKING:
@@ -60,17 +60,20 @@ class ElevenLabsClient:
     ) -> Self:
         self = super().__new__(cls)
         self._api_key = api_key if api_key is not None else os.environ.get(_API_KEY_VAR)
-        self._sdk = LazySdk(self._new_sdk, transport=httpx.TransportError, sdk=sdk)
+        # RequestError, not TransportError: httpx raises DecodingError and
+        # TooManyRedirects outside TransportError, and the SDK lets both escape.
+        self._sdk = LazySdk(self._new_sdk, transport=httpx.RequestError, sdk=sdk)
         return self
 
     def call[R](self, request: Callable[[ElevenLabs], R]) -> R:
         """Run *request* against the SDK, building the SDK on first use.
 
         A bundle the build cannot load raises ``CaBundleError``. The SDK lets
-        httpx's errors escape raw; they leave here as a transient
-        ``ProviderTransportError``, or as a ``CaBundleError`` when
-        ``SSL_CERT_FILE`` is why TLS verification failed. ``ApiError`` -- the
-        server answered -- passes through for the provider to interpret.
+        httpx's errors escape raw; they leave here translated by
+        :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
+        ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
+        ``ProviderTransportError`` (transient). ``ApiError`` -- the server
+        answered -- passes through for the provider to interpret.
         """
         return self._sdk.call(request)
 
@@ -100,8 +103,7 @@ class ElevenLabsClient:
             sub = self._sdk.call(lambda sdk: sdk.user.subscription.get())
         except ApiError as exc:
             reason = self._api_error_message(exc)
-        except (CaBundleError, OSError) as exc:
-            # OSError covers ProviderTransportError, a ConnectionError.
+        except TRANSPORT_ERRORS as exc:
             reason = str(exc)
         else:
             return HealthCheck(

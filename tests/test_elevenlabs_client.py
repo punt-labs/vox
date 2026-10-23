@@ -13,7 +13,10 @@ from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.transport_faults import (
+    ProviderConfigError,
+    ProviderTransportError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -236,6 +239,15 @@ class TestSubscriptionCheck:
         assert not check.passed
         assert "refused" in check.message
 
+    def test_configuration_fault_is_a_failed_line(self) -> None:
+        sdk = MagicMock()
+        sdk.user.subscription.get.side_effect = httpx.ProxyError("refused CONNECT")
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert not check.passed
+        assert "ProxyError" in check.message
+
     def test_tls_verify_failure_names_the_variable(self, garbage_ca: Path) -> None:
         sdk = MagicMock()
         sdk.user.subscription.get.side_effect = _verify_failure()
@@ -284,6 +296,33 @@ class TestCall:
             ElevenLabsClient(sdk=MagicMock()).call(
                 lambda _sdk: _raise(_verify_failure())
             )
+
+    def test_request_error_outside_transport_is_translated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """httpx.DecodingError is a RequestError, not a TransportError; it must
+        not escape raw as an unclassified exception."""
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+
+        with pytest.raises(ProviderTransportError):
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(httpx.DecodingError("bad gzip"))
+            )
+
+    @pytest.mark.parametrize(
+        "fault",
+        [
+            httpx.UnsupportedProtocol("Request URL is missing a protocol"),
+            httpx.ProxyError("proxy refused CONNECT"),
+            httpx.LocalProtocolError("Illegal header value"),
+        ],
+        ids=["unsupported-protocol", "proxy", "local-protocol"],
+    )
+    def test_configuration_fault_is_permanent(self, fault: httpx.RequestError) -> None:
+        with pytest.raises(ProviderConfigError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(fault))
+
+        assert info.value.__cause__ is fault
 
     def test_api_error_passes_through(self) -> None:
         """The server answered: the provider, not the client, interprets it."""

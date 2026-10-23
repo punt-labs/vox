@@ -66,10 +66,11 @@ class LazySdk[T]:
     def call[R](self, request: Callable[[T], R]) -> R:
         """Run *request* against the SDK, translating a transport failure.
 
-        A transport failure leaves as a transient ``ProviderTransportError``,
-        or as a ``CaBundleError`` when ``SSL_CERT_FILE`` is why TLS
-        verification failed; both chain the original. Anything else -- the
-        server answered, and the provider interprets the answer -- passes
+        A transport failure leaves as whatever
+        :meth:`~punt_vox.providers.transport_faults.TransportFaults.translate`
+        answers -- a ``CaBundleError``, ``ProviderConfigError``, or
+        ``ProviderTransportError`` -- chaining the original. Anything else --
+        the server answered, and the provider interprets the answer -- passes
         through unchanged.
         """
         try:

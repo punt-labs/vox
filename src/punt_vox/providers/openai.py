@@ -11,9 +11,9 @@ import openai
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
-from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -156,8 +156,7 @@ class OpenAIProvider(TTSProvider):
             reason = "invalid API key"
         except openai.NotFoundError:
             reason = f"model '{self._model}' not found"
-        except (CaBundleError, OSError) as exc:
-            # OSError covers ProviderTransportError, a ConnectionError.
+        except TRANSPORT_ERRORS as exc:
             reason = str(exc)
         else:
             return HealthCheck(
