@@ -120,8 +120,20 @@ class TestSynthesizeParseGuard:
         mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_api_key_with_a_newline_is_rejected_without_its_value(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        "api_key",
+        [
+            "SECRETKEY123\n",
+            "SECRET\u00a0KEY123",
+            "SECRETKEY123\u200b",
+            "SECRET\u2013KEY123",
+            "SECRET\u2019KEY123",
+            "SECRETKEY123 ",
+        ],
+        ids=["newline", "nbsp", "zwsp", "en-dash", "smart-quote", "trailing-space"],
+    )
+    async def test_unsendable_api_key_is_rejected_without_its_value(
+        self, api_key: str, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A per-request key that cannot go in a header never reaches a provider,
         and neither the reply nor the log quotes it."""
@@ -135,16 +147,18 @@ class TestSynthesizeParseGuard:
             "id": "1",
             "text": "hello",
             "provider": "elevenlabs",
-            "api_key": "SECRETKEY123\n",
+            "api_key": api_key,
         }
 
         with caplog.at_level(logging.DEBUG):
             await handler(msg, ws)
 
         assert sent[-1]["type"] == "error"
-        assert "api_key contains a control character" in str(sent[-1]["message"])
-        assert "SECRETKEY123" not in str(sent)
-        assert "SECRETKEY123" not in caplog.text
+        assert "api_key contains a character no HTTP header may carry" in str(
+            sent[-1]["message"]
+        )
+        assert "SECRET" not in str(sent)
+        assert "SECRET" not in caplog.text
         mock_synth.synthesize_to_file.assert_not_called()
 
 

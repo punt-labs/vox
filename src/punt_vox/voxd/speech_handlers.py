@@ -69,8 +69,8 @@ class _SpeechRequest:
 
         A string-typed field raises ``ValueError`` on a non-string value while a
         numeric field accepts a JSON number (via the parse helpers); empty text
-        and an ``api_key`` holding a control character are rejected here, so
-        both handlers share one validation point.
+        and an ``api_key`` no HTTP header may carry are rejected here, so both
+        handlers share one validation point.
         """
         text = parse_required_str(msg, "text")
         if not text:

@@ -191,7 +191,7 @@ class TestBuild:
 
 
 class TestMalformedKey:
-    """A key with a control character never reaches the SDK or the log."""
+    """A key no header may carry never reaches the SDK or the log."""
 
     _KEY = "SECRETKEY123"
 
@@ -237,7 +237,7 @@ class TestKeyCheck:
         check = ElevenLabsClient(api_key="k\n", sdk=MagicMock()).key_check()
 
         assert not check.passed
-        assert "control character" in check.message
+        assert "no HTTP header may carry" in check.message
 
 
 # ---------------------------------------------------------------------------

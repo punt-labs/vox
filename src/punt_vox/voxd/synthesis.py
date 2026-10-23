@@ -357,11 +357,17 @@ class SynthesisPipeline:
 
         The callback also retrieves the abandoned thread's exception, so a
         provider failure after the cancel is not reported as never retrieved.
+        It logs the type and message, never the repr: an encoding error's repr
+        quotes the value it could not encode, which can be the API key.
         """
 
         def _discard(done: asyncio.Future[AudioResult]) -> None:
             if not done.cancelled() and (error := done.exception()) is not None:
-                logger.debug("cancelled synthesis then failed: %r", error)
+                logger.debug(
+                    "cancelled synthesis then failed: %s: %s",
+                    type(error).__name__,
+                    error,
+                )
             output_path.unlink(missing_ok=True)
 
         return _discard

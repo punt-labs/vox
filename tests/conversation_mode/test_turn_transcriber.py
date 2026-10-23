@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 import pytest
 
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import (
     PERMANENT_ERRORS,
@@ -19,6 +20,7 @@ from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_transcriber import (
     CONFIDENCE_FLOOR,
+    PermanentSttFailure,
     TurnTranscriber,
 )
 
@@ -199,6 +201,18 @@ async def test_a_configuration_fault_is_reraised_not_swallowed() -> None:
     assert dict(timer.marks)["stt_response_received"] == "STT request misconfigured"
 
 
+async def test_an_unsendable_key_records_its_own_detail() -> None:
+    """A malformed key is a configuration fault with a cause the timer names."""
+    timer = _SpyTurnTimer()
+    error = MalformedApiKeyError("ELEVENLABS_API_KEY contains a character ...")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(MalformedApiKeyError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT API key unsendable"
+
+
 # Every member of the one permanent set, built the way its raiser builds it.
 _PERMANENT_FACTORIES: dict[type[ValueError], Callable[[], ValueError]] = {
     ProviderAuthError: lambda: ProviderAuthError("elevenlabs", 401),
@@ -233,3 +247,28 @@ async def test_a_provider_transport_error_still_asks_to_repeat() -> None:
     transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
 
     assert await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk())) is None
+
+
+class TestPermanentSttFailure:
+    """One row per permanent kind: the timer detail and the spoken ending."""
+
+    _GENERIC = PermanentSttFailure.of(ValueError("not a provider fault"))
+
+    @pytest.mark.parametrize("kind", PERMANENT_ERRORS, ids=lambda kind: kind.__name__)
+    def test_every_permanent_kind_has_its_own_wording(
+        self, kind: type[ValueError]
+    ) -> None:
+        wording = PermanentSttFailure.of(_PERMANENT_FACTORIES[kind]())
+
+        assert wording.detail != self._GENERIC.detail
+        assert wording.ending != self._GENERIC.ending
+        assert wording.ending.endswith("Ending the call now.")
+
+    def test_a_malformed_key_is_worded_apart_from_its_base(self) -> None:
+        """The subclass's row precedes ProviderConfigError's, so it is reached."""
+        key = PermanentSttFailure.of(MalformedApiKeyError("OPENAI_API_KEY ..."))
+        config = PermanentSttFailure.of(ProviderConfigError("proxy refused"))
+
+        assert key.detail == "STT API key unsendable"
+        assert "API key" in key.ending
+        assert key.ending != config.ending

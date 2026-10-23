@@ -18,11 +18,9 @@ scripted fakes' production counterparts for demos, tests, and CI.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
@@ -37,7 +35,10 @@ from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
-from punt_vox.voxd.conversation_mode.turn_transcriber import TurnTranscriber
+from punt_vox.voxd.conversation_mode.turn_transcriber import (
+    PermanentSttFailure,
+    TurnTranscriber,
+)
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
@@ -51,46 +52,6 @@ __all__ = ["CallSession", "SpeakFn"]
 logger = logging.getLogger(__name__)
 
 _ASK_TO_REPEAT = "Sorry, I didn't catch that -- could you repeat it?"
-
-# Unlike _ASK_TO_REPEAT, a rejected STT credential is certain and permanent,
-# so this ends the call instead of looping forever -- mirrors
-# reply_recovery.py's own _BARE_AUTH_MISSING sentence.
-_STT_AUTH_FAILED = (
-    "Sorry, this call can't continue -- the speech-recognition credentials "
-    "were rejected. Ending the call now."
-)
-
-# A failed certificate verification is configuration, as permanent as a
-# rejected key: the trust anchors (SSL_CERT_FILE, SSL_CERT_DIR, or the client's
-# default) distrust the issuer, or the certificate names another host or has
-# expired. vox.log says which, and what to change.
-_STT_TLS_FAILED = (
-    "Sorry, this call can't continue -- speech recognition can't verify the "
-    "provider's TLS certificate. Check SSL_CERT_FILE and the provider address; "
-    "vox.log has the details. Ending the call now."
-)
-
-# A request httpx will not send -- a proxy it cannot use, a key with a stray
-# newline -- is host configuration too.
-_STT_CONFIG_FAILED = (
-    "Sorry, this call can't continue -- speech recognition can't send its "
-    "request as this host is configured. Check the proxy settings and the API "
-    "key; vox.log has the details. Ending the call now."
-)
-
-# For a PERMANENT_ERRORS member with no sentence below: still an ending.
-_STT_FAILED = (
-    "Sorry, this call can't continue -- speech recognition failed in a way a "
-    "retry won't fix; vox.log has the details. Ending the call now."
-)
-
-# What the call says before ending on each permanent STT failure. Which
-# failures are permanent is PERMANENT_ERRORS's call, not this table's.
-_ENDING: Final[tuple[tuple[type[ValueError], str], ...]] = (
-    (ProviderAuthError, _STT_AUTH_FAILED),
-    (CaBundleError, _STT_TLS_FAILED),
-    (ProviderConfigError, _STT_CONFIG_FAILED),
-)
 
 
 @final
@@ -318,11 +279,8 @@ class CallSession:
         call listening against a provider that will fail every turn.
         """
         logger.exception("STT cannot continue -- ending the call")
-        message = next(
-            (text for kind, text in _ENDING if isinstance(cause, kind)), _STT_FAILED
-        )
         try:
-            await self._speak(message)
+            await self._speak(PermanentSttFailure.of(cause).ending)
         except Exception:
             # Broad on purpose: speaking is best-effort here, and any failure --
             # a provider error, a dead daemon socket -- must still end the call.

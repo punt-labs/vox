@@ -232,10 +232,10 @@ class OpenAIProvider(TTSProvider):
 
         Read here, as the SDK itself would, but checked first: the SDK puts the
         key in an ``Authorization`` header, and httpx's refusal of a header
-        with a newline quotes the key.
+        it cannot encode quotes the key.
 
         Raises:
-            MalformedApiKeyError: The key holds a control character.
+            MalformedApiKeyError: The key cannot be sent as a header value.
         """
         return openai.OpenAI(
             api_key=_KEY_CHECK.require(os.environ.get(_KEY_CHECK.source))

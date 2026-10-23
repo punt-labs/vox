@@ -732,13 +732,25 @@ class TestOpenAIProviderBadCaBundle:
 
 
 class TestOpenAIProviderMalformedKey:
-    """A key with a control character never reaches the SDK or the log."""
+    """A key no header may carry never reaches the SDK or the log."""
 
     _KEY = "sk-SECRETKEY123"
 
-    @pytest.fixture
-    def bad_key(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
-        monkeypatch.setenv("OPENAI_API_KEY", f"{self._KEY}\n")
+    @pytest.fixture(
+        params=[
+            f"{_KEY}\n",
+            "sk-SECRET\u00a0KEY123",
+            f"{_KEY}\u200b",
+            "sk-SECRET\u2013KEY123",
+            "sk-ab\u2019cdSECRETKEY123",
+            f"{_KEY} ",
+        ],
+        ids=["newline", "nbsp", "zwsp", "en-dash", "smart-quote", "trailing-space"],
+    )
+    def bad_key(
+        self, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+    ) -> list[dict[str, object]]:
+        monkeypatch.setenv("OPENAI_API_KEY", request.param)
         built: list[dict[str, object]] = []
 
         def _build(**kwargs: object) -> None:
@@ -762,8 +774,8 @@ class TestOpenAIProviderMalformedKey:
             OpenAIProvider().synthesize(request, tmp_path / "out.mp3")
 
         assert "OPENAI_API_KEY" in str(info.value)
-        assert self._KEY not in "".join(traceback.format_exception(info.value))
-        assert self._KEY not in caplog.text
+        assert "SECRET" not in "".join(traceback.format_exception(info.value))
+        assert "SECRET" not in caplog.text
         assert bad_key == []
 
     @pytest.mark.usefixtures("bad_key")
@@ -772,5 +784,5 @@ class TestOpenAIProviderMalformedKey:
 
         assert len(checks) == 1
         assert not checks[0].passed
-        assert "control character" in checks[0].message
-        assert self._KEY not in checks[0].message
+        assert "no HTTP header may carry" in checks[0].message
+        assert "SECRET" not in checks[0].message

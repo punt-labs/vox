@@ -80,7 +80,7 @@ class ElevenLabsClient:
         """Run *request* against the SDK, building the SDK on first use.
 
         A bundle the build cannot load raises ``CaBundleError``; a key holding a
-        control character raises ``MalformedApiKeyError``. The SDK lets
+        character no header may carry raises ``MalformedApiKeyError``. The SDK lets
         httpx's errors escape raw; they leave here translated by
         :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
         ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
@@ -138,7 +138,7 @@ class ElevenLabsClient:
         must fail the request that sends it -- by name -- not stop the daemon.
 
         Raises:
-            MalformedApiKeyError: The key holds a control character.
+            MalformedApiKeyError: The key cannot be sent as a header value.
         """
         return ElevenLabs(api_key=_KEY_CHECK.require(self._api_key))
 

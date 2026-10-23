@@ -8,13 +8,36 @@ import pytest
 
 from punt_vox.providers.api_key import ApiKeyCheck, MalformedApiKeyError
 from punt_vox.providers.caller_errors import CALLER_ERRORS
-from punt_vox.providers.provider_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 
 _KEY = "SECRETKEY123"
 
+# Every shape a pasted key takes that httpx cannot put in a header: control
+# characters, edge whitespace, and the non-ASCII characters a rich-text paste
+# carries in -- httpx encodes header values as ASCII and raises a
+# UnicodeEncodeError whose repr quotes the whole value.
+_UNSENDABLE = {
+    "newline": f"{_KEY}\n",
+    "carriage-return": f"{_KEY}\r",
+    "tab": f"\t{_KEY}",
+    "del": f"{_KEY}\x7f",
+    "nbsp": "SECRET\u00a0KEY123",
+    "zero-width-space": f"{_KEY}\u200b",
+    "en-dash": "SECRET\u2013KEY123",
+    "smart-quote": f"sk-ab\u2019cd{_KEY}",
+    "trailing-space": f"{_KEY} ",
+    "leading-space": f" {_KEY}",
+}
+_UNSENDABLE_KEYS = list(_UNSENDABLE.values())
+_UNSENDABLE_IDS = list(_UNSENDABLE)
+_REASON = (
+    "contains a character no HTTP header may carry "
+    "(whitespace, a newline, or a non-ASCII character)"
+)
 
-@pytest.mark.parametrize("key", [f"{_KEY}\n", f"{_KEY}\r", f"\t{_KEY}", f"{_KEY}\x7f"])
-def test_control_character_is_rejected(key: str) -> None:
+
+@pytest.mark.parametrize("key", _UNSENDABLE_KEYS, ids=_UNSENDABLE_IDS)
+def test_unsendable_key_is_rejected(key: str) -> None:
     with pytest.raises(MalformedApiKeyError):
         ApiKeyCheck("ELEVENLABS_API_KEY").require(key)
 
@@ -29,19 +52,21 @@ def test_absent_key_passes() -> None:
     assert ApiKeyCheck("OPENAI_API_KEY").require(None) is None
 
 
-def test_message_names_the_source_never_the_key() -> None:
+@pytest.mark.parametrize("key", _UNSENDABLE_KEYS, ids=_UNSENDABLE_IDS)
+def test_message_names_the_source_never_the_key(key: str) -> None:
     with pytest.raises(MalformedApiKeyError) as info:
-        ApiKeyCheck("ELEVENLABS_API_KEY").require(f"{_KEY}\n")
+        ApiKeyCheck("ELEVENLABS_API_KEY").require(key)
 
-    assert "ELEVENLABS_API_KEY" in str(info.value)
-    assert "stray whitespace or newlines" in str(info.value)
-    assert _KEY not in "".join(traceback.format_exception(info.value))
+    assert str(info.value) == f"ELEVENLABS_API_KEY {_REASON}"
+    assert "SECRET" not in "".join(traceback.format_exception(info.value))
+    assert "SECRET" not in repr(info.value)
 
 
 def test_is_a_permanent_caller_error() -> None:
     """Routed verbatim on the wire, permanent for music and calls."""
     assert issubclass(MalformedApiKeyError, ProviderConfigError)
     assert issubclass(MalformedApiKeyError, CALLER_ERRORS)
+    assert issubclass(MalformedApiKeyError, PERMANENT_ERRORS)
 
 
 class TestReport:
@@ -56,12 +81,13 @@ class TestReport:
         assert not line.passed
         assert line.message == "ElevenLabs API key: not set (export ELEVENLABS_API_KEY)"
 
-    def test_malformed_key_fails_without_its_value(self) -> None:
-        line = self._CHECK.report("ElevenLabs", f"{_KEY}\n")
+    @pytest.mark.parametrize("key", _UNSENDABLE_KEYS, ids=_UNSENDABLE_IDS)
+    def test_malformed_key_fails_without_its_value(self, key: str) -> None:
+        line = self._CHECK.report("ElevenLabs", key)
 
         assert not line.passed
-        assert "control character" in line.message
-        assert _KEY not in line.message
+        assert line.message == f"ElevenLabs API key: ELEVENLABS_API_KEY {_REASON}"
+        assert "SECRET" not in line.message
 
     def test_good_key_passes(self) -> None:
         line = self._CHECK.report("ElevenLabs", _KEY)

@@ -861,6 +861,61 @@ class TestSynthesizeFailFast:
 
         assert list(tmp_path.iterdir()) == []
 
+    def test_cancelled_then_failed_synthesis_logs_no_repr(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An abandoned worker's error is logged by type and message only: a
+        repr can quote what the provider was sending, the API key included."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            raise _ReprQuotesTheKeyError
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):
+                if "cancelled synthesis then failed" in caplog.text:
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.synthesis"),
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            asyncio.run(_drive())
+
+        assert "_ReprQuotesTheKeyError: header cannot be encoded" in caplog.text
+        assert "SECRETKEY" not in caplog.text
+
+
+class _ReprQuotesTheKeyError(Exception):
+    """An error whose repr quotes its value, as a UnicodeEncodeError's does."""
+
+    def __str__(self) -> str:
+        return "header cannot be encoded"
+
+    def __repr__(self) -> str:
+        return "_ReprQuotesTheKeyError('Bearer SECRETKEY')"
+
 
 class TestSynthesizeCacheObservability:
     """synthesize_to_file reports cache hit/miss via SynthesisOutcome.cached."""

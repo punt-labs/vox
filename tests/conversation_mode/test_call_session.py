@@ -19,6 +19,7 @@ from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedC
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
 from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import HealthCheck
@@ -550,7 +551,9 @@ def _misconfigured() -> Exception:
 
 
 def _malformed_key() -> Exception:
-    return MalformedApiKeyError("ELEVENLABS_API_KEY contains a control character")
+    return MalformedApiKeyError(
+        "ELEVENLABS_API_KEY contains a character no HTTP header may carry"
+    )
 
 
 def _refused() -> Exception:
@@ -1023,3 +1026,55 @@ async def test_reply_containing_a_secret_is_redacted_before_speaking(
     assert not any(secret in phrase for phrase in speak.said)
     assert any("[redacted]" in phrase for phrase in speak.said)
     assert any(secret in record.message for record in caplog.records)
+
+
+class TestUnsendableApiKeyEndsTheCall:
+    """A pasted key httpx cannot send fails every turn the same way: the call
+    ends saying so, rather than asking the human to repeat forever."""
+
+    @pytest.mark.parametrize(
+        "key",
+        ["sk-ab\u2019cdSECRET", "SECRET\u00a0KEY", "SECRET\n"],
+        ids=["smart-quote", "nbsp", "newline"],
+    )
+    async def test_real_stt_provider_ends_the_call_on_the_key(
+        self,
+        key: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+        speak = _Recorder()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=ElevenLabsSTTProvider(),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+        await session.start()
+
+        with caplog.at_level(logging.DEBUG):
+            await _feed_one_turn(session)
+
+        assert session.actor.mode is Mode.IDLE
+        assert "API key" in speak.said[-1]
+        assert "Ending the call now." in speak.said[-1]
+        assert "SECRET" not in caplog.text
+
+    async def test_the_key_ending_is_not_the_generic_configuration_one(
+        self,
+    ) -> None:
+        endings: list[str] = []
+        for error in (_malformed_key(), _misconfigured()):
+            speak = _Recorder()
+            session = CallSession(
+                turn_detector=_detector(),
+                stt_provider=_RaisingSTTProvider(error),
+                session_attach=FakeSessionAttach(),
+                speak=speak,
+            )
+            await session.start()
+            await _feed_one_turn(session)
+            endings.append(speak.said[-1])
+
+        assert endings[0] != endings[1]
