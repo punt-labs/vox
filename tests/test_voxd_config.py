@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,10 +70,8 @@ class TestLoadKeys:
 
         assert "ELEVENLABS_API_KEY" in loaded
         assert "OPENAI_API_KEY" in loaded
-        import os as _os
-
-        assert _os.environ["ELEVENLABS_API_KEY"] == "sk-eleven-test"
-        assert _os.environ["OPENAI_API_KEY"] == "sk-openai-test"
+        assert os.environ["ELEVENLABS_API_KEY"] == "sk-eleven-test"
+        assert os.environ["OPENAI_API_KEY"] == "sk-openai-test"
 
     def test_missing_keys_file_returns_empty(self, tmp_path: Path) -> None:
         """No keys.env file means no loaded keys — not a crash."""
@@ -91,9 +91,7 @@ class TestLoadKeys:
         loaded = _load_keys(tmp_path)
 
         assert "ELEVENLABS_API_KEY" not in loaded
-        import os as _os
-
-        assert _os.environ["ELEVENLABS_API_KEY"] == "from-env"
+        assert os.environ["ELEVENLABS_API_KEY"] == "from-env"
 
     def test_ignores_unknown_keys(
         self,
@@ -110,9 +108,86 @@ class TestLoadKeys:
 
         assert "HACKER_BACKDOOR" not in loaded
         assert "ELEVENLABS_API_KEY" in loaded
-        import os as _os
+        assert "HACKER_BACKDOOR" not in os.environ
 
-        assert "HACKER_BACKDOOR" not in _os.environ
+
+class TestLoadKeysFileFormat:
+    """load_keys reads keys.env with the same parser the installer writes for."""
+
+    def test_non_utf8_file_logs_the_path_only_and_loads_nothing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A corrupt file never crashes boot, and the log never quotes its bytes."""
+        (tmp_path / "keys.env").write_bytes(b"OPENAI_API_KEY=sk-x\n\xff\xfe\n")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.config"):
+            loaded = _load_keys(tmp_path)
+
+        assert loaded == frozenset()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(str(tmp_path / "keys.env") in m for m in messages)
+        assert all("0xff" not in m and "sk-x" not in m for m in messages)
+        assert all(r.exc_info is None for r in caplog.records)
+
+    def test_errno_less_read_failure_logs_its_type_and_loads_nothing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An ``OSError`` with no ``strerror`` is named by type, never ``None``."""
+        (tmp_path / "keys.env").write_text("OPENAI_API_KEY=sk-x\n")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        def refuse(*_args: object, **_kwargs: object) -> str:
+            msg = "sk-leaked-detail"
+            raise OSError(msg)
+
+        monkeypatch.setattr(Path, "read_text", refuse)
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.config"):
+            loaded = _load_keys(tmp_path)
+
+        assert loaded == frozenset()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(f"{tmp_path / 'keys.env'}: OSError --" in m for m in messages)
+        assert all("None" not in m and "sk-leaked-detail" not in m for m in messages)
+
+    def test_values_are_stripped_and_empty_values_skipped(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Surrounding whitespace is trimmed; ``KEY=`` sets nothing."""
+        (tmp_path / "keys.env").write_text(
+            "  OPENAI_API_KEY =  sk-trim  \nELEVENLABS_API_KEY=\n"
+        )
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+        loaded = _load_keys(tmp_path)
+
+        assert loaded == frozenset({"OPENAI_API_KEY"})
+        assert os.environ["OPENAI_API_KEY"] == "sk-trim"
+        assert "ELEVENLABS_API_KEY" not in os.environ
+
+    def test_later_line_for_the_same_key_wins(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Duplicate lines resolve as ``parse_keys_env`` resolves them."""
+        (tmp_path / "keys.env").write_text(
+            "OPENAI_API_KEY=sk-first\nOPENAI_API_KEY=sk-second\n"
+        )
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        _load_keys(tmp_path)
+
+        assert os.environ["OPENAI_API_KEY"] == "sk-second"
 
 
 class TestVoxdStartupEnforces0700:

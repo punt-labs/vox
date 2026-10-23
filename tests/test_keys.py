@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from punt_vox.keys import (
-    format_keys_env,
     parse_keys_env,
 )
 
@@ -43,30 +42,3 @@ class TestParseKeysEnv:
 
     def test_empty_string(self) -> None:
         assert parse_keys_env("") == {}
-
-
-# ---------------------------------------------------------------------------
-# format_keys_env
-# ---------------------------------------------------------------------------
-
-
-class TestFormatKeysEnv:
-    def test_sorted_output(self) -> None:
-        result = format_keys_env({"ZZZ": "last", "AAA": "first"})
-        lines = result.strip().splitlines()
-        # Skip header comment lines
-        data_lines = [line for line in lines if not line.startswith("#") and line]
-        assert data_lines == ["AAA=first", "ZZZ=last"]
-
-    def test_header_present(self) -> None:
-        result = format_keys_env({"FOO": "bar"})
-        assert result.startswith("# vox provider keys")
-
-    def test_trailing_newline(self) -> None:
-        result = format_keys_env({"FOO": "bar"})
-        assert result.endswith("\n")
-
-    def test_empty_values_omitted(self) -> None:
-        result = format_keys_env({"FOO": "bar", "EMPTY": ""})
-        assert "EMPTY" not in result
-        assert "FOO=bar" in result

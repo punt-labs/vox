@@ -1,6 +1,6 @@
 """Daemon configuration: paths, keys, auth tokens, port files (logging is elsewhere)."""
 # pyright: reportUnusedFunction=false
-# All functions here are re-exported via __init__.py and used by _monolith.py.
+# The private helpers here are imported by daemon.py and the tests.
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self, cast
 
-from punt_vox.keys import PROVIDER_KEY_NAMES
+from punt_vox.keys import PROVIDER_KEY_NAMES, parse_keys_env
 from punt_vox.paths import (
     config_dir as _user_config_dir,
     installed_version,
@@ -77,6 +77,7 @@ _STARTUP_ENV_KEYS: tuple[str, ...] = (
 )
 
 _TOKEN_RE = re.compile(r"\?token=[^\s\"']+")
+_KEYS_UNREADABLE = "Could not read %s: %s -- daemon will use system TTS only"
 
 
 class _TokenRedactFilter(logging.Filter):
@@ -177,33 +178,30 @@ class DaemonConfig:
     def load_keys(self) -> frozenset[str]:
         """Load keys.env from config dir into os.environ.
 
-        Return the names of variables that were loaded.
+        Return the names of variables that were loaded. A variable already in
+        the environment wins over the file. An unreadable or non-UTF-8 file
+        loads nothing and logs its path and the reason, never the decode
+        error's own text, which quotes the file's bytes (possibly part of a key).
         """
         keys_file = self._config_dir / "keys.env"
         if not keys_file.exists():
             return frozenset()
         try:
-            text = keys_file.read_text()
-        except OSError as exc:
-            logger.warning(
-                "Could not read %s: %s -- daemon will use system TTS only",
-                keys_file,
-                exc,
-            )
+            text = keys_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.warning(_KEYS_UNREADABLE, keys_file, "not valid UTF-8")
             return frozenset()
-        loaded: set[str] = set()
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if "=" not in stripped:
-                continue
-            key, _, value = stripped.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if key in PROVIDER_KEY_NAMES and value and key not in os.environ:
-                os.environ[key] = value
-                loaded.add(key)
+        except OSError as exc:
+            reason = exc.strerror or type(exc).__name__  # errno-less: no strerror
+            logger.warning(_KEYS_UNREADABLE, keys_file, reason)
+            return frozenset()
+        stored = parse_keys_env(text)
+        loaded = {
+            key
+            for key in PROVIDER_KEY_NAMES & stored.keys()
+            if stored[key] and key not in os.environ
+        }
+        os.environ.update({key: stored[key] for key in loaded})
         return frozenset(loaded)
 
     def read_or_create_token(self) -> str:
