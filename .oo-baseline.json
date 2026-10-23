@@ -1510,10 +1510,10 @@
   "src/punt_vox/providers/elevenlabs_client.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.89,
+    "avg_params": 1.0,
     "max_complexity": 4.0,
     "avg_complexity": 1.89,
-    "module_size": 181.0,
+    "module_size": 187.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

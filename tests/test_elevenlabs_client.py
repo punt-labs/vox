@@ -14,11 +14,13 @@ from elevenlabs.core import ApiError, ParsingError
 
 from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 
@@ -243,6 +245,27 @@ class TestAbsentKey:
 
         assert built == []
 
+    @pytest.mark.parametrize("source", ["argument", "environment"])
+    def test_an_empty_key_is_no_key(
+        self, source: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty key never reaches the SDK, which would send it blank."""
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.elevenlabs_client.ElevenLabs", _build)
+        client = (
+            ElevenLabsClient(api_key="") if source == "argument" else ElevenLabsClient()
+        )
+
+        with pytest.raises(ProviderUnavailableError, match="ELEVENLABS_API_KEY"):
+            client.call(_identity)
+
+        assert built == []
+
 
 class TestKeyCheck:
     def test_passes_with_a_key(self) -> None:
@@ -280,14 +303,28 @@ class TestSubscriptionCheck:
         assert check.passed
         assert "creator" in check.message
 
-    def test_rejected_key_is_a_failed_line(self) -> None:
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_rejected_key_is_a_failed_line(self, status: int) -> None:
         sdk = MagicMock()
-        sdk.user.subscription.get.side_effect = ApiError(status_code=401)
+        sdk.user.subscription.get.side_effect = ApiError(status_code=status)
 
         check = ElevenLabsClient(sdk=sdk).subscription_check()
 
         assert not check.passed
-        assert check.message == "ElevenLabs subscription: API key rejected (HTTP 401)"
+        assert check.message == (
+            f"ElevenLabs subscription: API key rejected (HTTP {status})"
+        )
+
+    def test_rejected_key_line_carries_the_server_s_code(self) -> None:
+        sdk = MagicMock()
+        body = {"detail": {"status": "quota_exceeded"}}
+        sdk.user.subscription.get.side_effect = ApiError(status_code=403, body=body)
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert check.message == (
+            "ElevenLabs subscription: API key rejected (HTTP 403: quota_exceeded)"
+        )
 
     def test_api_error_is_a_failed_line(self) -> None:
         sdk = MagicMock()
@@ -425,46 +462,70 @@ class TestCall:
 
         assert info.value.__cause__ is None
 
-    def test_rejected_key_is_a_provider_auth_error(self) -> None:
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_refused_credential_is_a_refusal(self, status: int) -> None:
         """Every ElevenLabs call site -- TTS, voices, STT, music, health -- gets
-        the 401 translated here, once."""
-        cause = ApiError(status_code=401)
+        the 401 or 403 translated here, once, into the caller's error."""
+        cause = ApiError(status_code=status)
 
-        with pytest.raises(ProviderAuthError) as info:
+        with pytest.raises(ProviderRefusalError) as info:
             ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
 
+        assert isinstance(info.value, CALLER_ERRORS)
         assert info.value.provider_name == "elevenlabs"
-        assert info.value.status_code == 401
+        assert info.value.status_code == status
+        assert info.value.reason is None
         assert info.value.__cause__ is cause
 
-    def test_a_rejected_key_logs_the_server_s_status_code(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_refusal_carries_the_server_s_code(self, status: int) -> None:
+        """A refusal is not always a bad key -- a quota, unusual activity -- so
+        the caller sees the code that says which."""
+        body = {"detail": {"status": "quota_exceeded", "message": "m"}}
+
+        with pytest.raises(ProviderRefusalError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=status, body=body))
+            )
+
+        assert info.value.reason == "quota_exceeded"
+        assert f"(HTTP {status}: quota_exceeded)" in str(info.value)
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_refusal_logs_the_server_s_status_code(
+        self, status: int, caplog: pytest.LogCaptureFixture
     ) -> None:
         """ElevenLabs says why it refused a key (invalid, unusual activity); the
-        log keeps that identifier, and the error stays a ProviderAuthError."""
+        log keeps that identifier."""
         body = {"detail": {"status": "detected_unusual_activity", "message": "m"}}
-        cause = ApiError(status_code=401, body=body)
+        cause = ApiError(status_code=status, body=body)
 
-        with caplog.at_level(logging.ERROR), pytest.raises(ProviderAuthError):
+        with caplog.at_level(logging.ERROR), pytest.raises(ProviderRefusalError):
             ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
 
         hits = [r for r in caplog.records if "detected_unusual_activity" in r.message]
         assert [r.levelno for r in hits] == [logging.ERROR]
+        assert f"HTTP {status}" in hits[0].message
 
+    @pytest.mark.parametrize("status", [401, 403])
     @pytest.mark.parametrize(
         "body",
         [None, "Unauthorized", {"detail": {"status": "sk-abc 123\n"}}],
         ids=["no-body", "raw-text", "not-an-identifier"],
     )
-    def test_a_rejected_key_logs_no_status_it_cannot_trust(
-        self, body: object, caplog: pytest.LogCaptureFixture
+    def test_a_refusal_logs_and_carries_no_code_it_cannot_trust(
+        self, status: int, body: object, caplog: pytest.LogCaptureFixture
     ) -> None:
-        cause = ApiError(status_code=401, body=body)
+        cause = ApiError(status_code=status, body=body)
 
-        with caplog.at_level(logging.DEBUG), pytest.raises(ProviderAuthError):
+        with (
+            caplog.at_level(logging.DEBUG),
+            pytest.raises(ProviderRefusalError) as info,
+        ):
             ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
 
         assert caplog.records == []
+        assert info.value.reason is None
 
     def test_api_error_becomes_a_provider_status_error(self) -> None:
         """The server answered: the status leaves as a vox type, so no caller
@@ -493,7 +554,7 @@ class TestCall:
         ("status", "body", "expected"),
         [
             (404, {"detail": "voice not found"}, "voice not found"),
-            (403, {"detail": {"status": "quota_exceeded"}}, "quota_exceeded"),
+            (400, {"detail": {"status": "bad_prompt"}}, "bad_prompt"),
             (
                 422,
                 {"detail": [{"loc": ["body", "text"], "msg": "field required"}]},

@@ -811,3 +811,22 @@ class TestOpenAIProviderAbsentKey:
             )
 
         assert built == []
+
+    def test_an_empty_key_is_no_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An empty variable never reaches the SDK as a blank key."""
+        monkeypatch.setenv("OPENAI_API_KEY", "")
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+
+        with pytest.raises(ProviderUnavailableError, match="OPENAI_API_KEY"):
+            OpenAIProvider().synthesize(
+                SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+            )
+
+        assert built == []

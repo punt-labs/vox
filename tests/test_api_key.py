@@ -79,12 +79,35 @@ class TestRequireSet:
 
     _CHECK = ApiKeyCheck("OPENAI_API_KEY")
 
-    def test_absent_key_is_the_readiness_gate_s_error(self) -> None:
+    @pytest.mark.parametrize("key", [None, ""], ids=["none", "empty"])
+    def test_absent_key_is_the_readiness_gate_s_error(self, key: str | None) -> None:
+        """An empty key is no key: sent, it would only be refused."""
         with pytest.raises(ProviderUnavailableError) as info:
-            self._CHECK.require_set(None, "openai")
+            self._CHECK.require_set(key, "openai")
 
         assert info.value.provider_name == "openai"
         assert "OPENAI_API_KEY" in str(info.value)
+
+    @pytest.mark.parametrize(
+        ("key", "error"),
+        [
+            (None, ProviderUnavailableError),
+            ("", ProviderUnavailableError),
+            (" ", MalformedApiKeyError),
+            (f"{_KEY}\n", MalformedApiKeyError),
+        ],
+        ids=["none", "empty", "whitespace-only", "newline"],
+    )
+    def test_refuses_a_key_as_report_classifies_it(
+        self, key: str | None, error: type[ValueError]
+    ) -> None:
+        """A key the health line calls unset is refused as unset, not sent."""
+        is_unset = "not set" in self._CHECK.report("OpenAI", key).message
+
+        with pytest.raises(error):
+            self._CHECK.require_set(key, "openai")
+
+        assert is_unset == (error is ProviderUnavailableError)
 
     def test_good_key_is_returned(self) -> None:
         assert self._CHECK.require_set(_KEY, "openai") == _KEY

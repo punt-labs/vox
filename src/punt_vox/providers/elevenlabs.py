@@ -291,8 +291,8 @@ class ElevenLabsProvider(TTSProvider):
     ) -> None:
         """Synthesize a single chunk to a file.
 
-        :class:`ElevenLabsClient` translates what the SDK raises: a 401 becomes
-        the :class:`ProviderAuthError` the wire sends the caller verbatim, a
+        :class:`ElevenLabsClient` translates what the SDK raises: a 401 or 403
+        becomes the :class:`ProviderAuthError` the wire sends the caller verbatim, a
         transport failure one of the errors ``TransportFaults`` answers. Other
         statuses (429, 500, 400) are upstream faults: a ``ProviderStatusError``,
         which the wire keeps on the opaque fault path.

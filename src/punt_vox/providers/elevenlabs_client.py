@@ -32,10 +32,10 @@ from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.error_body import ErrorBody
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.providers.stream_file import StreamFile
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 
 # The statuses an ApiError carries only when a success body failed to decode.
 _SUCCESS: Final = range(200, 300)
+# The statuses that refuse the credentials -- a bad key, or an account barred.
+_REFUSED: Final = (401, 403)
 
 
 @final
@@ -73,8 +75,9 @@ class ElevenLabsClient:
 
     An answered failure is translated here, once, for every call site that goes
     through :meth:`call` -- text-to-speech, the voice list, speech-to-text,
-    music, and the subscription check: a 401 into the :class:`ProviderAuthError`
-    the wire sends the caller verbatim, any other status into a
+    music, and the subscription check: a 401 or 403 into the
+    :class:`ProviderRefusalError` the wire sends the caller verbatim, carrying
+    the server's code for the refusal; any other status into a
     :class:`ProviderStatusError` the caller routes on.
     """
 
@@ -109,8 +112,9 @@ class ElevenLabsClient:
         httpx's errors escape raw; they leave here translated by
         :class:`~punt_vox.providers.transport_faults.TransportFaults` -- a
         ``CaBundleError`` or ``ProviderConfigError`` (permanent) or a
-        ``ProviderTransportError`` (transient). A 401 -- the server rejected the
-        key -- becomes ``ProviderAuthError``; any other answered failure becomes
+        ``ProviderTransportError`` (transient). A 401 or 403 -- the server
+        refused the credentials -- becomes ``ProviderRefusalError``, a
+        ``ProviderAuthError``; any other answered failure becomes
         ``ProviderStatusError``, carrying the status and the server's message.
         So does an answer the SDK cannot parse into its response model.
         """
@@ -140,8 +144,9 @@ class ElevenLabsClient:
         """Report the account's subscription tier and character usage."""
         try:
             sub = self.call(lambda sdk: sdk.user.subscription.get())
-        except ProviderAuthError as exc:
-            reason = f"API key rejected (HTTP {exc.status_code})"
+        except ProviderRefusalError as exc:
+            code = f": {exc.reason}" if exc.reason else ""
+            reason = f"API key rejected (HTTP {exc.status_code}{code})"
         except ProviderStatusError as exc:
             reason = exc.reason
         except TRANSPORT_ERRORS as exc:
@@ -181,7 +186,7 @@ class ElevenLabsClient:
         )
 
     @classmethod
-    def _answered(cls, exc: ApiError) -> ProviderAuthError | ProviderStatusError:
+    def _answered(cls, exc: ApiError) -> ProviderRefusalError | ProviderStatusError:
         """Return the vox error for the server's failed answer *exc*.
 
         The SDK raises ``ApiError`` on a 2xx too, when the body will not decode
@@ -189,8 +194,8 @@ class ElevenLabsClient:
         """
         status: int | None = exc.status_code  # None: the SDK reported no status
         body = ErrorBody(exc.body)
-        if status == 401:
-            return cls._rejected(body)
+        if status in _REFUSED:
+            return cls._refused(status, body)
         detail: str | None  # None: the body gives no reason
         if status in _SUCCESS:
             detail = (
@@ -201,13 +206,14 @@ class ElevenLabsClient:
         return ProviderStatusError("elevenlabs", status, detail)
 
     @staticmethod
-    def _rejected(body: ErrorBody) -> ProviderAuthError:
-        """Return the error for a rejected key, logging the server's code for it.
+    def _refused(status: int, body: ErrorBody) -> ProviderRefusalError:
+        """Return the refusal the caller sees, logging the server's code for it.
 
-        ElevenLabs names why it refused the key in ``detail.status`` (an invalid
-        key, unusual activity on the account); the operator needs that, and the
-        caller gets the same ``ProviderAuthError`` either way.
+        ElevenLabs names why it refused in ``detail.status`` -- an invalid key,
+        unusual activity on the account, an exhausted quota -- and each wants a
+        different fix, so the code reaches both the log and the caller. Only an
+        identifier is taken (``ErrorBody.status``), never the free text.
         """
         if (code := body.status) is not None:
-            logger.error("ElevenLabs rejected the API key (HTTP 401, status %s)", code)
-        return ProviderAuthError("elevenlabs", 401)
+            logger.error("ElevenLabs refused (HTTP %d, status %s)", status, code)
+        return ProviderRefusalError.from_code("elevenlabs", status, code)

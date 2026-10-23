@@ -112,7 +112,7 @@ class ElevenLabsMusicProvider(MusicProvider):
             The path to the generated file.
 
         Raises:
-            ProviderAuthError: When ElevenLabs rejects the API key (401).
+            ProviderAuthError: When ElevenLabs refuses the API key (401 or 403).
             ProviderUnavailableError: When no API key was set at construction.
             ProviderStatusError: On any other failure ElevenLabs answers with.
             CaBundleError: When the CA certificates in effect do not trust

@@ -73,13 +73,13 @@ class ApiKeyCheck:
 
         For an SDK factory holding the key its client was built with: handed
         no key, an SDK falls back to the environment as it is at that moment,
-        which can hold another request's key.
+        which can hold another request's key. An empty key counts as none.
 
         Raises:
-            ProviderUnavailableError: *key* is None -- *provider* has no key.
+            ProviderUnavailableError: *key* is None or empty -- *provider* has no key.
             MalformedApiKeyError: *key* cannot go in a header.
         """
-        if key is None:
+        if not key:
             raise ProviderUnavailableError(
                 provider, ApiKeyRequirement(self._source).unmet_message(provider)
             )
