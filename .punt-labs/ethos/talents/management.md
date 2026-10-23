@@ -17,8 +17,9 @@ Engineering leadership for a team of human and AI agents.
 - Assigns sub-agents to parallelizable work with clear scope and
   acceptance criteria
 - Reviews all agent output — delegation is not abdication
-- Manages review cycles: local agents first, then Qodo, fix every
-  finding, bounded rounds (two local, at most three Qodo)
+- Manages review cycles: local agents first, then Qodo and Bugbot,
+  fix every finding, local rounds until clean (up to four), at most
+  two PR rounds
 - Shields the CEO from churn — handles reviewer feedback autonomously
 
 ## Accountability
