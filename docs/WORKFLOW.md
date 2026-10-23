@@ -252,50 +252,64 @@ function pr_loop(unit):
 #                  has posted on the PR
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
 #                  "/agentic_review" comment for N > 1
-#   reviewed(N)  = a Qodo review or "Code Review by Qodo" comment created
-#                  after trigger(N); for N = 1, also a cursor[bot] Bugbot
-#                  review after the "bugbot run" comment, or 30 minutes
-#                  of Bugbot silence. Bugbot findings join round 1 only.
-#   ledger(N)    = the leader's round-N ledger comment: each finding of the
-#                  round as "fixed in <sha>" or "<reason> <file:line>"
-#   skipped(pr)  = the PR matches a [config] skip in .pr_agent.toml: title
-#                  regex, the skip-ai-review label, or a bot author
+#   qodo_in(N)   = a Qodo review or "Code Review by Qodo" comment created
+#                  after trigger(N), or the outage fallback ran for round N
+#   bugbot_in    = a cursor[bot] review after the "bugbot run" comment, or
+#                  30 minutes since that comment. Bugbot has its own timer.
+#   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
+#                  or not bugbot_in)
+#   finding      = any unresolved review thread, from any author, or any
+#                  Medium in Qodo's summary — whenever it arrives, late
+#                  ones included
+#   answered(f)  = f is fixed by a commit on the PR head, or a ledger
+#                  comment from the leader gives the reason and file:line.
+#                  A finding repeated from an earlier round keeps its answer.
 #   new High     = a High not raised in an earlier round; a manual review
 #                  may re-scan the whole PR and repeat old findings
+#   escalation   = the leader's "escalated:" comment on one new round-3 High;
+#                  closed by a later ledger entry recording the operator's
+#                  ruling and how it was applied
+#   skipped(pr)  = the PR matches a [config] skip in .pr_agent.toml: title
+#                  regex, the skip-ai-review label, or a bot author
 
 function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
                                                #   env -u GH_TOKEN
                                                #   -u GITHUB_PERSONAL_ACCESS_TOKEN
-    if CI failed: fix in this PR
-    for each unresolved thread not from Qodo or Bugbot:  # a human, any app
-        fix it, or reply with the reason and file:line; then resolve it
     N = round(pr)
-    if not skipped(pr) and not ledger(N):
-        if not reviewed(N) and 30 minutes have passed since trigger(N):
-            run code_reviewer locally on the diff Qodo was asked to review
-            treat its report as round N's findings   # Qodo outage fallback
-        if reviewed(N) or the fallback ran:
-            if N == 3 and any High is open: escalate to the operator; stop
-            for each High: fix now
-            for each Medium: fix now, or answer it in the ledger — round 1
-                and new Mediums in round 2 only; never re-litigated
-            for each Bugbot finding (round 1): fix now, or answer it in the
-                ledger
-            # Qodo Lows are dropped by comments_routing. No deferral beads.
-            delegate the fixes to a bare agent; make check; commit
-            post ledger(N)
-            if a fix landed and N < 3 and (N == 1 or a new High was fixed):
-                push once; comment "/agentic_review"   # opens round N+1
-    resolve each Qodo or Bugbot thread once its fix has landed or the
-        ledger answers it, one by one — the leader resolves, not the agent
+    if CI failed: fix in this PR
+    if not skipped(pr) and no Qodo review since trigger(N)
+            and 30 minutes have passed since trigger(N)
+            and the fallback has not yet run for round N:
+        run code_reviewer locally on the diff Qodo was asked to review;
+            its findings count as Qodo's for round N    # outage fallback
+    for each finding not answered(f) and not under an open escalation:
+        if N == 3 and f is a new High:
+            post an escalation comment; the operator rules
+        else:
+            fix it now, or answer it in a ledger comment
+            # never re-litigated; Qodo Lows are dropped by comments_routing;
+            # no deferral beads
+    for each escalation the operator has ruled on:
+        apply the ruling; record it in a ledger comment
+    if fixes were made: delegate them to a bare agent; make check; commit;
+        push once                          # every fix reaches the PR head
+    resolve each thread that is answered, one by one — the leader
+        resolves, not the agent
+    if not pending(pr) and N < 3 and a fix landed since trigger(N)
+            and (N == 1 or a new High was fixed since trigger(N)):
+        comment "/agentic_review"          # opens round N+1
+    re-read state                          # the gate must see this tick's
+                                           #   push and comment
     if merge_gate(state): merge (squash, --delete-branch); close_out()
 
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
-       and (skipped(pr) or ledger(round(pr)))   # no requested round pending
+       and not pending(pr)                 # no requested review outstanding
+       and every finding is answered
        and zero unresolved review threads
-       and round(pr) ≤ 3 and no escalation is open
+       and round(pr) ≤ 3
+       and no escalation is open
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
 
@@ -327,11 +341,11 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   BEFORE the PR opened
   ∧ demoConfirmedByEar(pr)                -- held BEFORE the PR opened
   ∧ ciGreen(head(pr))                     -- docs + lint + test
-  ∧ (skipped(pr) ∨ ledger(round(pr)))     -- the last requested round is in
-                                          --   and answered
+  ∧ ¬ pending(pr)                         -- every requested review is in
+  ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
   ∧ round(pr) ≤ 3                         -- round 3 only for a new High
-  ∧ unresolvedThreads(pr) = ∅             -- every thread fixed or answered
-  ∧ escalations(pr) = ∅
+  ∧ unresolvedThreads(pr) = ∅
+  ∧ openEscalations(pr) = ∅               -- each closed by a recorded ruling
   ∧ beadsOf(pr) ⊆ closed′
   ∧ mergeRecapSent(pr) ]
 ```
@@ -355,12 +369,13 @@ Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews once when
 the PR opens and never on push. High findings post inline as threads, and
 the `required_review_thread_resolution` rule in ruleset 13252005 makes each
 one block the merge. Medium findings appear in the summary and are answered
-in the ledger comment. Lows are dropped by `comments_routing`. Round 2 is
+in a ledger comment. Lows are dropped by `comments_routing`. Round 2 is
 one manual `/agentic_review` after the fix push. At most three rounds run,
 and the third only for a new High.
 
-Bugbot runs once per PR, on the leader's `bugbot run` comment at open, and
-its findings join round 1. It never runs again on that PR. It stays because
+Bugbot runs once per PR, on the leader's `bugbot run` comment at open. It
+never runs again on that PR, and its findings are handled whenever they
+arrive. It stays because
 it had the highest real-bug rate of the three bots in the 2026 sample (28%
 of its comments, against 20% for Qodo and 12% for Copilot). Copilot is off:
 66% of its comments were nits, and it drove the most extra pushes.
