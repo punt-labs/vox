@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -56,6 +57,13 @@ _ASK_TO_REPEAT = "Sorry, I didn't catch that -- could you repeat it?"
 _STT_AUTH_FAILED = (
     "Sorry, this call can't continue -- the speech-recognition credentials "
     "were rejected. Ending the call now."
+)
+
+# A CA bundle TLS cannot use is configuration, as permanent as a rejected key.
+# Names the variable, never its path: the operator finds the path in vox.log.
+_STT_TLS_FAILED = (
+    "Sorry, this call can't continue -- speech recognition can't use the CA "
+    "bundle SSL_CERT_FILE names. Ending the call now."
 )
 
 
@@ -226,14 +234,13 @@ class CallSession:
             final_event = await self._transcriber.transcribe(
                 AudioChunk.as_async_iter(chunks)
             )
+        # Both are certain and permanent, unlike a transient transcribe
+        # failure -- see TurnTranscriber's own re-raise.
         except ProviderAuthError:
-            # Certain and permanent, unlike a transient transcribe failure
-            # -- see TurnTranscriber's own re-raise. Mode is still LISTENING
-            # here, so EndCall's "any active mode" precondition already
-            # holds without routing through speaking first.
-            logger.exception("STT provider auth failed -- ending the call")
-            await self._speak(_STT_AUTH_FAILED)
-            self._actor.apply(EndCall())
+            await self._end_call(_STT_AUTH_FAILED)
+            return
+        except CaBundleError:
+            await self._end_call(_STT_TLS_FAILED)
             return
         if final_event is None:
             # FR-19: never fabricate on ambiguous or failed capture -- no
@@ -245,7 +252,10 @@ class CallSession:
             await self._speak(_ASK_TO_REPEAT)
             return
 
-        turn = TranscribedTurn(text=final_event.text)
+        await self._act_on(TranscribedTurn(text=final_event.text))
+
+    async def _act_on(self, turn: TranscribedTurn) -> None:
+        """Forward *turn*, or hold it as an addendum while a reply is pending."""
         if self._actor.mode is Mode.WAITING:
             # docs/conversation-mode-call-state.tex section 5's
             # CaptureDuringWait: the turn detector (still active while
@@ -258,21 +268,30 @@ class CallSession:
             # call. Folded into the next real turn's text once the call
             # returns to listening, per FR-9's same principle for barge-in
             # speech (the Z model pins only the discharge moment, not what
-            # the implementation does with the content).
+            # the implementation does with the content). A third+ utterance
+            # while still waiting folds onto what is already pending rather
+            # than overwriting it, so no addendum's text is silently lost.
             self._actor.apply(CaptureDuringWait())
-            if self._pending_addendum is not None:
-                # A third+ utterance while still waiting: fold onto what is
-                # already pending rather than overwrite it -- a second
-                # CaptureDuringWait must not silently discard the first
-                # addendum's text.
-                turn = TranscribedTurn(
-                    text=f"{self._pending_addendum.text} {turn.text}"
-                )
-            self._pending_addendum = turn
+            self._pending_addendum = self._with_addendum(turn)
             return
-
-        if self._pending_addendum is not None:
-            turn = TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
-            self._pending_addendum = None
+        turn = self._with_addendum(turn)
+        self._pending_addendum = None
         self._actor.apply(TurnDetected())
         await self._reply_delivery.deliver(turn)
+
+    def _with_addendum(self, turn: TranscribedTurn) -> TranscribedTurn:
+        """Return *turn* with any pending addendum's text folded in front."""
+        if self._pending_addendum is None:
+            return turn
+        return TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
+
+    async def _end_call(self, message: str) -> None:
+        """Say why speech recognition cannot go on, then end the call.
+
+        Called from an ``except`` block, so the log carries the traceback. Mode
+        is still LISTENING here, so EndCall's "any active mode" precondition
+        holds without routing through speaking first.
+        """
+        logger.exception("STT cannot continue -- ending the call")
+        await self._speak(message)
+        self._actor.apply(EndCall())

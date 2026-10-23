@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
@@ -60,16 +61,13 @@ class TurnTranscriber:
         provider failure -- a caller's response in every case is "ask the
         human to repeat", never to fabricate an answer from an uncertain or
         missing result.
+
+        Raises:
+            ProviderAuthError: The provider rejected its credentials.
+            CaBundleError: ``SSL_CERT_FILE`` names a bundle TLS cannot use.
         """
-        final_event = None
         try:
-            async for event in self._provider.transcribe(chunks):
-                # Only a final event settles the transcript -- a provider
-                # that yields a partial as the last thing before ending its
-                # stream must not have that partial mistaken for a settled
-                # result (Copilot review, PR #460).
-                if event.is_final:
-                    final_event = event
+            final_event = await self._final_event(self._provider.transcribe(chunks))
         except ProviderAuthError:
             # A revoked/expired STT credential is certain and permanent --
             # every subsequent turn would hit exactly the same rejection,
@@ -82,10 +80,39 @@ class TurnTranscriber:
             # ends the call with an actionable message instead.
             self._turn_timer.mark("stt_response_received", detail="STT auth failed")
             raise
+        except CaBundleError:
+            # The same asymmetry for TLS: an SSL_CERT_FILE the provider cannot
+            # use fails every turn identically, so it ends the call too.
+            self._turn_timer.mark(
+                "stt_response_received", detail="STT TLS setup failed"
+            )
+            raise
         except Exception:
             logger.exception("STT transcribe failed mid-turn")
             self._turn_timer.mark("stt_response_received", detail="transcribe failed")
             return None
+        return self._settle(final_event)
+
+    @staticmethod
+    async def _final_event(
+        events: AsyncIterator[TranscriptEvent],
+    ) -> TranscriptEvent | None:  # None: the provider yielded no final event
+        """Drain the provider's *events* and return the last final one.
+
+        Only a final event settles the transcript -- a provider that yields a
+        partial as the last thing before ending its stream must not have that
+        partial mistaken for a settled result.
+        """
+        final_event = None
+        async for event in events:
+            if event.is_final:
+                final_event = event
+        return final_event
+
+    def _settle(
+        self, final_event: TranscriptEvent | None
+    ) -> TranscriptEvent | None:  # None: ambiguous, ask the human to repeat
+        """Record what came back, then apply the confidence floor."""
         detail = (
             "no transcript"
             if final_event is None

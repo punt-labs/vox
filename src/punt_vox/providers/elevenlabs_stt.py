@@ -111,16 +111,16 @@ class ElevenLabsSTTProvider:
             return TranscriptEvent(text="", confidence=0.0, is_final=True)
 
         try:
-            # asyncio.to_thread, not a bare call: the SDK's convert() is a
-            # synchronous, blocking HTTP call, and this method runs on the
-            # call's single event loop -- a direct call here would stall
-            # audio capture and control-request handling for the full
-            # network round trip.
+            # On a worker thread: the SDK's first build reads the CA bundle and
+            # convert() is a blocking round trip; either would stall the call's
+            # single event loop -- audio capture and control requests with it.
             response = await asyncio.to_thread(
-                self._client.sdk().speech_to_text.convert,
-                model_id=self._model,
-                file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
-                file_format=_FILE_FORMAT,
+                self._client.call,
+                lambda sdk: sdk.speech_to_text.convert(
+                    model_id=self._model,
+                    file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
+                    file_format=_FILE_FORMAT,
+                ),
             )
         except ApiError as exc:
             if exc.status_code == 401:

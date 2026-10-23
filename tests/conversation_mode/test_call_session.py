@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -424,26 +425,26 @@ class TestSTTTranscribeFailureRecovery:
         assert session_attach.turns() == ["hello"]
 
 
-class _AuthFailingSTTProvider:
-    """An ``STTProvider`` whose ``transcribe`` always raises ``ProviderAuthError``."""
+class _RaisingSTTProvider:
+    """An ``STTProvider`` whose ``transcribe`` always raises *error*."""
 
-    def __init__(self) -> None:
-        # An instance attribute, not a literal, so mypy cannot narrow the
-        # branch below to "always true" and flag the trailing ``yield`` as
-        # unreachable.
-        self._always_fails = True
+    def __init__(self, error: Exception) -> None:
+        # Raised through an instance attribute, so mypy cannot see that the
+        # trailing ``yield`` is unreachable -- the method still has to be
+        # shaped as an async generator to satisfy STTProvider.transcribe.
+        self._error: Exception | None = error
 
     @property
     def name(self) -> str:
-        return "auth-failing-fake"
+        return "raising-fake"
 
     async def transcribe(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[TranscriptEvent]:
         async for _ in chunks:
             pass
-        if self._always_fails:
-            raise ProviderAuthError("elevenlabs", 401)
+        if self._error is not None:
+            raise self._error
         yield TranscriptEvent(  # pragma: no cover -- unreachable
             text="", confidence=0.0, is_final=True
         )
@@ -464,7 +465,7 @@ class TestSTTProviderAuthFailure:
         session_attach = FakeSessionAttach()
         session = CallSession(
             turn_detector=_detector(),
-            stt_provider=_AuthFailingSTTProvider(),
+            stt_provider=_RaisingSTTProvider(ProviderAuthError("elevenlabs", 401)),
             session_attach=session_attach,
             speak=speak,
         )
@@ -477,6 +478,53 @@ class TestSTTProviderAuthFailure:
         rejections = [phrase for phrase in speak.said if "credentials" in phrase]
         assert len(rejections) == 1
         assert "repeat" not in rejections[0].lower()
+
+
+class TestSTTCaBundleFailure:
+    """An unloadable SSL_CERT_FILE is as permanent as a rejected key: the call
+    ends, naming the variable, instead of asking the human to repeat forever.
+    """
+
+    @staticmethod
+    def _session(speak: _Recorder, session_attach: FakeSessionAttach) -> CallSession:
+        error = CaBundleError(
+            "SSL_CERT_FILE names a CA bundle that cannot be loaded "
+            "(No such file or directory); fix the path or unset SSL_CERT_FILE"
+        )
+        return CallSession(
+            turn_detector=_detector(),
+            stt_provider=_RaisingSTTProvider(error),
+            session_attach=session_attach,
+            speak=speak,
+        )
+
+    async def test_ends_the_call(self) -> None:
+        session = self._session(_Recorder(), FakeSessionAttach())
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.IDLE
+
+    async def test_says_one_message_naming_ssl_cert_file(self) -> None:
+        speak = _Recorder()
+        session = self._session(speak, FakeSessionAttach())
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        named = [phrase for phrase in speak.said if "SSL_CERT_FILE" in phrase]
+        assert len(named) == 1
+        assert not any("repeat" in phrase.lower() for phrase in speak.said)
+
+    async def test_forwards_no_turn(self) -> None:
+        session_attach = FakeSessionAttach()
+        session = self._session(_Recorder(), session_attach)
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        assert session_attach.turns() == []
 
 
 class TestCaptureDuringWait:
