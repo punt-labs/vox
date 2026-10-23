@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import stat as stat_mod
 from pathlib import Path
@@ -175,15 +176,82 @@ def test_write_keys_env_preserves_existing_keys(
     assert "OPENAI_API_KEY=new-openai" in content
 
 
-def test_write_keys_env_removes_empty_value_keys(
-    writer: KeysEnvWriter, tmp_path: Path
+def test_write_keys_env_keeps_existing_key_when_env_value_empty(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An empty string in the env dict removes that key from the file."""
+    """An empty env value never deletes a stored credential, and says so.
+
+    A failed secret-manager lookup exports ``KEY=""`` rather than leaving it
+    unset; treating that as "remove" silently wiped working keys on install.
+    """
     keys_path = tmp_path / "keys.env"
-    keys_path.write_text("ELEVENLABS_API_KEY=stale\n")
-    writer.write({"ELEVENLABS_API_KEY": ""}, keys_path)
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-working-eleven\n")
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({"ELEVENLABS_API_KEY": ""}, keys_path)
+    assert "ELEVENLABS_API_KEY=sk-working-eleven" in keys_path.read_text()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("ELEVENLABS_API_KEY" in r.getMessage() for r in warnings)
+    assert all("sk-working-eleven" not in r.getMessage() for r in caplog.records)
+
+
+def test_write_keys_env_empty_value_for_absent_key_writes_nothing_quietly(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty value for a key the file lacks writes no line and logs nothing."""
+    keys_path = tmp_path / "keys.env"
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({"ELEVENLABS_API_KEY": "", "OPENAI_API_KEY": "sk-o"}, keys_path)
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY" not in content
+    assert "OPENAI_API_KEY=sk-o" in content
+    assert caplog.records == []
+
+
+def test_write_keys_env_override_and_absent_keys_log_nothing(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A non-empty override and a key absent from env are silent, as before."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-kept\nOPENAI_API_KEY=sk-old\n")
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+    content = keys_path.read_text()
+    assert "ELEVENLABS_API_KEY=sk-kept" in content
+    assert "OPENAI_API_KEY=sk-new" in content
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        pytest.param("sk-abc def", id="inner-space"),
+        pytest.param("sk-abc ", id="trailing-space"),
+        pytest.param("\tsk-abc", id="leading-tab"),
+        pytest.param("sk-abc\r", id="carriage-return"),
+        pytest.param("\u201csk-abc\u201d", id="smart-quotes"),
+        pytest.param("sk-\u00e9abc", id="non-ascii-letter"),
+        pytest.param("sk-abc\x7f", id="delete-char"),
+    ],
+)
+def test_write_keys_env_refuses_value_no_header_can_carry(
+    writer: KeysEnvWriter,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    bad_value: str,
+) -> None:
+    """A value outside printable non-space ASCII is refused, key named, value not."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-previous\n")
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({"ELEVENLABS_API_KEY": bad_value}, keys_path)
+    assert "ELEVENLABS_API_KEY=sk-previous" in keys_path.read_text()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "ELEVENLABS_API_KEY" in m
+        and "contains a character no HTTP header may carry" in m
+        for m in messages
+    )
+    assert all(bad_value.strip() not in m for m in messages)
 
 
 def test_write_keys_env_no_sudo_required_note(

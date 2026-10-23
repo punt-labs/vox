@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Self
 
 from punt_vox.atomic_file import AtomicFile
-from punt_vox.keys import PROVIDER_KEY_NAMES
+from punt_vox.keys import PROVIDER_KEY_NAMES, parse_keys_env
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,12 @@ _HEADER = (
     "# Written by: vox daemon install\n"
     "# Edit with your normal editor — no sudo required.\n\n"
 )
-_CONTROL_CHARS = "\x00\n\r"
+# Printable ASCII without space (0x21-0x7E): every character an API key or
+# token legitimately holds, and nothing a pasted smart quote or newline adds.
+_HEADER_SAFE = frozenset(map(chr, range(0x21, 0x7F)))
+# Log templates take the key name only: a credential value never reaches a log.
+_KEPT = "Ignoring empty %s; keeping its keys.env value (edit the file to remove it)"
+_REFUSED = "Refusing to write %s: value contains a character no HTTP header may carry"
 
 
 class KeysEnvWriter:
@@ -31,9 +36,10 @@ class KeysEnvWriter:
         """Write ``keys.env`` at *keys_path* (mode 0600), merging existing keys.
 
         Preserves any keys already present that the caller did not override; an
-        empty value in *env* removes the key. The write is atomic (temp file at
-        mode 0600 + fsync + ``os.replace``) so a crash never leaves a partial
-        credentials file and the secret never exists at wider-than-0600 perms.
+        empty value in *env* never removes a stored key. The write is atomic
+        (temp file at mode 0600 + fsync + ``os.replace``) so a crash never leaves
+        a partial credentials file and the secret never exists at wider-than-0600
+        perms.
         """
         self._harden_parent(keys_path)
         self._reject_irregular(keys_path)
@@ -78,41 +84,35 @@ class KeysEnvWriter:
                 exc,
             )
             return {}, True
-        return self._parse(text), False
-
-    def _parse(self, text: str) -> dict[str, str]:
-        """Return the ``key=value`` pairs in *text*, skipping blanks and comments."""
-        pairs: dict[str, str] = {}
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, _, value = stripped.partition("=")
-            if key := key.strip():
-                pairs[key] = value.strip()
-        return pairs
+        return parse_keys_env(text), False
 
     def _merge(self, existing: dict[str, str], env: dict[str, str]) -> dict[str, str]:
-        """Return *existing* overlaid with the provider keys from *env*.
+        """Return *existing* overlaid with the provider keys present in *env*.
 
-        A control-character value is refused (line-injection defense: without
-        it an attacker-controlled env var could smuggle extra ``key=value``
-        lines into the file); an empty value removes the key.
+        An empty value never removes a stored key: a failed secret lookup
+        exports ``KEY=""`` rather than unsetting it, and must not wipe a working
+        credential. A value outside :data:`_HEADER_SAFE` is refused, which also
+        stops a newline smuggling extra ``key=value`` lines into the file.
         """
         merged = dict(existing)
-        for k in PROVIDER_KEY_NAMES:
-            if k not in env:
-                continue
-            value = env[k]
+        for key in sorted(PROVIDER_KEY_NAMES & env.keys()):
+            value = env[key]
             if not value:
-                merged.pop(k, None)
-            elif any(c in value for c in _CONTROL_CHARS):
-                logger.warning(
-                    "Refusing to write %s: value contains control characters", k
-                )
+                if merged.get(key):
+                    self._warn_kept(key)
+            elif _HEADER_SAFE.issuperset(value):
+                merged[key] = value
             else:
-                merged[k] = value
+                self._warn_refused(key)
         return merged
+
+    def _warn_kept(self, key: str) -> None:
+        """Log that an empty *key* from the environment left the stored key alone."""
+        logger.warning(_KEPT, key)
+
+    def _warn_refused(self, key: str) -> None:
+        """Log that *key* was refused; any stored value for it is kept."""
+        logger.warning(_REFUSED, key)
 
     def _render(self, merged: dict[str, str]) -> str:
         """Return the file body: sorted ``key=value`` lines with a trailing newline."""
