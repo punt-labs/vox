@@ -365,6 +365,22 @@ def test_logs_the_path_once_at_error(
     ]
 
 
+@pytest.mark.parametrize(
+    "translate", [_unloadable, _untrusted], ids=["unloadable", "untrusted"]
+)
+def test_a_path_cannot_forge_a_log_line(
+    translate: Callable[[CaBundle], CaBundleError], caplog: pytest.LogCaptureFixture
+) -> None:
+    """The path comes from the environment; its newline is escaped, not written."""
+    with caplog.at_level(logging.ERROR, logger="punt_vox.providers.ca_bundle"):
+        translate(CaBundle("/etc/ca.pem\nERROR forged record\r"))
+
+    [message] = [r.getMessage() for r in caplog.records]
+    assert "\n" not in message
+    assert "\r" not in message
+    assert "/etc/ca.pem\\nERROR forged record\\r" in message
+
+
 @pytest.mark.usefixtures("no_trust_vars")
 def test_default_bundle_failure_is_logged_at_error(
     caplog: pytest.LogCaptureFixture,

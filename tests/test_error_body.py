@@ -41,6 +41,26 @@ def test_message_is_the_server_s_reason(body: object, expected: str) -> None:
     assert ErrorBody(body).message == expected
 
 
+_FORGED = "voice not found\nERROR punt_vox forged\r\x1b[31m"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"detail": _FORGED},
+        {"detail": {"message": _FORGED}},
+        {"detail": {"status": _FORGED}},
+        {"detail": [{"msg": _FORGED}]},
+    ],
+    ids=["detail-str", "detail-message", "detail-status", "detail-list"],
+)
+def test_message_escapes_control_characters(body: object) -> None:
+    """The message is written to the log; a raw newline would forge a record."""
+    assert ErrorBody(body).message == (
+        "voice not found\\nERROR punt_vox forged\\r\\x1b[31m"
+    )
+
+
 @pytest.mark.parametrize(
     "body",
     [

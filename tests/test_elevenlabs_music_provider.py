@@ -15,15 +15,13 @@ from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import MusicProvider
+from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
     ProducerTransientError,
-)
-from punt_vox.voxd.synthesis import (
-    _api_key_context,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -391,7 +389,7 @@ class TestConstructor:
         )
         provider = ElevenLabsMusicProvider()
 
-        with _api_key_context("caller-key-B", "elevenlabs"):
+        with ApiKeyEnv("elevenlabs", "caller-key-B").applied():
             await provider.generate_track("ambient", 60_000, tmp_path / "t.mp3")
 
         assert captured.get("api_key") == "daemon-key-A"

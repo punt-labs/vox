@@ -1419,10 +1419,10 @@
   "src/punt_vox/providers/ca_bundle.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.14,
+    "avg_params": 1.0,
     "max_complexity": 3.0,
-    "avg_complexity": 2.14,
-    "module_size": 165.0,
+    "avg_complexity": 2.0,
+    "module_size": 173.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -1549,10 +1549,10 @@
   "src/punt_vox/providers/error_body.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.25,
+    "avg_params": 0.2,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
-    "module_size": 59.0,
+    "module_size": 69.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -2416,6 +2416,19 @@
     "method_ratio": 0.0,
     "module_size": 104.0,
     "public_attr_violations": 0.0
+  },
+  "src/punt_vox/voxd/api_key_env.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.67,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.67,
+    "module_size": 51.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/audit_log_level.py": {
     "avg_complexity": 1.25,
@@ -4563,14 +4576,14 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/synthesis.py": {
-    "method_ratio": 0.833,
+    "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.29,
+    "avg_params": 2.33,
     "max_complexity": 7.0,
-    "avg_complexity": 4.07,
-    "module_size": 420.0,
+    "avg_complexity": 4.0,
+    "module_size": 318.0,
     "classes_per_module": 1.0,
-    "class_to_func_ratio": 0.333,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -4600,6 +4613,19 @@
     "method_ratio": 1.0,
     "module_size": 126.0,
     "public_attr_violations": 0.0
+  },
+  "src/punt_vox/voxd/temp_synthesis.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.4,
+    "max_complexity": 5.0,
+    "avg_complexity": 3.0,
+    "module_size": 101.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/types.py": {
     "avg_complexity": 1.0,

@@ -31,6 +31,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Final, Literal, Self, final
 
+from punt_vox.log_sanitize import SANITIZER
+
 if TYPE_CHECKING:
     import ssl
 
@@ -119,7 +121,7 @@ class CaBundle:
         # strerror, not str(cause): a FileNotFoundError's str carries the path.
         reason = cause.strerror or type(cause).__name__
         logger.error(
-            "%s=%s is not a loadable CA bundle: %s", self._var, self._path, reason
+            "%s=%s is not a loadable CA bundle: %s", self._var, self._shown_path, reason
         )
         return CaBundleError(
             f"{self._var} names a CA bundle that cannot be loaded ({reason}); "
@@ -172,13 +174,22 @@ class CaBundle:
         logger.error(
             "%s=%s does not trust the provider's certificate: %s",
             self._var,
-            self._path,
+            self._shown_path,
             reason,
         )
         return CaBundleError(
             f"{self._var} names a {noun} that does not trust the provider's "
             f"certificate ({reason}); fix the {noun} or unset {self._var}"
         )
+
+    @property
+    def _shown_path(self) -> str:
+        """Return the path as the log writes it, escaped onto one line.
+
+        The path comes from the environment, and a newline in it would end the
+        record and let the rest pass for one of voxd's own.
+        """
+        return SANITIZER.escape(self._path)
 
     @staticmethod
     def _verify_reason(cause: ssl.SSLCertVerificationError) -> str:

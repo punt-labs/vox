@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Final, Self, cast, final
 
+from punt_vox.log_sanitize import SANITIZER
+
 __all__ = ["ErrorBody"]
 
 _IDENTIFIER: Final = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -36,7 +38,18 @@ class ErrorBody:
 
     @property
     def message(self) -> str | None:  # None: the body gives no reason
-        """Return the server's human-readable reason for the failure."""
+        """Return the server's human-readable reason for the failure, on one line.
+
+        The reason is the server's text, and every error built from it renders
+        it verbatim in the daemon log; its control characters are escaped here,
+        where the text enters vox, so no consumer can write a raw newline.
+        """
+        reason = self._reason
+        return None if reason is None else SANITIZER.escape(reason)
+
+    @property
+    def _reason(self) -> str | None:  # None: the body gives no reason
+        """Return the server's reason as it sent it."""
         match self._detail:
             case str() as text if text:
                 return text

@@ -512,6 +512,21 @@ class TestCall:
 
         assert info.value.detail == expected
 
+    def test_the_server_s_message_cannot_forge_a_log_line(self) -> None:
+        """The error renders verbatim in the daemon log; the server's newline
+        is escaped, and its text still names the reason."""
+        body = {"detail": {"message": "names an artist\nERROR forged record\r"}}
+
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=400, body=body))
+            )
+
+        rendered = str(info.value)
+        assert "\n" not in rendered
+        assert "\r" not in rendered
+        assert rendered.endswith("names an artist\\nERROR forged record\\r")
+
     @pytest.mark.parametrize(
         "body",
         [None, "plain text", {"detail": {"message": ""}}],

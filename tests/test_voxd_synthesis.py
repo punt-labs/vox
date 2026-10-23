@@ -18,8 +18,9 @@ from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.types import SynthesisRequest
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.synthesis import SynthesisPipeline, _api_key_context
+from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
@@ -772,7 +773,7 @@ class TestSynthesizeFailFast:
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
             patch("punt_vox.voxd.synthesis.cache_put") as mock_cache_put,
-            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client = MagicMock()
             mock_client.synthesize = fake_synth
@@ -815,7 +816,7 @@ class TestSynthesizeFailFast:
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
-            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = failing_synth
             with pytest.raises(type(error)):
@@ -856,7 +857,7 @@ class TestSynthesizeFailFast:
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
-            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = slow_synth
             asyncio.run(_drive())
@@ -897,16 +898,67 @@ class TestSynthesizeFailFast:
         provider = MagicMock()
         provider.name = "elevenlabs"
         with (
-            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.synthesis"),
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.temp_synthesis"),
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
-            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = failing_synth
             asyncio.run(_drive())
 
         assert "_ReprQuotesTheKeyError: header cannot be encoded" in caplog.text
         assert "SECRETKEY" not in caplog.text
+
+    def test_cancelled_then_failed_synthesis_cannot_forge_a_log_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A late error's message can carry caller text -- a voice name with a
+        newline in it; the record stays one line and still names it."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            raise ValueError("voice 'x\nERROR forged record\r' not found")
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):
+                if "cancelled synthesis then failed" in caplog.text:
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.temp_synthesis"),
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            asyncio.run(_drive())
+
+        [message] = [
+            r.getMessage()
+            for r in caplog.records
+            if "cancelled synthesis then failed" in r.getMessage()
+        ]
+        assert "\n" not in message
+        assert "\r" not in message
+        assert "voice 'x\\nERROR forged record\\r' not found" in message
 
 
 class _ReprQuotesTheKeyError(Exception):
@@ -950,7 +1002,7 @@ class TestSynthesizeCacheObservability:
 
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=MagicMock()),
-            patch("punt_vox.voxd.synthesis.TTSClient", return_value=mock_client),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient", return_value=mock_client),
         ):
             outcomes = asyncio.run(_drive())
         return outcomes, synth_calls
@@ -1273,7 +1325,7 @@ class TestOpenAIProviderKeyCapture:
 
         monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
 
-        with _api_key_context("sk-B", "openai"):
+        with ApiKeyEnv("openai", "sk-B").applied():
             provider = OpenAIProvider()
         monkeypatch.setenv("OPENAI_API_KEY", "sk-C")
         provider.synthesize(
@@ -1286,7 +1338,7 @@ class TestOpenAIProviderKeyCapture:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        with _api_key_context("sk-B", "openai"):
+        with ApiKeyEnv("openai", "sk-B").applied():
             provider = OpenAIProvider(client=MagicMock())
 
         key, _ = provider.check_health()

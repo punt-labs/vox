@@ -5,35 +5,30 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import os
 import re
-import tempfile
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
 from punt_vox.cache import CacheKey, cache_get, cache_put
-from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
-from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
-    AudioResult,
     DirectPlayProvider,
     TTSProvider,
 )
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+from punt_vox.voxd.temp_synthesis import TempFileSynthesis
 
 __all__ = [
     "_LOCAL_PROVIDERS",
     "SynthesisPipeline",
-    "_run_play_directly_sync",
 ]
 
 logger = logging.getLogger(__name__)
@@ -47,86 +42,6 @@ logger = logging.getLogger(__name__)
 # providers are skipped entirely so we don't pay for provider construction
 # only to discover they don't implement play_directly.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
-
-
-# provider -> env-var the API-key context injects for it. Derived from
-# :class:`ProviderCredentials` (via :meth:`ProviderCredentials.api_key_env_vars`)
-# rather than duplicated here, so the direct-play env helper and the readiness
-# gate cannot list different env vars for the same provider. Adding an
-# API-key provider is one entry in the credentials module; this map picks
-# it up automatically.
-_PROVIDER_API_KEY_VAR: dict[str, str] = ProviderCredentials().api_key_env_vars()
-
-
-@contextlib.contextmanager
-def _api_key_context(api_key: str | None, provider_name: str) -> Generator[None]:
-    """Temporarily inject api_key into os.environ for the provider."""
-    env_key_name = _PROVIDER_API_KEY_VAR.get(provider_name)
-    old_key: str | None = None
-    if api_key and env_key_name:
-        old_key = os.environ.get(env_key_name)
-        os.environ[env_key_name] = api_key
-    try:
-        yield
-    finally:
-        if api_key and env_key_name:
-            if old_key is not None:
-                os.environ[env_key_name] = old_key
-            else:
-                os.environ.pop(env_key_name, None)
-
-
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
-
-
-def _run_play_directly_sync(
-    provider_name: str,
-    api_key: str | None,
-    provider_factory: Callable[[], TTSProvider],
-    request: AudioRequest,
-) -> int | None:
-    """Construct provider and call ``play_directly`` on a worker thread.
-
-    Returns ``None`` if the provider does not implement the
-    ``DirectPlayProvider`` protocol -- the caller will fall back to the
-    synthesize-and-queue path. For local providers (say, espeak) whose
-    direct play has been extracted to ``local_play.py``, constructs the
-    appropriate direct player sharing the provider's VoiceResolver.
-    """
-    with _api_key_context(api_key, provider_name):
-        provider = provider_factory()
-
-        # Local providers have extracted direct players that share
-        # the same VoiceResolver instance as the synthesis provider.
-        if provider_name == "say":
-            from punt_vox.providers.say import SayProvider
-
-            if isinstance(provider, SayProvider):
-                from punt_vox.providers.local_play import SayDirectPlayer
-
-                say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
-                return say_player.play_directly(request)
-
-        if provider_name == "espeak":
-            from punt_vox.providers.espeak import EspeakProvider
-
-            if isinstance(provider, EspeakProvider):
-                from punt_vox.providers.local_play import EspeakDirectPlayer
-
-                espeak_player = EspeakDirectPlayer(
-                    binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
-                    voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
-                )
-                return espeak_player.play_directly(request)
-
-        # Cloud providers and any other provider that implements
-        # DirectPlayProvider directly.
-        if isinstance(provider, DirectPlayProvider):
-            return provider.play_directly(request)
-
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +210,12 @@ class SynthesisPipeline:
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
-            with _api_key_context(api_key, provider_name):
+            with ApiKeyEnv(provider_name, api_key).applied():
                 provider = get_provider(provider_name, model=model)
                 request = self._build_audio_request(normalized, spec)
-                output_path = await self._synthesize_fresh(
-                    TTSClient(provider), request, spec, len(text)
-                )
+                output_path = await TempFileSynthesis(
+                    provider, request, spec, len(text)
+                ).run()
 
                 # Anonymous path only; log the real cache_put path, never a
                 # CACHE_DIR snapshot and never file= when the bytes weren't cached
@@ -313,85 +228,6 @@ class SynthesisPipeline:
                     ", cached" if cached_path else "",
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
-
-    @classmethod
-    async def _synthesize_fresh(
-        cls,
-        client: TTSClient,
-        request: AudioRequest,
-        spec: SynthesisSpec,
-        chars_in: int,
-    ) -> Path:
-        """Synthesize *request* into a new temp file and return its path.
-
-        The file is created before the provider runs, so any failure -- the
-        provider raising, or the output coming back empty -- removes it before
-        the error propagates; otherwise every failed request strands a file in
-        the temp directory. A cancelled request removes it too, but only once
-        the worker thread is done: the thread cannot be stopped, and it may
-        write the file after the cancel lands.
-        """
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            output_path = Path(tmp.name)
-        work = asyncio.ensure_future(
-            asyncio.to_thread(client.synthesize, request, output_path)
-        )
-        try:
-            # Shielded, so a cancel reaches this await and not the thread's
-            # future, which then still completes when the thread does.
-            await asyncio.shield(work)
-            cls._require_nonempty_output(output_path, spec, chars_in)
-        except asyncio.CancelledError:
-            work.add_done_callback(cls._discard_when_done(output_path))
-            raise
-        except BaseException:
-            output_path.unlink(missing_ok=True)
-            raise
-        return output_path
-
-    @staticmethod
-    def _discard_when_done(
-        output_path: Path,
-    ) -> Callable[[asyncio.Future[AudioResult]], None]:
-        """Return a done-callback that removes *output_path* after its writer.
-
-        The callback also retrieves the abandoned thread's exception, so a
-        provider failure after the cancel is not reported as never retrieved.
-        It logs the type and message, never the repr: an encoding error's repr
-        quotes the value it could not encode, which can be the API key.
-        """
-
-        def _discard(done: asyncio.Future[AudioResult]) -> None:
-            if not done.cancelled() and (error := done.exception()) is not None:
-                logger.debug(
-                    "cancelled synthesis then failed: %s: %s",
-                    type(error).__name__,
-                    error,
-                )
-            output_path.unlink(missing_ok=True)
-
-        return _discard
-
-    @staticmethod
-    def _require_nonempty_output(
-        output_path: Path, spec: SynthesisSpec, chars_in: int
-    ) -> None:
-        """Reject a missing or empty synthesis output; caching it would poison
-        every identical request, so it fails fast. The caller removes the file
-        and logs the exception (traceback + fields) -- no separate log here.
-        """
-        try:
-            synth_size = output_path.stat().st_size
-        except OSError:
-            synth_size = -1
-        if synth_size > 0:
-            return
-        msg = (
-            f"synthesis produced missing or empty output file: {output_path} "
-            f"(provider={spec.provider or ''}, voice={spec.voice or ''}, "
-            f"size={synth_size}, chars_in={chars_in})"
-        )
-        raise RuntimeError(msg)
 
     async def try_direct_play(
         self,
@@ -479,13 +315,61 @@ class SynthesisPipeline:
         even though direct play bypasses the queue.
         """
         provider_name = spec.provider or ""
-        api_key = spec.api_key
-        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
+        key_env = ApiKeyEnv(provider_name, spec.api_key)
+        if key_env.injects:
             async with self._env_lock, self._playback_mutex:
                 return await asyncio.to_thread(
-                    _run_play_directly_sync, provider_name, api_key, factory, request
+                    self._play_directly_sync, provider_name, key_env, factory, request
                 )
         async with self._playback_mutex:
             return await asyncio.to_thread(
-                _run_play_directly_sync, provider_name, None, factory, request
+                self._play_directly_sync, provider_name, key_env, factory, request
             )
+
+    @staticmethod
+    def _play_directly_sync(
+        provider_name: str,
+        key_env: ApiKeyEnv,
+        provider_factory: Callable[[], TTSProvider],
+        request: AudioRequest,
+    ) -> int | None:
+        """Construct provider and call ``play_directly`` on a worker thread.
+
+        Returns ``None`` if the provider does not implement the
+        ``DirectPlayProvider`` protocol -- the caller will fall back to the
+        synthesize-and-queue path. For local providers (say, espeak) whose
+        direct play has been extracted to ``local_play.py``, constructs the
+        appropriate direct player sharing the provider's VoiceResolver.
+        """
+        with key_env.applied():
+            provider = provider_factory()
+
+            # Local providers have extracted direct players that share
+            # the same VoiceResolver instance as the synthesis provider.
+            if provider_name == "say":
+                from punt_vox.providers.say import SayProvider
+
+                if isinstance(provider, SayProvider):
+                    from punt_vox.providers.local_play import SayDirectPlayer
+
+                    say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
+                    return say_player.play_directly(request)
+
+            if provider_name == "espeak":
+                from punt_vox.providers.espeak import EspeakProvider
+
+                if isinstance(provider, EspeakProvider):
+                    from punt_vox.providers.local_play import EspeakDirectPlayer
+
+                    espeak_player = EspeakDirectPlayer(
+                        binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
+                        voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
+                    )
+                    return espeak_player.play_directly(request)
+
+            # Cloud providers and any other provider that implements
+            # DirectPlayProvider directly.
+            if isinstance(provider, DirectPlayProvider):
+                return provider.play_directly(request)
+
+            return None
