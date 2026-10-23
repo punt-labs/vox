@@ -3,9 +3,9 @@
 [config]
 ignore_pr_title = ["^\\[Auto\\]", "^(docs|chore|style)(\\(.*\\))?!?:"]
 ignore_pr_labels = ["skip-ai-review"]
-ignore_bot_pr = true
 
 [github_app]
+ignore_bot_pr = true
 pr_commands = ["/agentic_describe", "/agentic_review"]
 handle_push_trigger = false
 
