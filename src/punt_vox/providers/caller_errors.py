@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Final
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types_errors import VoiceNotFoundError
 from punt_vox.types_provider_errors import (
     ProviderAuthError,

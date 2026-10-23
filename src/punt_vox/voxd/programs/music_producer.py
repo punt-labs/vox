@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import (
+from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )

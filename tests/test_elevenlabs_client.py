@@ -13,7 +13,7 @@ from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
-from punt_vox.providers.transport_faults import (
+from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )
@@ -251,7 +251,7 @@ class TestSubscriptionCheck:
 
     def test_configuration_fault_is_a_failed_line(self) -> None:
         sdk = MagicMock()
-        sdk.user.subscription.get.side_effect = httpx.ProxyError("refused CONNECT")
+        sdk.user.subscription.get.side_effect = httpx.ProxyError("407 Proxy Auth")
 
         check = ElevenLabsClient(sdk=sdk).subscription_check()
 
@@ -323,16 +323,24 @@ class TestCall:
         "fault",
         [
             httpx.UnsupportedProtocol("Request URL is missing a protocol"),
-            httpx.ProxyError("proxy refused CONNECT"),
-            httpx.LocalProtocolError("Illegal header value"),
+            httpx.ProxyError("407 Proxy Authentication Required"),
         ],
-        ids=["unsupported-protocol", "proxy", "local-protocol"],
+        ids=["unsupported-protocol", "proxy-auth"],
     )
     def test_configuration_fault_is_permanent(self, fault: httpx.RequestError) -> None:
         with pytest.raises(ProviderConfigError) as info:
             ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(fault))
 
         assert info.value.__cause__ is fault
+
+    def test_header_fault_is_permanent_and_unchained(self) -> None:
+        """The fault's text quotes the header -- the key -- so it is not chained."""
+        fault = httpx.LocalProtocolError("Illegal header value b'key\\n'")
+
+        with pytest.raises(ProviderConfigError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(fault))
+
+        assert info.value.__cause__ is None
 
     def test_rejected_key_is_a_provider_auth_error(self) -> None:
         """Every ElevenLabs call site -- TTS, voices, STT, music, health -- gets

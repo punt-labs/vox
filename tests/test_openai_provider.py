@@ -15,7 +15,7 @@ from punt_vox.core import (
 )
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.openai import OpenAIProvider
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 

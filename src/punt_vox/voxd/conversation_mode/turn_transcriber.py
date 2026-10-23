@@ -14,7 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:

@@ -12,7 +12,7 @@ import pytest
 from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.types import MusicProvider
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.part_tags import PartTags

@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.providers.ca_bundle import CaBundle
+from punt_vox.providers.provider_faults import UnsendableHeaderError
 from punt_vox.providers.transport_faults import TransportFaults
 
 if TYPE_CHECKING:
@@ -69,14 +70,17 @@ class LazySdk[T]:
         A transport failure leaves as whatever
         :meth:`~punt_vox.providers.transport_faults.TransportFaults.translate`
         answers -- a ``CaBundleError``, ``ProviderConfigError``, or
-        ``ProviderTransportError`` -- chaining the original. Anything else --
-        the server answered, and the provider interprets the answer -- passes
-        through unchanged.
+        ``ProviderTransportError`` -- chaining the original, except under an
+        ``UnsendableHeaderError``, whose original quotes the API key. Anything
+        else -- the server answered, and the provider interprets the answer --
+        passes through unchanged.
         """
         try:
             return request(self.get())
         except self._transport as exc:
-            raise TransportFaults.translate(exc) from exc
+            fault = TransportFaults.translate(exc)
+            cause = None if isinstance(fault, UnsendableHeaderError) else exc
+            raise fault from cause
 
     def _build(self) -> T:
         try:

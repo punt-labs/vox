@@ -13,8 +13,8 @@ from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.stream_file import StreamFile
-from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,

@@ -18,7 +18,7 @@ from punt_vox.providers.elevenlabs import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
     ElevenLabsProvider,
 )
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 from punt_vox.types_provider_errors import ProviderAuthError
 

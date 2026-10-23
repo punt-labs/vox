@@ -8,7 +8,7 @@ import pytest
 
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import (
+from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )

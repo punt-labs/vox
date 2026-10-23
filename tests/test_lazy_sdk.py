@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+import traceback
+
+import httpx
 import pytest
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.lazy_sdk import LazySdk
-from punt_vox.providers.transport_faults import ProviderTransportError
+from punt_vox.providers.provider_faults import (
+    ProviderTransportError,
+    UnsendableHeaderError,
+)
 
 
 class _TransportError(Exception):
@@ -127,3 +134,40 @@ def test_call_passes_other_errors_through() -> None:
 
     with pytest.raises(KeyError):
         sdk.call(lambda _client: _raise(KeyError("server said no")))
+
+
+class TestHeaderFaultChain:
+    """httpx's header fault quotes the header value: the chain is cut, not kept."""
+
+    _KEY = "SECRETKEY123"
+
+    def _call(self) -> UnsendableHeaderError:
+        fault = httpx.LocalProtocolError(f"Illegal header value b'{self._KEY}\\n'")
+        sdk = LazySdk(_Counter(), transport=httpx.RequestError)
+        with pytest.raises(UnsendableHeaderError) as info:
+            sdk.call(lambda _client: _raise(fault))
+        return info.value
+
+    def test_cause_is_cut(self) -> None:
+        error = self._call()
+
+        assert error.__cause__ is None
+        assert error.__suppress_context__
+
+    def test_traceback_never_quotes_the_key(self) -> None:
+        text = "".join(traceback.format_exception(self._call()))
+
+        assert self._KEY not in text
+
+    def test_logged_traceback_never_quotes_the_key(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """What a handler's ``logger.exception`` writes to vox.log."""
+        log = logging.getLogger("test_lazy_sdk")
+        with caplog.at_level(logging.DEBUG):
+            try:
+                raise self._call()
+            except UnsendableHeaderError:
+                log.exception("request failed")
+
+        assert self._KEY not in caplog.text

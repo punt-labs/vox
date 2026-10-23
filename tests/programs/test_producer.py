@@ -12,7 +12,7 @@ from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 from mutagen.id3 import ID3
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import (
+from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
 )

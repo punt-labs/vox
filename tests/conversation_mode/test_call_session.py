@@ -18,7 +18,7 @@ import pytest
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import ProviderConfigError
+from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk

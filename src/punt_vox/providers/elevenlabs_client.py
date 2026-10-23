@@ -18,8 +18,8 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 
 from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.stream_file import StreamFile
-from punt_vox.providers.transport_faults import TRANSPORT_ERRORS
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 

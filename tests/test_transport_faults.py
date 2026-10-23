@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
 
 import httpx
@@ -9,12 +10,12 @@ import httpx2
 import pytest
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.transport_faults import (
-    TRANSPORT_ERRORS,
+from punt_vox.providers.provider_faults import (
     ProviderConfigError,
     ProviderTransportError,
-    TransportFaults,
+    UnsendableHeaderError,
 )
+from punt_vox.providers.transport_faults import TransportFaults
 
 _PATH = "/etc/private/host-ca.pem"
 
@@ -108,10 +109,10 @@ class TestConfigurationFault:
     # the fork, and the two packages' error classes are unrelated types.
     _FAULTS = (
         httpx.UnsupportedProtocol("Request URL has an unsupported protocol 'ftp://'"),
-        httpx.ProxyError("http://user:s3cret@proxy.internal:3128 refused"),
+        httpx.ProxyError("407 Proxy Authentication Required"),
         httpx.LocalProtocolError("Illegal header value b'key\\n'"),
         httpx2.UnsupportedProtocol("Request URL has an unsupported protocol 'ftp'"),
-        httpx2.ProxyError("http://user:s3cret@proxy.internal:3128 refused"),
+        httpx2.ProxyError("407 Proxy Authentication Required"),
         httpx2.LocalProtocolError("Illegal header value b'key\\n'"),
     )
     _IDS = (
@@ -144,15 +145,13 @@ class TestConfigurationFault:
 
     @pytest.mark.usefixtures("bundle_unset")
     def test_message_names_the_fault_type_not_its_text(self) -> None:
-        """A proxy URL can carry credentials; the message crosses the wire."""
-        message = str(TransportFaults.translate(self._FAULTS[1]))
+        """A URL can carry credentials; the message crosses the wire."""
+        fault = httpx.UnsupportedProtocol("unsupported 'ftp://user:s3cret@host/'")
 
-        assert "ProxyError" in message
+        message = str(TransportFaults.translate(fault))
+
+        assert "UnsupportedProtocol" in message
         assert "s3cret" not in message
-
-    def test_config_error_is_a_value_error(self) -> None:
-        """ValueError: the wire reply routes it verbatim as a caller rejection."""
-        assert issubclass(ProviderConfigError, ValueError)
 
 
 class TestTransientFailure:
@@ -200,10 +199,101 @@ class TestTransientFailure:
         assert "Connection error." not in message
 
 
-def test_transport_errors_is_every_error_translate_returns() -> None:
-    """The tuple a health check catches is exactly what a request can raise."""
-    assert set(TRANSPORT_ERRORS) == {
-        CaBundleError,
-        ProviderConfigError,
-        ProviderTransportError,
-    }
+class TestProxyFault:
+    """A proxy that refuses credentials is configuration; one that fails is not.
+
+    The texts are httpcore's own: an HTTP proxy's CONNECT reply is
+    ``"<status> <reason>"``, a SOCKS proxy's refusals are fixed sentences.
+    """
+
+    _REFUSED = (
+        "407 Proxy Authentication Required",
+        "403 Forbidden",
+        "Invalid username/password",
+        (
+            "Requested NO AUTHENTICATION REQUIRED from proxy server, but got "
+            "USERNAME/PASSWORD."
+        ),
+    )
+    _FAILING = (
+        "503 Service Unavailable",
+        "502 Bad Gateway",
+        "Proxy Server could not connect: 5.",
+    )
+
+    @pytest.mark.usefixtures("bundle_unset")
+    @pytest.mark.parametrize("text", _REFUSED)
+    @pytest.mark.parametrize("kind", [httpx.ProxyError, httpx2.ProxyError])
+    def test_credential_refusal_is_permanent(
+        self, kind: type[httpx.ProxyError | httpx2.ProxyError], text: str
+    ) -> None:
+        translated = TransportFaults.translate(_wrapped(kind(text)))
+
+        assert isinstance(translated, ProviderConfigError)
+        assert "HTTPS_PROXY" in str(translated)
+
+    @pytest.mark.usefixtures("bundle_unset")
+    @pytest.mark.parametrize("text", _FAILING)
+    @pytest.mark.parametrize("kind", [httpx.ProxyError, httpx2.ProxyError])
+    def test_proxy_failure_is_transient(
+        self, kind: type[httpx.ProxyError | httpx2.ProxyError], text: str
+    ) -> None:
+        translated = TransportFaults.translate(_wrapped(kind(text)))
+
+        assert isinstance(translated, ProviderTransportError)
+        assert text in str(translated)
+
+    @pytest.mark.usefixtures("bundle_unset")
+    def test_transient_proxy_message_points_at_the_proxy(self) -> None:
+        """Not "check the network": the network to the proxy worked."""
+        message = str(TransportFaults.translate(httpx.ProxyError("503 Unavailable")))
+
+        assert "proxy" in message
+        assert "HTTPS_PROXY" in message
+
+    @pytest.mark.usefixtures("bundle_unset")
+    def test_httpcore_link_beneath_httpx_is_classified_once(self) -> None:
+        """httpx re-raises httpcore's ProxyError; the inner text is the same."""
+        outer = httpx.ProxyError("503 Service Unavailable")
+        outer.__cause__ = Exception("503 Service Unavailable")
+
+        assert isinstance(TransportFaults.translate(outer), ProviderTransportError)
+
+
+class TestHeaderFault:
+    """A header httpx will not send quotes its value -- the API key."""
+
+    _KEY = "SECRETKEY123"
+
+    def _fault(
+        self, kind: type[httpx.LocalProtocolError | httpx2.LocalProtocolError]
+    ) -> Exception:
+        return _wrapped(kind(f"Illegal header value b'Bearer {self._KEY}\\n'"))
+
+    @pytest.mark.parametrize(
+        "kind", [httpx.LocalProtocolError, httpx2.LocalProtocolError]
+    )
+    def test_is_permanent_and_names_the_api_key(
+        self, kind: type[httpx.LocalProtocolError | httpx2.LocalProtocolError]
+    ) -> None:
+        translated = TransportFaults.translate(self._fault(kind))
+
+        assert isinstance(translated, UnsendableHeaderError)
+        assert isinstance(translated, ProviderConfigError)
+        assert "stray whitespace or newlines" in str(translated)
+
+    @pytest.mark.parametrize(
+        "kind", [httpx.LocalProtocolError, httpx2.LocalProtocolError]
+    )
+    def test_never_logs_the_header_value(
+        self,
+        kind: type[httpx.LocalProtocolError | httpx2.LocalProtocolError],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.DEBUG):
+            translated = TransportFaults.translate(self._fault(kind))
+
+        assert caplog.records
+        assert all(self._KEY not in r.getMessage() for r in caplog.records)
+        assert all(r.exc_info is None for r in caplog.records)
+        assert self._KEY not in str(translated)
