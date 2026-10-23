@@ -25,9 +25,10 @@ jobs:
     # 22m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
     # + 2m save) + 5m for the rest of the job. Healthy runs take 3-5 min end
     # to end (October 2026: 182-282 s, of which apt is 16-62 s), so the
-    # non-apt steps take at most ~3.7 min; the two pytest invocations
-    # (default tier, then slow/subprocess -- see TESTING.md, "Why the Suite
-    # Takes as Long as It Does") are ~3.5 min of that. 22m is also above
+    # non-apt steps take at most 282 - 16 = 266 s (~4.4 min), inside the 5m
+    # allowance; the two pytest invocations (default tier, then
+    # slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long as It
+    # Does") are ~3.5 min of that. 22m is also above
     # the 20m test-job default in punt-kit/standards/github.md.
     timeout-minutes: 22
     steps:
@@ -46,10 +47,18 @@ jobs:
       # in the same run usually finished normally.
       #
       # 1. apt-prepare: create $VOX_APT_DIR (runner-owned), point apt at it
-      #    for both archives and lists, and compute the cache key
-      #      apt-v1-<ImageOS>-<arch>-<sha256(packages, flags)[:16]>-<ImageVersion>
+      #    for both archives and lists, confine apt's sources to the image's
+      #    Ubuntu archive + security file, and compute the cache key
+      #      apt-v2-<ImageOS>-<arch>-<sha256(packages, flags, sources)[:16]>-<ImageVersion>
       #    The runner image is in the key because the lists and .debs must
-      #    resolve against that image's installed package set.
+      #    resolve against that image's installed package set; the sources
+      #    file is hashed because the lists are fetched from exactly it.
+      #    The image also ships third-party sources (packages.microsoft.com
+      #    and others) that ffmpeg and espeak-ng never come from. Confining
+      #    every apt-get call in the job to Ubuntu's sources means a broken
+      #    third-party repo cannot fail `update --error-on=any` below, and
+      #    the lists, the download, the install, and autoclean all read the
+      #    same source set. A missing Ubuntu sources file fails the step.
       # 2. apt-restore: warm cache (exact key) restores the lists and every
       #    .deb, so the install below skips `apt-get update` and apt reports
       #    "Need to get 0 B" -- no mirror contact at all. A new runner image
@@ -89,19 +98,35 @@ jobs:
         run: |
           set -euo pipefail
           : "${ImageOS:?runner image name unset}" "${ImageVersion:?runner image version unset}"
+          # The image's deb822 file for Ubuntu's archive and security
+          # pockets (ubuntu-24.04). No fallback to the full source set.
+          ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+          if [ ! -s "$ubuntu_sources" ]; then
+            echo "::error::${ubuntu_sources} is missing or empty; cannot confine apt to the Ubuntu sources"
+            exit 1
+          fi
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 \
-            "$VOX_APT_DIR" "$VOX_APT_DIR/archives" "$VOX_APT_DIR/lists"
+            "$VOX_APT_DIR" "$VOX_APT_DIR/archives" "$VOX_APT_DIR/lists" \
+            "$VOX_APT_DIR/sources.list.d"
+          # Not cached: rebuilt from the image every run.
+          install -m 0644 "$ubuntu_sources" "$VOX_APT_DIR/sources.list.d/ubuntu.sources"
           # Every apt-get invocation in this job reads its state from here.
+          # SourceList /dev/null drops the one-line sources.list; SourceParts
+          # replaces /etc/apt/sources.list.d with the Ubuntu-only copy.
           # Keep-Downloaded-Packages is apt-get's default; stated because the
           # cache depends on it.
           printf '%s\n' \
             "Dir::Cache::Archives \"$VOX_APT_DIR/archives\";" \
             "Dir::State::Lists \"$VOX_APT_DIR/lists\";" \
+            'Dir::Etc::SourceList "/dev/null";' \
+            "Dir::Etc::SourceParts \"$VOX_APT_DIR/sources.list.d\";" \
             'APT::Keep-Downloaded-Packages "true";' |
             sudo tee /etc/apt/apt.conf.d/99vox-ci-cache >/dev/null
-          pkg_hash=$(printf '%s\n' "$VOX_APT_PACKAGES" --no-install-recommends |
-            sha256sum | cut -c1-16)
-          prefix="apt-v1-${ImageOS}-${RUNNER_ARCH}-${pkg_hash}-"
+          pkg_hash=$({
+            printf '%s\n' "$VOX_APT_PACKAGES" --no-install-recommends
+            cat "$ubuntu_sources"
+          } | sha256sum | cut -c1-16)
+          prefix="apt-v2-${ImageOS}-${RUNNER_ARCH}-${pkg_hash}-"
           echo "restore-prefix=${prefix}" >>"$GITHUB_OUTPUT"
           echo "key=${prefix}${ImageVersion}" >>"$GITHUB_OUTPUT"
           echo "apt cache key: ${prefix}${ImageVersion}"
@@ -172,7 +197,8 @@ jobs:
               echo "apt cache hit: skipping apt-get update"
             else
               # --error-on=any: a failed index fetch is an error, not a
-              # warning over the old lists.
+              # warning over the old lists. Only the Ubuntu sources are
+              # configured (apt-prepare), so only they can fail it.
               sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update --error-on=any || rc=$?
             fi
             if [ "$rc" -eq 0 ]; then
