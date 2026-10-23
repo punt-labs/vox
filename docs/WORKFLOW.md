@@ -252,8 +252,11 @@ function pr_loop(unit):
 #                  has posted on the PR
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
 #                  "/agentic_review" comment for N > 1
-#   qodo_in(N)   = a Qodo review or "Code Review by Qodo" comment created
-#                  after trigger(N), or the outage fallback ran for round N
+#   head(N)      = the PR head commit when trigger(N) happened
+#   qodo_in(N)   = a Qodo review whose commit is head(N), or a "Code Review
+#                  by Qodo" comment updated after trigger(N) whose code links
+#                  cite head(N); or the outage fallback ran for round N.
+#                  A late reply to an earlier round never completes round N.
 #   bugbot_in    = a cursor[bot] review after the "bugbot run" comment, or
 #                  30 minutes since that comment. Bugbot has its own timer.
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
@@ -269,8 +272,10 @@ function pr_loop(unit):
 #   escalation   = the leader's "escalated:" comment on one new round-3 High;
 #                  closed by a later ledger entry recording the operator's
 #                  ruling and how it was applied
-#   skipped(pr)  = the PR matches a [config] skip in .pr_agent.toml: title
-#                  regex, the skip-ai-review label, or a bot author
+#   skipped(pr)  = the PR author is a bot ([github_app] ignore_bot_pr in
+#                  .pr_agent.toml); no title or label lets an author skip
+#   reviewed_head = the newest commit that Qodo reviewed or that the local
+#                  delta review below covered
 
 function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
@@ -299,6 +304,11 @@ function poll_tick(pr):
     if not pending(pr) and N < 3 and a fix landed since trigger(N)
             and (N == 1 or a new High was fixed since trigger(N)):
         comment "/agentic_review"          # opens round N+1
+    if not pending(pr) and no review is requested and the PR head is newer
+            than reviewed_head:
+        run code_reviewer locally on the reviewed_head..head delta; its
+            findings are findings like any other   # bounded rounds, but
+                                                   #   no unreviewed merge
     re-read state                          # the gate must see this tick's
                                            #   push and comment
     if merge_gate(state): merge (squash, --delete-branch); close_out()
@@ -306,6 +316,7 @@ function poll_tick(pr):
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
+       and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
        and round(pr) ≤ 3
@@ -342,6 +353,7 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
   ∧ demoConfirmedByEar(pr)                -- held BEFORE the PR opened
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
+  ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
   ∧ round(pr) ≤ 3                         -- round 3 only for a new High
   ∧ unresolvedThreads(pr) = ∅
@@ -377,7 +389,9 @@ Bugbot runs once per PR, on the leader's `bugbot run` comment at open. It
 never runs again on that PR, and its findings are handled whenever they
 arrive. It stays because
 it had the highest real-bug rate of the three bots in the 2026 sample (28%
-of its comments, against 20% for Qodo and 12% for Copilot). Copilot is off:
+of its comments, against 20% for Qodo and 12% for Copilot). The Cursor
+security automation ("Find vulnerabilities") also runs here; its threads
+are findings like any other. Copilot is off:
 66% of its comments were nits, and it drove the most extra pushes.
 
 This holds only when four settings are in place (pilot `vox-2q95`):
