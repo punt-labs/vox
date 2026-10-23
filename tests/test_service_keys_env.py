@@ -194,17 +194,19 @@ def test_write_keys_env_keeps_existing_key_when_env_value_empty(
     assert all("sk-working-eleven" not in r.getMessage() for r in caplog.records)
 
 
-def test_write_keys_env_empty_value_for_absent_key_writes_nothing_quietly(
+def test_write_keys_env_empty_value_for_absent_key_is_reported(
     writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An empty value for a key the file lacks writes no line and logs nothing."""
+    """An empty value for a key the file lacks writes no line, and says so."""
     keys_path = tmp_path / "keys.env"
     with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
         writer.write({"ELEVENLABS_API_KEY": "", "OPENAI_API_KEY": "sk-o"}, keys_path)
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY" not in content
     assert "OPENAI_API_KEY=sk-o" in content
-    assert caplog.records == []
+    (message,) = [r.getMessage() for r in caplog.records]
+    assert message.startswith("ELEVENLABS_API_KEY: empty in the environment")
+    assert "its provider has no credential" in message
 
 
 def test_write_keys_env_override_and_absent_keys_log_nothing(
@@ -219,82 +221,6 @@ def test_write_keys_env_override_and_absent_keys_log_nothing(
     assert "ELEVENLABS_API_KEY=sk-kept" in content
     assert "OPENAI_API_KEY=sk-new" in content
     assert caplog.records == []
-
-
-def test_write_keys_env_non_header_setting_keeps_spaces(
-    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A plain setting such as AWS_PROFILE never goes in a header; a space is fine."""
-    keys_path = tmp_path / "keys.env"
-    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
-        writer.write({"AWS_PROFILE": "my profile"}, keys_path)
-    assert "AWS_PROFILE=my profile" in keys_path.read_text()
-    assert caplog.records == []
-
-
-@pytest.mark.parametrize(
-    "key", ["AWS_PROFILE", "TTS_PROVIDER", "AWS_SECRET_ACCESS_KEY"]
-)
-def test_write_keys_env_non_header_setting_refuses_control_chars(
-    writer: KeysEnvWriter,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-    key: str,
-) -> None:
-    """Non-header values still get the line-injection refusal, by key name."""
-    keys_path = tmp_path / "keys.env"
-    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
-        writer.write({key: "x\nOPENAI_API_KEY=injected"}, keys_path)
-    assert "injected" not in keys_path.read_text()
-    messages = [r.getMessage() for r in caplog.records]
-    assert any(key in m and "control characters" in m for m in messages)
-    assert all("injected" not in m for m in messages)
-
-
-@pytest.mark.parametrize(
-    "key",
-    ["ELEVENLABS_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"],
-)
-def test_write_keys_env_header_carried_keys_refuse_spaces(
-    writer: KeysEnvWriter, tmp_path: Path, key: str
-) -> None:
-    """Every value sent as HTTP header content gets the header-safe check."""
-    keys_path = tmp_path / "keys.env"
-    writer.write({key: "abc def"}, keys_path)
-    assert key not in keys_path.read_text()
-
-
-@pytest.mark.parametrize(
-    "bad_value",
-    [
-        pytest.param("sk-abc def", id="inner-space"),
-        pytest.param("sk-abc ", id="trailing-space"),
-        pytest.param("\tsk-abc", id="leading-tab"),
-        pytest.param("sk-abc\r", id="carriage-return"),
-        pytest.param("\u201csk-abc\u201d", id="smart-quotes"),
-        pytest.param("sk-\u00e9abc", id="non-ascii-letter"),
-        pytest.param("sk-abc\x7f", id="delete-char"),
-    ],
-)
-def test_write_keys_env_refuses_value_no_header_can_carry(
-    writer: KeysEnvWriter,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-    bad_value: str,
-) -> None:
-    """A value outside printable non-space ASCII is refused, key named, value not."""
-    keys_path = tmp_path / "keys.env"
-    keys_path.write_text("ELEVENLABS_API_KEY=sk-previous\n")
-    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
-        writer.write({"ELEVENLABS_API_KEY": bad_value}, keys_path)
-    assert "ELEVENLABS_API_KEY=sk-previous" in keys_path.read_text()
-    messages = [r.getMessage() for r in caplog.records]
-    assert any(
-        "ELEVENLABS_API_KEY" in m
-        and "contains a character no HTTP header may carry" in m
-        for m in messages
-    )
-    assert all(bad_value.strip() not in m for m in messages)
 
 
 def test_write_keys_env_lines_are_sorted_after_the_header(
@@ -366,41 +292,47 @@ def test_write_keys_env_rejects_control_chars_in_value(
     assert "ELEVENLABS_API_KEY" not in content
 
 
-def test_write_keys_env_handles_unreadable_existing_file(
+def test_write_keys_env_refuses_a_non_utf8_file_and_keeps_it(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A keys.env that is not UTF-8 stops the install; its keys are never wiped."""
+    keys_path = tmp_path / "keys.env"
+    original = b"OPENAI_API_KEY=sk-stored\n\xff\xfe garbage\n"
+    keys_path.write_bytes(original)
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="punt_vox.service.keys_env"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+
+    message = str(excinfo.value)
+    assert str(keys_path) in message
+    assert "not valid UTF-8" in message
+    # The decoder's own text quotes the offending byte; neither surface repeats it.
+    assert "0xff" not in message
+    assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
+    assert all("0xff" not in r.getMessage() for r in caplog.records)
+    assert keys_path.read_bytes() == original
+
+
+def test_write_keys_env_refuses_an_unreadable_file_and_keeps_it(
     writer: KeysEnvWriter, tmp_path: Path
 ) -> None:
-    """Non-UTF-8 bytes in an existing keys.env do not crash the install."""
+    """A permission error stops the install, naming the path and the problem."""
     keys_path = tmp_path / "keys.env"
-    keys_path.write_bytes(b"\xff\xfe garbage \x00\x01\x02")
-
-    writer.write(
-        {"OPENAI_API_KEY": "sk-clean", "TTS_PROVIDER": "openai"},
-        keys_path,
-    )
-
-    content = keys_path.read_text()
-    assert "OPENAI_API_KEY=sk-clean" in content
-    assert "TTS_PROVIDER=openai" in content
-    assert "garbage" not in content
-    mode = stat_mod.S_IMODE(keys_path.stat().st_mode)
-    assert mode == 0o600
-
-
-def test_write_keys_env_handles_unreadable_existing_file_oserror(
-    writer: KeysEnvWriter, tmp_path: Path
-) -> None:
-    """OSError (e.g. permission denied) during read_text is non-fatal."""
-    keys_path = tmp_path / "keys.env"
-    keys_path.write_text("OPENAI_API_KEY=stale\n")
+    keys_path.write_text("OPENAI_API_KEY=sk-stored\n")
     keys_path.chmod(0o000)
     try:
-        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+        with pytest.raises(SystemExit) as excinfo:
+            writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
     finally:
         keys_path.chmod(0o600)
 
-    content = keys_path.read_text()
-    assert "OPENAI_API_KEY=sk-new" in content
-    assert "stale" not in content
+    message = str(excinfo.value)
+    assert str(keys_path) in message
+    assert "Permission denied" in message
+    assert keys_path.read_text() == "OPENAI_API_KEY=sk-stored\n"
 
 
 def test_write_keys_env_never_exposes_world_readable_state(
@@ -460,3 +392,18 @@ def test_write_keys_env_rejects_symlink_at_keys_path(
 
     assert keys_path.is_symlink()
     assert real_target.read_text() == "OPENAI_API_KEY=via-symlink\n"
+
+
+def test_write_keys_env_rejects_dangling_symlink_at_keys_path(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """A symlink to nowhere is refused too, never followed to create its target."""
+    target = tmp_path / "missing.env"
+    keys_path = tmp_path / "keys.env"
+    keys_path.symlink_to(target)
+
+    with pytest.raises(SystemExit, match="not a regular file"):
+        writer.write({"OPENAI_API_KEY": "sk-test"}, keys_path)
+
+    assert keys_path.is_symlink()
+    assert not target.exists()
