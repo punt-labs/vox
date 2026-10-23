@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.voxd.conversation_mode.permanent_stt_failure import PermanentSttFailure
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -60,32 +60,55 @@ class TurnTranscriber:
         provider failure -- a caller's response in every case is "ask the
         human to repeat", never to fabricate an answer from an uncertain or
         missing result.
+
+        Raises:
+            ProviderAuthError: The provider rejected its credentials.
+            ProviderUnavailableError: The provider has no API key to send.
+            CaBundleError: The CA certificates in effect cannot verify the
+                provider, or ``SSL_CERT_FILE`` cannot be loaded.
+            ProviderConfigError: httpx refuses to send the request as the host
+                configured it (proxy, base URL), or the API key holds a
+                character no header may carry.
+            ProviderStatusError: The provider refused the request in a way no
+                retry changes (``is_permanent``); a rate limit or a 5xx is
+                transient and resolves to ``None``.
         """
-        final_event = None
         try:
-            async for event in self._provider.transcribe(chunks):
-                # Only a final event settles the transcript -- a provider
-                # that yields a partial as the last thing before ending its
-                # stream must not have that partial mistaken for a settled
-                # result (Copilot review, PR #460).
-                if event.is_final:
-                    final_event = event
-        except ProviderAuthError:
-            # A revoked/expired STT credential is certain and permanent --
-            # every subsequent turn would hit exactly the same rejection,
-            # the same asymmetry :class:`~.session_attach.BareAuthMissingError`
-            # already draws against a transient session-attach fault. Folding
-            # this into the broad ``except Exception`` below would launder
-            # it into "ask the human to repeat", which repeats identically
-            # forever and never tells the human their STT credentials are
-            # broken. Re-raised, not swallowed -- the caller (CallSession)
-            # ends the call with an actionable message instead.
-            self._turn_timer.mark("stt_response_received", detail="STT auth failed")
-            raise
-        except Exception:
+            final_event = await self._final_event(self._provider.transcribe(chunks))
+        except Exception as exc:
+            if PermanentSttFailure.ends_call(exc):
+                # Re-raised, not swallowed: every later turn would fail the same
+                # way, so the caller (CallSession) ends the call with an
+                # actionable message instead of asking the human to repeat.
+                self._turn_timer.mark(
+                    "stt_response_received", detail=PermanentSttFailure.of(exc).detail
+                )
+                raise
             logger.exception("STT transcribe failed mid-turn")
             self._turn_timer.mark("stt_response_received", detail="transcribe failed")
             return None
+        return self._settle(final_event)
+
+    @staticmethod
+    async def _final_event(
+        events: AsyncIterator[TranscriptEvent],
+    ) -> TranscriptEvent | None:  # None: the provider yielded no final event
+        """Drain the provider's *events* and return the last final one.
+
+        Only a final event settles the transcript -- a provider that yields a
+        partial as the last thing before ending its stream must not have that
+        partial mistaken for a settled result.
+        """
+        final_event = None
+        async for event in events:
+            if event.is_final:
+                final_event = event
+        return final_event
+
+    def _settle(
+        self, final_event: TranscriptEvent | None
+    ) -> TranscriptEvent | None:  # None: ambiguous, ask the human to repeat
+        """Record what came back, then apply the confidence floor."""
         detail = (
             "no transcript"
             if final_event is None

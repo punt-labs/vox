@@ -1296,6 +1296,8 @@ dependencies = [
     { name = "boto3-stubs", extra = ["polly"] },
     { name = "botocore-stubs" },
     { name = "elevenlabs" },
+    { name = "httpx" },
+    { name = "httpx2" },
     { name = "mcp" },
     { name = "mutagen" },
     { name = "openai" },
@@ -1312,7 +1314,7 @@ call = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx2" },
+    { name = "cryptography" },
     { name = "mypy" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1328,6 +1330,8 @@ requires-dist = [
     { name = "boto3-stubs", extras = ["polly"], specifier = ">=1.35.0" },
     { name = "botocore-stubs", specifier = ">=1.35.0" },
     { name = "elevenlabs", specifier = ">=2.0.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.14.0" },
     { name = "mcp", specifier = ">=1.30.0" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
@@ -1341,7 +1345,7 @@ provides-extras = ["call"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx2", specifier = ">=2.7.0" },
+    { name = "cryptography", specifier = ">=46.0.0" },
     { name = "mypy", specifier = ">=1.18.1" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "pytest", specifier = ">=8.4.2" },

@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Any, Self
-
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+from typing import TYPE_CHECKING, Any, Self
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
+from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
 from punt_vox.providers.voice_resolver import VoiceResolver
 from punt_vox.types import (
     AudioProviderId,
@@ -21,7 +19,9 @@ from punt_vox.types import (
     SynthesisResult,
     TTSProvider,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
+
+if TYPE_CHECKING:
+    from punt_vox.providers.elevenlabs_client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -70,24 +70,19 @@ class ElevenLabsProvider(TTSProvider):
     """
 
     _model: str
-    _client: Any  # pyright: ignore[reportExplicitAny]
+    _client: ElevenLabsClient
     _voices: VoiceResolver[str]
 
     def __new__(
         cls,
         *,
         model: str | None = None,
-        client: Any | None = None,  # pyright: ignore[reportExplicitAny]
+        # The test seam: absent, the real SDK client is built on first use.
+        client: ElevenLabs | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
-        if client is not None:
-            self._client = client
-        else:
-            from elevenlabs import ElevenLabs  # pyright: ignore[reportMissingTypeStubs]
-
-            self._client = ElevenLabs()  # pyright: ignore[reportUnknownMemberType]
-
+        self._client = ElevenLabsClient(sdk=client)
         self._voices = VoiceResolver(
             self._fetch_voices,
             default_key="matilda",
@@ -95,18 +90,6 @@ class ElevenLabsProvider(TTSProvider):
             cooldown_seconds=60,
         )
         return self
-
-    @staticmethod
-    def _extract_api_error_message(exc: ApiError) -> str:
-        """Extract a human-readable message from an ElevenLabs ApiError."""
-        body: Any = exc.body  # pyright: ignore[reportUnknownMemberType]
-        if isinstance(body, dict):
-            detail: Any = body.get("detail", {})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if isinstance(detail, dict):
-                msg: Any = detail.get("message", "")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                if isinstance(msg, str) and msg:
-                    return msg
-        return f"HTTP {exc.status_code}"
 
     @property
     def name(self) -> str:
@@ -210,51 +193,11 @@ class ElevenLabsProvider(TTSProvider):
         return name.lower()
 
     def check_health(self) -> list[HealthCheck]:
-        """Check ElevenLabs API key and subscription status."""
-        checks: list[HealthCheck] = []
-
-        api_key = os.environ.get("ELEVENLABS_API_KEY")
-        if not api_key:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message=("ElevenLabs API key: not set (export ELEVENLABS_API_KEY)"),
-                )
-            )
-            return checks
-
-        checks.append(HealthCheck(passed=True, message="ElevenLabs API key: set"))
-
-        try:
-            sub: Any = self._client.user.subscription.get()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            tier: str = sub.tier  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            used: int = sub.character_count  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            limit: int = sub.character_limit  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            checks.append(
-                HealthCheck(
-                    passed=True,
-                    message=(
-                        f"ElevenLabs subscription: {tier} ({used:,}/{limit:,} chars)"
-                    ),
-                )
-            )
-        except ApiError as exc:
-            msg = self._extract_api_error_message(exc)
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message=f"ElevenLabs subscription: {msg}",
-                )
-            )
-        except OSError as exc:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message=f"ElevenLabs subscription: {exc}",
-                )
-            )
-
-        return checks
+        """Check the ElevenLabs API key, then the account's subscription."""
+        key = self._client.key_check()
+        if not key.passed:
+            return [key]
+        return [key, self._client.subscription_check()]
 
     def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default ElevenLabs voice for a language.
@@ -290,10 +233,12 @@ class ElevenLabsProvider(TTSProvider):
         """
         fresh: dict[str, str] = {}
 
-        response: Any = self._client.voices.get_all()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        for voice in response.voices:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            full_name: str = voice.name.lower()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            vid: str = voice.voice_id  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        response = self._client.call(lambda sdk: sdk.voices.get_all())
+        for voice in response.voices:
+            if voice.name is None:  # unnamed voices are reachable by raw id only
+                continue
+            full_name = voice.name.lower()
+            vid = voice.voice_id
 
             # Store full name (e.g. "adam - dominant, firm").
             if full_name not in fresh:
@@ -333,10 +278,6 @@ class ElevenLabsProvider(TTSProvider):
         if not kwargs:
             return None
 
-        from elevenlabs.types import (
-            VoiceSettings,  # pyright: ignore[reportMissingTypeStubs]
-        )
-
         return VoiceSettings(  # pyright: ignore[reportUnknownVariableType, reportCallIssue]
             **kwargs,
         )
@@ -350,21 +291,12 @@ class ElevenLabsProvider(TTSProvider):
     ) -> None:
         """Synthesize a single chunk to a file.
 
-        Wraps the ElevenLabs SDK call so an ``ApiError`` with a 401
-        status becomes a :class:`ProviderAuthError` that
-        ``WireReply.reject_or_fault`` routes verbatim to the client,
-        rather than falling through to speech_handlers' broad guard
-        and getting laundered to ``"operation failed"``. The
-        readiness gate catches the credential-absent case at F2;
-        this catches the credential-present-but-rejected case at F3.
-        Other ``ApiError`` statuses (429 rate-limit, 500 server error,
-        400 bad request) are not credential problems and re-raise
-        unchanged -- the broad guard will render them opaquely, which
-        is correct for a genuine SDK/upstream fault. Only 401 crosses
-        as a typed rejection.
+        :class:`ElevenLabsClient` translates what the SDK raises: a 401 or 403
+        becomes the :class:`ProviderAuthError` the wire sends the caller verbatim, a
+        transport failure one of the errors ``TransportFaults`` answers. Other
+        statuses (429, 500, 400) are upstream faults: a ``ProviderStatusError``,
+        which the wire keeps on the opaque fault path.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
         voice_settings = self._build_voice_settings(request)
 
         kwargs: dict[str, Any] = {
@@ -376,18 +308,12 @@ class ElevenLabsProvider(TTSProvider):
         if voice_settings is not None:
             kwargs["voice_settings"] = voice_settings
 
-        try:
-            response: Any = self._client.text_to_speech.stream(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        except ApiError as exc:
-            if exc.status_code == 401:
-                raise ProviderAuthError("elevenlabs", 401) from exc
-            raise
+        self._client.stream_to(
+            output_path, lambda sdk: sdk.text_to_speech.stream(**kwargs)
+        )
 
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",
             voice_id,
             len(text),
         )
-        with output_path.open("wb") as f:
-            for chunk in response:  # pyright: ignore[reportUnknownVariableType]
-                f.write(chunk)  # pyright: ignore[reportUnknownArgumentType]

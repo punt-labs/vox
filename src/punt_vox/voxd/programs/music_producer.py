@@ -12,8 +12,11 @@ from __future__ import annotations
 import secrets
 from typing import TYPE_CHECKING, Final, Self, final
 
-from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
-
+from punt_vox.providers.provider_faults import (
+    PERMANENT_ERRORS,
+    ProviderTransportError,
+)
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.programs.producer import (
     PartSpec,
@@ -31,8 +34,17 @@ __all__ = ["LengthPolicy", "MusicProducer"]
 _PLAYLIST_MIN_MS: Final = 90_000
 _PLAYLIST_MAX_MS: Final = 210_000
 
-# HTTP statuses that mean "retrying will not help" (bad prompt, ToS, auth).
-_PERMANENT_STATUS: Final = frozenset({400, 401, 403, 404, 422})
+# The provider's transport faults -- worth a retry. Not every OSError: a local
+# PermissionError or a full disk is no network blip, and retrying it as one
+# would hide it; it escapes to the fill loop's unexpected path instead.
+_TRANSIENT_ERRORS: Final = (ProviderTransportError, TimeoutError)
+
+# Every provider failure ``produce`` maps; anything else escapes unclassified.
+_GENERATION_ERRORS: Final[tuple[type[Exception], ...]] = (
+    ProviderStatusError,
+    *PERMANENT_ERRORS,
+    *_TRANSIENT_ERRORS,
+)
 
 
 @final
@@ -96,22 +108,29 @@ class MusicProducer:
         duration_ms = self._length.sample()
         try:
             await self._provider.generate_track(spec.prompt, duration_ms, target)
-        except ApiError as exc:
+        except _GENERATION_ERRORS as exc:
             raise self._classify(exc) from exc
-        except (TimeoutError, ConnectionError, OSError) as exc:
-            raise ProducerTransientError(str(exc)) from exc
         spec.tags.write_to(target)
         return Part(target.name, spec.index)
 
-    @staticmethod
-    def _classify(exc: ApiError) -> ProducerBadInputError | ProducerTransientError:
-        """Route an ElevenLabs ``ApiError`` to the right Producer error type.
-
-        ``ApiError`` ships from an untyped SDK path, so ``status_code`` is read
-        defensively (PY-TS-9 exception): a permanent HTTP status becomes
-        ``ProducerBadInputError``; everything else (429, 5xx, unknown) is transient.
-        """
-        status: object = getattr(exc, "status_code", None)
-        if isinstance(status, int) and status in _PERMANENT_STATUS:
+    @classmethod
+    def _classify(
+        cls, exc: Exception
+    ) -> ProducerBadInputError | ProducerTransientError:
+        """Route a generation failure to the Producer error the fill loop expects."""
+        if cls._is_permanent(exc):
             return ProducerBadInputError(str(exc))
         return ProducerTransientError(str(exc))
+
+    @staticmethod
+    def _is_permanent(exc: Exception) -> bool:
+        """Return whether retrying ``exc`` with the same input cannot succeed.
+
+        An answered failure knows whether it is permanent (bad prompt, ToS,
+        auth). A rejected or missing key or a host misconfiguration is permanent
+        too: it fails the same way on every retry. Rate limits, 5xx, and network
+        faults are not.
+        """
+        if isinstance(exc, ProviderStatusError):
+            return exc.is_permanent
+        return isinstance(exc, PERMANENT_ERRORS)

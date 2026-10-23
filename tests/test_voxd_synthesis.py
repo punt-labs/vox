@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,7 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.types import SynthesisRequest
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
@@ -769,7 +773,7 @@ class TestSynthesizeFailFast:
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
             patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
             patch("punt_vox.voxd.synthesis.cache_put") as mock_cache_put,
-            patch("punt_vox.voxd.synthesis.TTSClient") as mock_client_cls,
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client = MagicMock()
             mock_client.synthesize = fake_synth
@@ -786,6 +790,185 @@ class TestSynthesizeFailFast:
         mock_cache_put.assert_not_called()
         assert "path" in captured_temp
         assert not captured_temp["path"].exists()
+
+    @pytest.mark.parametrize(
+        "error",
+        [ValueError("provider rejected"), ConnectionError("unreachable")],
+        ids=["caller-error", "transport-error"],
+    )
+    def test_failed_synthesis_leaves_no_temp_file(
+        self,
+        error: Exception,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A provider that raises after the temp file exists must not strand it."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            output_path.write_bytes(b"partial")
+            raise error
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            with pytest.raises(type(error)):
+                asyncio.run(pipeline.synthesize_to_file("hello", _default_spec()))
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_cancelled_synthesis_leaves_no_temp_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cancelled request cannot stop its worker thread, which writes the
+        file after the cancel lands; the file goes once the thread is done."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            output_path.write_bytes(b"written after the cancel")
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):  # the thread finishes, then the loop cleans up
+                if not list(tmp_path.iterdir()):
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = slow_synth
+            asyncio.run(_drive())
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_cancelled_then_failed_synthesis_logs_no_repr(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An abandoned worker's error is logged by type and message only: a
+        repr can quote what the provider was sending, the API key included."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            raise _ReprQuotesTheKeyError
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):
+                if "cancelled synthesis then failed" in caplog.text:
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            asyncio.run(_drive())
+
+        assert "_ReprQuotesTheKeyError: header cannot be encoded" in caplog.text
+        assert "SECRETKEY" not in caplog.text
+
+    def test_cancelled_then_failed_synthesis_cannot_forge_a_log_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A late error's message can carry caller text -- a voice name with a
+        newline in it; the record stays one line and still names it."""
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        pipeline = _make_pipeline()
+        entered, release = threading.Event(), threading.Event()
+
+        def failing_synth(request: object, output_path: Path) -> None:
+            entered.set()
+            release.wait(timeout=5)
+            raise ValueError("voice 'x\nERROR forged record\r' not found")
+
+        async def _drive() -> None:
+            task = asyncio.create_task(
+                pipeline.synthesize_to_file("hello", _default_spec())
+            )
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            for _ in range(200):
+                if "cancelled synthesis then failed" in caplog.text:
+                    return
+                await asyncio.sleep(0.01)
+
+        provider = MagicMock()
+        provider.name = "elevenlabs"
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
+            patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
+            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.synthesize = failing_synth
+            asyncio.run(_drive())
+
+        [message] = [
+            r.getMessage()
+            for r in caplog.records
+            if "cancelled synthesis then failed" in r.getMessage()
+        ]
+        assert "\n" not in message
+        assert "\r" not in message
+        assert "voice 'x\\nERROR forged record\\r' not found" in message
+
+
+class _ReprQuotesTheKeyError(Exception):
+    """An error whose repr quotes its value, as a UnicodeEncodeError's does."""
+
+    def __str__(self) -> str:
+        return "header cannot be encoded"
+
+    def __repr__(self) -> str:
+        return "_ReprQuotesTheKeyError('Bearer SECRETKEY')"
 
 
 class TestSynthesizeCacheObservability:
@@ -819,7 +1002,7 @@ class TestSynthesizeCacheObservability:
 
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=MagicMock()),
-            patch("punt_vox.voxd.synthesis.TTSClient", return_value=mock_client),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient", return_value=mock_client),
         ):
             outcomes = asyncio.run(_drive())
         return outcomes, synth_calls
@@ -1118,3 +1301,46 @@ class TestApplyVibeForSynthesis:
         self._patch_expressive(monkeypatch)
         result = self._apply("hello", "[warm]", "elevenlabs", "eleven_v3")
         assert result == "[warm] hello"
+
+
+class TestOpenAIProviderKeyCapture:
+    """The key is the one in effect when the provider was built, not at first use.
+
+    voxd swaps OPENAI_API_KEY in for one request's provider construction; a
+    cancelled request's worker thread can make the first SDK build after the
+    swap is undone and another request's key is in the environment.
+    """
+
+    def test_first_build_uses_the_key_from_construction(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-A")
+        built: list[object] = []
+
+        def _build(**kwargs: object) -> MagicMock:
+            built.append(kwargs.get("api_key"))
+            client = MagicMock()
+            client.audio.speech.create.return_value.content = b"audio"
+            return client
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+
+        with ApiKeyEnv("openai", "sk-B").applied():
+            provider = OpenAIProvider()
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-C")
+        provider.synthesize(
+            SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+        )
+
+        assert built == ["sk-B"]
+
+    def test_health_reports_the_key_from_construction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with ApiKeyEnv("openai", "sk-B").applied():
+            provider = OpenAIProvider(client=MagicMock())
+
+        key, _ = provider.check_health()
+
+        assert key.passed

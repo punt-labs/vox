@@ -5,13 +5,18 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 import openai
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
+from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.chunked import chunked_synthesize
+from punt_vox.providers.lazy_sdk import LazySdk
+from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
+from punt_vox.providers.provider_refusal import ProviderRefusalError
+from punt_vox.providers.stream_file import StreamFile
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -20,11 +25,13 @@ from punt_vox.types import (
     TTSProvider,
     VoiceNotFoundError,
 )
-from punt_vox.types_provider_errors import ProviderAuthError
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["OpenAIProvider"]
+
+# The variable the readiness gate names for this provider, not a second literal.
+_KEY_CHECK = ApiKeyCheck.for_provider("openai")
 
 # Maximum characters per OpenAI TTS API request.
 _MAX_CHARS = 4096
@@ -55,20 +62,37 @@ class OpenAIProvider(TTSProvider):
 
     Implements the TTSProvider protocol using the OpenAI audio API.
     Supports tts-1 and tts-1-hd models with 9 built-in voices.
+
+    The SDK client is built on first use, not here: constructing it loads
+    ``SSL_CERT_FILE``, and a bad bundle should fail the request that needs
+    TLS -- by name -- rather than the code that merely composes a provider.
+
+    The key is read here, though. voxd swaps ``OPENAI_API_KEY`` in for the
+    length of a request that carries its own key and builds the provider
+    inside that window; the first SDK build can run later, on a worker thread
+    that outlived a cancelled request, after the swap is undone. Reading the
+    key then would send whatever key is in the environment at that moment --
+    possibly another caller's.
     """
 
     _model: str
-    _client: openai.OpenAI
+    # None: no key in the environment at construction; check_health says so.
+    _api_key: str | None
+    _client: LazySdk[openai.OpenAI]
 
     def __new__(
         cls,
         *,
         model: str | None = None,
+        # The test seam: absent, the real SDK client is built on first use.
         client: openai.OpenAI | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
-        self._client = client or openai.OpenAI()
+        self._api_key = os.environ.get(_KEY_CHECK.source)
+        self._client = LazySdk(
+            self._new_sdk, transport=openai.APIConnectionError, sdk=client
+        )
         return self
 
     @property
@@ -128,54 +152,57 @@ class OpenAIProvider(TTSProvider):
         return self._resolve_voice_name(name)
 
     def check_health(self) -> list[HealthCheck]:
-        """Check OpenAI API key and model access."""
-        checks: list[HealthCheck] = []
+        """Check the OpenAI API key, then the configured model's access."""
+        key = _KEY_CHECK.report("OpenAI", self._api_key)
+        if not key.passed:
+            return [key]
+        return [key, self._model_access_check()]
 
-        # Check OPENAI_API_KEY env var.
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI API key: not set (export OPENAI_API_KEY)",
-                )
-            )
-            return checks
-
-        checks.append(HealthCheck(passed=True, message="OpenAI API key: set"))
-
-        # Verify model access.
+    def _model_access_check(self) -> HealthCheck:
+        """Report whether the configured model is reachable with this key."""
         try:
-            self._client.models.retrieve(self._model)
-            checks.append(
-                HealthCheck(
-                    passed=True,
-                    message=f"OpenAI model access: {self._model}",
-                )
+            self._client.call(lambda sdk: sdk.models.retrieve(self._model))
+        except openai.APIStatusError as exc:
+            reason = self._refusal(exc)
+        except TRANSPORT_ERRORS as exc:
+            reason = str(exc)
+        else:
+            return HealthCheck(
+                passed=True, message=f"OpenAI model access: {self._model}"
             )
-        except openai.AuthenticationError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI model access: invalid API key",
-                )
-            )
-        except openai.NotFoundError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message=f"OpenAI model access: model '{self._model}' not found",
-                )
-            )
-        except openai.APIConnectionError:
-            checks.append(
-                HealthCheck(
-                    passed=False,
-                    message="OpenAI model access: cannot reach API (check network)",
-                )
-            )
+        return HealthCheck(passed=False, message=f"OpenAI model access: {reason}")
 
-        return checks
+    def _refusal(self, exc: openai.APIStatusError) -> str:
+        """Say why the server refused the model lookup -- any status, never raised."""
+        if isinstance(exc, openai.AuthenticationError):
+            return "invalid API key"
+        if isinstance(exc, openai.NotFoundError):
+            return f"model '{self._model}' not found"
+        if isinstance(exc, openai.PermissionDeniedError):
+            return self._refused(exc).answer
+        return f"HTTP {exc.status_code}"
+
+    @staticmethod
+    def _refused(
+        exc: openai.AuthenticationError | openai.PermissionDeniedError,
+    ) -> ProviderRefusalError:
+        """Return the refusal the caller sees, with the server's error code.
+
+        A 403 is not always the key -- the project or the region can be at
+        fault, and the code says which -- so its body, which never holds the
+        key, is logged whole. A 401's message can quote a masked key, so only
+        its code is.
+        """
+        if isinstance(exc, openai.PermissionDeniedError):
+            logger.error(
+                "openai refused the request (HTTP 403): code=%r message=%r",
+                exc.code,
+                exc.message,
+            )
+        else:
+            logger.error("openai rejected the key (HTTP 401): code=%r", exc.code)
+        # A response arrived, so the SDK's status_code is always set.
+        return ProviderRefusalError.from_code("openai", exc.status_code, exc.code)
 
     def get_default_voice(self, language: str) -> str:  # noqa: ARG002 -- protocol requires language param
         """Get the default OpenAI voice for a language.
@@ -208,6 +235,21 @@ class OpenAIProvider(TTSProvider):
             return VOICES[key]
         raise VoiceNotFoundError(name, sorted(VOICES))
 
+    def _new_sdk(self) -> openai.OpenAI:
+        """Construct the SDK client with the key this provider was built with.
+
+        Passed explicitly, so the SDK never reads ``OPENAI_API_KEY`` itself --
+        given no key, it would -- and checked first: the SDK puts the key in an
+        ``Authorization`` header, and httpx's refusal of a header it cannot
+        encode quotes the key.
+
+        Raises:
+            MalformedApiKeyError: The key cannot be sent as a header value.
+            ProviderUnavailableError: No key was set when this provider was
+                built.
+        """
+        return openai.OpenAI(api_key=_KEY_CHECK.require_set(self._api_key, self.name))
+
     @staticmethod
     def _rate_to_speed(rate: int) -> float:
         """Convert percentage rate to OpenAI speed parameter.
@@ -224,37 +266,35 @@ class OpenAIProvider(TTSProvider):
         voice: str,
         speed: float,
     ) -> None:
-        """Synthesize a single chunk to a file.
+        """Synthesize a single chunk to a file, all of it or nothing.
 
-        Wraps the OpenAI SDK call so an ``AuthenticationError`` at
-        synthesis-time (a revoked key, a wrong project, an org that
-        does not have TTS access) becomes a :class:`ProviderAuthError`
-        that ``WireReply.reject_or_fault`` routes verbatim to the
-        client, rather than falling through to speech_handlers' broad
-        guard and getting laundered to ``"operation failed"``. The
+        A rejected credential at synthesis time -- 401 for a revoked or wrong
+        key, 403 for a key whose project or org has no TTS access -- becomes a
+        :class:`ProviderAuthError` that ``WireReply.reject_or_fault`` routes
+        verbatim to the client, rather than falling through to speech_handlers'
+        broad guard and getting laundered to ``"operation failed"``. The
         readiness gate (:class:`ProviderCredentials`) catches the
         credential-absent case at F2; this catches the
-        credential-present-but-rejected case at F3, and both cross
-        the wire with a message the caller can act on.
+        credential-present-but-rejected case at F3.
+
+        The audio lands through :class:`StreamFile`: renamed into place only
+        once whole, and an empty body is rejected rather than cached.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            response: Any = self._client.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
-                model=self._model,
-                voice=voice,  # pyright: ignore[reportArgumentType]
-                input=text,
-                speed=speed,
-                response_format="mp3",
+            response = self._client.call(
+                lambda sdk: sdk.audio.speech.create(
+                    model=self._model,
+                    voice=voice,  # pyright: ignore[reportArgumentType]
+                    input=text,
+                    speed=speed,
+                    response_format="mp3",
+                )
             )
-        except openai.AuthenticationError as exc:
-            # 401 for a rejected key; status_code is nullable on the
-            # SDK's exception when the transport never got a response
-            # (e.g. an outbound proxy dropped the connection).
-            status = getattr(exc, "status_code", None)
-            raise ProviderAuthError("openai", status) from exc
+        except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
+            raise self._refused(exc) from exc
+        StreamFile(output_path).write((response.content,))
         logger.info(
             "API call: provider=openai, voice=%s, chars=%d",
             voice,
             len(text),
         )
-        output_path.write_bytes(response.content)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]

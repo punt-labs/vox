@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
+from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import (
@@ -205,16 +207,6 @@ class VoxDaemon:
             logger.info("voxd stopped")
 
     @staticmethod
-    def read_port_file() -> int | None:
-        """Read the daemon port from the port file."""
-        return DaemonConfig.read_port_file(_run_dir())
-
-    @staticmethod
-    def read_token_file() -> str | None:
-        """Read the daemon auth token."""
-        return DaemonConfig.read_token_file(_run_dir())
-
-    @staticmethod
     def _programs_root() -> Path:
         """Return the root directory under which saved Programs live.
 
@@ -233,8 +225,16 @@ class VoxDaemon:
         The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
         drive the subsystem with a fake; the ElevenLabs default is applied here, at
         the daemon composition root.
+
+        The key is read here, from the variable the readiness gate names, and
+        passed explicitly. Boot calls this after the keys file is loaded and
+        before any request runs, so the long-lived music client holds the
+        daemon's own key -- never one a synthesis request has swapped into the
+        environment for its own duration.
         """
-        producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
+        key_var = ProviderCredentials().api_key_env_vars()["elevenlabs"]
+        music = ElevenLabsMusicProvider(api_key=os.environ.get(key_var))
+        producer = MusicProducer(music, LengthPolicy())
         mpv_socket = _run_dir() / "mpv.sock"
         return ProgramSubsystem(VoxDaemon._programs_root(), producer, mpv_socket)
 
@@ -260,11 +260,7 @@ class VoxDaemon:
     ) -> Starlette:
         """Build a Starlette app from pre-wired components."""
         routes: list[Route | WebSocketRoute] = [
-            Route(
-                "/health",
-                VoxDaemon._health_handler(health),
-                methods=["GET"],
-            ),
+            Route("/health", VoxDaemon._health_handler(health), methods=["GET"]),
             WebSocketRoute("/ws", router.handle_connection),
         ]
         return Starlette(routes=routes, lifespan=lifespan)
@@ -301,10 +297,7 @@ class VoxDaemon:
                 programs=progs,
                 health=hlth,
             ).build()
-            router = WebSocketRouter(
-                handlers=handlers,
-                auth_token=auth_token,
-            )
+            router = WebSocketRouter(handlers=handlers, auth_token=auth_token)
 
         return VoxDaemon._starlette(health=hlth, router=router)
 

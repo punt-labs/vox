@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types_errors import VoiceNotFoundError
 from punt_vox.types_provider_errors import (
     ProviderAuthError,
@@ -116,6 +117,48 @@ class TestSynthesizeParseGuard:
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "1"
         assert "text must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "api_key",
+        [
+            "SECRETKEY123\n",
+            "SECRET\u00a0KEY123",
+            "SECRETKEY123\u200b",
+            "SECRET\u2013KEY123",
+            "SECRET\u2019KEY123",
+            "SECRETKEY123 ",
+        ],
+        ids=["newline", "nbsp", "zwsp", "en-dash", "smart-quote", "trailing-space"],
+    )
+    async def test_unsendable_api_key_is_rejected_without_its_value(
+        self, api_key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A per-request key that cannot go in a header never reaches a provider,
+        and neither the reply nor the log quotes it."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "elevenlabs",
+            "api_key": api_key,
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert "api_key contains a character no HTTP header may carry" in str(
+            sent[-1]["message"]
+        )
+        assert "SECRET" not in str(sent)
+        assert "SECRET" not in caplog.text
         mock_synth.synthesize_to_file.assert_not_called()
 
 
@@ -577,6 +620,25 @@ class TestSynthesizeHandlerTypedErrorRouting:
             f.get("type") == "fault" or f.get("message") == "operation failed"
             for f in sent
         ), "F5 must never route through fault()"
+
+    @pytest.mark.asyncio
+    async def test_unusable_ca_bundle_crosses_verbatim_via_error(self) -> None:
+        # An unloadable SSL_CERT_FILE is configuration the caller's operator
+        # can fix; laundered to "operation failed" it is undiagnosable.
+        message = (
+            "SSL_CERT_FILE names a CA bundle that cannot be loaded "
+            "(No such file or directory); fix the path or unset SSL_CERT_FILE"
+        )
+        handler, _ = self._handler_that_raises(CaBundleError(message))
+
+        sent = await self._drive(handler)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"] == message
+        assert not any(
+            f.get("type") == "fault" or f.get("message") == "operation failed"
+            for f in sent
+        ), "a CA bundle failure must never route through fault()"
 
     @pytest.mark.asyncio
     async def test_reject_log_escapes_newlines_in_caller_supplied_strings(

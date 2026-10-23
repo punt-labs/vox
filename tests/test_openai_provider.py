@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import logging
+import ssl
+import traceback
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
 
 from punt_vox.core import (
     _split_at_words,  # pyright: ignore[reportPrivateUsage]
     split_text,
 )
+from punt_vox.providers.api_key import MalformedApiKeyError
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.openai import OpenAIProvider
+from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_refusal import ProviderRefusalError
 from punt_vox.types import SynthesisRequest, VoiceNotFoundError
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
 
 class TestSplitText:
@@ -300,6 +309,156 @@ class TestOpenAIProviderSynthesize:
         assert exc_info.value.provider_name == "openai"
         assert exc_info.value.status_code == 401
 
+    def test_synthesize_translates_permission_denied_to_provider_auth_error(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A 403 -- a key whose project or org has no TTS access -- is the same
+        credential rejection as a 401, and crosses the wire as F3 with its own
+        status."""
+        import openai
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_openai_client.audio.speech.create.side_effect = (
+            openai.PermissionDeniedError(
+                message="project has no access to tts-1",
+                response=MagicMock(status_code=403),
+                body=None,
+            )
+        )
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        request = SynthesisRequest(text="hello", voice="alloy")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "denied.mp3")
+
+        assert exc_info.value.status_code == 403
+
+    @staticmethod
+    def _denied(code: str | None) -> openai.PermissionDeniedError:
+        body: dict[str, object] = {"message": "Country not supported", "code": code}
+        return openai.PermissionDeniedError(
+            message=f"Error code: 403 - {body}",
+            response=MagicMock(status_code=403),
+            body=body,
+        )
+
+    def test_rejected_key_logs_its_code_but_not_its_message(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """OpenAI's 401 message quotes the key, masked; only the code is logged."""
+        body: dict[str, object] = {
+            "message": "Incorrect API key provided: sk-proj-****WXYZ",
+            "code": "invalid_api_key",
+        }
+        mock_openai_client.audio.speech.create.side_effect = openai.AuthenticationError(
+            message=f"Error code: 401 - {body}",
+            response=MagicMock(status_code=401),
+            body=body,
+        )
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="punt_vox.providers.openai"),
+            pytest.raises(ProviderRefusalError) as info,
+        ):
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "rejected.mp3"
+            )
+
+        assert "HTTP 401: invalid_api_key" in str(info.value)
+        assert "invalid_api_key" in caplog.text
+        assert "WXYZ" not in caplog.text
+
+    def test_permission_denied_carries_the_server_s_reason(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A 403 is not always a bad key: the server's error code says which."""
+        mock_openai_client.audio.speech.create.side_effect = self._denied(
+            "unsupported_country_region_territory"
+        )
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="punt_vox.providers.openai"),
+            pytest.raises(ProviderRefusalError) as info,
+        ):
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "denied.mp3"
+            )
+
+        assert str(info.value) == (
+            "provider 'openai' refused the request (HTTP 403: "
+            "unsupported_country_region_territory); run `vox doctor`"
+        )
+        assert "unsupported_country_region_territory" in caplog.text
+        assert "Country not supported" in caplog.text
+
+    @pytest.mark.parametrize("code", [None, "", "bad code\nforged line", "x" * 65])
+    def test_permission_denied_without_a_usable_code_is_a_plain_rejection(
+        self, code: str | None, mock_openai_client: MagicMock, tmp_output_dir: Path
+    ) -> None:
+        """The code crosses the wire: only a plain identifier is quoted."""
+        mock_openai_client.audio.speech.create.side_effect = self._denied(code)
+        request = SynthesisRequest(text="hello", voice="alloy")
+
+        with pytest.raises(ProviderRefusalError) as info:
+            OpenAIProvider(client=mock_openai_client).synthesize(
+                request, tmp_output_dir / "denied.mp3"
+            )
+
+        assert str(info.value) == (
+            "provider 'openai' rejected the credentials (HTTP 403); run `vox doctor`"
+        )
+
+    def test_synthesize_rejects_empty_audio(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """An empty response body is no audio; caching it would poison the key."""
+        mock_openai_client.audio.speech.create.side_effect = None
+        mock_openai_client.audio.speech.create.return_value = MagicMock(content=b"")
+        out = tmp_output_dir / "empty.mp3"
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        with pytest.raises(RuntimeError, match="no audio"):
+            provider.synthesize(SynthesisRequest(text="hello", voice="alloy"), out)
+
+        assert list(tmp_output_dir.iterdir()) == []
+
+    def test_synthesize_writes_through_a_temp_file(
+        self,
+        openai_provider: OpenAIProvider,
+        tmp_output_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The target appears whole or not at all: the bytes land beside it and
+        are renamed into place, so a crash mid-write cannot leave a torn file."""
+        out = tmp_output_dir / "atomic.mp3"
+        landed: list[tuple[Path, Path]] = []
+        real_replace = Path.replace
+
+        def _spy(self: Path, target: Path) -> Path:
+            landed.append((self, target))
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _spy)
+
+        openai_provider.synthesize(SynthesisRequest(text="hello", voice="alloy"), out)
+
+        assert [target for _, target in landed] == [out]
+        assert landed[0][0].parent == out.parent
+        assert out.stat().st_size > 0
+
 
 class TestOpenAIProviderDefaultModel:
     def test_default_model(self) -> None:
@@ -392,6 +551,55 @@ class TestOpenAIProviderCheckHealth:
         assert not checks[1].passed
         assert "not found" in checks[1].message
 
+    @pytest.mark.parametrize(
+        ("error_cls", "status"),
+        [
+            (openai.RateLimitError, 429),
+            (openai.InternalServerError, 500),
+        ],
+    )
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_any_status_error_is_a_failed_line_with_its_status(
+        self,
+        mock_openai_client: MagicMock,
+        error_cls: type[openai.APIStatusError],
+        status: int,
+    ) -> None:
+        """The server answered with an error: report it, never raise out."""
+        mock_openai_client.models.retrieve.side_effect = error_cls(
+            message="nope", response=MagicMock(status_code=status), body=None
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert not checks[1].passed
+        assert checks[1].message == f"OpenAI model access: HTTP {status}"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_permission_denied_line_carries_the_server_s_code(
+        self, mock_openai_client: MagicMock
+    ) -> None:
+        body: dict[str, object] = {"message": "nope", "code": "model_not_allowed"}
+        mock_openai_client.models.retrieve.side_effect = openai.PermissionDeniedError(
+            message="nope", response=MagicMock(status_code=403), body=body
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert checks[1].message == "OpenAI model access: HTTP 403: model_not_allowed"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"})
+    def test_permission_denied_line_without_a_code_is_the_bare_status(
+        self, mock_openai_client: MagicMock
+    ) -> None:
+        mock_openai_client.models.retrieve.side_effect = openai.PermissionDeniedError(
+            message="nope", response=MagicMock(status_code=403), body=None
+        )
+
+        checks = OpenAIProvider(client=mock_openai_client).check_health()
+
+        assert checks[1].message == "OpenAI model access: HTTP 403"
+
 
 class TestOpenAIProviderLanguageSupport:
     def test_resolve_voice_with_language(self) -> None:
@@ -437,3 +645,188 @@ class TestOpenAIProviderLanguageSupport:
         request = SynthesisRequest(text="hello", voice="nova")
         result = openai_provider.synthesize(request, tmp_output_dir / "test.mp3")
         assert result.language is None
+
+
+class TestOpenAIProviderBadCaBundle:
+    """The OpenAI SDK loads SSL_CERT_FILE when its client is built, like ElevenLabs."""
+
+    @pytest.fixture
+    def missing_ca(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        cafile = tmp_path / "gone" / "ca-bundle.pem"
+        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        return cafile
+
+    def test_construction_never_builds_the_sdk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built: list[object] = []
+        monkeypatch.setattr(
+            "punt_vox.providers.openai.openai.OpenAI",
+            lambda **_kwargs: built.append(object()),  # pyright: ignore[reportUnknownLambdaType]
+        )
+
+        OpenAIProvider()
+
+        assert built == []
+
+    def test_construction_survives_a_missing_bundle(self, missing_ca: Path) -> None:
+        assert OpenAIProvider().name == "openai"
+
+    def test_synthesize_names_the_variable_not_the_path(
+        self, missing_ca: Path, tmp_path: Path
+    ) -> None:
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE") as info:
+            OpenAIProvider().synthesize(request, tmp_path / "out.mp3")
+
+        assert str(missing_ca) not in str(info.value)
+
+    def test_check_health_reports_the_bundle(self, missing_ca: Path) -> None:
+        key, access = OpenAIProvider().check_health()
+
+        assert key.passed
+        assert not access.passed
+        assert "SSL_CERT_FILE" in access.message
+
+    def test_tls_verify_failure_with_bundle_set_names_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = openai.APIConnectionError(request=MagicMock())
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        client = MagicMock()
+        client.audio.speech.create.side_effect = error
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
+            OpenAIProvider(client=client).synthesize(request, tmp_path / "out.mp3")
+
+    def test_connection_error_is_transient(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        client = MagicMock()
+        client.audio.speech.create.side_effect = openai.APIConnectionError(
+            request=MagicMock()
+        )
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with pytest.raises(ProviderTransportError):
+            OpenAIProvider(client=client).synthesize(request, tmp_path / "out.mp3")
+
+    def test_check_health_reports_an_unreachable_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        client = MagicMock()
+        client.models.retrieve.side_effect = openai.APIConnectionError(
+            request=MagicMock()
+        )
+
+        _, access = OpenAIProvider(client=client).check_health()
+
+        assert not access.passed
+        assert "check the network" in access.message
+
+
+class TestOpenAIProviderMalformedKey:
+    """A key no header may carry never reaches the SDK or the log."""
+
+    _KEY = "sk-SECRETKEY123"
+
+    @pytest.fixture(
+        params=[
+            f"{_KEY}\n",
+            "sk-SECRET\u00a0KEY123",
+            f"{_KEY}\u200b",
+            "sk-SECRET\u2013KEY123",
+            "sk-ab\u2019cdSECRETKEY123",
+            f"{_KEY} ",
+        ],
+        ids=["newline", "nbsp", "zwsp", "en-dash", "smart-quote", "trailing-space"],
+    )
+    def bad_key(
+        self, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+    ) -> list[dict[str, object]]:
+        monkeypatch.setenv("OPENAI_API_KEY", request.param)
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+        return built
+
+    def test_synthesis_names_the_variable_not_the_key(
+        self,
+        bad_key: list[dict[str, object]],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        request = SynthesisRequest(text="hello", voice="nova")
+
+        with (
+            caplog.at_level(logging.DEBUG),
+            pytest.raises(MalformedApiKeyError) as info,
+        ):
+            OpenAIProvider().synthesize(request, tmp_path / "out.mp3")
+
+        assert "OPENAI_API_KEY" in str(info.value)
+        assert "SECRET" not in "".join(traceback.format_exception(info.value))
+        assert "SECRET" not in caplog.text
+        assert bad_key == []
+
+    @pytest.mark.usefixtures("bad_key")
+    def test_health_reports_it_as_a_failed_line(self) -> None:
+        checks = OpenAIProvider().check_health()
+
+        assert len(checks) == 1
+        assert not checks[0].passed
+        assert "no HTTP header may carry" in checks[0].message
+        assert "SECRET" not in checks[0].message
+
+
+class TestOpenAIProviderAbsentKey:
+    """No key at construction is final: the SDK never falls back to the env."""
+
+    def test_a_key_set_after_construction_is_never_sent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+        provider = OpenAIProvider()
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-later")
+
+        with pytest.raises(ProviderUnavailableError, match="OPENAI_API_KEY"):
+            provider.synthesize(
+                SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+            )
+
+        assert built == []
+
+    def test_an_empty_key_is_no_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An empty variable never reaches the SDK as a blank key."""
+        monkeypatch.setenv("OPENAI_API_KEY", "")
+        built: list[dict[str, object]] = []
+
+        def _build(**kwargs: object) -> None:
+            built.append(kwargs)
+
+        monkeypatch.setattr("punt_vox.providers.openai.openai.OpenAI", _build)
+
+        with pytest.raises(ProviderUnavailableError, match="OPENAI_API_KEY"):
+            OpenAIProvider().synthesize(
+                SynthesisRequest(text="hello", voice="nova"), tmp_path / "out.mp3"
+            )
+
+        assert built == []

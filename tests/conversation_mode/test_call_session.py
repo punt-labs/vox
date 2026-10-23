@@ -11,15 +11,22 @@ from __future__ import annotations
 
 import logging
 import struct
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Callable
+
+import pytest
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.providers.api_key import MalformedApiKeyError
+from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
+from punt_vox.providers.provider_faults import PERMANENT_ERRORS, ProviderConfigError
+from punt_vox.providers.provider_refusal import ProviderRefusalError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
-from punt_vox.voxd.conversation_mode.call_session import CallSession
+from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
@@ -27,9 +34,6 @@ from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
-
-if TYPE_CHECKING:
-    import pytest
 
 _CHUNK_S = 0.02
 
@@ -72,6 +76,13 @@ async def _feed_one_turn(session: CallSession) -> None:
         await session.process_chunk(_speech_chunk())
     for _ in range(10):
         await session.process_chunk(_silence_chunk())
+
+
+def _record_transitions(session: CallSession) -> list[tuple[Mode, Mode]]:
+    """Return a list that fills with every ``(before, after)`` mode change."""
+    seen: list[tuple[Mode, Mode]] = []
+    session.actor.on_transition(lambda before, after: seen.append((before, after)))
+    return seen
 
 
 async def test_full_round_trip_speaks_the_agent_s_reply() -> None:
@@ -424,26 +435,26 @@ class TestSTTTranscribeFailureRecovery:
         assert session_attach.turns() == ["hello"]
 
 
-class _AuthFailingSTTProvider:
-    """An ``STTProvider`` whose ``transcribe`` always raises ``ProviderAuthError``."""
+class _RaisingSTTProvider:
+    """An ``STTProvider`` whose ``transcribe`` always raises *error*."""
 
-    def __init__(self) -> None:
-        # An instance attribute, not a literal, so mypy cannot narrow the
-        # branch below to "always true" and flag the trailing ``yield`` as
-        # unreachable.
-        self._always_fails = True
+    def __init__(self, error: Exception) -> None:
+        # Raised through an instance attribute, so mypy cannot see that the
+        # trailing ``yield`` is unreachable -- the method still has to be
+        # shaped as an async generator to satisfy STTProvider.transcribe.
+        self._error: Exception | None = error
 
     @property
     def name(self) -> str:
-        return "auth-failing-fake"
+        return "raising-fake"
 
     async def transcribe(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[TranscriptEvent]:
         async for _ in chunks:
             pass
-        if self._always_fails:
-            raise ProviderAuthError("elevenlabs", 401)
+        if self._error is not None:
+            raise self._error
         yield TranscriptEvent(  # pragma: no cover -- unreachable
             text="", confidence=0.0, is_final=True
         )
@@ -464,7 +475,7 @@ class TestSTTProviderAuthFailure:
         session_attach = FakeSessionAttach()
         session = CallSession(
             turn_detector=_detector(),
-            stt_provider=_AuthFailingSTTProvider(),
+            stt_provider=_RaisingSTTProvider(ProviderAuthError("elevenlabs", 401)),
             session_attach=session_attach,
             speak=speak,
         )
@@ -477,6 +488,286 @@ class TestSTTProviderAuthFailure:
         rejections = [phrase for phrase in speak.said if "credentials" in phrase]
         assert len(rejections) == 1
         assert "repeat" not in rejections[0].lower()
+
+
+class TestSTTCaBundleFailure:
+    """An unloadable SSL_CERT_FILE is as permanent as a rejected key: the call
+    ends, naming the variable, instead of asking the human to repeat forever.
+    """
+
+    @staticmethod
+    def _session(speak: _Recorder, session_attach: FakeSessionAttach) -> CallSession:
+        error = CaBundleError(
+            "SSL_CERT_FILE names a CA bundle that cannot be loaded "
+            "(No such file or directory); fix the path or unset SSL_CERT_FILE"
+        )
+        return CallSession(
+            turn_detector=_detector(),
+            stt_provider=_RaisingSTTProvider(error),
+            session_attach=session_attach,
+            speak=speak,
+        )
+
+    async def test_ends_the_call(self) -> None:
+        session = self._session(_Recorder(), FakeSessionAttach())
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.IDLE
+
+    async def test_says_one_message_naming_ssl_cert_file(self) -> None:
+        speak = _Recorder()
+        session = self._session(speak, FakeSessionAttach())
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        named = [phrase for phrase in speak.said if "SSL_CERT_FILE" in phrase]
+        assert len(named) == 1
+        assert not any("repeat" in phrase.lower() for phrase in speak.said)
+
+    async def test_forwards_no_turn(self) -> None:
+        session_attach = FakeSessionAttach()
+        session = self._session(_Recorder(), session_attach)
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        assert session_attach.turns() == []
+
+
+class _FailingSpeak(_Recorder):
+    """A ``SpeakFn`` that records every phrase, then raises -- a dead TTS path."""
+
+    async def __call__(self, text: str) -> None:
+        await super().__call__(text)
+        if text != "Listening.":
+            raise ConnectionError("TTS unreachable")
+
+
+def _rejected_key() -> Exception:
+    return ProviderAuthError("elevenlabs", 401)
+
+
+def _bad_ca_bundle() -> Exception:
+    return CaBundleError("SSL_CERT_FILE names a CA bundle that cannot be loaded")
+
+
+def _misconfigured() -> Exception:
+    return ProviderConfigError("provider request cannot be sent (ProxyError)")
+
+
+def _malformed_key() -> Exception:
+    return MalformedApiKeyError(
+        "ELEVENLABS_API_KEY contains a character no HTTP header may carry"
+    )
+
+
+def _missing_key() -> Exception:
+    return ProviderUnavailableError(
+        "elevenlabs",
+        "provider 'elevenlabs' is configured but voxd has no ELEVENLABS_API_KEY; "
+        "run `vox doctor`",
+    )
+
+
+def _refused() -> Exception:
+    return ProviderRefusalError.from_code("elevenlabs", 403, "quota_exceeded")
+
+
+# Factories, not instances: each test raises a fresh error with its own traceback.
+# The last two are subclasses: a call ends on them through their base's entry.
+_PERMANENT_STT_FAILURES = (
+    _rejected_key,
+    _missing_key,
+    _bad_ca_bundle,
+    _misconfigured,
+    _malformed_key,
+    _refused,
+)
+_PERMANENT_IDS = (
+    "rejected-key",
+    "missing-key",
+    "ca-bundle",
+    "config",
+    "malformed-key",
+    "refused",
+)
+
+# The one factory per member of PERMANENT_ERRORS.
+_PERMANENT_BY_KIND: dict[type[ValueError], Callable[[], Exception]] = {
+    ProviderAuthError: _rejected_key,
+    ProviderUnavailableError: _missing_key,
+    CaBundleError: _bad_ca_bundle,
+    ProviderConfigError: _misconfigured,
+}
+
+
+def test_every_permanent_error_is_exercised_here() -> None:
+    """A member added to PERMANENT_ERRORS fails here until it gets an ending."""
+    assert set(_PERMANENT_BY_KIND) == set(PERMANENT_ERRORS)
+
+
+class TestPermanentSTTFailureAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: from an active mode to
+    idle, with no pending addendum -- the transition a permanent STT failure
+    must take, whether or not the explanation could be spoken.
+    """
+
+    @staticmethod
+    def _session(error: Exception, speak: SpeakFn) -> CallSession:
+        return CallSession(
+            turn_detector=_detector(),
+            stt_provider=_RaisingSTTProvider(error),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_end_call_takes_listening_to_idle(
+        self, error: Callable[[], Exception]
+    ) -> None:
+        session = self._session(error(), _Recorder())
+        await session.start()
+        transitions = _record_transitions(session)
+
+        await _feed_one_turn(session)
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_end_call_applies_when_the_explanation_cannot_be_spoken(
+        self, error: Callable[[], Exception]
+    ) -> None:
+        """A TTS failure must not strand the call in listening, retrying forever."""
+        speak = _FailingSpeak()
+        session = self._session(error(), speak)
+        await session.start()
+        transitions = _record_transitions(session)
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert len(speak.said) == 2  # "Listening.", then the failed explanation
+
+    @pytest.mark.parametrize("error", _PERMANENT_STT_FAILURES, ids=_PERMANENT_IDS)
+    async def test_a_failed_explanation_is_logged(
+        self, error: Callable[[], Exception], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = self._session(error(), _FailingSpeak())
+        await session.start()
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert any(
+            "could not say why the call is ending" in r.getMessage()
+            and r.exc_info is not None
+            for r in caplog.records
+        )
+
+    async def test_each_permanent_error_says_its_own_reason(self) -> None:
+        """Three kinds, three different explanations -- none the generic one."""
+        endings: list[str] = []
+        for factory in _PERMANENT_BY_KIND.values():
+            speak = _Recorder()
+            session = self._session(factory(), speak)
+            await session.start()
+            await _feed_one_turn(session)
+            endings.append(speak.said[-1])
+
+        assert len(set(endings)) == len(endings)
+        assert all("Ending the call now." in ending for ending in endings)
+        assert not any("a retry won't fix" in ending for ending in endings)
+
+
+async def test_a_configuration_fault_says_to_check_the_proxy() -> None:
+    speak = _Recorder()
+    session = CallSession(
+        turn_detector=_detector(),
+        stt_provider=_RaisingSTTProvider(_misconfigured()),
+        session_attach=FakeSessionAttach(),
+        speak=speak,
+    )
+    await session.start()
+
+    await _feed_one_turn(session)
+
+    assert [phrase for phrase in speak.said if "proxy" in phrase] != []
+    assert not any("repeat" in phrase.lower() for phrase in speak.said)
+
+
+def _status_session(status: int | None, speak: _Recorder) -> CallSession:
+    """Build a session whose STT answers every turn with HTTP ``status``."""
+    error = ProviderStatusError("elevenlabs", status, "server's reason")
+    return CallSession(
+        turn_detector=_detector(),
+        stt_provider=_RaisingSTTProvider(error),
+        session_attach=FakeSessionAttach(),
+        speak=speak,
+    )
+
+
+_PERMANENT_STATUSES = (400, 403, 404, 422)
+
+
+class TestPermanentStatusAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: an answered refusal no
+    retry changes takes the call from listening to idle, with no pending
+    addendum, saying why."""
+
+    @pytest.mark.parametrize("status", _PERMANENT_STATUSES)
+    async def test_end_call_takes_listening_to_idle(self, status: int) -> None:
+        session = _status_session(status, _Recorder())
+        await session.start()
+        transitions = _record_transitions(session)
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+
+    @pytest.mark.parametrize("status", _PERMANENT_STATUSES)
+    async def test_the_ending_names_the_status(self, status: int) -> None:
+        speak = _Recorder()
+        session = _status_session(status, speak)
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        assert speak.said[-1] == (
+            "Sorry, this call can't continue -- speech recognition was refused "
+            f"(HTTP {status}); vox.log has the server's reason. Ending the call now."
+        )
+
+
+class TestRefusedStatus:
+    """The server's reason reaches the log; a rate limit or a 5xx asks the
+    human to repeat, as any transient fault does."""
+
+    async def test_the_server_s_reason_goes_to_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = _status_session(422, _Recorder())
+        await session.start()
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert "server's reason" in caplog.text
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, None])
+    async def test_a_transient_status_asks_to_repeat(self, status: int | None) -> None:
+        speak = _Recorder()
+        session = _status_session(status, speak)
+        await session.start()
+
+        await _feed_one_turn(session)
+
+        assert session.actor.mode is Mode.LISTENING
+        assert speak.said[-1] == "Sorry, I didn't catch that -- could you repeat it?"
 
 
 class TestCaptureDuringWait:
@@ -825,3 +1116,86 @@ async def test_reply_containing_a_secret_is_redacted_before_speaking(
     assert not any(secret in phrase for phrase in speak.said)
     assert any("[redacted]" in phrase for phrase in speak.said)
     assert any(secret in record.message for record in caplog.records)
+
+
+class TestUnsendableApiKeyAppliesEndCall:
+    """docs/conversation-mode-call-state.tex's EndCall: a key httpx cannot
+    send, or no key at all, fails every turn the same way, so the call goes
+    from listening to idle with no pending addendum, saying so, rather than
+    asking the human to repeat forever."""
+
+    @pytest.mark.parametrize(
+        "key",
+        ["sk-ab\u2019cdSECRET", "SECRET\u00a0KEY", "SECRET\n"],
+        ids=["smart-quote", "nbsp", "newline"],
+    )
+    async def test_real_stt_provider_ends_the_call_on_the_key(
+        self,
+        key: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+        speak = _Recorder()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=ElevenLabsSTTProvider(),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+        await session.start()
+        transitions = _record_transitions(session)
+
+        with caplog.at_level(logging.DEBUG):
+            await _feed_one_turn(session)
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+        assert "API key" in speak.said[-1]
+        assert "Ending the call now." in speak.said[-1]
+        assert "SECRET" not in caplog.text
+
+    async def test_real_stt_provider_ends_the_call_with_no_key(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No key set: the SDK is never built, and the call ends saying so
+        instead of asking the human to repeat against a provider that cannot
+        be reached."""
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        speak = _Recorder()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=ElevenLabsSTTProvider(),
+            session_attach=FakeSessionAttach(),
+            speak=speak,
+        )
+        await session.start()
+        transitions = _record_transitions(session)
+
+        with caplog.at_level(logging.ERROR):
+            await _feed_one_turn(session)
+
+        assert transitions == [(Mode.LISTENING, Mode.IDLE)]
+        assert session.actor.has_pending_addendum is False
+        assert "no API key" in speak.said[-1]
+        assert "Ending the call now." in speak.said[-1]
+        assert not any("repeat" in phrase.lower() for phrase in speak.said)
+        assert "ELEVENLABS_API_KEY" in caplog.text
+
+    async def test_the_key_ending_is_not_the_generic_configuration_one(
+        self,
+    ) -> None:
+        endings: list[str] = []
+        for error in (_malformed_key(), _misconfigured()):
+            speak = _Recorder()
+            session = CallSession(
+                turn_detector=_detector(),
+                stt_provider=_RaisingSTTProvider(error),
+                session_attach=FakeSessionAttach(),
+                speak=speak,
+            )
+            await session.start()
+            await _feed_one_turn(session)
+            endings.append(speak.said[-1])
+
+        assert endings[0] != endings[1]

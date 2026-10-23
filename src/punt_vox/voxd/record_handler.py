@@ -88,15 +88,21 @@ class RecordHandler(MessageHandler):
             )
             return
 
-        outcome = await self._synthesize(req)
+        await self._record(req, name)
+
+    async def _record(self, req: _SpeechRequest, name: str | None) -> None:
+        """Synthesize, land the file in the store, and send the terminal reply.
+
+        Each failing step has already sent its own error frame, so a failure
+        here only stops the pipeline.
+        """
+        outcome = await req.synthesize(self._synthesis)
         if outcome is None:
             return
-
         write = await self._store_outcome(req, name, outcome)
         if write is None:
             return
-
-        await reply.send(
+        await req.reply(
             {
                 "type": "audio",
                 "name": write.path.name,
@@ -134,18 +140,5 @@ class RecordHandler(MessageHandler):
             # Any place() failure (not just OSError) must reach the already-ack'd
             # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).fault(
-                SafeFault.from_exception(exc)
-            )
-            return None
-
-    async def _synthesize(self, req: _SpeechRequest) -> SynthesisOutcome | None:
-        """Synthesize to a file, or reply with the error and return None."""
-        try:
-            return await self._synthesis.synthesize_to_file(req.text, req.spec)
-        except Exception as exc:
-            logger.exception("Record synthesis failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).fault(
-                SafeFault.from_exception(exc)
-            )
+            await req.fault(SafeFault.from_exception(exc))
             return None

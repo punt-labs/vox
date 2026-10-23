@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.providers.api_key import MalformedApiKeyError
+from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.provider_faults import (
+    PERMANENT_ERRORS,
+    ProviderConfigError,
+    ProviderTransportError,
+)
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types import HealthCheck
-from punt_vox.types_provider_errors import ProviderAuthError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_transcriber import (
@@ -115,28 +123,26 @@ async def test_a_transient_provider_failure_returns_none_not_raises() -> None:
     assert dict(timer.marks)["stt_response_received"] == "transcribe failed"
 
 
-class _AuthFailingSTTProvider:
-    """An ``STTProvider`` whose ``transcribe`` always raises ``ProviderAuthError``."""
+class _RaisingSTTProvider:
+    """An ``STTProvider`` whose ``transcribe`` always raises *error*."""
 
-    def __init__(self) -> None:
-        # An instance attribute, not a literal, so mypy cannot narrow the
-        # branch below to "always true" and flag the trailing ``yield`` as
-        # unreachable -- it is genuinely unreachable at runtime (this fake
-        # always raises), but the method still has to be shaped as an async
-        # generator to satisfy STTProvider.transcribe's return type.
-        self._always_fails = True
+    def __init__(self, error: Exception) -> None:
+        # Raised through an instance attribute, so mypy cannot see that the
+        # trailing ``yield`` is unreachable -- the method still has to be
+        # shaped as an async generator to satisfy STTProvider.transcribe.
+        self._error: Exception | None = error
 
     @property
     def name(self) -> str:
-        return "auth-failing-fake"
+        return "raising-fake"
 
     async def transcribe(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[TranscriptEvent]:
         async for _ in chunks:
             pass
-        if self._always_fails:
-            raise ProviderAuthError("elevenlabs", 401)
+        if self._error is not None:
+            raise self._error
         yield TranscriptEvent(  # pragma: no cover -- unreachable
             text="", confidence=0.0, is_final=True
         )
@@ -152,9 +158,138 @@ async def test_a_provider_auth_error_is_reraised_not_swallowed() -> None:
     ambiguous-audio recovers to.
     """
     timer = _SpyTurnTimer()
-    transcriber = TurnTranscriber(_AuthFailingSTTProvider(), timer)
+    transcriber = TurnTranscriber(
+        _RaisingSTTProvider(ProviderAuthError("elevenlabs", 401)), timer
+    )
 
     with pytest.raises(ProviderAuthError):
         await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
 
     assert dict(timer.marks)["stt_response_received"] == "STT auth failed"
+
+
+def _bad_bundle() -> CaBundleError:
+    return CaBundleError(
+        "SSL_CERT_FILE names a CA bundle that cannot be loaded "
+        "(No such file or directory); fix the path or unset SSL_CERT_FILE"
+    )
+
+
+async def test_an_unloadable_ca_bundle_is_reraised_not_swallowed() -> None:
+    """A bad SSL_CERT_FILE is configuration: every later turn fails the same
+    way, so it must reach the caller, never collapse into "ask to repeat".
+    """
+    timer = _SpyTurnTimer()
+    transcriber = TurnTranscriber(_RaisingSTTProvider(_bad_bundle()), timer)
+
+    with pytest.raises(CaBundleError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT TLS setup failed"
+
+
+async def test_a_configuration_fault_is_reraised_not_swallowed() -> None:
+    """A proxy or base URL httpx refuses fails every turn identically, like a
+    bad bundle -- it must end the call, not loop on "ask to repeat"."""
+    timer = _SpyTurnTimer()
+    error = ProviderConfigError("provider request cannot be sent (ProxyError)")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(ProviderConfigError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT request misconfigured"
+
+
+async def test_an_unsendable_key_records_its_own_detail() -> None:
+    """A malformed key is a configuration fault with a cause the timer names."""
+    timer = _SpyTurnTimer()
+    error = MalformedApiKeyError("ELEVENLABS_API_KEY contains a character ...")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(MalformedApiKeyError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT API key unsendable"
+
+
+def _missing_key() -> ProviderUnavailableError:
+    return ProviderUnavailableError(
+        "elevenlabs",
+        "provider 'elevenlabs' is configured but voxd has no ELEVENLABS_API_KEY; "
+        "run `vox doctor`",
+    )
+
+
+async def test_a_missing_key_is_reraised_and_records_its_own_detail() -> None:
+    """No key is as permanent as a revoked one: every later turn finds none."""
+    timer = _SpyTurnTimer()
+    transcriber = TurnTranscriber(_RaisingSTTProvider(_missing_key()), timer)
+
+    with pytest.raises(ProviderUnavailableError):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] == "STT API key missing"
+
+
+# Every member of the one permanent set, built the way its raiser builds it.
+_PERMANENT_FACTORIES: dict[type[ValueError], Callable[[], ValueError]] = {
+    ProviderAuthError: lambda: ProviderAuthError("elevenlabs", 401),
+    ProviderUnavailableError: _missing_key,
+    CaBundleError: _bad_bundle,
+    ProviderConfigError: lambda: ProviderConfigError("proxy refused"),
+}
+
+
+def test_every_permanent_error_is_exercised_here() -> None:
+    """A member added to PERMANENT_ERRORS fails here until it gets a detail."""
+    assert set(_PERMANENT_FACTORIES) == set(PERMANENT_ERRORS)
+
+
+@pytest.mark.parametrize("kind", PERMANENT_ERRORS, ids=lambda kind: kind.__name__)
+async def test_every_permanent_error_records_its_own_detail(
+    kind: type[ValueError],
+) -> None:
+    timer = _SpyTurnTimer()
+    error = _PERMANENT_FACTORIES[kind]()
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(kind):
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert dict(timer.marks)["stt_response_received"] != "STT failed permanently"
+
+
+@pytest.mark.parametrize("status", [400, 403, 404, 422])
+async def test_a_permanent_status_is_reraised_with_its_status(status: int) -> None:
+    """A refusal no retry changes fails every turn identically; it must end
+    the call, never loop on "ask to repeat"."""
+    timer = _SpyTurnTimer()
+    error = ProviderStatusError("elevenlabs", status, "server's reason")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    with pytest.raises(ProviderStatusError) as info:
+        await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert info.value is error
+    assert dict(timer.marks)["stt_response_received"] == f"STT refused (HTTP {status})"
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, None])
+async def test_a_transient_status_still_asks_to_repeat(status: int | None) -> None:
+    """A rate limit or a 5xx may clear by the next turn."""
+    timer = _SpyTurnTimer()
+    error = ProviderStatusError("elevenlabs", status, None)
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    assert await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk())) is None
+    assert dict(timer.marks)["stt_response_received"] == "transcribe failed"
+
+
+async def test_a_provider_transport_error_still_asks_to_repeat() -> None:
+    """A dropped connection is transient: the next turn may succeed."""
+    timer = _SpyTurnTimer()
+    error = ProviderTransportError("provider request failed in transport")
+    transcriber = TurnTranscriber(_RaisingSTTProvider(error), timer)
+
+    assert await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk())) is None

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import os
+import ssl
+import threading
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from elevenlabs.core import ApiError
 from elevenlabs.types import (
@@ -14,7 +17,10 @@ from elevenlabs.types import (
     SpeechToTextWordResponseModel,
 )
 
+from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
+from punt_vox.providers.provider_faults import ProviderTransportError
+from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 
@@ -222,36 +228,119 @@ class TestElevenLabsSTTProviderAuthFailure:
             async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
                 pass
 
-    async def test_non_401_api_error_propagates_unchanged(self) -> None:
+    async def test_non_401_api_error_is_a_provider_status_error(self) -> None:
         client = MagicMock()
         client.speech_to_text.convert.side_effect = ApiError(status_code=500)
         provider = ElevenLabsSTTProvider(client=client)
-        with pytest.raises(ApiError) as exc_info:
+        with pytest.raises(ProviderStatusError) as exc_info:
             async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
                 pass
         assert exc_info.value.status_code == 500
 
 
 class TestElevenLabsSTTProviderCheckHealth:
-    def test_reports_unset_key(self, mock_stt_client: MagicMock) -> None:
+    def test_reports_unset_key(
+        self, mock_stt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
         provider = ElevenLabsSTTProvider(client=mock_stt_client)
-        original = os.environ.pop("ELEVENLABS_API_KEY", None)
-        try:
-            (check,) = provider.check_health()
-            assert check.passed is False
-        finally:
-            if original is not None:
-                os.environ["ELEVENLABS_API_KEY"] = original
 
-    def test_reports_set_key(self, mock_stt_client: MagicMock) -> None:
+        (check,) = provider.check_health()
+
+        assert check.passed is False
+
+    def test_reports_set_key(
+        self, mock_stt_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk_test")
         provider = ElevenLabsSTTProvider(client=mock_stt_client)
-        original = os.environ.get("ELEVENLABS_API_KEY")
-        os.environ["ELEVENLABS_API_KEY"] = "sk_test"
-        try:
-            (check,) = provider.check_health()
-            assert check.passed is True
-        finally:
-            if original is None:
-                del os.environ["ELEVENLABS_API_KEY"]
-            else:
-                os.environ["ELEVENLABS_API_KEY"] = original
+
+        (check,) = provider.check_health()
+
+        assert check.passed is True
+
+
+class TestElevenLabsSTTProviderBadCaBundle:
+    """An unloadable ``SSL_CERT_FILE`` fails the transcription, by name."""
+
+    @pytest.fixture
+    def missing_ca(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        cafile = tmp_path / "gone" / "ca-bundle.pem"
+        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+        return cafile
+
+    def test_construction_succeeds(self, missing_ca: Path) -> None:
+        provider = ElevenLabsSTTProvider()
+
+        assert provider.name == "elevenlabs"
+
+    async def test_transcribe_names_the_bundle(self, missing_ca: Path) -> None:
+        provider = ElevenLabsSTTProvider()
+
+        with pytest.raises(CaBundleError) as info:
+            async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
+                pass
+
+        assert "SSL_CERT_FILE" in str(info.value)
+        assert str(missing_ca) not in str(info.value)
+
+
+class TestElevenLabsSTTProviderOffTheLoop:
+    """The first transcription builds the SDK client, which reads the CA bundle
+    from disk -- blocking I/O that must not stall the call's event loop.
+    """
+
+    async def test_first_sdk_build_runs_off_the_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        loop_thread = threading.get_ident()
+        build_threads: list[int] = []
+
+        def _fake_sdk(**_kwargs: object) -> MagicMock:
+            build_threads.append(threading.get_ident())
+            client = MagicMock()
+            client.speech_to_text.convert.return_value = _response("hi", [_word(0.0)])
+            return client
+
+        monkeypatch.setattr(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs", _fake_sdk
+        )
+        provider = ElevenLabsSTTProvider()
+
+        async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
+            pass
+
+        assert len(build_threads) == 1
+        assert build_threads[0] != loop_thread
+
+
+class TestElevenLabsSTTProviderTransportFailure:
+    async def test_transport_error_is_transient_and_chained(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        cause = httpx.ConnectError("refused")
+        client = MagicMock()
+        client.speech_to_text.convert.side_effect = cause
+        provider = ElevenLabsSTTProvider(client=client)
+
+        with pytest.raises(ProviderTransportError) as info:
+            async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
+                pass
+
+        assert info.value.__cause__ is cause
+
+    async def test_tls_verify_failure_with_bundle_set_names_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/private/ca.pem")
+        error = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+        error.__cause__ = ssl.SSLCertVerificationError(1, "verify failed")
+        client = MagicMock()
+        client.speech_to_text.convert.side_effect = error
+        provider = ElevenLabsSTTProvider(client=client)
+
+        with pytest.raises(CaBundleError, match="SSL_CERT_FILE"):
+            async for _ in provider.transcribe(_chunks(b"\x01\x00" * 100)):
+                pass

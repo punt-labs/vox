@@ -5,21 +5,16 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import os
 import re
-import tempfile
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
 from punt_vox.cache import CacheKey, cache_get, cache_put
-from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
-from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -27,12 +22,13 @@ from punt_vox.types import (
     TTSProvider,
 )
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+from punt_vox.voxd.temp_synthesis import TempFileSynthesis
 
 __all__ = [
     "_LOCAL_PROVIDERS",
     "SynthesisPipeline",
-    "_run_play_directly_sync",
 ]
 
 logger = logging.getLogger(__name__)
@@ -46,86 +42,6 @@ logger = logging.getLogger(__name__)
 # providers are skipped entirely so we don't pay for provider construction
 # only to discover they don't implement play_directly.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
-
-
-# provider -> env-var the API-key context injects for it. Derived from
-# :class:`ProviderCredentials` (via :meth:`ProviderCredentials.api_key_env_vars`)
-# rather than duplicated here, so the direct-play env helper and the readiness
-# gate cannot list different env vars for the same provider. Adding an
-# API-key provider is one entry in the credentials module; this map picks
-# it up automatically.
-_PROVIDER_API_KEY_VAR: dict[str, str] = ProviderCredentials().api_key_env_vars()
-
-
-@contextlib.contextmanager
-def _api_key_context(api_key: str | None, provider_name: str) -> Generator[None]:
-    """Temporarily inject api_key into os.environ for the provider."""
-    env_key_name = _PROVIDER_API_KEY_VAR.get(provider_name)
-    old_key: str | None = None
-    if api_key and env_key_name:
-        old_key = os.environ.get(env_key_name)
-        os.environ[env_key_name] = api_key
-    try:
-        yield
-    finally:
-        if api_key and env_key_name:
-            if old_key is not None:
-                os.environ[env_key_name] = old_key
-            else:
-                os.environ.pop(env_key_name, None)
-
-
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
-
-
-def _run_play_directly_sync(
-    provider_name: str,
-    api_key: str | None,
-    provider_factory: Callable[[], TTSProvider],
-    request: AudioRequest,
-) -> int | None:
-    """Construct provider and call ``play_directly`` on a worker thread.
-
-    Returns ``None`` if the provider does not implement the
-    ``DirectPlayProvider`` protocol -- the caller will fall back to the
-    synthesize-and-queue path. For local providers (say, espeak) whose
-    direct play has been extracted to ``local_play.py``, constructs the
-    appropriate direct player sharing the provider's VoiceResolver.
-    """
-    with _api_key_context(api_key, provider_name):
-        provider = provider_factory()
-
-        # Local providers have extracted direct players that share
-        # the same VoiceResolver instance as the synthesis provider.
-        if provider_name == "say":
-            from punt_vox.providers.say import SayProvider
-
-            if isinstance(provider, SayProvider):
-                from punt_vox.providers.local_play import SayDirectPlayer
-
-                say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
-                return say_player.play_directly(request)
-
-        if provider_name == "espeak":
-            from punt_vox.providers.espeak import EspeakProvider
-
-            if isinstance(provider, EspeakProvider):
-                from punt_vox.providers.local_play import EspeakDirectPlayer
-
-                espeak_player = EspeakDirectPlayer(
-                    binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
-                    voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
-                )
-                return espeak_player.play_directly(request)
-
-        # Cloud providers and any other provider that implements
-        # DirectPlayProvider directly.
-        if isinstance(provider, DirectPlayProvider):
-            return provider.play_directly(request)
-
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -170,28 +86,18 @@ class SynthesisPipeline:
         return False
 
     @staticmethod
-    def _build_audio_request(
-        normalized_text: str,
-        voice: str | None,
-        language: str | None,
-        rate: int | None,
-        stability: float | None,
-        similarity: float | None,
-        style: float | None,
-        *,
-        speaker_boost: bool | None,
-        provider_id: str,
-    ) -> AudioRequest:
-        """Build an AudioRequest from parsed message fields."""
+    def _build_audio_request(normalized_text: str, spec: SynthesisSpec) -> AudioRequest:
+        """Build the provider's AudioRequest: *spec*'s fields over normalized text."""
+        provider_id = spec.provider or ""
         return AudioRequest(
             text=normalized_text,
-            voice=voice,
-            language=language,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
+            voice=spec.voice,
+            language=spec.language,
+            rate=spec.rate,
+            stability=spec.stability,
+            similarity=spec.similarity,
+            style=spec.style,
+            speaker_boost=spec.speaker_boost,
             provider=AudioProviderId(provider_id)
             if provider_id in AudioProviderId.__members__
             else None,
@@ -275,11 +181,9 @@ class SynthesisPipeline:
         cache on lookup and store (billing isolation); the anonymous path
         uses the MD5-keyed cache. See ``punt_vox.cache``.
         """
-        voice = spec.voice
         provider_name = spec.provider or ""
         model = spec.model
         api_key = spec.api_key
-        resolved_voice = voice or ""
 
         # apply_vibe_for_synthesis takes RAW text: it normalizes the body
         # after splitting off bracket tags that normalization would eat.
@@ -289,7 +193,7 @@ class SynthesisPipeline:
 
         # Cache lookup on the anonymous path only; per-call api_key scopes
         # bypass it (billing isolation + CodeQL sensitive-hash avoidance).
-        key = CacheKey(normalized, resolved_voice, provider_name)
+        key = CacheKey(normalized, spec.voice or "", provider_name)
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
@@ -306,26 +210,12 @@ class SynthesisPipeline:
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
-            with _api_key_context(api_key, provider_name):
+            with ApiKeyEnv(provider_name, api_key).applied():
                 provider = get_provider(provider_name, model=model)
-                request = self._build_audio_request(
-                    normalized,
-                    voice,
-                    spec.language,
-                    spec.rate,
-                    spec.stability,
-                    spec.similarity,
-                    spec.style,
-                    speaker_boost=spec.speaker_boost,
-                    provider_id=provider_name,
-                )
-                client = TTSClient(provider)
-
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                    output_path = Path(tmp.name)
-
-                await asyncio.to_thread(client.synthesize, request, output_path)
-                self._require_nonempty_output(output_path, spec, len(text))
+                request = self._build_audio_request(normalized, spec)
+                output_path = await TempFileSynthesis(
+                    provider, request, spec, len(text)
+                ).run()
 
                 # Anonymous path only; log the real cache_put path, never a
                 # CACHE_DIR snapshot and never file= when the bytes weren't cached
@@ -338,27 +228,6 @@ class SynthesisPipeline:
                     ", cached" if cached_path else "",
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
-
-    def _require_nonempty_output(
-        self, output_path: Path, spec: SynthesisSpec, chars_in: int
-    ) -> None:
-        """Delete and reject a missing or empty synthesis output; caching it would
-        poison every identical request, so it fails fast. The caller logs the
-        exception (traceback + fields) -- no separate log here.
-        """
-        try:
-            synth_size = output_path.stat().st_size
-        except OSError:
-            synth_size = -1
-        if synth_size > 0:
-            return
-        output_path.unlink(missing_ok=True)
-        msg = (
-            f"synthesis produced missing or empty output file: {output_path} "
-            f"(provider={spec.provider or ''}, voice={spec.voice or ''}, "
-            f"size={synth_size}, chars_in={chars_in})"
-        )
-        raise RuntimeError(msg)
 
     async def try_direct_play(
         self,
@@ -380,7 +249,6 @@ class SynthesisPipeline:
         injected. Local providers (espeak, say) take a fast path with no
         cross-request blocking. Audio playback never holds the lock.
         """
-        voice = spec.voice
         provider_name = spec.provider or ""
         model = spec.model
 
@@ -391,17 +259,7 @@ class SynthesisPipeline:
             text, spec.vibe_tags, provider_name, model
         )
 
-        request = self._build_audio_request(
-            normalized,
-            voice,
-            spec.language,
-            spec.rate,
-            spec.stability,
-            spec.similarity,
-            spec.style,
-            speaker_boost=spec.speaker_boost,
-            provider_id=provider_name,
-        )
+        request = self._build_audio_request(normalized, spec)
 
         def _factory() -> TTSProvider:
             return get_provider(provider_name, model=model)
@@ -436,7 +294,7 @@ class SynthesisPipeline:
             logger.error(
                 "Direct-play FAILED: provider=%r voice=%r elapsed=%.3fs rc=%d",
                 provider_name,
-                voice or "",
+                spec.voice or "",
                 elapsed,
                 rc,
             )
@@ -457,13 +315,61 @@ class SynthesisPipeline:
         even though direct play bypasses the queue.
         """
         provider_name = spec.provider or ""
-        api_key = spec.api_key
-        if api_key and provider_name in _PROVIDER_API_KEY_VAR:
+        key_env = ApiKeyEnv(provider_name, spec.api_key)
+        if key_env.injects:
             async with self._env_lock, self._playback_mutex:
                 return await asyncio.to_thread(
-                    _run_play_directly_sync, provider_name, api_key, factory, request
+                    self._play_directly_sync, provider_name, key_env, factory, request
                 )
         async with self._playback_mutex:
             return await asyncio.to_thread(
-                _run_play_directly_sync, provider_name, None, factory, request
+                self._play_directly_sync, provider_name, key_env, factory, request
             )
+
+    @staticmethod
+    def _play_directly_sync(
+        provider_name: str,
+        key_env: ApiKeyEnv,
+        provider_factory: Callable[[], TTSProvider],
+        request: AudioRequest,
+    ) -> int | None:
+        """Construct provider and call ``play_directly`` on a worker thread.
+
+        Returns ``None`` if the provider does not implement the
+        ``DirectPlayProvider`` protocol -- the caller will fall back to the
+        synthesize-and-queue path. For local providers (say, espeak) whose
+        direct play has been extracted to ``local_play.py``, constructs the
+        appropriate direct player sharing the provider's VoiceResolver.
+        """
+        with key_env.applied():
+            provider = provider_factory()
+
+            # Local providers have extracted direct players that share
+            # the same VoiceResolver instance as the synthesis provider.
+            if provider_name == "say":
+                from punt_vox.providers.say import SayProvider
+
+                if isinstance(provider, SayProvider):
+                    from punt_vox.providers.local_play import SayDirectPlayer
+
+                    say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
+                    return say_player.play_directly(request)
+
+            if provider_name == "espeak":
+                from punt_vox.providers.espeak import EspeakProvider
+
+                if isinstance(provider, EspeakProvider):
+                    from punt_vox.providers.local_play import EspeakDirectPlayer
+
+                    espeak_player = EspeakDirectPlayer(
+                        binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
+                        voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
+                    )
+                    return espeak_player.play_directly(request)
+
+            # Cloud providers and any other provider that implements
+            # DirectPlayProvider directly.
+            if isinstance(provider, DirectPlayProvider):
+                return provider.play_directly(request)
+
+            return None
