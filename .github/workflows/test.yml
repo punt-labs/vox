@@ -22,12 +22,14 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 18m = the apt ceilings (2m restore + 10m install + 2m save) + the rest
-    # of the job. Healthy runs take 3-5 min end to end (October 2026:
-    # 182-282 s), of which the two pytest invocations (default tier, then
-    # slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long as It
-    # Does") are ~3.5 min.
-    timeout-minutes: 18
+    # 22m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
+    # + 2m save) + 5m for the rest of the job. Healthy runs take 3-5 min end
+    # to end (October 2026: 182-282 s, of which apt is 16-62 s), so the
+    # non-apt steps take at most ~3.7 min; the two pytest invocations
+    # (default tier, then slow/subprocess -- see TESTING.md, "Why the Suite
+    # Takes as Long as It Does") are ~3.5 min of that. 22m is also above
+    # the 20m test-job default in punt-kit/standards/github.md.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -57,10 +59,17 @@ jobs:
       # 3. apt-install: bounded, retried download + local install. The
       #    download (network, safe to kill) is split from the install (dpkg,
       #    local, never killed mid-unpack, so a retry cannot hit an
-      #    interrupted dpkg database). Each attempt is capped at 60 s (update)
-      #    + 90 s (fetch); finished and partial .debs survive in
-      #    $VOX_APT_DIR, so a retry resumes. Three attempts with 10 s / 20 s
-      #    backoff bound a cold or stale cache at ~8 min.
+      #    interrupted dpkg database). `apt-get update --error-on=any` makes
+      #    a failed index fetch a non-zero exit, so it retries instead of
+      #    leaving stale lists to be saved under a new key. Each attempt is
+      #    capped at 60 s (update) + 90 s (fetch), each with a 10 s KILL
+      #    grace; finished and partial .debs survive in $VOX_APT_DIR, so a
+      #    retry resumes. Worst case for the download loop:
+      #      3 x ((60 + 10) + (90 + 10)) + 10 + 20 (backoff) = 540 s = 9 min
+      #    The final install runs with --no-download, so it can only use
+      #    the local .debs and fails at once on any gap. If the restore step
+      #    failed or timed out, whatever it half-extracted is discarded
+      #    first. The step then checks that ffmpeg and espeak-ng run.
       # 4. apt-save: on any non-exact hit, save the refreshed lists + .debs
       #    under the exact key right away, so a later failing test step does
       #    not cost the next run its cache. When test and packaging-e2e both
@@ -107,32 +116,64 @@ jobs:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
         with:
           # Globs skip apt's root-only lock files and the _apt partial/ dirs.
-          path: |
+          # Anchored here, aliased by apt-save: one path list for both.
+          path: &apt-cache-paths |
             ${{ env.VOX_APT_DIR }}/archives/*.deb
             ${{ env.VOX_APT_DIR }}/lists/*_*
           key: ${{ steps.apt-prepare.outputs.key }}
           restore-keys: ${{ steps.apt-prepare.outputs.restore-prefix }}
       - &apt-install
         name: Install ffmpeg and espeak-ng (cached, bounded, retried)
-        timeout-minutes: 10
+        # 12m = the 9 min (540 s) download worst case above + 3 min for the
+        # local dpkg install, autoclean, and the binary checks (16-62 s on
+        # healthy runs, download included).
+        timeout-minutes: 12
         env:
           APT_CACHE_HIT: ${{ steps.apt-restore.outputs.cache-hit }}
+          # outcome, not conclusion: continue-on-error turns a failed or
+          # timed-out restore's conclusion into success.
+          APT_RESTORE_OUTCOME: ${{ steps.apt-restore.outcome }}
         run: |
           set -euo pipefail
           read -ra packages <<<"$VOX_APT_PACKAGES"
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "::error::VOX_APT_PACKAGES is empty; nothing to install"
+            exit 1
+          fi
+          # timeout(1) exits 124 when it sends TERM, and 137 (128 + KILL)
+          # when the command outlives the -k grace and is killed.
+          describe_rc() {
+            case "$1" in
+              124) echo "exit 124, timed out" ;;
+              137) echo "exit 137, killed 10 s after timing out" ;;
+              *) echo "exit $1" ;;
+            esac
+          }
+          skip_update=false
+          if [ "$APT_RESTORE_OUTCOME" != "success" ]; then
+            # A restore killed mid-extract can leave truncated .debs and
+            # lists; apt would trust them. Start from an empty cache.
+            echo "::warning::apt cache restore ended '${APT_RESTORE_OUTCOME}'; discarding restored .debs and lists"
+            find "$VOX_APT_DIR/archives" -maxdepth 1 -type f -name '*.deb' -delete
+            find "$VOX_APT_DIR/lists" -maxdepth 1 -type f -name '*_*' -delete
+          elif [ "$APT_CACHE_HIT" = "true" ]; then
+            # Exact cache hit: the restored lists match this runner image, so
+            # the first attempt goes straight to the (0 B) download.
+            skip_update=true
+          fi
           # Idle-connection timeout 30 s (apt default 120 s); per-item retries.
           apt_opts=(-o Acquire::http::Timeout=30 -o Acquire::Retries=3)
           attempts=3
           for attempt in $(seq 1 "$attempts"); do
             echo "apt download attempt ${attempt}/${attempts}"
             rc=0
-            # Exact cache hit: the restored lists match this runner image, so
-            # the first attempt goes straight to the (0 B) download. A failed
-            # attempt refreshes the lists like a cold cache.
-            if [ "$APT_CACHE_HIT" = "true" ] && [ "$attempt" -eq 1 ]; then
+            # A failed attempt refreshes the lists like a cold cache.
+            if [ "$skip_update" = "true" ] && [ "$attempt" -eq 1 ]; then
               echo "apt cache hit: skipping apt-get update"
             else
-              sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update || rc=$?
+              # --error-on=any: a failed index fetch is an error, not a
+              # warning over the old lists.
+              sudo timeout -k 10 60 apt-get "${apt_opts[@]}" update --error-on=any || rc=$?
             fi
             if [ "$rc" -eq 0 ]; then
               sudo timeout -k 10 90 apt-get "${apt_opts[@]}" install -y \
@@ -142,17 +183,30 @@ jobs:
               break
             fi
             if [ "$attempt" -eq "$attempts" ]; then
-              echo "::error::apt download failed after ${attempts} attempts (last exit ${rc}; 124 = timed out)"
+              echo "::error::apt download failed after ${attempts} attempts (last: $(describe_rc "$rc"))"
               exit 1
             fi
             delay=$((attempt * 10))
-            echo "::warning::apt download attempt ${attempt}/${attempts} failed (exit ${rc}; 124 = timed out); retrying in ${delay}s"
+            echo "::warning::apt download attempt ${attempt}/${attempts} failed ($(describe_rc "$rc")); retrying in ${delay}s"
             sleep "$delay"
           done
-          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          # --no-download: install only from the .debs fetched above; a
+          # missing one fails here with apt's own message instead of a
+          # silent, unbounded fetch from the mirror.
+          sudo apt-get install -y --no-install-recommends --no-download "${packages[@]}"
           # Drop .debs the current lists no longer reference, so a cache
           # carried across runner images does not accumulate old versions.
           sudo apt-get autoclean
+          # The binaries the test suites call. The step name and these
+          # checks follow VOX_APT_PACKAGES; edit all three together.
+          for check in "ffmpeg -version" "espeak-ng --version"; do
+            read -ra cmd <<<"$check"
+            if ! out=$("${cmd[@]}" 2>&1); then
+              echo "::error::'${check}' failed after install: ${out}"
+              exit 1
+            fi
+            echo "${check}: ${out%%$'\n'*}"
+          done
       - &apt-save
         name: Save apt cache
         if: steps.apt-restore.outputs.cache-hit != 'true'
@@ -160,9 +214,7 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
         with:
-          path: |
-            ${{ env.VOX_APT_DIR }}/archives/*.deb
-            ${{ env.VOX_APT_DIR }}/lists/*_*
+          path: *apt-cache-paths
           key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
@@ -183,10 +235,10 @@ jobs:
   # human-judged testing. This is installed-wheel packaging smoke.
   packaging-e2e:
     runs-on: ubuntu-latest
-    # 15m = the apt ceilings (2m restore + 10m install + 2m save) + the rest
-    # of the job; healthy runs take under 1.5 min end to end (October 2026:
-    # 37-75 s).
-    timeout-minutes: 15
+    # 20m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
+    # + 2m save) + 3m for the rest of the job; healthy runs take under 1.5
+    # min end to end (October 2026: 37-75 s, apt included).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
