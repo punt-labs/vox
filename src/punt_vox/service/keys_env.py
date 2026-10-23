@@ -16,12 +16,21 @@ _HEADER = (
     "# Written by: vox daemon install\n"
     "# Edit with your normal editor — no sudo required.\n\n"
 )
-# Printable ASCII without space (0x21-0x7E): every character an API key or
-# token legitimately holds, and nothing a pasted smart quote or newline adds.
+# Values sent as HTTP header content (both API keys, the SigV4 access key id,
+# X-Amz-Security-Token) must be printable non-space ASCII, 0x21-0x7E, which also
+# rejects a pasted smart quote. The AWS secret key never goes on the wire, so it
+# and plain settings (profile, region, provider) get the line-break check alone.
 _HEADER_SAFE = frozenset(map(chr, range(0x21, 0x7F)))
-# Log templates take the key name only: a credential value never reaches a log.
+_CONTROL_CHARS = frozenset("\x00\n\r")
+_HEADER_CARRIED: frozenset[str] = frozenset(
+    {"ELEVENLABS_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"}
+)
+_VALUE_CHECK = dict.fromkeys(_HEADER_CARRIED, _HEADER_SAFE.issuperset)
 _KEPT = "Ignoring empty %s; keeping its keys.env value (edit the file to remove it)"
 _REFUSED = "Refusing to write %s: value contains a character no HTTP header may carry"
+_CONTROL = "Refusing to write %s: value contains control characters"
+_UNREADABLE = "Could not read existing %s: %s — will overwrite with env values"
+_UNLINK_FAILED = "Could not unlink unreadable %s: %s — write may fail"
 
 
 class KeysEnvWriter:
@@ -35,11 +44,9 @@ class KeysEnvWriter:
     def write(self, env: dict[str, str], keys_path: Path) -> Path:
         """Write ``keys.env`` at *keys_path* (mode 0600), merging existing keys.
 
-        Preserves any keys already present that the caller did not override; an
-        empty value in *env* never removes a stored key. The write is atomic
-        (temp file at mode 0600 + fsync + ``os.replace``) so a crash never leaves
-        a partial credentials file and the secret never exists at wider-than-0600
-        perms.
+        Preserves stored keys the caller did not override; an empty value never
+        removes one. The write is atomic (0600 temp file + fsync + ``os.replace``),
+        so a crash leaves no partial file and the secret is never wider than 0600.
         """
         self._harden_parent(keys_path)
         self._reject_irregular(keys_path)
@@ -60,11 +67,10 @@ class KeysEnvWriter:
     def _reject_irregular(self, keys_path: Path) -> None:
         """Abort the install if *keys_path* exists as a non-regular file."""
         if keys_path.is_symlink() or (keys_path.exists() and not keys_path.is_file()):
-            msg = (
+            raise SystemExit(
                 f"{keys_path} exists but is not a regular file. "
                 "Remove it manually and re-run install."
             )
-            raise SystemExit(msg)
 
     def _read_existing(self, keys_path: Path) -> tuple[dict[str, str], bool]:
         """Return the merge-base keys and whether to force a fresh write.
@@ -78,11 +84,7 @@ class KeysEnvWriter:
         try:
             text = keys_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            logger.warning(
-                "Could not read existing %s: %s — will overwrite with env values",
-                keys_path,
-                exc,
-            )
+            logger.warning(_UNREADABLE, keys_path, exc)
             return {}, True
         return parse_keys_env(text), False
 
@@ -91,8 +93,8 @@ class KeysEnvWriter:
 
         An empty value never removes a stored key: a failed secret lookup
         exports ``KEY=""`` rather than unsetting it, and must not wipe a working
-        credential. A value outside :data:`_HEADER_SAFE` is refused, which also
-        stops a newline smuggling extra ``key=value`` lines into the file.
+        credential. A value failing its :data:`_VALUE_CHECK` is refused, which
+        also stops a newline smuggling extra ``key=value`` lines into the file.
         """
         merged = dict(existing)
         for key in sorted(PROVIDER_KEY_NAMES & env.keys()):
@@ -100,19 +102,19 @@ class KeysEnvWriter:
             if not value:
                 if merged.get(key):
                     self._warn_kept(key)
-            elif _HEADER_SAFE.issuperset(value):
+            elif _VALUE_CHECK.get(key, _CONTROL_CHARS.isdisjoint)(value):
                 merged[key] = value
             else:
                 self._warn_refused(key)
         return merged
 
     def _warn_kept(self, key: str) -> None:
-        """Log that an empty *key* from the environment left the stored key alone."""
+        """Log, by name only, that an empty *key* left the stored value alone."""
         logger.warning(_KEPT, key)
 
     def _warn_refused(self, key: str) -> None:
-        """Log that *key* was refused; any stored value for it is kept."""
-        logger.warning(_REFUSED, key)
+        """Log, by name only, that *key* was refused; a stored value is kept."""
+        logger.warning(_REFUSED if key in _HEADER_CARRIED else _CONTROL, key)
 
     def _render(self, merged: dict[str, str]) -> str:
         """Return the file body: sorted ``key=value`` lines with a trailing newline."""
@@ -123,6 +125,4 @@ class KeysEnvWriter:
         try:
             keys_path.unlink(missing_ok=True)
         except OSError as exc:
-            logger.warning(
-                "Could not unlink unreadable %s: %s — write may fail", keys_path, exc
-            )
+            logger.warning(_UNLINK_FAILED, keys_path, exc)

@@ -221,6 +221,49 @@ def test_write_keys_env_override_and_absent_keys_log_nothing(
     assert caplog.records == []
 
 
+def test_write_keys_env_non_header_setting_keeps_spaces(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A plain setting such as AWS_PROFILE never goes in a header; a space is fine."""
+    keys_path = tmp_path / "keys.env"
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({"AWS_PROFILE": "my profile"}, keys_path)
+    assert "AWS_PROFILE=my profile" in keys_path.read_text()
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize(
+    "key", ["AWS_PROFILE", "TTS_PROVIDER", "AWS_SECRET_ACCESS_KEY"]
+)
+def test_write_keys_env_non_header_setting_refuses_control_chars(
+    writer: KeysEnvWriter,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    key: str,
+) -> None:
+    """Non-header values still get the line-injection refusal, by key name."""
+    keys_path = tmp_path / "keys.env"
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        writer.write({key: "x\nOPENAI_API_KEY=injected"}, keys_path)
+    assert "injected" not in keys_path.read_text()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(key in m and "control characters" in m for m in messages)
+    assert all("injected" not in m for m in messages)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["ELEVENLABS_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN"],
+)
+def test_write_keys_env_header_carried_keys_refuse_spaces(
+    writer: KeysEnvWriter, tmp_path: Path, key: str
+) -> None:
+    """Every value sent as HTTP header content gets the header-safe check."""
+    keys_path = tmp_path / "keys.env"
+    writer.write({key: "abc def"}, keys_path)
+    assert key not in keys_path.read_text()
+
+
 @pytest.mark.parametrize(
     "bad_value",
     [
