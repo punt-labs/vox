@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 import httpx
 from elevenlabs.client import ElevenLabs
-from elevenlabs.core import ApiError
+from elevenlabs.core import ApiError, ParsingError
 from elevenlabs.types import (
     SpeechToTextChunkResponseModel,
     SpeechToTextWordResponseModel,
@@ -109,11 +109,14 @@ class ElevenLabsClient:
         ``ProviderTransportError`` (transient). A 401 -- the server rejected the
         key -- becomes ``ProviderAuthError``; any other answered failure becomes
         ``ProviderStatusError``, carrying the status and the server's message.
+        So does an answer the SDK cannot parse into its response model.
         """
         try:
             return self._sdk.call(request)
         except ApiError as exc:
             raise self._answered(exc) from exc
+        except ParsingError as exc:
+            raise self._unparsed(exc) from exc
 
     def stream_to(
         self, target: Path, open_stream: Callable[[ElevenLabs], Iterable[bytes]]
@@ -163,6 +166,16 @@ class ElevenLabsClient:
                 built; a request without one would only be refused.
         """
         return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
+
+    @staticmethod
+    def _unparsed(exc: ParsingError) -> ProviderStatusError:
+        """Return the vox error for an answer that failed the SDK's validation.
+
+        The body decoded but does not fit the response model; it is not echoed.
+        """
+        return ProviderStatusError(
+            "elevenlabs", exc.status_code, "response did not match the expected schema"
+        )
 
     @staticmethod
     def _answered(exc: ApiError) -> ProviderAuthError | ProviderStatusError:

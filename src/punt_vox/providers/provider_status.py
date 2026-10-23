@@ -37,11 +37,8 @@ class ProviderStatusError(Exception):
 
     def __str__(self) -> str:
         """Render the status and the server's message, whichever there are."""
-        if self._status_code is None:
-            answered = "with no HTTP status"
-        else:
-            answered = f"HTTP {self._status_code}"
-        message = f"provider {self._provider_name!r} answered {answered}"
+        answered = "with " if self._status_code is None else ""
+        message = f"provider {self._provider_name!r} answered {answered}{self._status}"
         return message if self._detail is None else f"{message}: {self._detail}"
 
     @property
@@ -62,4 +59,13 @@ class ProviderStatusError(Exception):
     @property
     def reason(self) -> str:
         """Return the server's message, or the status when it gave none."""
-        return self._detail if self._detail is not None else f"HTTP {self._status_code}"
+        return self._detail if self._detail is not None else self._status
+
+    @property
+    def _status(self) -> str:
+        """Return the status as a phrase: ``HTTP 500``, or ``no HTTP status``."""
+        return (
+            "no HTTP status"
+            if self._status_code is None
+            else f"HTTP {self._status_code}"
+        )

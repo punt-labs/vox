@@ -40,10 +40,14 @@ def test_exposes_what_the_server_said() -> None:
 
 @pytest.mark.parametrize(
     ("status", "detail", "expected"),
-    [(500, "server melted", "server melted"), (500, None, "HTTP 500")],
-    ids=["message", "status"],
+    [
+        (500, "server melted", "server melted"),
+        (500, None, "HTTP 500"),
+        (None, None, "no HTTP status"),
+    ],
+    ids=["message", "status", "neither"],
 )
 def test_reason_is_the_message_or_else_the_status(
-    status: int, detail: str | None, expected: str
+    status: int | None, detail: str | None, expected: str
 ) -> None:
     assert ProviderStatusError("elevenlabs", status, detail).reason == expected

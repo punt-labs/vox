@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from elevenlabs.core import ApiError
+from elevenlabs.core import ApiError, ParsingError
 
 from punt_vox.providers.api_key import MalformedApiKeyError
 from punt_vox.providers.ca_bundle import CaBundleError
@@ -308,6 +308,17 @@ class TestSubscriptionCheck:
 
         assert check.message == "ElevenLabs subscription: payment required"
 
+    def test_a_response_off_the_schema_is_a_failed_line(self) -> None:
+        """A ParsingError never escapes the health check."""
+        sdk = MagicMock()
+        sdk.user.subscription.get.side_effect = ParsingError(status_code=200, body={})
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert check.message == (
+            "ElevenLabs subscription: response did not match the expected schema"
+        )
+
     def test_transport_error_is_a_failed_line(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -501,6 +512,22 @@ class TestCall:
             f"answered HTTP {status} with a response that is not the expected JSON"
         )
         assert "captive portal" not in str(info.value)
+
+    @pytest.mark.parametrize("status", [200, None], ids=["status", "no-status"])
+    def test_a_response_off_the_schema_is_a_provider_status_error(
+        self, status: int | None
+    ) -> None:
+        """The SDK raises ParsingError when a decoded body fails validation; it
+        leaves as a vox type, the body unechoed, the cause chained."""
+        cause = ParsingError(status_code=status, body={"secret": "body"})
+
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(lambda _sdk: _raise(cause))
+
+        assert info.value.status_code == status
+        assert info.value.detail == "response did not match the expected schema"
+        assert "secret" not in str(info.value)
+        assert info.value.__cause__ is cause
 
 
 class TestStreamTo:
