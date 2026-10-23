@@ -9,21 +9,348 @@ on:
 permissions:
   contents: read
 
+env:
+  # ffmpeg (pydub's codec backend) and espeak-ng (the Linux provider). The
+  # apt cache key hashes this string, so editing it starts a fresh cache.
+  VOX_APT_PACKAGES: ffmpeg espeak-ng
+  # Runner-owned apt state (archives + package lists) that actions/cache can
+  # tar and untar without root. The default /var/cache/apt/archives and
+  # /var/lib/apt/lists hold root-only lock files and a 0700 _apt partial/
+  # directory that the cache action, running as `runner`, cannot read.
+  VOX_APT_DIR: /var/cache/vox-ci-apt
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    # This job now runs two pytest invocations in sequence (default tier,
-    # then slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long
-    # as It Does"); 30m gives headroom for both rather than the 20m ceiling
-    # sized for the single unmarked run that preceded this taxonomy.
-    timeout-minutes: 30
+    # 22m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
+    # + 2m save) + 5m for the rest of the job. Healthy runs take 3-5 min end
+    # to end (October 2026: 182-282 s, of which apt is 16-62 s), so the
+    # non-apt steps take at most 282 - 16 = 266 s (~4.4 min), inside the 5m
+    # allowance; the two pytest invocations (default tier, then
+    # slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long as It
+    # Does") are ~3.5 min of that. 22m is also above
+    # the 20m test-job default in punt-kit/standards/github.md.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      # Install $VOX_APT_PACKAGES: four steps, defined once here and aliased
+      # into packaging-e2e, so both jobs install the same set the same way.
+      #
+      # Why: a healthy install takes 16-62 s, but in 13 of 78 job runs
+      # (October 2026) azure.archive.ubuntu.com served the ~70 MB of .debs at
+      # ~40 KB/s, and the step crawled to 2-19 min or was killed by the job
+      # timeout. The slow mirror is per-runner, not global -- the other job
+      # in the same run usually finished normally.
+      #
+      # 1. apt-prepare: create $VOX_APT_DIR (runner-owned), point apt at it
+      #    for both archives and lists, confine apt's sources to the image's
+      #    Ubuntu archive + security file, and compute the cache key
+      #      apt-v2-<ImageOS>-<arch>-<sha256(packages, flags, sources)[:16]>-<ImageVersion>
+      #    The runner image is in the key because the lists and .debs must
+      #    resolve against that image's installed package set; the sources
+      #    file is hashed because the lists are fetched from exactly it.
+      #    The image also ships third-party sources (packages.microsoft.com
+      #    and others) that ffmpeg and espeak-ng never come from. Confining
+      #    every apt-get call in the job to Ubuntu's sources means a broken
+      #    third-party repo cannot fail `update --error-on=any` below, and
+      #    the lists, the download, the install, and autoclean all read the
+      #    same source set. A missing Ubuntu sources file, or one with no
+      #    deb822 URIs: line to rewrite, fails the step. The image's
+      #    original is kept beside the copy; the key hashes the original,
+      #    so a mirror rewrite (step 3) never changes the key.
+      # 2. apt-restore: warm cache (exact key) restores the lists and every
+      #    .deb, so the install below skips `apt-get update` and apt reports
+      #    "Need to get 0 B" -- no mirror contact at all. A new runner image
+      #    misses the exact key and falls back to the newest cache for the
+      #    same package set (restore-keys); apt then refreshes the lists and
+      #    downloads only the .debs whose version changed.
+      # 3. apt-install: bounded, retried download + local install. The
+      #    download (network, safe to kill) is split from the install (dpkg,
+      #    local, never killed mid-unpack, so a retry cannot hit an
+      #    interrupted dpkg database). `apt-get update --error-on=any` makes
+      #    a failed index fetch a non-zero exit, so it retries instead of
+      #    leaving stale lists to be saved under a new key. Each attempt is
+      #    capped at 60 s (update) + 90 s (fetch), each with a 10 s KILL
+      #    grace; finished and partial .debs survive in $VOX_APT_DIR, so a
+      #    retry resumes. Worst case for the download loop:
+      #      3 x ((60 + 10) + (90 + 10)) + 10 + 20 (backoff) = 540 s = 9 min
+      #    Attempt 1 uses the image's sources verbatim. The image points them
+      #    at mirror+file:/etc/apt/apt-mirrors.txt (azure.archive first) and
+      #    bounds retries and timeouts in apt.conf.d/zz-retries so a hung or
+      #    refusing mirror fails over within seconds; this job does not
+      #    override those values. The mirror method fails over only on
+      #    errors, never on a slow transfer: in run 39946518738 three 90 s
+      #    attempts on azure.archive at ~50 KB/s fetched ~7 MB of 68 MB.
+      #    So attempts 2 and 3 rewrite
+      #    the Ubuntu-only copy (never /etc) to archive.ubuntu.com for the
+      #    archive pockets and security.ubuntu.com for -security
+      #    (ports.ubuntu.com off amd64/i386). The mirror the lists came from
+      #    is recorded in lists/vox-ci_mirror and cached with them, so an
+      #    exact hit reads the lists through the same sources that fetched
+      #    them. The final install runs with --no-download, so it can only
+      #    use the local .debs and fails at once on any gap. If the restore
+      #    step failed, timed out, or restored nothing (cache-hit unset),
+      #    whatever is in the cache directories is discarded first. The step
+      #    then checks that ffmpeg and espeak-ng run.
+      # 4. apt-save: on any non-exact hit, save the refreshed lists + .debs
+      #    under the exact key right away, so a later failing test step does
+      #    not cost the next run its cache. When test and packaging-e2e both
+      #    miss, one save wins and the other logs a non-fatal warning.
+      #
+      # The cache steps are best-effort: restore and save are bounded at 2
+      # min and continue-on-error, so a cache-service outage degrades to the
+      # cold path instead of failing the job.
+      #
+      # --no-install-recommends drops ~31 MB of the ~99 MB download
+      # (pocketsphinx-en-us at 27 MB, plus VA-API/VDPAU GPU drivers) that
+      # neither ffmpeg's audio path nor espeak-ng uses.
+      - &apt-prepare
+        name: Prepare apt cache directory and key
+        id: apt-prepare
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          : "${ImageOS:?runner image name unset}" "${ImageVersion:?runner image version unset}"
+          # The image's deb822 file for Ubuntu's archive and security
+          # pockets (ubuntu-24.04). No fallback to the full source set.
+          ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+          if [ ! -s "$ubuntu_sources" ]; then
+            echo "::error::${ubuntu_sources} is missing or empty; cannot confine apt to the Ubuntu sources"
+            exit 1
+          fi
+          # apt-install's mirror fallback rewrites deb822 URIs: lines.
+          if ! grep -q '^URIs:' "$ubuntu_sources"; then
+            echo "::error::${ubuntu_sources} has no deb822 URIs: line; cannot rewrite it to a fallback mirror"
+            exit 1
+          fi
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 \
+            "$VOX_APT_DIR" "$VOX_APT_DIR/archives" "$VOX_APT_DIR/lists" \
+            "$VOX_APT_DIR/sources.list.d"
+          # Not cached: rebuilt from the image every run. ubuntu.sources.image
+          # is the pristine original apt-install rewrites from; it sits
+          # outside sources.list.d, so apt never reads it directly.
+          install -m 0644 "$ubuntu_sources" "$VOX_APT_DIR/ubuntu.sources.image"
+          install -m 0644 "$ubuntu_sources" "$VOX_APT_DIR/sources.list.d/ubuntu.sources"
+          # Every apt-get invocation in this job reads its state from here.
+          # SourceList /dev/null drops the one-line sources.list; SourceParts
+          # replaces /etc/apt/sources.list.d with the Ubuntu-only copy.
+          # Keep-Downloaded-Packages is apt-get's default; stated because the
+          # cache depends on it.
+          printf '%s\n' \
+            "Dir::Cache::Archives \"$VOX_APT_DIR/archives\";" \
+            "Dir::State::Lists \"$VOX_APT_DIR/lists\";" \
+            'Dir::Etc::SourceList "/dev/null";' \
+            "Dir::Etc::SourceParts \"$VOX_APT_DIR/sources.list.d\";" \
+            'APT::Keep-Downloaded-Packages "true";' |
+            sudo tee /etc/apt/apt.conf.d/99vox-ci-cache >/dev/null
+          pkg_hash=$({
+            printf '%s\n' "$VOX_APT_PACKAGES" --no-install-recommends
+            cat "$ubuntu_sources"
+          } | sha256sum | cut -c1-16)
+          prefix="apt-v2-${ImageOS}-${RUNNER_ARCH}-${pkg_hash}-"
+          echo "restore-prefix=${prefix}" >>"$GITHUB_OUTPUT"
+          echo "key=${prefix}${ImageVersion}" >>"$GITHUB_OUTPUT"
+          echo "apt cache key: ${prefix}${ImageVersion}"
+      - &apt-restore
+        name: Restore apt cache
+        id: apt-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        env:
+          # The action's default per-segment download timeout is 10 min.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+        with:
+          # Globs skip apt's root-only lock files and the _apt partial/ dirs.
+          # Anchored here, aliased by apt-save: one path list for both.
+          path: &apt-cache-paths |
+            ${{ env.VOX_APT_DIR }}/archives/*.deb
+            ${{ env.VOX_APT_DIR }}/lists/*_*
+          key: ${{ steps.apt-prepare.outputs.key }}
+          restore-keys: ${{ steps.apt-prepare.outputs.restore-prefix }}
+      - &apt-install
+        name: Install ffmpeg and espeak-ng (cached, bounded, retried)
+        # 12m = the 9 min (540 s) download worst case above + 3 min for the
+        # local dpkg install, autoclean, and the binary checks (16-62 s on
+        # healthy runs, download included).
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.apt-restore.outputs.cache-hit }}
+          # outcome, not conclusion: continue-on-error turns a failed or
+          # timed-out restore's conclusion into success.
+          APT_RESTORE_OUTCOME: ${{ steps.apt-restore.outcome }}
+        run: |
+          set -euo pipefail
+          read -ra packages <<<"$VOX_APT_PACKAGES"
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "::error::VOX_APT_PACKAGES is empty; nothing to install"
+            exit 1
+          fi
+          # timeout(1) exits 124 when it sends TERM, and 137 (128 + KILL)
+          # when the command outlives the -k grace and is killed.
+          describe_rc() {
+            case "$1" in
+              124) echo "exit 124, timed out" ;;
+              137) echo "exit 137, killed 10 s after timing out" ;;
+              *) echo "exit $1" ;;
+            esac
+          }
+          image_sources="$VOX_APT_DIR/ubuntu.sources.image"
+          active_sources="$VOX_APT_DIR/sources.list.d/ubuntu.sources"
+          mirror_marker="$VOX_APT_DIR/lists/vox-ci_mirror"
+          case "$(dpkg --print-architecture)" in
+            amd64 | i386)
+              fallback_archive=http://archive.ubuntu.com/ubuntu/
+              fallback_security=http://security.ubuntu.com/ubuntu/
+              ;;
+            *)
+              fallback_archive=http://ports.ubuntu.com/ubuntu-ports/
+              fallback_security=$fallback_archive
+              ;;
+          esac
+          # Rewrite the Ubuntu-only copy apt reads; /etc/apt is never edited.
+          # image = the image's own sources; fallback = every URIs: line
+          # replaced, per deb822 stanza, by the security or archive mirror.
+          use_mirror() {
+            case "$1" in
+              image) install -m 0644 "$image_sources" "$active_sources" ;;
+              fallback)
+                awk -v archive="$fallback_archive" -v security="$fallback_security" '
+                  BEGIN { RS = ""; FS = "\n"; ORS = "\n\n" }
+                  {
+                    uri = archive
+                    for (i = 1; i <= NF; i++)
+                      if ($i ~ /^Suites:/ && $i ~ /-security/) uri = security
+                    out = ""
+                    for (i = 1; i <= NF; i++) {
+                      line = ($i ~ /^URIs:/) ? "URIs: " uri : $i
+                      out = out (i > 1 ? "\n" : "") line
+                    }
+                    print out
+                  }' "$image_sources" >"$active_sources"
+                if ! awk -v a="URIs: $fallback_archive" -v s="URIs: $fallback_security" '
+                  /^URIs:/ && $0 != a && $0 != s { bad = 1 }
+                  END { exit bad }' "$active_sources"; then
+                  echo "::error::fallback rewrite left a non-fallback URIs: line in ${active_sources}"
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::unknown apt mirror '$1'"
+                exit 1
+                ;;
+            esac
+            mirror=$1
+            echo "apt mirror: ${mirror} ($(sed -n 's/^URIs:[[:space:]]*//p' "$active_sources" | sort -u | paste -sd ' '))"
+          }
+          skip_update=false
+          start_mirror=image
+          if [ "$APT_RESTORE_OUTCOME" != "success" ] || [ -z "$APT_CACHE_HIT" ]; then
+            # A restore killed mid-extract can leave truncated .debs and
+            # lists; apt would trust them. actions/cache can also swallow an
+            # extraction error and report success with cache-hit unset --
+            # the same output as a true miss, which restores nothing. Exact
+            # hits set cache-hit=true and restore-key hits false, so an
+            # unset cache-hit means nothing here is trustworthy: start empty.
+            if [ "$APT_RESTORE_OUTCOME" != "success" ]; then
+              echo "::warning::apt cache restore ended '${APT_RESTORE_OUTCOME}'; discarding restored .debs and lists"
+            else
+              echo "apt cache miss (cache-hit unset): discarding any partially restored .debs and lists"
+            fi
+            find "$VOX_APT_DIR/archives" -maxdepth 1 -type f -name '*.deb' -delete
+            find "$VOX_APT_DIR/lists" -maxdepth 1 -type f -name '*_*' -delete
+          elif [ "$APT_CACHE_HIT" = "true" ]; then
+            # Exact cache hit: the restored lists match this runner image, so
+            # the first attempt goes straight to the (0 B) download, through
+            # the mirror that fetched those lists (apt names list files by
+            # source URI, so other sources would not see them).
+            skip_update=true
+            if [ -f "$mirror_marker" ]; then
+              start_mirror=$(<"$mirror_marker")
+            fi
+            case "$start_mirror" in
+              image | fallback) ;;
+              *)
+                echo "::warning::unrecognized apt mirror marker '${start_mirror}'; refreshing the lists from the image's sources"
+                start_mirror=image
+                skip_update=false
+                ;;
+            esac
+          fi
+          use_mirror "$start_mirror"
+          # No Acquire::Retries / Timeout overrides: the image sets them in
+          # /etc/apt/apt.conf.d/zz-retries (x64: 1 retry, 15 s) so that
+          # mirror+file fails over to the next mirror within seconds. A
+          # command-line -o beats that file, and 3 retries x 30 s on a hung
+          # URI outlast the 60 s update cap before failover ever happens.
+          apt-config dump Acquire::Retries Acquire::http::Timeout Acquire::https::Timeout
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            # Retrying the mirror that just failed or crawled cannot finish
+            # a cold cache; attempts 2 and 3 go to the fallback mirror.
+            if [ "$attempt" -ge 2 ] && [ "$mirror" != "fallback" ]; then
+              use_mirror fallback
+            fi
+            echo "apt download attempt ${attempt}/${attempts} via ${mirror} mirror"
+            rc=0
+            # A failed attempt refreshes the lists like a cold cache.
+            if [ "$skip_update" = "true" ] && [ "$attempt" -eq 1 ]; then
+              echo "apt cache hit: skipping apt-get update"
+            else
+              # --error-on=any: a failed index fetch is an error, not a
+              # warning over the old lists. Only the Ubuntu sources are
+              # configured (apt-prepare), so only they can fail it.
+              sudo timeout -k 10 60 apt-get update --error-on=any || rc=$?
+            fi
+            if [ "$rc" -eq 0 ]; then
+              sudo timeout -k 10 90 apt-get install -y \
+                --no-install-recommends --download-only "${packages[@]}" || rc=$?
+            fi
+            if [ "$rc" -eq 0 ]; then
+              break
+            fi
+            if [ "$attempt" -eq "$attempts" ]; then
+              echo "::error::apt download failed after ${attempts} attempts (last: $(describe_rc "$rc"))"
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "::warning::apt download attempt ${attempt}/${attempts} failed ($(describe_rc "$rc")); retrying in ${delay}s"
+            sleep "$delay"
+          done
+          # Record which sources fetched the lists; apt-save caches it with
+          # them (it matches lists/*_*). Written after the loop because
+          # `apt-get update` deletes unknown files from the lists directory.
+          echo "$mirror" >"$mirror_marker"
+          # --no-download: install only from the .debs fetched above; a
+          # missing one fails here with apt's own message instead of a
+          # silent, unbounded fetch from the mirror.
+          sudo apt-get install -y --no-install-recommends --no-download "${packages[@]}"
+          # Drop .debs the current lists no longer reference, so a cache
+          # carried across runner images does not accumulate old versions.
+          sudo apt-get autoclean
+          # The binaries the test suites call. The step name and these
+          # checks follow VOX_APT_PACKAGES; edit all three together.
+          for check in "ffmpeg -version" "espeak-ng --version"; do
+            read -ra cmd <<<"$check"
+            if ! out=$("${cmd[@]}" 2>&1); then
+              echo "::error::'${check}' failed after install: ${out}"
+              exit 1
+            fi
+            echo "${check}: ${out%%$'\n'*}"
+          done
+      - &apt-save
+        name: Save apt cache
+        if: steps.apt-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: *apt-cache-paths
+          key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
       # slow + subprocess were folded into the unmarked default run before
@@ -43,6 +370,9 @@ jobs:
   # human-judged testing. This is installed-wheel packaging smoke.
   packaging-e2e:
     runs-on: ubuntu-latest
+    # 20m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
+    # + 2m save) + 3m for the rest of the job; healthy runs take under 1.5
+    # min end to end (October 2026: 37-75 s, apt included).
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,9 +380,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      # ffmpeg + espeak-ng match the unit job so `vox doctor` reports the same
-      # environment the packaged binary is expected to run against.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      # The same apt steps as the unit job (YAML aliases), so `vox doctor`
+      # reports the same environment the packaged binary is expected to run
+      # against. Both jobs share one cache key.
+      - *apt-prepare
+      - *apt-restore
+      - *apt-install
+      - *apt-save
       - run: uv sync --frozen --all-extras
       # `make install` builds the wheel and does `uv tool install --force
       # dist/*.whl`; uv drops the console script in `$HOME/.local/bin` by
