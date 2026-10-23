@@ -450,9 +450,32 @@ class TestCall:
         assert info.value.detail == "names an artist"
 
     @pytest.mark.parametrize(
+        ("status", "body", "expected"),
+        [
+            (404, {"detail": "voice not found"}, "voice not found"),
+            (403, {"detail": {"status": "quota_exceeded"}}, "quota_exceeded"),
+            (
+                422,
+                {"detail": [{"loc": ["body", "text"], "msg": "field required"}]},
+                "field required",
+            ),
+        ],
+        ids=["detail-str", "detail-status", "detail-list"],
+    )
+    def test_every_common_body_shape_keeps_the_server_s_reason(
+        self, status: int, body: object, expected: str
+    ) -> None:
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=status, body=body))
+            )
+
+        assert info.value.detail == expected
+
+    @pytest.mark.parametrize(
         "body",
-        [None, "plain text", {"detail": "flat"}, {"detail": {"message": ""}}],
-        ids=["none", "text", "flat-detail", "empty-message"],
+        [None, "plain text", {"detail": {"message": ""}}],
+        ids=["none", "text", "empty-message"],
     )
     def test_a_body_without_a_message_leaves_no_detail(self, body: object) -> None:
         with pytest.raises(ProviderStatusError) as info:
@@ -461,6 +484,23 @@ class TestCall:
             )
 
         assert info.value.detail is None
+
+    @pytest.mark.parametrize("status", [200, 204, 299])
+    def test_a_success_status_that_is_not_json_is_a_failure(self, status: int) -> None:
+        """The SDK raises ApiError with the raw text when a 2xx body will not
+        decode as JSON; the text is never echoed, the oddity is named."""
+        body = "<html>captive portal</html>"
+
+        with pytest.raises(ProviderStatusError) as info:
+            ElevenLabsClient(sdk=MagicMock()).call(
+                lambda _sdk: _raise(ApiError(status_code=status, body=body))
+            )
+
+        assert info.value.status_code == status
+        assert info.value.detail == (
+            f"answered HTTP {status} with a response that is not the expected JSON"
+        )
+        assert "captive portal" not in str(info.value)
 
 
 class TestStreamTo:

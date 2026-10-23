@@ -16,7 +16,7 @@ leaves as a vox type, so nothing past the providers knows the SDK exists.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 import httpx
 from elevenlabs.client import ElevenLabs
@@ -28,6 +28,7 @@ from elevenlabs.types import (
 )
 
 from punt_vox.providers.api_key import ApiKeyCheck
+from punt_vox.providers.error_body import ErrorBody
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.provider_status import ProviderStatusError
@@ -49,6 +50,9 @@ __all__ = [
 
 # The variable the readiness gate names for this provider, not a second literal.
 _KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
+
+# The statuses an ApiError carries only when a success body failed to decode.
+_SUCCESS: Final = range(200, 300)
 
 
 @final
@@ -160,25 +164,21 @@ class ElevenLabsClient:
         """
         return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
 
-    @classmethod
-    def _answered(cls, exc: ApiError) -> ProviderAuthError | ProviderStatusError:
-        """Return the vox error for the server's failed answer *exc*."""
-        if exc.status_code == 401:
-            return ProviderAuthError("elevenlabs", 401)
-        return ProviderStatusError(
-            "elevenlabs", exc.status_code, cls._api_error_message(exc)
-        )
-
     @staticmethod
-    def _api_error_message(
-        exc: ApiError,
-    ) -> str | None:  # None: the body carried no message
-        """Extract the human-readable message from an ``ApiError`` body."""
-        body: object = exc.body
-        if isinstance(body, dict):
-            detail = cast("dict[str, object]", body).get("detail")
-            if isinstance(detail, dict):
-                message = cast("dict[str, object]", detail).get("message")
-                if isinstance(message, str) and message:
-                    return message
-        return None
+    def _answered(exc: ApiError) -> ProviderAuthError | ProviderStatusError:
+        """Return the vox error for the server's failed answer *exc*.
+
+        The SDK raises ``ApiError`` on a 2xx too, when the body will not decode
+        as JSON; its body is then the raw text, which is never echoed.
+        """
+        status: int | None = exc.status_code  # None: the SDK reported no status
+        if status == 401:
+            return ProviderAuthError("elevenlabs", 401)
+        detail: str | None  # None: the body gives no reason
+        if status in _SUCCESS:
+            detail = (
+                f"answered HTTP {status} with a response that is not the expected JSON"
+            )
+        else:
+            detail = ErrorBody(exc.body).message
+        return ProviderStatusError("elevenlabs", status, detail)
