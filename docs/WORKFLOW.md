@@ -369,9 +369,9 @@ function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
        and not bugbot_open                 # a push-started run's findings
-                                           #   land before the merge; the
-                                           #   30-minute bound matches
-                                           #   bugbot_in
+                                           #   land before the merge; its 30
+                                           #   minutes run from the run's
+                                           #   start, as it has no comment
        and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
