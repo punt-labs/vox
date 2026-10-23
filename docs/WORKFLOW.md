@@ -275,12 +275,16 @@ function local_review(diff):
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
-#   answered(f)  = for a Qodo finding: its attribution_status in the same
-#                  CLI read is closed (implemented, dismissed, outdated);
-#                  close it with `qodo pr-review-session mark-implemented` or
-#                  `dismiss` plus the reason and file:line. For any other
-#                  finding: fixed by a commit on the PR head, or a ledger
-#                  comment from the leader gives the reason and file:line.
+#   answered(f)  = one path per source, never both:
+#                  - a finding with a Qodo id (from the CLI read): its
+#                    attribution_status is closed (implemented, dismissed,
+#                    outdated); close it with `qodo pr-review-session
+#                    mark-implemented` or `dismiss` plus the reason and
+#                    file:line. A ledger line does not close it.
+#                  - any other finding — Bugbot, Cursor security, a human,
+#                    the local outage fallback: fixed by a commit on the PR
+#                    head, or a ledger comment gives the reason and
+#                    file:line.
 #                  A finding repeated from an earlier round keeps its answer.
 #   new High     = a High not raised in an earlier round; a manual review
 #                  may re-scan the whole PR and repeat old findings
@@ -302,12 +306,13 @@ function poll_tick(pr):
             and 30 minutes have passed since trigger(N)
             and the fallback has not yet run for round N:
         run code_reviewer locally on the diff Qodo was asked to review;
-            its findings count as Qodo's for round N    # outage fallback
+            it completes round N for qodo_in; its findings have no Qodo
+            id, so they take the ledger path       # outage fallback
     for each finding not answered(f) and not under an open escalation:
         if N == 2 and f is a new High:
             post an escalation comment; the operator rules
         else:
-            fix it now, or answer it in a ledger comment
+            fix it now, or answer it by its source's path (answered(f))
             # never re-litigated; Qodo Lows are dropped by comments_routing;
             # no deferral beads
     for each escalation the operator has ruled on:
@@ -405,8 +410,8 @@ that local review of each fix diff now covers.
 Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when
 the PR opens and never on push. High findings post inline as threads, and
 the `required_review_thread_resolution` rule in ruleset 13252005 makes each
-one block the merge. Medium findings appear in the summary and are answered
-through Qodo or in a ledger comment. Lows are dropped by `comments_routing`.
+one block the merge. Medium findings appear in the summary; every Qodo finding is closed
+through the Qodo CLI (`mark-implemented` or `dismiss`), never a ledger line. Lows are dropped by `comments_routing`.
 
 Bugbot runs once per round, on the leader's `bugbot run` comment, and its
 findings are handled whenever they arrive. It posts fewer comments than
