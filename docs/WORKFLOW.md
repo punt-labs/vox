@@ -298,10 +298,14 @@ function demo(pr):
 #                  .pr_agent.toml); no title or label lets an author skip
 #   reviewed_head = the newest commit covered by a Qodo review, the outage
 #                  fallback, or the local delta review below
-#   audible(x)   = the PR or the commit range x changes any file outside
-#                  docs/, tests/, .github/, *.md, and the ratchet files
-#                  (.oo-*, .suppression-*) — a dependency or install
-#                  change can change what the operator hears
+#   audible(x)   = the PR or the commit range x changes any file under
+#                  src/ or plugin/, or any file outside docs/, tests/,
+#                  .github/, the ratchet files (.oo-*, .suppression-*),
+#                  and top-level *.md — a slash-command prompt, a
+#                  dependency, or an install change can change what the
+#                  operator hears
+#   bugbot_open  = a Cursor Bugbot check run on the head whose status is
+#                  not completed and that started under 30 minutes ago
 #   demoed_head  = the commit named in the leader's latest "demo confirmed:"
 #                  comment, newer than any "demo failed:" comment
 #   demo_ok(pr)  = not audible(pr), or demoed_head exists, is the head or
@@ -351,7 +355,7 @@ function poll_tick(pr):
         demo(pr)                           # first demo, a re-demo after an
                                            #   audible push, or after a fix for
                                            #   a failed demo
-    if not pending(pr) and no finding is unanswered:
+    if not pending(pr) and not bugbot_open and no finding is unanswered:
         cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
     else: cadence = 3m
@@ -364,9 +368,10 @@ function poll_tick(pr):
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
-       and no Cursor Bugbot check run on the head is in progress
-                                           # a push-started run's findings
-                                           #   must land before the merge
+       and not bugbot_open                 # a push-started run's findings
+                                           #   land before the merge; the
+                                           #   30-minute bound matches
+                                           #   bugbot_in
        and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
@@ -450,8 +455,8 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   and nothing audible landed after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
-  ∧ ¬ bugbotRunning(head(pr))             -- no Bugbot run on the head was
-                                          --   still in progress at the merge
+  ∧ ¬ bugbotOpen(head(pr))                -- bugbot_open was false at the
+                                          --   merge
   ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
   ∧ round(pr) ≤ 2                         -- round 2 only after a High fix
