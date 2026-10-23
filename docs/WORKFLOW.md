@@ -220,13 +220,20 @@ function pr_loop(unit):
 
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
     make check                            # full gate on the accumulated diff
-    round 1: findings = code_reviewer + silent_failure_hunter on the full diff
-             fix each finding now, or dismiss it with a one-line reason
-    round 2: the same agents on the round-1 fix diff, High severity only
-             fix each High now        # skipped when round 1 changed nothing
-    # two rounds, then the PR opens. A round-2 fix is checked by make check
-    # and by Qodo on the PR, not by a third local round. A High that cannot
-    # be fixed goes to the operator. No deferral beads.
+    local_review(full diff)               # defined below; up to 4 rounds
+    # the PR opens only after a local round reports no High or Medium
+
+function local_review(diff):
+    # Local rounds are cheap and bugs die here; the PR gate is kept short.
+    for round in 1..4:
+        findings = code_reviewer + silent_failure_hunter + `qodo review`
+                   on diff               # qodo review: the PR's own engine
+        if no High or Medium in findings: return clean
+        fix each finding now, or dismiss it with a one-line reason
+        diff = this round's fix diff
+    a High or Medium still open after round 4 goes to the operator
+    # Lows are fixed or dismissed in place and never start a round.
+    # No deferral beads.
 
     # C. AUDIO DEMO — confirmed by ear, the one human gate
     make install; vox daemon restart      # the daemon serves old code until
@@ -243,7 +250,7 @@ function pr_loop(unit):
     bd close the bead(s)
     push; create the PR (description carries the verification playbook)
         # Qodo reviews once, on open (.pr_agent.toml)
-    unless skipped(pr): comment "bugbot run"   # Bugbot's one run per PR
+    unless skipped(pr): comment "bugbot run"   # Bugbot runs once per round
     schedule a background poll with /loop   # never gh pr checks --watch,
                                             # never foreground sleep loops
 
@@ -259,10 +266,12 @@ function pr_loop(unit):
 #                  branch; or the outage fallback ran for
 #                  round N. A late reply to an earlier round never completes
 #                  round N, and a clean review counts like any other.
-#   bugbot_in    = a cursor[bot] review after the "bugbot run" comment, or
-#                  30 minutes since that comment. Bugbot has its own timer.
+#   bugbot_in(N) = a completed "Cursor Bugbot" check run after round N's
+#                  "bugbot run" comment, or 30 minutes since that comment.
+#                  Bugbot has its own timer; a clean run posts no review,
+#                  so read the check run, not reviews.
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
-#                  or not bugbot_in)
+#                  or not bugbot_in(round(pr)))
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
@@ -275,7 +284,7 @@ function pr_loop(unit):
 #                  A finding repeated from an earlier round keeps its answer.
 #   new High     = a High not raised in an earlier round; a manual review
 #                  may re-scan the whole PR and repeat old findings
-#   escalation   = the leader's "escalated:" comment on one new round-3 High;
+#   escalation   = the leader's "escalated:" comment on one new round-2 High;
 #                  closed by a later ledger entry recording the operator's
 #                  ruling and how it was applied
 #   skipped(pr)  = the PR author is a bot ([github_app] ignore_bot_pr in
@@ -295,7 +304,7 @@ function poll_tick(pr):
         run code_reviewer locally on the diff Qodo was asked to review;
             its findings count as Qodo's for round N    # outage fallback
     for each finding not answered(f) and not under an open escalation:
-        if N == 3 and f is a new High:
+        if N == 2 and f is a new High:
             post an escalation comment; the operator rules
         else:
             fix it now, or answer it in a ledger comment
@@ -304,13 +313,14 @@ function poll_tick(pr):
     for each escalation the operator has ruled on:
         apply the ruling; record it in a ledger comment
     if fixes were made: delegate them to a bare agent; make check; commit;
+        local_review(the fix diff)         # before it reaches the PR
         push once                          # every fix reaches the PR head
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
-    if not skipped(pr) and not pending(pr) and N < 3
-            and a fix landed since trigger(N)
-            and (N == 1 or a new High was fixed since trigger(N)):
-        comment "/agentic_review"          # opens round N+1
+    if not skipped(pr) and not pending(pr) and N == 1
+            and a High was fixed since trigger(1):
+        comment "/agentic_review"; comment "bugbot run"   # opens round 2,
+                                                          #   the last
     if not pending(pr) and no review is requested and the PR head is newer
             than reviewed_head:
         run code_reviewer locally on the reviewed_head..head delta; its
@@ -326,7 +336,7 @@ function merge_gate(state) -> bool:
        and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
-       and round(pr) ≤ 3
+       and round(pr) ≤ 2
        and no escalation is open
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
@@ -354,15 +364,15 @@ EnterPR ≙ [ LoopState; unit : ℙ BEAD |
 
 ExitPR ≙ [ Δ LoopState; pr : PR |
   merged(pr)
-  ∧ localReviewDone(pr)                   -- round-1 findings fixed or
-                                          --   dismissed, round-2 Highs fixed,
-                                          --   BEFORE the PR opened
+  ∧ localReviewClean(pr)                  -- a local round with no High or
+                                          --   Medium, BEFORE the PR opened and
+                                          --   before every fix push
   ∧ demoConfirmedByEar(pr)                -- held BEFORE the PR opened
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
   ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
-  ∧ round(pr) ≤ 3                         -- round 3 only for a new High
+  ∧ round(pr) ≤ 2                         -- round 2 only after a High fix
   ∧ unresolvedThreads(pr) = ∅
   ∧ openEscalations(pr) = ∅               -- each closed by a recorded ruling
   ∧ beadsOf(pr) ⊆ closed′
@@ -375,31 +385,40 @@ Full-diff local review is where issues die cheaply. A local round costs
 seconds; a remote review cycle costs minutes to hours. Both `code-reviewer`
 and `silent-failure-hunter` run on the full diff — silent-failure-hunter
 matters especially in vox, where a swallowed provider error becomes silence
-the user cannot diagnose. Local review runs two rounds: the full diff, then
-the fix diff with only High-severity findings reported. Every finding is
-fixed now or dismissed with the exact finding, the specific reason, and the
-code reference. Nothing is deferred to a bead. In this repo the two-round cap
-replaces the "re-run until zero findings" sequence in the deposited
+the user cannot diagnose. `qodo review` runs alongside them: it is the
+engine that reviews the PR, so what it finds locally does not come back as
+a PR round. Local rounds repeat until one reports no High or Medium, up to
+four; every fix diff goes through the same loop before it is pushed,
+including fixes made for PR findings. Every finding is fixed now or
+dismissed with the exact finding, the specific reason, and the code
+reference. Nothing is deferred to a bead. In this repo this loop replaces
+the "re-run until zero findings" sequence in the deposited
 `.punt-labs/ethos/CLAUDE.md` guide.
 
-### Remote review: Qodo, plus one Bugbot run
+The split is deliberate: local rounds are cheap and the PR gate is short.
+In the 2026 coverage sample, 31 of the 49 real bugs a reduced PR review
+would miss were in code added by fix pushes after the PR opened — the code
+that local review of each fix diff now covers.
 
-Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews once when
+### Remote review: Qodo and Bugbot, at most two rounds
+
+Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when
 the PR opens and never on push. High findings post inline as threads, and
 the `required_review_thread_resolution` rule in ruleset 13252005 makes each
 one block the merge. Medium findings appear in the summary and are answered
-in a ledger comment. Lows are dropped by `comments_routing`. Round 2 is
-one manual `/agentic_review` after the fix push. At most three rounds run,
-and the third only for a new High.
+through Qodo or in a ledger comment. Lows are dropped by `comments_routing`.
 
-Bugbot runs once per PR, on the leader's `bugbot run` comment at open. It
-never runs again on that PR, and its findings are handled whenever they
-arrive. It stays because
-it had the highest real-bug rate of the three bots in the 2026 sample (28%
-of its comments, against 20% for Qodo and 12% for Copilot). The Cursor
-security automation ("Find vulnerabilities") also runs here; its threads
-are findings like any other. Copilot is off:
-66% of its comments were nits, and it drove the most extra pushes.
+Bugbot runs once per round, on the leader's `bugbot run` comment, and its
+findings are handled whenever they arrive. It posts fewer comments than
+Copilot (about 2.4 per PR against 5.4) and had the highest real-bug rate in
+the 2026 sample (28% of its comments, against 20% for Qodo and 12% for
+Copilot). The Cursor security automation ("Find vulnerabilities") also runs
+here; its threads are findings like any other. Copilot is off: 66% of its
+comments were nits, and it drove the most extra pushes.
+
+Round 1 is the review at open. Round 2 — one `/agentic_review` plus one
+`bugbot run` — happens only when round 1's fixes included a High, and it is
+the last. A new High in round 2 goes to the operator.
 
 This holds only when four settings are in place (pilot `vox-2q95`):
 
@@ -578,8 +597,9 @@ itself.
    reason, the moment it arrives. It is never deferred to a bead or a
    follow-up PR. Threads are resolved only against a landed commit, one by
    one, never in bulk.
-4. **A push restarts CI, not review.** Review rounds are bounded: two local,
-   two Qodo, and a third Qodo round only for a new High.
+4. **A push restarts CI, not review.** Local rounds run until clean, up to
+   four, before the PR opens and before every fix push. PR rounds are at
+   most two, and the second only after a High fix.
 5. **Defects flow inward, scope flows outward.** A defect found while a PR is
    open is fixed in that PR. Only genuinely new lines of work become beads;
    a review finding is never new work.
