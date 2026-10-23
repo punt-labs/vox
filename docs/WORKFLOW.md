@@ -231,13 +231,14 @@ function pr_loop(unit):
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
                                               # never foreground sleep loops
 
-    # D. AUDIO DEMO — confirmed by ear, the one human gate
-    if audible(pr): demo(pr)              # a docs- or tests-only PR has
-                                          #   nothing to demo; poll_tick re-runs
-                                          #   the demo after an audible push
+    # D. AUDIO DEMO — confirmed by ear, the one human gate. poll_tick is
+    #    its only caller, so it runs at most once at a time, and it runs
+    #    again after an audible push or a failed demo
 
 function demo(pr):
-    no push to the branch while the demo runs
+    no push to the branch, and no other demo, while this one runs
+    if the operator is not available: return    # no comment; a later tick
+                                                #   tries again
     from a clean worktree at the PR head H:
         make install; vox daemon restart  # the daemon serves old code until
                                           #   restarted; a stale daemon demos
@@ -297,14 +298,14 @@ function demo(pr):
 #                  .pr_agent.toml); no title or label lets an author skip
 #   reviewed_head = the newest commit covered by a Qodo review, the outage
 #                  fallback, or the local delta review below
-#   audible(x)   = the PR or the commit range x changes a file under src/
-#                  or plugin/ — code that can change what the operator
-#                  hears. docs/, tests/, CI, and the ratchet files are not
-#                  audible
+#   audible(x)   = the PR or the commit range x changes any file outside
+#                  docs/, tests/, .github/, *.md, and the ratchet files
+#                  (.oo-*, .suppression-*) — a dependency or install
+#                  change can change what the operator hears
 #   demoed_head  = the commit named in the leader's latest "demo confirmed:"
 #                  comment, newer than any "demo failed:" comment
-#   demo_ok(pr)  = not audible(pr), or demoed_head exists and
-#                  not audible(demoed_head..head)
+#   demo_ok(pr)  = not audible(pr), or demoed_head exists, is the head or
+#                  an ancestor of it, and not audible(demoed_head..head)
 #   finding also = the leader's latest "demo failed:" comment, until a
 #                  later "demo confirmed:" comment
 
@@ -345,13 +346,17 @@ function poll_tick(pr):
         run code_reviewer locally on the reviewed_head..head delta; its
             findings are findings like any other   # bounded rounds, but
                                                    #   no unreviewed merge
-    if audible(pr) and not demo_ok(pr) and no fix is in flight:
+    if audible(pr) and not demo_ok(pr) and nothing was pushed this tick
+            and no demo is running:
         demo(pr)                           # first demo, a re-demo after an
                                            #   audible push, or after a fix for
                                            #   a failed demo
     if not pending(pr) and no finding is unanswered:
-        reschedule the poll at /loop 15m   # only the demo, CI, or a late
+        cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
+    else: cadence = 3m
+    if the poll's interval is not cadence:
+        cancel the poll job; schedule /loop <cadence> in its place
     re-read state                          # the gate must see this tick's
                                            #   push and comment
     if merge_gate(state): merge (squash, --delete-branch); close_out()
@@ -359,6 +364,9 @@ function poll_tick(pr):
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
+       and no Cursor Bugbot check run on the head is in progress
+                                           # a push-started run's findings
+                                           #   must land before the merge
        and (skipped(pr) or reviewed_head is the PR head)
        and every finding is answered
        and zero unresolved review threads
@@ -395,11 +403,12 @@ function local_review(diff):
                 unchanged behaviour
         run reviewers in parallel        # qodo review from the worktree,
                                          #   against the pushed base
-        if `qodo review` did not complete (CLI error, outage):
-            run code_reviewer in its place   # an empty result from a
-                                             #   review that never ran is
-                                             #   not clean
-        findings = every completed reviewer's findings
+        re-run once any reviewer that did not complete (error, outage)
+        if a reviewer still has not completed:
+            report it to the operator
+            return blocked               # a review that never ran is not
+                                         #   clean
+        findings = every reviewer's findings
         if round == 5 and a finding needs a fix:
             report the open findings to the operator
             return blocked               # the caller stops; see below
@@ -441,6 +450,8 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   and nothing audible landed after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
+  ∧ ¬ bugbotRunning(head(pr))             -- no Bugbot run on the head was
+                                          --   still in progress at the merge
   ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
   ∧ round(pr) ≤ 2                         -- round 2 only after a High fix
