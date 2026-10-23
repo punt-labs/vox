@@ -610,9 +610,10 @@ itself.
    `--auto`, never `--admin`.
 3. **Do or do not.** A finding is fixed in this PR or dismissed with a
    reason, the moment it arrives. It is never deferred to a bead or a
-   follow-up PR. A thread is resolved only once it is answered — against a
-   landed commit, or by a Qodo CLI dismissal or a ledger reason per
-   `answered(f)` — one by one, never in bulk.
+   follow-up PR. A thread is resolved only once it is answered per
+   `answered(f)` — a Qodo finding closed through the Qodo CLI
+   (`mark-implemented` or `dismiss`), any other finding by a landed commit
+   or a ledger reason — one by one, never in bulk.
 4. **A push restarts CI, not review.** Local rounds run until clean (at most
    four fix rounds plus a verifying review) before the PR opens and before
    every fix push. PR rounds are at
