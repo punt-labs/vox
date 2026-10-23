@@ -221,7 +221,7 @@ function pr_loop(unit):
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
     make check                            # full gate on the accumulated diff
     local_review(full diff)               # defined after close_out
-    # the PR opens only after a local round reports no High or Medium
+    # the PR opens only after a local round leaves nothing to fix
 
     # C. AUDIO DEMO — confirmed by ear, the one human gate
     make install; vox daemon restart      # the daemon serves old code until
@@ -348,16 +348,15 @@ function local_review(diff):
     for round in 1..5:
         findings = code_reviewer + silent_failure_hunter + `qodo review`
                    on diff               # qodo review: the PR's own engine
-        fix each Low now, or dismiss it with a one-line reason
-                                         # Lows never start a round
-        if no High or Medium in findings:
-            make check; commit any Low fixes; return clean
-        if round == 5: the open Highs and Mediums go to the operator; stop
-        fix each High and Medium now, or dismiss it with a one-line reason
+        if findings are empty, or every finding is dismissed with a
+                one-line reason: return clean
+        if round == 5: the open findings go to the operator; stop
+        fix each finding now, or dismiss it with a one-line reason
         make check; commit
-        diff = this round's fix diff
-    # at most four fix rounds; review 5 only verifies round 4's fixes.
-    # No deferral beads.
+        diff = this round's fix diff     # every change is reviewed,
+                                         #   Low fixes included
+    # at most four fix rounds, plus a fifth review that only verifies the
+    # fourth round's fixes. No deferral beads.
 ```
 
 Entry and exit for one PR iteration. `merge_gate` in the pseudocode is the
@@ -374,8 +373,8 @@ EnterPR ≙ [ LoopState; unit : ℙ BEAD |
 
 ExitPR ≙ [ Δ LoopState; pr : PR |
   merged(pr)
-  ∧ localReviewClean(pr)                  -- a local round with no High or
-                                          --   Medium, BEFORE the PR opened and
+  ∧ localReviewClean(pr)                  -- a local round that left nothing
+                                          --   to fix, BEFORE the PR opened and
                                           --   before every fix push
   ∧ demoConfirmedByEar(pr)                -- held BEFORE the PR opened
   ∧ ciGreen(head(pr))                     -- docs + lint + test
@@ -397,8 +396,9 @@ and `silent-failure-hunter` run on the full diff — silent-failure-hunter
 matters especially in vox, where a swallowed provider error becomes silence
 the user cannot diagnose. `qodo review` runs alongside them: it is the
 engine that reviews the PR, so what it finds locally does not come back as
-a PR round. Local rounds repeat until one reports no High or Medium, up to
-four; every fix diff goes through the same loop before it is pushed,
+a PR round. Local rounds repeat until a round leaves nothing to fix: at
+most four fix rounds plus one review that verifies the last fixes. Every
+fix diff goes through the same loop before it is pushed,
 including fixes made for PR findings. Every finding is fixed now or
 dismissed with the exact finding, the specific reason, and the code
 reference. Nothing is deferred to a bead. In this repo this loop replaces
@@ -607,8 +607,9 @@ itself.
    reason, the moment it arrives. It is never deferred to a bead or a
    follow-up PR. Threads are resolved only against a landed commit, one by
    one, never in bulk.
-4. **A push restarts CI, not review.** Local rounds run until clean, up to
-   four, before the PR opens and before every fix push. PR rounds are at
+4. **A push restarts CI, not review.** Local rounds run until clean (at most
+   four fix rounds plus a verifying review) before the PR opens and before
+   every fix push. PR rounds are at
    most two, and the second only after a High fix.
 5. **Defects flow inward, scope flows outward.** A defect found while a PR is
    open is fixed in that PR. Only genuinely new lines of work become beads;
