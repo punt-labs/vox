@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
-from typing import Self
+from typing import ClassVar, Self
 
 
 class ModuleMetrics:
     """Compute OO quality metrics for one parsed module."""
+
+    # Nodes that each add exactly one path, whatever their contents.
+    _ONE_WAY_BRANCHES: ClassVar[tuple[type[ast.AST], ...]] = (
+        ast.If,
+        ast.IfExp,
+        ast.While,
+        ast.For,
+        ast.AsyncFor,
+        ast.ExceptHandler,
+        ast.Assert,
+    )
 
     _path: str
     _tree: ast.Module
@@ -182,34 +193,26 @@ class ModuleMetrics:
     ) -> int:
         return 1 + sum(map(cls._decision_points, ast.walk(func_node)))
 
-    @staticmethod
-    def _decision_points(node: ast.AST) -> int:
+    @classmethod
+    def _decision_points(cls, node: ast.AST) -> int:
         """Return how many paths *node* adds to the function that contains it.
 
         Every ``case`` arm counts, ``case _`` included, and a guard is one more
         test on top of its pattern, the way ``and`` is in an ``if``. A match
         without a catch-all scores what its ``if``/``elif`` ladder scores; a
         ``case _`` costs one more than the ladder's ``else``, which counts 0.
+        An or-pattern ``case A() | B()`` is the pattern form of ``or`` and adds
+        one per alternative after the first, as a ``BoolOp`` does.
         """
+        if isinstance(node, cls._ONE_WAY_BRANCHES):
+            return 1
         match node:
-            case (
-                ast.If()
-                | ast.IfExp()
-                | ast.While()
-                | ast.For()
-                | ast.AsyncFor()
-                | ast.ExceptHandler()
-                | ast.Assert()
-            ):
-                return 1
-            case ast.BoolOp(values=values):
-                return len(values) - 1
+            case ast.BoolOp(values=alternatives) | ast.MatchOr(patterns=alternatives):
+                return len(alternatives) - 1
             case ast.comprehension(ifs=ifs):
                 return 1 + len(ifs)
-            case ast.match_case(guard=None):
-                return 1
-            case ast.match_case():
-                return 2
+            case ast.match_case(guard=guard):
+                return 1 + (guard is not None)
             case _:
                 return 0
 

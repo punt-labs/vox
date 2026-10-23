@@ -47,6 +47,21 @@ def f(x: object, flag: bool) -> int:
     return 0
 """
 
+_OR_IF = """
+def f(x: object) -> int:
+    if isinstance(x, int) or isinstance(x, str):
+        return 1
+    return 0
+"""
+
+_OR_MATCH = """
+def f(x: object) -> int:
+    match x:
+        case int() | str():
+            return 1
+    return 0
+"""
+
 
 def _complexity(source: str) -> int:
     """Return the max_complexity the ratchet records for a one-function module."""
@@ -88,6 +103,20 @@ def test_case_guard_adds_one() -> None:
     assert _complexity(_GUARDED_MATCH) == _complexity(unguarded) + 1
 
 
+@pytest.mark.parametrize("alternatives", [2, 3, 5])
+def test_or_pattern_adds_one_per_extra_alternative(alternatives: int) -> None:
+    """``case 0 | 1 | 2`` adds what ``x == 0 or x == 1 or x == 2`` adds."""
+    pattern = " | ".join(str(value) for value in range(alternatives))
+    source = f"""
+    def f(x: int) -> int:
+        match x:
+            case {pattern}:
+                return 1
+        return 0
+    """
+    assert _complexity(source) == _complexity(_STRAIGHT_LINE) + alternatives
+
+
 def test_conditional_expression_adds_one() -> None:
     """``a if cond else b`` is a decision and scores like an if statement."""
     source = """
@@ -111,6 +140,7 @@ def test_nested_conditional_expressions_each_add_one() -> None:
     [
         pytest.param(_MATCH_EQUIVALENT, _IF_LADDER, id="two-arm"),
         pytest.param(_GUARDED_MATCH, _GUARDED_IF, id="guarded"),
+        pytest.param(_OR_MATCH, _OR_IF, id="or-pattern"),
     ],
 )
 def test_match_scores_like_its_if_ladder(match_source: str, ladder_source: str) -> None:
