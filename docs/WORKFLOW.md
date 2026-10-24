@@ -278,12 +278,16 @@ function demo(pr):
 #                  a later push does not undo a completed run (the delta
 #                  review covers it). A clean run posts no review, so read
 #                  the check run.
-#   copilot_trial(pr) = fewer than 5 merged vox PRs numbered above #526
-#                  carry a review by copilot-pull-request-reviewer (read
-#                  from GitHub; #527 was the first)
-#   copilot_in   = no Copilot review was requested, or a review by
-#                  copilot-pull-request-reviewer exists, or 30 minutes have
-#                  passed since the request
+#   copilot_trial(pr) = fewer than 5 vox PRs numbered above #526 and below
+#                  pr carry a Copilot review request (a ReviewRequestedEvent
+#                  for copilot-pull-request-reviewer, read from GitHub;
+#                  #527 was the first). A request counts toward the 5
+#                  whether or not a review came back.
+#   copilot_in   = not copilot_trial(pr), or a Copilot review request
+#                  exists on pr and (a review by
+#                  copilot-pull-request-reviewer exists or 30 minutes have
+#                  passed since the request); a trial PR with no request is
+#                  pending until the leader makes one
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
 #                  or not bugbot_in(round(pr)) or not copilot_in)
 #   finding      = any unresolved review thread, from any author, or any
