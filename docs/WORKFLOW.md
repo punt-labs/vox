@@ -226,8 +226,11 @@ function pr_loop(unit):
     # C. SHIP — the PR opens before the demo, so remote review runs while
     #    the operator is away; the merge waits for the demo (merge_gate)
     push; create the PR (description carries the verification playbook)
-        # Qodo reviews once, on open (.pr_agent.toml)
-    unless skipped(pr): comment "bugbot run"   # Bugbot runs once per round
+        # Qodo reviews once, on open (.pr_agent.toml); Bugbot reviews once,
+        #   on its own, at open (Cursor dashboard: once per PR) — no
+        #   "bugbot run" comment for round 1
+    if copilot_trial(pr): request a Copilot review   # once, at open; none
+                                                      #   on push
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
                                               # never foreground sleep loops
 
@@ -267,14 +270,22 @@ function demo(pr):
 #                  round N. A late reply to an earlier round never completes
 #                  round N, and a clean review counts like any other.
 #   bugbot_in(N) = a "Cursor Bugbot" check run on head(N) or a later branch
-#                  commit, started after round N's "bugbot run" comment, and
-#                  completed with any conclusion except cancelled; or 30
-#                  minutes since that comment. A run a push cancelled
-#                  reviewed nothing, so it does not count; a later push
-#                  does not undo a completed run (the delta review covers
-#                  it). A clean run posts no review, so read the check run.
+#                  commit, started at or after trigger(N) — the PR open for
+#                  N = 1 (Bugbot's automatic run), round 2's "bugbot run"
+#                  comment for N = 2 — and completed with any conclusion
+#                  except cancelled; or 30 minutes since trigger(N). A run
+#                  a push cancelled reviewed nothing, so it does not count;
+#                  a later push does not undo a completed run (the delta
+#                  review covers it). A clean run posts no review, so read
+#                  the check run.
+#   copilot_trial(pr) = fewer than 5 merged vox PRs numbered above #526
+#                  carry a review by copilot-pull-request-reviewer (read
+#                  from GitHub; #527 was the first)
+#   copilot_in   = no Copilot review was requested, or a review by
+#                  copilot-pull-request-reviewer exists, or 30 minutes have
+#                  passed since the request
 #   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
-#                  or not bugbot_in(round(pr)))
+#                  or not bugbot_in(round(pr)) or not copilot_in)
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
@@ -284,7 +295,8 @@ function demo(pr):
 #                    outdated); close it with `qodo pr-review-session
 #                    mark-implemented` or `dismiss` plus the reason and
 #                    file:line. A ledger line does not close it.
-#                  - any other finding — Bugbot, Cursor security, a human,
+#                  - any other finding — Bugbot, Cursor security, Copilot,
+#                    a human,
 #                    the local outage fallback: fixed by a commit on the PR
 #                    head, or a ledger comment gives the reason and
 #                    file:line.
@@ -390,7 +402,11 @@ function close_out():
     delete the branch; checkout main; pull
     send the merge recap via beadle-email # to jim@punt-labs.com, every merge,
                                           # unprompted — a permanent record in
-                                          # the 8-part recap structure
+                                          # the 8-part recap structure, plus
+                                          # the review data block from
+                                          # ../.bin/review-metrics.py pr
+                                          # punt-labs/vox <N> --format recap,
+                                          # pasted verbatim
     start the next unit immediately       # no stopping to report
 
 function local_review(diff):
@@ -506,13 +522,21 @@ the `required_review_thread_resolution` rule in ruleset 13252005 makes each
 one block the merge. Medium findings appear in the summary; every Qodo finding is closed
 through the Qodo CLI (`mark-implemented` or `dismiss`), never a ledger line. Lows are dropped by `comments_routing`.
 
-Bugbot runs once per round, on the leader's `bugbot run` comment, and its
-findings are handled whenever they arrive. It posts fewer comments than
-Copilot (about 2.4 per PR against 5.4) and had the highest real-bug rate in
-the 2026 sample (28% of its comments, against 20% for Qodo and 12% for
-Copilot). The Cursor security automation ("Find vulnerabilities") also runs
-here; its threads are findings like any other. Copilot is off: 66% of its
-comments were nits, and it drove the most extra pushes.
+Bugbot reviews each PR once, on its own, when the PR opens (Cursor
+dashboard setting, 2026-10-23); round 1 needs no `bugbot run` comment, and
+a push draws no Bugbot review. Its findings are handled whenever they
+arrive. It posts fewer comments than Copilot (about 2.4 per PR against
+5.4) and had the highest real-bug rate in the 2026 sample (28% of its
+comments, against 20% for Qodo and 12% for Copilot). The Cursor security
+automation ("Find vulnerabilities") also runs here; its threads are
+findings like any other.
+
+Copilot is on a trial (operator ruling, 2026-10-23): one review, requested
+at open, on 5 vox PRs after #526, and none on push. The coverage study made
+Copilot the only source of 37 of 101 real bugs; the trial counts how many
+real bugs Copilot alone finds on top of this local loop, and the operator
+keeps it only if that count is not zero. Its findings are findings like
+any other.
 
 Round 1 is the review at open. Round 2 — one `/agentic_review` plus one
 `bugbot run` — happens only when round 1's fixes included a High, and it is
@@ -523,16 +547,16 @@ This holds only when four settings are in place (pilot `vox-2q95`):
 - `.pr_agent.toml` is on `main`. Qodo reads it from the default branch, so
   a PR opened before it merged runs on the portal defaults.
 - The `copilot_code_review` rule is gone from ruleset 13252005 (removed
-  2026-10-22).
-- Bugbot runs only when mentioned for this repo (Cursor dashboard), so a
-  push does not re-run it.
+  2026-10-22), so Copilot reviews only when requested.
+- Bugbot reviews each PR once, at open, for this repo (Cursor dashboard,
+  set 2026-10-23), so a push does not re-run it.
 - "Review every push" is set to Disable in the Qodo portal; the portal
   default is Enable.
 
-Until the Bugbot setting is in effect, a push also starts a Bugbot run.
-Its findings are findings like any other, but it does not count toward
-`bugbot_in(N)` unless it started after round N's `bugbot run` comment, so
-the leader still posts that comment for each round.
+If a push still starts a Bugbot run, its findings are findings like any
+other. Whether a `bugbot run` comment still triggers a run under the
+once-per-PR setting is unverified; round 2 posts it, and `bugbot_in(2)`
+falls back after 30 minutes if no run starts.
 
 The first two PRs after the pilot (#523, #524) checked the claims:
 
@@ -540,8 +564,9 @@ The first two PRs after the pilot (#523, #524) checked the claims:
   marks a finding implemented when a push fixes it.
 - `/agentic_review` reviewed the new commits; its two new findings were
   both in round-1 fix code.
-- Bugbot ran on a push with no `bugbot run` comment, so its mention-only
-  setting is not yet in effect for this repo.
+- Bugbot ran on a push with no `bugbot run` comment, so the mention-only
+  setting tried first was not in effect; the operator then set the
+  dashboard to review each PR once.
 - #524 drew no remote findings in its one round. #523 used both rounds,
   and round 2 raised no new High.
 
