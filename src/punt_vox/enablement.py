@@ -386,6 +386,11 @@ class RepoEnablement:
         return self._marker.path
 
     @property
+    def allow_rules(self) -> tuple[str, ...]:
+        """Return the rules enable adds to the repo's ``.claude/settings.json``."""
+        return self._settings.entries
+
+    @property
     def import_line(self) -> str:
         """Return the canonical ``@``-import line enablement owns."""
         return self._import.import_line

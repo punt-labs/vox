@@ -13,10 +13,9 @@ text moved from bare to namespaced in the same release), so a stale file
 from an older release is never byte-identical to the current source — only
 a content-independent ownership signal survives that. The five
 session-scoped verbs (``vox``, ``unmute``, ``mute``, ``vibe``, ``music``) are
-unaffected and must keep deploying bare, unchanged. The permission grants for
-the four namespaced commands must read ``Skill(vox:<name>)``, never the bare
-form, and a stale bare grant is pruned only for a name this run's file
-retirement actually cleaned — not unconditionally, and not in dev mode.
+unaffected and must keep deploying bare, unchanged. The hook grants no
+permissions: it never reads or writes a settings file (``vox enable`` grants
+vox's rules in the repo's own ``.claude/settings.json``).
 
 Driven as a subprocess against the real script, with a copy of the real
 ``plugin/`` tree and a sandboxed ``$HOME`` — the interface is the contract,
@@ -371,138 +370,38 @@ class TestDevModeSkipsDeployment:
         assert not _commands_dir(home).exists() or not _deployed_names(home)
 
 
-class TestPermissionGrantsAreNamespaced:
-    """The Skill() grants actually written to settings.json, not just the
-    deploy-loop file list, must read the namespaced form for the four.
-    """
+class TestHookWritesNoSettings:
+    """The hook never reads or writes a settings file; ``vox enable`` grants."""
 
-    def test_namespaced_grants_present(self, tmp_path: Path) -> None:
-        plugin_dir = _make_prod_plugin(tmp_path)
+    def test_prod_run_creates_no_settings(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
-        result = _run(plugin_dir, home)
+        result = _run(_make_prod_plugin(tmp_path), home)
         assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill(vox:{name})" in allow
+        assert not (home / ".claude" / "settings.json").exists()
 
-    def test_bare_grants_absent(self, tmp_path: Path) -> None:
-        plugin_dir = _make_prod_plugin(tmp_path)
+    def test_dev_run_creates_no_settings(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
-        result = _run(plugin_dir, home)
+        result = _run(_make_dev_plugin(tmp_path), home)
         assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill({name})" not in allow
+        assert not (home / ".claude" / "settings.json").exists()
 
-    def test_bare_grants_present_for_the_five(self, tmp_path: Path) -> None:
-        plugin_dir = _make_prod_plugin(tmp_path)
+    def test_existing_settings_survive_a_retirement_run(self, tmp_path: Path) -> None:
+        # A retirement run (CLEANED non-empty) used to prune stale bare grants.
         home = tmp_path / "home"
-        result = _run(plugin_dir, home)
-        assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _BARE:
-            assert f"Skill({name})" in allow
-
-    def _seed_settings_with_stale_grants(self, home: Path) -> None:
-        claude_dir = home / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        stale = {
-            "permissions": {
-                "allow": [
-                    "Skill(model)",
-                    "Skill(provider)",
-                    "Skill(voice)",
-                    "Skill(recap)",
-                    "Skill(vibe)",
-                ]
-            }
-        }
-        (claude_dir / "settings.json").write_text(json.dumps(stale), encoding="utf-8")
-
-    def test_stale_bare_grants_are_pruned_alongside_their_files(
-        self, tmp_path: Path
-    ) -> None:
-        # A grant is pruned only for a name this run's retirement ACTUALLY
-        # cleaned -- so the fixture must seed both the stale command file
-        # (real vox content, eligible for retirement) and the stale grant.
-        plugin_dir = _make_prod_plugin(tmp_path)
-        home = tmp_path / "home"
-        self._seed_settings_with_stale_grants(home)
         commands_dir = _commands_dir(home)
-        commands_dir.mkdir(parents=True, exist_ok=True)
-        for name in _NAMESPACED_ONLY:
-            (commands_dir / f"{name}.md").write_text(
-                _pre_pr_content(name), encoding="utf-8"
-            )
-        result = _run(plugin_dir, home)
-        assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill({name})" not in allow
-        # An unrelated bare grant that was never namespaced survives.
-        assert "Skill(vibe)" in allow
-
-    def test_stale_grant_survives_when_its_file_was_never_deployed(
-        self, tmp_path: Path
-    ) -> None:
-        # A grant with no corresponding file this run retired must NOT be
-        # pruned -- it is exactly as plausibly the user's own permission for
-        # their own hand-authored command as the file itself would be (see
-        # TestForeignFileWithGenericNameSurvives). Pruning independent of
-        # whether the file was actually vox's would silently revoke a grant
-        # the hook has no evidence it ever wrote.
-        plugin_dir = _make_prod_plugin(tmp_path)
-        home = tmp_path / "home"
-        self._seed_settings_with_stale_grants(home)
-        result = _run(plugin_dir, home)
-        assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill({name})" in allow
-
-    def test_stale_grant_survives_dev_mode(self, tmp_path: Path) -> None:
-        # Dev mode never runs file retirement, so CLEANED is always empty --
-        # the grant-pruning block must not run independently of it, or a
-        # vox-dev session would strip grants the sibling prod plugin wrote.
-        dest = tmp_path / "plugin"
-        shutil.copytree(_PLUGIN_SRC, dest)
-        home = tmp_path / "home"
-        self._seed_settings_with_stale_grants(home)
-        result = _run(dest, home)
-        assert result.returncode == 0, result.stderr
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill({name})" in allow
-
-    def test_write_failure_is_reported(self, tmp_path: Path) -> None:
-        # The stale-grant write goes through the same mktemp/jq/mv sequence
-        # as the legacy-MCP-pattern cleanup and the main permissions write,
-        # and must report failure the same way if that sequence can't run.
-        # settings.json's PARENT directory (~/.claude), not settings.json
-        # itself, needs to be unwritable: mktemp creates its temp file
-        # directly inside that directory. ~/.claude/commands stays writable
-        # (it is its own directory), so file retirement still succeeds and
-        # populates CLEANED -- the write only fails at the settings.json step.
-        plugin_dir = _make_prod_plugin(tmp_path)
-        home = tmp_path / "home"
-        claude_dir = home / ".claude"
-        commands_dir = claude_dir / "commands"
         commands_dir.mkdir(parents=True)
         (commands_dir / "model.md").write_text(
             _pre_pr_content("model"), encoding="utf-8"
         )
-        self._seed_settings_with_stale_grants(home)
-        claude_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
-        try:
-            result = _run(plugin_dir, home)
-        finally:
-            claude_dir.chmod(stat.S_IRWXU)
+        settings = home / ".claude" / "settings.json"
+        settings.write_text(
+            json.dumps({"permissions": {"allow": ["Skill(model)"]}}), encoding="utf-8"
+        )
+        before = settings.read_bytes()
+        result = _run(_make_prod_plugin(tmp_path), home)
         assert result.returncode == 0, result.stderr
-        # The file side still succeeded -- model.md was genuinely retired.
-        assert "model.md" not in _deployed_names(home)
-        context = _additional_context(result)
-        assert "Failed to remove stale bare Skill() grants for" in context
-        assert "Skill(model)" in context
+        assert "Cleaned retired commands: /model" in _additional_context(result)
+        assert settings.read_bytes() == before
 
 
 class TestForeignFileWithGenericNameSurvives:
@@ -680,9 +579,7 @@ class TestStockMacBashCompatibility:
         deployed = _deployed_names(home)
         for name in _BARE:
             assert f"{name}.md" in deployed
-        allow = _settings_allow(home)
-        for name in _NAMESPACED_ONLY:
-            assert f"Skill(vox:{name})" in allow
+        assert _settings_allow(home) == []
 
     def test_steady_state_session_does_not_abort(self, tmp_path: Path) -> None:
         # The common case after the one-time retirement: CLEANED is empty

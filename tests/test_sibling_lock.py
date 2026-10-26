@@ -113,3 +113,14 @@ def test_held_releases_on_exception(tmp_path: Path) -> None:
     # that it returns proves the lock was freed.
     with lock.held():
         assert lock.path.exists()
+
+
+def test_held_does_not_follow_a_symlinked_lock(tmp_path: Path) -> None:
+    host = tmp_path / "CLAUDE.md"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    lock = SiblingLock(host)
+    lock.path.symlink_to(victim)
+    with pytest.raises(OSError), lock.held():
+        pass
+    assert victim.read_text(encoding="utf-8") == "keep me"

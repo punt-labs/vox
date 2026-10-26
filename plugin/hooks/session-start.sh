@@ -14,29 +14,30 @@ fi
 _cwd=$(cd "$_cwd" 2>/dev/null && pwd) || _cwd="$PWD"
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
 PLUGIN_JSON="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
 
 ACTIONS=()
 
 # Dev vs prod comes from the manifest: a "vox-dev" name means this is a working
-# tree loaded with `claude --plugin-dir plugin`, and the permission glob, the
-# retired-command cleanup, and the command deployment all branch on it.
+# tree loaded with `claude --plugin-dir plugin`, and the retired-command
+# cleanup and the command deployment both branch on it. This hook never edits a
+# settings file: `vox enable` grants vox's rules in the repo's
+# .claude/settings.json.
 #
 # There are THREE answers, not two. An absent or unreadable manifest used to
 # fall through to prod, which is the worst available guess: prod deploys
-# commands out of $PLUGIN_ROOT and writes the prod tool glob, so a PLUGIN_ROOT
+# commands out of $PLUGIN_ROOT, so a PLUGIN_ROOT
 # that is not actually the plugin failed OPEN -- taking the more invasive
 # branch on the strength of a file it never managed to read. `unknown` refuses
 # to guess: it reports the reason through ACTIONS (this hook's only channel to
 # the agent) and skips every branch that needs the answer. The panel block at
 # the end reads no mode, so an unreadable manifest costs the session its
-# commands and permissions, not its panel. Exit stays 0 either way -- a
+# commands, not its panel. Exit stays 0 either way -- a
 # SessionStart hook must not take the session down with it.
 PLUGIN_MODE=unknown
 if [[ ! -f "$PLUGIN_JSON" ]]; then
-  ACTIONS+=("No plugin manifest at .claude-plugin/plugin.json under the plugin root - cannot tell dev from prod, so skipped command deployment and permission setup")
+  ACTIONS+=("No plugin manifest at .claude-plugin/plugin.json under the plugin root - cannot tell dev from prod, so skipped command deployment")
 else
   # No 2>/dev/null here, deliberately. grep exits 1 for "no match" -- a genuine
   # prod manifest -- and 2 for a read error, and collapsing those two into
@@ -47,14 +48,8 @@ else
   case "$_grep_status" in
     0) PLUGIN_MODE=dev ;;
     1) PLUGIN_MODE=prod ;;
-    *) ACTIONS+=("Could not read the plugin manifest at .claude-plugin/plugin.json (grep exit $_grep_status) - cannot tell dev from prod, so skipped command deployment and permission setup") ;;
+    *) ACTIONS+=("Could not read the plugin manifest at .claude-plugin/plugin.json (grep exit $_grep_status) - cannot tell dev from prod, so skipped command deployment") ;;
   esac
-fi
-
-if [[ "$PLUGIN_MODE" == "dev" ]]; then
-  TOOL_GLOB="mcp__plugin_vox-dev_mic__*"
-elif [[ "$PLUGIN_MODE" == "prod" ]]; then
-  TOOL_GLOB="mcp__plugin_vox_mic__*"
 fi
 
 # NAMESPACED_ONLY files — model/provider/voice/recap are deliberately
@@ -67,8 +62,7 @@ fi
 NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
 
 # CLEANED names the retired commands this run's rm actually removed. Declared
-# here, above the prod-only block that populates it, so the permission
-# section below (which reads it to decide which Skill() grants to prune) can
+# here, above the prod-only block that populates it, so the report below can
 # reference it safely under `set -u` even when PLUGIN_MODE never reaches the
 # prod branch that fills it in.
 CLEANED=()
@@ -142,8 +136,7 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
   # against. `mkdir -p` returns 0 for an ALREADY-existing directory
   # regardless of its write permission, so the guard alone doesn't cover
   # an existing-but-now-unwritable $COMMANDS_DIR -- `cp` below is guarded
-  # too. Report every failure via ACTIONS (the settings.json block below
-  # does the same on its identical failure class) instead of aborting or
+  # too. Report every failure via ACTIONS instead of aborting or
   # skipping silently -- the agent's additionalContext is the only
   # channel this hook has to say why commands never showed up. This static
   # summary line reports the fixed path "~/.claude/commands", never
@@ -183,151 +176,6 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
   fi
   if [[ $FAILED_DEPLOY -gt 0 ]]; then
     ACTIONS+=("Failed to deploy $FAILED_DEPLOY command(s) to ~/.claude/commands")
-  fi
-fi
-
-# ── Auto-allow MCP tools and skills ───────────────────────────────────
-# Every MCP tool and every skill must be auto-approved so users never see
-# a permission prompt after enabling the plugin. Uses the PLUGIN_RULES
-# array pattern from punt-kit/standards/permissions.md § 6.
-#
-# Skill names must match deployed commands. When a command is added
-# or renamed, update the Skill() list below; scripts/check-skill-permissions.sh
-# (wired into `make lint`) enforces parity and catches any drift that
-# would otherwise surface as unexplained permission prompts.
-#
-# Skipped entirely when the mode is unknown: TOOL_GLOB is the dev/prod-specific
-# half of every rule written here, so there is nothing correct to write without
-# it, and `set -u` would abort on the unset variable rather than guess.
-if [[ "$PLUGIN_MODE" == "unknown" ]]; then
-  : # already reported above; the tool glob is unknowable without the manifest
-elif ! command -v jq >/dev/null 2>&1; then
-  ACTIONS+=("jq not found, skipping permission setup")
-else
-  # Remove legacy mcp__plugin_tts_* and mcp__plugin_vox*_vox__* patterns
-  if jq -e '.permissions.allow // [] | map(select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)"))) | length > 0' "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
-    if [[ -n "$TMPFILE" ]] && jq '.permissions.allow = [.permissions.allow[] | select(test("mcp__plugin_(tts[_-]|vox[^_]*_vox__)") | not)]' "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
-      ACTIONS+=("Removed legacy MCP permission patterns")
-    else
-      [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
-      ACTIONS+=("Failed to remove legacy MCP permission patterns")
-    fi
-  fi
-
-  # Remove a stale bare Skill(<name>) grant for each of model/provider/
-  # voice/recap that this run's retired-command cleanup ACTUALLY removed
-  # (CLEANED, populated above -- prod mode only, and only for a file that
-  # passed the vox-fingerprint check). Forward-integration cleanup of
-  # superseded state, the same class of thing the RETIRED command cleanup
-  # already does for files above -- an upgrading user would otherwise keep
-  # a now-meaningless grant forever, since nothing else in this hook ever
-  # removes a permission rule once added.
-  #
-  # Deliberately NOT unconditional the way the legacy-MCP-pattern cleanup
-  # above is: a bare Skill(model) grant is exactly as plausibly the user's
-  # own permission for their own hand-authored command as
-  # ~/.claude/commands/model.md itself is (see the fingerprint-check
-  # comment on the file retirement above) -- stripping it independent of
-  # whether the file was actually vox's would silently revoke a grant that
-  # was never vox's to touch. Scoped to prod mode only, matching where
-  # file retirement runs, so a vox-dev session never strips grants the
-  # sibling prod plugin wrote (that would just have prod re-add them next
-  # start, churning settings.json every dev/prod session flip).
-  STALE_SKILL_ARGS=()
-  # Stock macOS ships bash 3.2 as /bin/bash, and "${empty_array[@]}" on that
-  # version raises "unbound variable" under `set -u` even after `arr=()` --
-  # a real bug in bash itself, not a `set -u` false alarm, fixed in bash 4.4.
-  # CLEANED is empty on every fresh install and on every steady-state session
-  # after the one-time retirement, so this is the common case, not an edge
-  # case -- every other array expansion in this file is already guarded with
-  # a `${#arr[@]} -gt 0` check; this one needs the same guard.
-  if [[ "$PLUGIN_MODE" == "prod" ]] && [[ ${#CLEANED[@]} -gt 0 ]]; then
-    for cleaned in "${CLEANED[@]}"; do
-      bare="${cleaned#/}"
-      for skip in "${NAMESPACED_ONLY[@]}"; do
-        [[ "${bare}.md" == "$skip" ]] && { STALE_SKILL_ARGS+=("Skill($bare)"); break; }
-      done
-    done
-  fi
-  if [[ ${#STALE_SKILL_ARGS[@]} -gt 0 ]]; then
-    # Guarded the same way every other command substitution that can fail in
-    # this file is (_rm_err, _cp_err, PLUGIN_RULES, ADDED, TMP, _repo_root) --
-    # a bare assignment under `set -euo pipefail` aborts the whole script on
-    # failure, with no ACTIONS message and no exit-0 guarantee, violating this
-    # file's own "a SessionStart hook must not take the session down with it"
-    # invariant (see the PLUGIN_MODE comment above). Reproduced directly: a
-    # failing `jq -cn --args` here kills the hook before it reaches the Lux
-    # panel launch block, with nothing on stdout.
-    STALE_SKILLS=$(jq -cn --args '$ARGS.positional' -- "${STALE_SKILL_ARGS[@]}") || {
-      ACTIONS+=("jq failed to build stale-grant list — skipping stale grant cleanup")
-      STALE_SKILLS=""
-    }
-    if [[ -n "$STALE_SKILLS" ]] && jq -e --argjson stale "$STALE_SKILLS" \
-      '.permissions.allow // [] | map(select(. as $r | $stale | index($r))) | length > 0' \
-      "$SETTINGS" >/dev/null 2>&1; then
-      TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
-      if [[ -n "$TMPFILE" ]] && jq --argjson stale "$STALE_SKILLS" \
-        '.permissions.allow = [.permissions.allow[] | select(. as $r | $stale | index($r) | not)]' \
-        "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
-        ACTIONS+=("Removed stale bare Skill() grants for: ${STALE_SKILL_ARGS[*]} (now namespaced-only)")
-      else
-        [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
-        ACTIONS+=("Failed to remove stale bare Skill() grants for: ${STALE_SKILL_ARGS[*]}")
-      fi
-    fi
-  fi
-
-  # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
-  #
-  # model/provider/voice/recap are namespaced-only commands (NAMESPACED_ONLY
-  # above), so their skill grant is qualified with the plugin namespace below,
-  # not the un-namespaced form -- a grant on the bare command name would
-  # pre-approve a command that no longer deploys and never matches the actual
-  # namespaced invocation.
-  PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(call)", "Skill(vox:model)", "Skill(vox:provider)", "Skill(vox:voice)", "Skill(vox:recap)"]' 2>/dev/null) || {
-    ACTIONS+=("jq failed to build permission rules — skipping permission setup")
-    PLUGIN_RULES=""
-  }
-
-  if [[ -z "$PLUGIN_RULES" ]]; then
-    : # jq failed above, already logged
-  else
-    if [[ ! -f "$SETTINGS" ]]; then
-      if mkdir -p "$(dirname "$SETTINGS")" && printf '{}' > "$SETTINGS"; then
-        ACTIONS+=("Created ~/.claude/settings.json")
-      else
-        ACTIONS+=("Failed to create ~/.claude/settings.json — skipping permission setup")
-      fi
-    fi
-  fi
-
-  if [[ -n "$PLUGIN_RULES" ]] && [[ -f "$SETTINGS" ]]; then
-    ADDED=$(jq -r --argjson new "$PLUGIN_RULES" '
-      (.permissions.allow // []) as $orig
-      | [$new[] | select(. as $r | $orig | index($r) | not)] | length
-    ' "$SETTINGS" 2>/dev/null) || ADDED=""
-
-    if [[ -z "$ADDED" ]]; then
-      ACTIONS+=("Failed to read permissions from settings.json (file may be corrupt)")
-    elif [[ "$ADDED" =~ ^[0-9]+$ ]] && [[ "$ADDED" -gt 0 ]]; then
-      TMP=$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null) || {
-        ACTIONS+=("mktemp failed — skipped permission update")
-        TMP=""
-      }
-      if [[ -n "$TMP" ]] && jq --argjson new "$PLUGIN_RULES" '
-        (.permissions.allow // []) as $orig
-        | .permissions.allow = $orig + [$new[] | select(. as $r | $orig | index($r) | not)]
-      ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"; then
-        ACTIONS+=("Auto-allowed $ADDED permission rule(s) in settings.json")
-      else
-        if [[ -n "$TMP" ]]; then
-          rm -f "$TMP"
-          ACTIONS+=("Failed to update permissions in settings.json")
-        fi
-      fi
-    fi
   fi
 fi
 

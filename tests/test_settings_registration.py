@@ -13,6 +13,10 @@ _ENTRY = "Bash(vox:*)"
 
 
 def _reg(tmp_path: Path) -> SettingsRegistration:
+    return SettingsRegistration(tmp_path / ".claude" / "settings.json", (_ENTRY,))
+
+
+def _default_reg(tmp_path: Path) -> SettingsRegistration:
     return SettingsRegistration(tmp_path / ".claude" / "settings.json")
 
 
@@ -199,3 +203,67 @@ def test_register_creates_absent_allow_key(tmp_path: Path) -> None:
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert data["permissions"]["deny"] == ["X"]
     assert data["permissions"]["allow"] == [_ENTRY]
+
+
+# ---------------------------------------------------------------------------
+# default rules and refusals
+# ---------------------------------------------------------------------------
+
+
+def test_default_entries_are_vox_rules_and_no_dev_rule(tmp_path: Path) -> None:
+    assert _default_reg(tmp_path).register() is True
+    rules = _default_reg(tmp_path).entries
+    assert _allow(tmp_path / ".claude" / "settings.json") == list(rules)
+    assert "Bash(vox:*)" in rules
+    assert "mcp__plugin_vox_mic__*" in rules
+    assert not [rule for rule in rules if "vox-dev" in rule]
+
+
+def test_deregister_removes_exactly_vox_rules(tmp_path: Path) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    user = {"model": "x", "permissions": {"allow": ["Bash(ls:*)"], "deny": ["Y"]}}
+    settings.write_text(json.dumps(user), encoding="utf-8")
+    reg = _default_reg(tmp_path)
+    reg.register()
+    reg.deregister()
+    assert json.loads(settings.read_text(encoding="utf-8")) == user
+
+
+def test_refuses_invalid_utf8(tmp_path: Path) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(ValueError, match="UTF-8"):
+        _reg(tmp_path).register()
+    assert settings.read_bytes() == b"\xff\xfe{}"
+
+
+def test_refuses_a_symlinked_settings_file(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.json"
+    victim.write_text("{}", encoding="utf-8")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").symlink_to(victim)
+    with pytest.raises(ValueError, match="symlinked"):
+        _reg(tmp_path).register()
+    assert victim.read_text(encoding="utf-8") == "{}"
+
+
+def test_refuses_a_symlinked_claude_dir(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".claude").symlink_to(elsewhere)
+    with pytest.raises(ValueError, match="symlinked"):
+        _reg(repo).deregister()
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_refuses_a_repo_rooted_at_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="home directory"):
+        _reg(tmp_path).register()
+    assert not (tmp_path / ".claude").exists()

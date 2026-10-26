@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Verify plugin/hooks/session-start.sh auto-allows a Skill(<name>) rule for
-# every command in plugin/commands/*.md. Drift here causes unexplained
-# permission prompts on first use. Fast (no network; uses standard shell
+# Verify _VOX_RULES (the rules `vox enable` grants in a repo's
+# .claude/settings.json) has a Skill(<name>) rule for every command in
+# plugin/commands/*.md, and no other. Drift here causes unexplained
+# permission prompts on first use. NAMESPACED_ONLY is read from
+# plugin/hooks/session-start.sh. Fast (no network; uses standard shell
 # utilities only).
 set -euo pipefail
 shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$ROOT/plugin/hooks/session-start.sh"
+RULES="$ROOT/src/punt_vox/settings_registration.py"
 COMMANDS_DIR="$ROOT/plugin/commands"
 
 if [[ ! -f "$HOOK" ]]; then
   echo "error: $HOOK not found" >&2
+  exit 2
+fi
+if [[ ! -f "$RULES" ]]; then
+  echo "error: $RULES not found" >&2
   exit 2
 fi
 if [[ ! -d "$COMMANDS_DIR" ]]; then
@@ -68,7 +75,7 @@ while IFS= read -r allow; do
 done < <(
   # shellcheck disable=SC2016  # single quotes deliberate: this is a sed
   # address expression, not a shell variable expansion.
-  sed -n '/^  PLUGIN_RULES=\$(jq -n/,/2>\/dev\/null) || {$/p' "$HOOK" \
+  sed -n '/^_VOX_RULES: /,/^)$/p' "$RULES" \
     | grep -oE 'Skill\([a-z_:-]+\)' \
     | sed -E 's/Skill\(|\)//g' \
     | sort -u
@@ -90,7 +97,7 @@ _is_namespaced() {
 }
 
 # ALLOWED can legitimately be empty (e.g. a future edit breaks the
-# PLUGIN_RULES sed extraction above), and on bash 3.2 (stock macOS
+# _VOX_RULES sed extraction above), and on bash 3.2 (stock macOS
 # /bin/bash) "${empty_array[@]}" raises "unbound variable" under `set -u`
 # even after `arr=()`. Guard every loop over it so an empty ALLOWED is
 # reported as "everything is missing", not a crash.
@@ -125,12 +132,12 @@ fi
 
 status=0
 if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "error: plugin/commands/*.md has no matching Skill() permission in plugin/hooks/session-start.sh:" >&2
+  echo "error: plugin/commands/*.md has no matching Skill() rule in _VOX_RULES (src/punt_vox/settings_registration.py):" >&2
   for m in "${missing[@]}"; do echo "  - $m" >&2; done
   status=1
 fi
 if [[ ${#extra[@]} -gt 0 ]]; then
-  echo "error: plugin/hooks/session-start.sh grants Skill() for commands that do not exist:" >&2
+  echo "error: _VOX_RULES grants Skill() for commands that do not exist:" >&2
   for e in "${extra[@]}"; do echo "  - $e" >&2; done
   status=1
 fi
