@@ -27,7 +27,6 @@ lancedb/
 Lux.ini
 research/
 .biff.local
-.entire/
 .vscode/
 
 # Per-repo vox ephemeral state (session config, audio)

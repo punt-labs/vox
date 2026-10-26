@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Stale session working notes (`RESUME.md`).
+- The `.entire/` gitignore entry left over from the retired Entire CLI.
 
 ### Fixed
 
