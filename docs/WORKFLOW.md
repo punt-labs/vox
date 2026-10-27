@@ -333,10 +333,13 @@ function demo(pr):
 #   bugbot_open  = a Cursor Bugbot check run on any commit of the PR, not
 #                  only the head, whose status is not completed (queued or
 #                  in progress), whatever its age; it stays true until the
-#                  run ends or, for a stuck run, the operator's ruling on
-#                  its escalation is recorded
+#                  run ends
 #   bugbot_stuck = a Bugbot run queued or in progress for more than 60
-#                  minutes
+#                  minutes. It gets one escalation, ever. A "cancel" ruling:
+#                  the leader cancels the run, the run ends, and
+#                  bugbot_open clears. A "wait" ruling: the run stays open,
+#                  bugbot_open stays true until it ends, and the operator
+#                  may rule again later.
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
@@ -373,7 +376,7 @@ function poll_tick(pr):
     if a bugbot_stuck run has no "bugbot run" comment since it got stuck:
         comment "bugbot run"               # once; the leader cancels nothing
     if a run is still bugbot_stuck 30 minutes after that comment and no
-            escalation for it is open:
+            escalation has been posted for this run:
         post an escalation comment         # the operator rules: cancel the
                                            #   run, or wait
     for each finding not answered(f) and not under an open escalation:
@@ -432,9 +435,8 @@ function merge_gate(state) -> bool:
        and not pending(pr)                 # no requested review outstanding
        and not bugbot_open                 # any queued or in-progress run on
                                            #   any commit: its findings land
-                                           #   before the merge, until it
-                                           #   ends or a stuck run's
-                                           #   escalation is ruled on
+                                           #   before the merge; only the run
+                                           #   ending clears it
        and reviewed_head is the PR head    # bot-authored PRs included
        and every finding is answered
        and zero unresolved review threads
