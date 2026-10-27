@@ -321,9 +321,9 @@ function demo(pr):
 #                  a manual review may re-scan the whole PR and repeat old
 #                  findings, and a round-1 High that arrives late is not
 #                  new — it takes the normal fix path
-#   escalation   = the leader's "escalated:" comment on one new round-2 High;
-#                  closed by a later ledger entry recording the operator's
-#                  ruling and how it was applied
+#   escalation   = the leader's "escalated:" comment on one new round-2 High,
+#                  or on a stuck Bugbot run; closed by a later ledger entry
+#                  recording the operator's ruling and how it was applied
 #   skipped(pr)  = the PR author is a bot ([github_app] ignore_bot_pr in
 #                  .pr_agent.toml); no title or label lets an author skip
 #   reviewed_head = the newest commit covered by a Qodo review, the outage
@@ -332,7 +332,11 @@ function demo(pr):
 #                  has covered its whole diff
 #   bugbot_open  = a Cursor Bugbot check run on any commit of the PR, not
 #                  only the head, whose status is not completed (queued or
-#                  in progress), whatever its age
+#                  in progress), whatever its age; it stays true until the
+#                  run ends or, for a stuck run, the operator's ruling on
+#                  its escalation is recorded
+#   bugbot_stuck = a Bugbot run queued or in progress for more than 60
+#                  minutes
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
@@ -366,6 +370,12 @@ function poll_tick(pr):
         comment "bugbot run"               # once; if the re-run fails too or
                                            #   none starts, the 30-minute
                                            #   fallback in bugbot_in applies
+    if a bugbot_stuck run has no "bugbot run" comment since it got stuck:
+        comment "bugbot run"               # once; the leader cancels nothing
+    if a run is still bugbot_stuck 30 minutes after that comment and no
+            escalation for it is open:
+        post an escalation comment         # the operator rules: cancel the
+                                           #   run, or wait
     for each finding not answered(f) and not under an open escalation:
         if N == 2 and f is a new High:
             post an escalation comment; the operator rules
@@ -422,7 +432,9 @@ function merge_gate(state) -> bool:
        and not pending(pr)                 # no requested review outstanding
        and not bugbot_open                 # any queued or in-progress run on
                                            #   any commit: its findings land
-                                           #   before the merge
+                                           #   before the merge, until it
+                                           #   ends or a stuck run's
+                                           #   escalation is ruled on
        and reviewed_head is the PR head    # bot-authored PRs included
        and every finding is answered
        and zero unresolved review threads
