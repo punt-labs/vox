@@ -283,9 +283,8 @@ function demo(pr):
 #                  undo a completed run. A clean run posts no review, so
 #                  read the check run. Or: 30 minutes have passed since
 #                  trigger(N) (or since the re-run comment below, if
-#                  later) and no Bugbot run on the PR is queued or in
-#                  progress — the timeout covers an outage, never a live
-#                  run.
+#                  later) and bugbot_open is false — the timeout covers an
+#                  outage, never a live run.
 #   copilot_trial(pr) = not skipped(pr), and fewer than 5 vox PRs that are
 #                  not skipped, numbered above #526 and below pr, carry a
 #                  Copilot review request (a ReviewRequestedEvent for
@@ -330,16 +329,19 @@ function demo(pr):
 #                  fallback, or the local delta review below; a skipped
 #                  (bot-authored) PR has none until the local delta review
 #                  has covered its whole diff
+#   delta_head   = the newest commit a local delta review has completed on
 #   bugbot_open  = a Cursor Bugbot check run on any commit of the PR, not
 #                  only the head, whose status is not completed (queued or
-#                  in progress), whatever its age; it stays true until the
-#                  run ends
+#                  in progress), whatever its age, and that has no recorded
+#                  "proceed" ruling; it stays true until the run ends or a
+#                  "proceed" ruling is recorded
 #   bugbot_stuck = a Bugbot run queued or in progress for more than 60
-#                  minutes. It gets one escalation, ever. A "cancel" ruling:
-#                  the leader cancels the run, the run ends, and
-#                  bugbot_open clears. A "wait" ruling: the run stays open,
-#                  bugbot_open stays true until it ends, and the operator
-#                  may rule again later.
+#                  minutes, with no recorded "proceed" ruling. It gets one
+#                  escalation, ever. A "proceed" ruling: the operator rules
+#                  the run abandoned, the ledger entry names its check-run
+#                  id, and bugbot_open ignores it. A "wait" ruling: the run
+#                  stays open, bugbot_open stays true until it ends, and
+#                  the operator may rule again later.
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
@@ -369,7 +371,8 @@ function poll_tick(pr):
             its findings have no Qodo id, so they take the ledger path
                                                    # outage fallback
     if a Bugbot run for round N completed without a finished review
-            (failure, timeout, or cancelled) and no re-run was requested for round N:
+            (failure, timeout, or cancelled) and no re-run was requested for round N
+            and bugbot_in(N) is still false:
         comment "bugbot run"               # once; if the re-run fails too or
                                            #   none starts, the 30-minute
                                            #   fallback in bugbot_in applies
@@ -377,8 +380,8 @@ function poll_tick(pr):
         comment "bugbot run"               # once; the leader cancels nothing
     if a run is still bugbot_stuck 30 minutes after that comment and no
             escalation has been posted for this run:
-        post an escalation comment         # the operator rules: cancel the
-                                           #   run, or wait
+        post an escalation comment         # the operator rules: proceed
+                                           #   (the run is abandoned), or wait
     for each finding not answered(f) and not under an open escalation:
         if N == 2 and f is a new High:
             post an escalation comment; the operator rules
@@ -407,14 +410,15 @@ function poll_tick(pr):
             and a High was fixed since trigger(1):
         comment "/agentic_review"; comment "bugbot run"   # opens round 2,
                                                           #   the last
-    if not pending(pr) and (reviewed_head does not exist
-            or the PR head is newer than reviewed_head):
+    if not pending(pr) and (the PR head is newer than both reviewed_head
+            and delta_head, or skipped(pr) and neither exists):
         run code_reviewer locally on the reviewed_head..head delta (the
             whole diff when there is no reviewed_head); its findings are
-            findings like any other; set reviewed_head to the head only
-            once the review has completed and every finding it raised is
-            answered(f)              # bounded rounds, but no unreviewed
-                                     #   merge, bot-authored PRs included
+            findings like any other; set delta_head to the head once the
+            review has completed
+    if every finding of the delta review at delta_head is answered(f):
+        set reviewed_head to delta_head  # bounded rounds, but no unreviewed
+                                         #   merge, bot-authored PRs included
     if demo_ok(pr) is false and nothing was pushed this tick
             and no demo is running:
         demo(pr)                           # first demo, a re-demo after a
@@ -436,7 +440,8 @@ function merge_gate(state) -> bool:
        and not bugbot_open                 # any queued or in-progress run on
                                            #   any commit: its findings land
                                            #   before the merge; only the run
-                                           #   ending clears it
+                                           #   ending or a "proceed" ruling
+                                           #   clears it
        and reviewed_head is the PR head    # bot-authored PRs included
        and every finding is answered
        and zero unresolved review threads
