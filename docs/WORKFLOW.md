@@ -286,20 +286,21 @@ function demo(pr):
 #                  later) and no Bugbot run on the PR is queued or in
 #                  progress — the timeout covers an outage, never a live
 #                  run.
-#   copilot_trial(pr) = fewer than 5 vox PRs numbered above #526 and below
-#                  pr carry a Copilot review request (a ReviewRequestedEvent
-#                  for copilot-pull-request-reviewer, read from GitHub;
-#                  #527 was the first). A request counts toward the 5
-#                  whether or not a review came back.
-#   copilot_in   = not copilot_trial(pr), or a Copilot review request
-#                  exists on pr and (a review by
+#   copilot_trial(pr) = not skipped(pr), and fewer than 5 vox PRs that are
+#                  not skipped, numbered above #526 and below pr, carry a
+#                  Copilot review request (a ReviewRequestedEvent for
+#                  copilot-pull-request-reviewer, read from GitHub; #527
+#                  was the first). A request counts toward the 5 whether
+#                  or not a review came back.
+#   copilot_in   = no Copilot review request exists on pr and not
+#                  copilot_trial(pr), or a request exists and (a review by
 #                  copilot-pull-request-reviewer exists or 30 minutes have
 #                  passed since the request); a trial PR with no request is
 #                  pending until the leader makes one
 #   pending(pr)  = (not skipped(pr) and (not qodo_in(round(pr))
 #                  or not bugbot_in(round(pr)))) or not copilot_in
-#                  # a requested Copilot review counts on a skipped
-#                  # (bot-authored) PR too
+#                  # a Copilot review someone requests on a skipped
+#                  # (bot-authored) PR still counts
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
@@ -361,7 +362,7 @@ function poll_tick(pr):
             its findings have no Qodo id, so they take the ledger path
                                                    # outage fallback
     if a Bugbot run for round N completed without a finished review
-            (failure or timeout) and no re-run was requested for round N:
+            (failure, timeout, or cancelled) and no re-run was requested for round N:
         comment "bugbot run"               # once; if the re-run fails too or
                                            #   none starts, the 30-minute
                                            #   fallback in bugbot_in applies
