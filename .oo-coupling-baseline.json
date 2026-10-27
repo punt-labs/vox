@@ -332,8 +332,8 @@
     "efferent_coupling": 8.0,
     "public_names": 5.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.333,
-    "avg_lcom": 0.333
+    "max_lcom": 0.5,
+    "avg_lcom": 0.45
   },
   "src/punt_vox/frontmatter.py": {
     "efferent_coupling": 1.0,

@@ -299,7 +299,7 @@ class TestHookGate:
 
 class TestPanelSpawn:
     """``session-start.sh``'s vox-panel spawn block: a different shape from the
-    simple gated hooks above (it also provisions permissions/commands), so
+    simple gated hooks above (it also deploys commands), so
     each test isolates ``HOME`` to a scratch directory rather than reusing
     ``_run_hook``'s plain env."""
 
@@ -498,7 +498,7 @@ class TestPanelSpawn:
 
         `jq` (and the jq-less `grep` fallback) exit non-zero on input with no
         `cwd`; under `set -e` that killed the hook before its command
-        deployment and permission auto-allow ever ran.
+        deployment ever ran.
 
         An unresolvable cwd falls back to `$PWD`, so the subprocess runs from
         an unenabled scratch directory (outside the repo tree, which pytest's
@@ -677,11 +677,11 @@ class TestPanelSpawn:
 class TestManifestRefusal:
     """``session-start.sh`` refuses to guess dev-vs-prod it cannot read.
 
-    The manifest decides the permission glob, the retired-command cleanup, and
-    the command deployment. An absent or unreadable one used to fall through to
+    The manifest decides the retired-command cleanup and the command
+    deployment. An absent or unreadable one used to fall through to
     *prod*, the more invasive branch, on the strength of a file the hook never
-    managed to read -- so a wrong ``PLUGIN_ROOT`` deployed commands and wrote
-    the prod glob instead of reporting the problem. These tests pin the third
+    managed to read -- so a wrong ``PLUGIN_ROOT`` deployed commands instead of
+    reporting the problem. These tests pin the third
     state: report it, touch nothing, exit 0.
     """
 
@@ -719,7 +719,7 @@ class TestManifestRefusal:
         plugin = self._plugin_copy(tmp_path)
         result = self._run(plugin, _make_repo(tmp_path), tmp_path / "home")
         assert result.returncode == 0, result.stderr
-        assert (tmp_path / "home" / ".claude" / "settings.json").exists()
+        assert "cannot tell dev from prod" not in result.stdout
 
     def test_absent_manifest_provisions_nothing(self, tmp_path: Path) -> None:
         plugin = self._plugin_copy(tmp_path)
@@ -730,7 +730,7 @@ class TestManifestRefusal:
         assert result.returncode == 0, result.stderr
         assert not (home / ".claude").exists(), "provisioned against an unread manifest"
         assert "No plugin manifest" in result.stdout
-        assert "skipped command deployment and permission setup" in result.stdout
+        assert "skipped command deployment" in result.stdout
 
     def test_unreadable_manifest_provisions_nothing(self, tmp_path: Path) -> None:
         if os.geteuid() == 0:

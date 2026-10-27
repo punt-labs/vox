@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Permission rules are repo-level only.** The SessionStart hook no longer
+  reads or writes `~/.claude/settings.json`: it used to add
+  `mcp__plugin_vox_mic__*` (or the `-dev` glob) and vox's `Skill()` rules to
+  it on every session, and prune legacy and stale bare rules there. Now
+  `vox enable` adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*` and a `Skill()`
+  rule per vox command to the repo's `.claude/settings.json` and prints them,
+  and `vox disable` removes exactly those. A symlinked `.claude/` or
+  `settings.json`, a non-UTF-8 file, or a repo rooted at your home directory
+  is refused, and the lock file is never followed through a symlink. Rules
+  older versions put in `~/.claude/settings.json` are left in place; delete
+  them by hand if you want them gone. Dev-plugin rules are not granted.
 - `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
   abbreviations are now family-friendly ("laughing my head off" and "what
   the heck", respectively) instead of profane.

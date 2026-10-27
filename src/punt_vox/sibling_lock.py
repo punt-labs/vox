@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import os
 import time
 from typing import TYPE_CHECKING, Self, final
 
@@ -57,7 +58,13 @@ class SiblingLock:
     def held(self) -> Generator[None]:
         """Hold the exclusive lock for the duration of the ``with`` block."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as lock:
+        # O_NOFOLLOW: a planted symlink at the lock path must not truncate its target.
+        with open(
+            self._path,
+            "w",
+            encoding="utf-8",
+            opener=lambda path, flags: os.open(path, flags | os.O_NOFOLLOW, 0o600),
+        ) as lock:
             self._acquire(lock)
             try:
                 yield
