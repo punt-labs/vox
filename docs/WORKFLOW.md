@@ -236,7 +236,7 @@ function pr_loop(unit):
 
     # D. AUDIO DEMO — confirmed by ear, the one human gate. poll_tick is
     #    its only caller, so it runs at most once at a time, and it runs
-    #    again after an audible push or a failed demo
+    #    again after a non-exempt push or a failed demo
 
 function demo(pr):
     no push to the branch, and no other demo, while this one runs
@@ -252,7 +252,9 @@ function demo(pr):
     run the canonical flight in docs/testing/manual-tests.md and ask the
         operator after EACH audible step — a log cannot judge whether the
         audio sounded right; only the operator's ear can
-    if the operator confirms: comment "demo confirmed: H"   # demoed_head
+    if the operator confirms: comment "demo confirmed: H"   # demoed_head;
+                                    #   only a PR that changes a non-exempt
+                                    #   file reaches here (demo_ok is false)
     else: comment "demo failed: H" with what the operator heard; the
         failure is a finding like any other (fixed, local_review on the
         fix diff, pushed), and the next tick demos the new head
@@ -265,19 +267,25 @@ function demo(pr):
 #   head(N)      = the PR head commit when trigger(N) happened
 #   qodo_in(N)   = `qodo read pr-review-session findings --pr-url <url>`
 #                  reports review_session.status "completed" with a
-#                  commit_sha that is head(N) or a later commit on the
-#                  branch; or the outage fallback ran for
-#                  round N. A late reply to an earlier round never completes
-#                  round N, and a clean review counts like any other.
+#                  started_at at or after trigger(N) and a commit_sha that
+#                  is head(N) or a later commit on the branch; or the
+#                  outage fallback ran for round N. A session that started
+#                  before trigger(N) — a round-1 session for N = 2 — never
+#                  completes round N, and a clean review counts like any
+#                  other.
 #   bugbot_in(N) = a "Cursor Bugbot" check run on head(N) or a later branch
 #                  commit, started at or after trigger(N) — the PR open for
 #                  N = 1 (Bugbot's automatic run), round 2's "bugbot run"
-#                  comment for N = 2 — and completed with any conclusion
-#                  except cancelled; or 30 minutes since trigger(N). A run
-#                  a push cancelled reviewed nothing, so it does not count;
-#                  a later push does not undo a completed run (the delta
-#                  review covers it). A clean run posts no review, so read
-#                  the check run.
+#                  comment for N = 2 — and completed with a conclusion
+#                  showing the review finished (success or neutral). A run
+#                  that failed, timed out, or was cancelled reviewed
+#                  nothing, so it does not count; a later push does not
+#                  undo a completed run. A clean run posts no review, so
+#                  read the check run. Or: 30 minutes have passed since
+#                  trigger(N) (or since the re-run comment below, if
+#                  later) and no Bugbot run on the PR is queued or in
+#                  progress — the timeout covers an outage, never a live
+#                  run.
 #   copilot_trial(pr) = fewer than 5 vox PRs numbered above #526 and below
 #                  pr carry a Copilot review request (a ReviewRequestedEvent
 #                  for copilot-pull-request-reviewer, read from GitHub;
@@ -288,8 +296,10 @@ function demo(pr):
 #                  copilot-pull-request-reviewer exists or 30 minutes have
 #                  passed since the request); a trial PR with no request is
 #                  pending until the leader makes one
-#   pending(pr)  = not skipped(pr) and (not qodo_in(round(pr))
-#                  or not bugbot_in(round(pr)) or not copilot_in)
+#   pending(pr)  = (not skipped(pr) and (not qodo_in(round(pr))
+#                  or not bugbot_in(round(pr)))) or not copilot_in
+#                  # a requested Copilot review counts on a skipped
+#                  # (bot-authored) PR too
 #   finding      = any unresolved review thread, from any author, or any
 #                  Medium in Qodo's summary — whenever it arrives, late
 #                  ones included
@@ -305,28 +315,34 @@ function demo(pr):
 #                    head, or a ledger comment gives the reason and
 #                    file:line.
 #                  A finding repeated from an earlier round keeps its answer.
-#   new High     = a High not raised in an earlier round; a manual review
-#                  may re-scan the whole PR and repeat old findings
+#   new High     = a High raised by a round-2 review (one that started at
+#                  or after trigger(2)) and not raised in an earlier round;
+#                  a manual review may re-scan the whole PR and repeat old
+#                  findings, and a round-1 High that arrives late is not
+#                  new — it takes the normal fix path
 #   escalation   = the leader's "escalated:" comment on one new round-2 High;
 #                  closed by a later ledger entry recording the operator's
 #                  ruling and how it was applied
 #   skipped(pr)  = the PR author is a bot ([github_app] ignore_bot_pr in
 #                  .pr_agent.toml); no title or label lets an author skip
 #   reviewed_head = the newest commit covered by a Qodo review, the outage
-#                  fallback, or the local delta review below
-#   audible(x)   = the PR or the commit range x changes any file under
-#                  src/ or plugin/, or any file outside docs/, tests/,
-#                  .github/, the ratchet files (.oo-*, .suppression-*),
-#                  and top-level *.md — a slash-command prompt, a
-#                  dependency, or an install change can change what the
-#                  operator hears
-#   bugbot_open  = a Cursor Bugbot check run on the head whose status is
-#                  not completed (queued or in progress) and that was
-#                  created under 30 minutes ago
+#                  fallback, or the local delta review below; a skipped
+#                  (bot-authored) PR has none until the local delta review
+#                  has covered its whole diff
+#   bugbot_open  = a Cursor Bugbot check run on any commit of the PR, not
+#                  only the head, whose status is not completed (queued or
+#                  in progress), whatever its age
+#   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
+#                  file (.oo-*, .suppression-*), or is a top-level *.md,
+#                  and is not under plugin/ — commands, skills, agents,
+#                  and hooks there are behavior even when Markdown, because
+#                  Claude Code executes them; src/, a dependency, or an
+#                  install change can change what the operator hears
 #   demoed_head  = the commit named in the leader's latest "demo confirmed:"
 #                  comment, newer than any "demo failed:" comment
-#   demo_ok(pr)  = not audible(pr), or demoed_head exists, is the head or
-#                  an ancestor of it, and not audible(demoed_head..head)
+#   demo_ok(pr)  = every file the PR changes is demo_exempt, or demoed_head
+#                  exists, is the head or an ancestor of it, and every file
+#                  changed since it is demo_exempt
 #   finding also = the leader's latest "demo failed:" comment, until a
 #                  later "demo confirmed:" comment
 
@@ -340,8 +356,15 @@ function poll_tick(pr):
             and 30 minutes have passed since trigger(N)
             and the fallback has not yet run for round N:
         run code_reviewer locally on the diff Qodo was asked to review;
-            it completes round N for qodo_in; its findings have no Qodo
-            id, so they take the ledger path       # outage fallback
+            it completes round N for qodo_in only if it completed — on an
+            error, re-run once, then report to the operator and stop;
+            its findings have no Qodo id, so they take the ledger path
+                                                   # outage fallback
+    if a Bugbot run for round N completed without a finished review
+            (failure or timeout) and no re-run was requested for round N:
+        comment "bugbot run"               # once; if the re-run fails too or
+                                           #   none starts, the 30-minute
+                                           #   fallback in bugbot_in applies
     for each finding not answered(f) and not under an open escalation:
         if N == 2 and f is a new High:
             post an escalation comment; the operator rules
@@ -356,22 +379,33 @@ function poll_tick(pr):
             stop; the operator rules                 #   committed inside it
         push once                          # every fix reaches the PR head;
                                            #   never while demo(pr) runs
+    close each escalated finding the operator ruled on, by its answered(f)
+        path — a finding with a Qodo id through the Qodo CLI, because a
+        ledger line does not close it: a dismiss ruling closes it (dismiss)
+        as soon as the ruling is recorded; a fix ruling closes it
+        (mark-implemented) only once its fix commit is on the PR head and
+        passed local_review
+        # a fix ruling closed earlier would let a stopped fix merge
+        #   unfixed: no open escalation, no unanswered finding
     resolve each thread that is answered, one by one — the leader
         resolves, not the agent
     if not skipped(pr) and not pending(pr) and N == 1
             and a High was fixed since trigger(1):
         comment "/agentic_review"; comment "bugbot run"   # opens round 2,
                                                           #   the last
-    if not pending(pr) and no review is requested and the PR head is newer
-            than reviewed_head:
-        run code_reviewer locally on the reviewed_head..head delta; its
-            findings are findings like any other   # bounded rounds, but
-                                                   #   no unreviewed merge
-    if audible(pr) and not demo_ok(pr) and nothing was pushed this tick
+    if not pending(pr) and (reviewed_head does not exist
+            or the PR head is newer than reviewed_head):
+        run code_reviewer locally on the reviewed_head..head delta (the
+            whole diff when there is no reviewed_head); its findings are
+            findings like any other; set reviewed_head to the head only
+            once the review has completed and every finding it raised is
+            answered(f)              # bounded rounds, but no unreviewed
+                                     #   merge, bot-authored PRs included
+    if demo_ok(pr) is false and nothing was pushed this tick
             and no demo is running:
-        demo(pr)                           # first demo, a re-demo after an
-                                           #   audible push, or after a fix for
-                                           #   a failed demo
+        demo(pr)                           # first demo, a re-demo after a
+                                           #   non-exempt push, or after a fix
+                                           #   for a failed demo
     if not pending(pr) and not bugbot_open and no finding is unanswered:
         cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
@@ -385,16 +419,15 @@ function poll_tick(pr):
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
-       and not bugbot_open                 # a push-started run's findings
-                                           #   land before the merge; its 30
-                                           #   minutes run from the run's
-                                           #   creation, as it has no comment
-       and (skipped(pr) or reviewed_head is the PR head)
+       and not bugbot_open                 # any queued or in-progress run on
+                                           #   any commit: its findings land
+                                           #   before the merge
+       and reviewed_head is the PR head    # bot-authored PRs included
        and every finding is answered
        and zero unresolved review threads
        and round(pr) ≤ 2
        and no escalation is open
-       and demo_ok(pr)                     # demoed, and nothing audible
+       and demo_ok(pr)                     # demoed, and nothing non-exempt
                                            #   landed after the demo
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
@@ -471,14 +504,16 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
   ∧ localReviewClean(pr)                  -- a local round that left nothing
                                           --   to fix, BEFORE the PR opened and
                                           --   before every fix push
-  ∧ demoOk(pr)                            -- demo_ok: an audible PR was
+  ∧ demoOk(pr)                            -- demo_ok: a non-exempt PR was
                                           --   confirmed by ear on demoed_head,
-                                          --   and nothing audible landed after
+                                          --   and nothing non-exempt landed
+                                          --   after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
-  ∧ ¬ bugbotOpen(head(pr))                -- bugbot_open was false at the
+  ∧ ¬ bugbotOpen(pr)                      -- bugbot_open was false at the
                                           --   merge
-  ∧ (skipped(pr) ∨ reviewedHead(pr) = head(pr))  -- merged code was reviewed
+  ∧ reviewedHead(pr) = head(pr)           -- merged code was reviewed, bot-
+                                          --   authored PRs included
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned
   ∧ round(pr) ≤ 2                         -- round 2 only after a High fix
   ∧ unresolvedThreads(pr) = ∅
