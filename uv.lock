@@ -1377,7 +1377,7 @@ requires-dist = [
     { name = "botocore-stubs", specifier = ">=1.35.0" },
     { name = "dnspython", specifier = ">=2.9.0" },
     { name = "elevenlabs", specifier = ">=2.0.0" },
-    { name = "fastmcp", specifier = ">=3.4.10" },
+    { name = "fastmcp", specifier = ">=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx2", specifier = ">=2.14.0" },
     { name = "mcp", specifier = ">=1.30.0" },

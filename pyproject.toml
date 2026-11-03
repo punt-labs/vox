@@ -36,9 +36,11 @@ dependencies = [
     "dnspython>=2.9.0",
     "elevenlabs>=2.0.0",
     # Security floor only: vox does not import fastmcp (punt-lux pulls it in
-    # with fastmcp>=3.0.0). fastmcp < 3.4.10 is covered by Dependabot alert
-    # #60; the floor keeps a PyPI install off it.
-    "fastmcp>=3.4.10",
+    # with fastmcp>=3.0.0). Dependabot alert #60 covers fastmcp >=3.0.0,<3.4.10
+    # and >=4.0.0,<4.1.2; the floor and the exclusions keep a PyPI install off
+    # both. The 4.1.0.* / 4.1.1.* wildcards also exclude post-releases, which
+    # sit inside <4.1.2. No upper cap: a patched later major stays installable.
+    "fastmcp>=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*",
     # Imported directly, not just through the SDKs: the providers classify
     # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
     # that the ElevenLabs SDK lets escape raw. Floors are the locked versions.
