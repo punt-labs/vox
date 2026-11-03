@@ -208,7 +208,6 @@ class FakeService:
 
     def __init__(self, *, raise_on: Failure = "") -> None:
         self.entry = MenuEntry("vox-panel", "Vox", "vox.panel")
-        self.callback_id = self.entry.callback_id
         self.refusal = FAILURE_TEXT
         # Open unless a test closes it to stand in for a voxd slow to answer.
         self.prefetch_gate = threading.Event()

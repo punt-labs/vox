@@ -97,11 +97,6 @@ class VoxPanelService:
         """The ``Vox`` menu entry this session registers, and whose clicks it serves."""
         return _ENTRY
 
-    @property
-    def callback_id(self) -> str:
-        """The id the ``Vox`` menu entry's clicks carry back to this session."""
-        return _ENTRY.callback_id
-
     def prefetch(self) -> None:
         """Read settings once before any click, so the first click has some to show."""
         self.refresh()
