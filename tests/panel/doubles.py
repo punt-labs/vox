@@ -22,6 +22,7 @@ from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.lux_common import MenuEntry
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.types_errors import ConfigValueError
 
@@ -206,9 +207,8 @@ class FakeService:
     _raise_on: Failure
 
     def __init__(self, *, raise_on: Failure = "") -> None:
-        self.callback_id = "vox-panel"
-        self.label = "Vox"
-        self.frame_id = "vox.panel"
+        self.entry = MenuEntry("vox-panel", "Vox", "vox.panel")
+        self.callback_id = self.entry.callback_id
         self.refusal = FAILURE_TEXT
         # Open unless a test closes it to stand in for a voxd slow to answer.
         self.prefetch_gate = threading.Event()

@@ -3,8 +3,9 @@
 Four regions top to bottom: a one-line status slot, the Notifications radio,
 the Mic Mode radio, and the Voice combo + preview button, separated by rules --
 the layout locked in ``docs/vox-control-panel-ui.md``. The status slot renders
-empty unless :class:`~punt_vox.panel.panel_notice.PanelNotice` carries a warning,
-so the scene's shape never changes between the silent and the warning case.
+empty unless :class:`~punt_vox.panel.panel_notice.PanelNotice` carries a
+warning, so the scene's shape never changes between the silent and the
+warning case.
 
 The frame uses a fixed ``size`` rather than ``frame.flags.auto_resize``: this
 panel's section labels render as ImGui's ``separator_text`` widget, which by

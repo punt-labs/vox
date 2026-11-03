@@ -8,9 +8,10 @@ Every entry point -- :meth:`notify_changed`, the failure presenters, and
 lux listener's event loop (a menu click, a hub handshake) as readily as the
 control-channel single-writer. So every render reads each album's track count
 from :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache`
-rather than the disk, and the live refresh that keeps the cache honest runs as a
-best-effort background task, never awaited inline: paint from what is already
-known, refresh live, and resubmit once that refresh lands.
+rather than the disk, and the live refresh that keeps the cache honest always
+runs as a best-effort background task via :meth:`_schedule_track_count_refresh`,
+never awaited inline: paint from whatever is already known, refresh live in the
+background, and resubmit once that refresh lands.
 
 Every projection is the same tree; only the *intent* differs. :meth:`notify_changed`
 and the failure presenters refresh, so a parked window stays parked;
@@ -49,19 +50,22 @@ class MusicPlayer:
     As the daemon's :class:`ChangeListener` it repaints silently on every state
     change; as the receive leg's :class:`ScenePresenter` it also repaints with a
     transient warning when a clicked Play or Stop could not be applied, and
-    installs the scene outright when the user asked to see the window.
+    installs the scene outright on the two triggers that mean the user asked to
+    see the window.
     """
 
     __slots__ = ("_cache", "_latest_notice", "_publisher", "_refresher", "_service")
     _service: PlayerService
     _publisher: ScenePublisher
     _cache: TrackCountCache
-    # Single-flighted: a burst of state changes (one per completed Part) must not
-    # queue an unbounded pile of overlapping disk reads.
+    # A background cache refresh is single-flighted: a burst of state changes --
+    # one per completed Part -- must not queue an unbounded pile of overlapping
+    # disk reads.
     _refresher: SingleFlightRefresh
-    # The notice a background refresh's resubmit must carry, read fresh at resubmit
-    # time so a warning surfaced after scheduling is never clobbered, and a warning
-    # already cleared is never resurrected.
+    # The notice a background refresh's resubmit must carry -- read fresh at
+    # resubmit time (not the notice captured when the refresh was scheduled) so
+    # a warning surfaced *after* scheduling is never clobbered by a refresh that
+    # started before it, and a warning already cleared is never resurrected.
     _latest_notice: PlaybackNotice
 
     def __new__(cls, service: PlayerService, publisher: ScenePublisher) -> Self:
@@ -94,15 +98,15 @@ class MusicPlayer:
 
         Differs from :meth:`notify_changed` in intent, not content: a menu
         click or fresh hub connection means "show this", so it installs
-        rather than merely refreshing. Async only for
+        (the whole scene) rather than merely refreshing. Async only for
         :class:`~punt_vox.voxd.music_player.presenter_ports.ScenePresenter`;
         nothing here awaits -- this runs on the event loop that holds the hub
         connection's session lease, so it must never await the bounded-but-up-
         to-5s :meth:`~punt_vox.voxd.music_player.track_count_cache.
         TrackCountCache.serialized_refresh` before showing anything, as it
-        used to. Instead it installs from whatever :attr:`_cache` already holds
-        and hands the live refresh to the background, as :meth:`notify_changed`
-        does.
+        used to. Instead it installs from whatever :attr:`_cache` already
+        holds and hands the live refresh to :meth:`_schedule_track_count_
+        refresh`, the same background path :meth:`notify_changed` uses.
         """
         albums = self._service.catalog_albums()
         notice = PlaybackNotice.silent()
@@ -152,7 +156,7 @@ class MusicPlayer:
         dict lookup, never a disk read, so this never blocks its caller -- and
         schedules the same background refresh :meth:`install` also triggers,
         converging once it lands. :meth:`install` does not call this: it
-        installs (raises the frame) rather than merely refreshing, so it
+        installs (the whole scene) rather than merely refreshing, so it
         repeats this shape against ``reinstall`` instead of ``submit``.
         """
         self._latest_notice = notice

@@ -58,7 +58,7 @@ class MusicPlayerSubsystem:
         self._publisher = LuxScenePublisher(lux.client)
         self._player = MusicPlayer(service, self._publisher)
         # One HubOutageLog spans both music_player call sites: the receive-leg
-        # retry loop and the menu's best-effort I/O share one
+        # retry loop and the menu registrar's best-effort I/O share one
         # escalation window so a single luxd outage reports once, not twice.
         outage = HubOutageLog(logger)
         self._subscription = LuxSubscription(

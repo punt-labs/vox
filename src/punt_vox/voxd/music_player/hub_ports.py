@@ -18,7 +18,11 @@ if TYPE_CHECKING:
 
     from punt_vox.lux_common import MenuEntry
 
-__all__ = ["HubListener", "LuxClientFactory", "MenuRegistrar"]
+__all__ = [
+    "HubListener",
+    "LuxClientFactory",
+    "MenuRegistrar",
+]
 
 
 @runtime_checkable
