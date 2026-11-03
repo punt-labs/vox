@@ -28,6 +28,14 @@ def _scene(
 
 
 class TestFrame:
+    def test_the_frame_id_is_the_frame_the_scene_lands_in(self) -> None:
+        # The menu entry names this frame so the display can reopen it; a scene
+        # pushed into a differently-named frame would leave the entry reopening
+        # nothing.
+        request = _scene().render_request()
+        assert request.frame is not None
+        assert (request.frame.frame_id or request.scene_id) == PanelScene.FRAME_ID
+
     def test_uses_an_explicit_size_not_auto_resize(self) -> None:
         request = _scene().render_request()
         assert request.frame is not None

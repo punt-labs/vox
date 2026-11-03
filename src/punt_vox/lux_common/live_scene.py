@@ -9,14 +9,10 @@ the frame shell changed and no patch could express it.
 
 :meth:`install` is the other door, and it is a different intent rather than a
 different mechanism: the user clicked the menu entry that opens this window, or a
-hub handshake just told us nothing is installed. Both mean *put this in front of
-me*, so both take a full :class:`InstallScene` push unconditionally -- but
-``show`` on its own does NOT reliably raise the frame (DES-072 addendum): the
-Hub only clears the frame's minimized state and grabs focus when the scene is
-new to it, and this scene stays installed past the first push, so every later
-``show`` finds the scene already there and raises nothing. The caller that owns
-this object is the one that must explicitly raise the frame after the push
-lands.
+hub handshake just told us nothing is installed. Both mean *put the whole scene
+back*, so both take a full :class:`InstallScene` push unconditionally. Reopening
+a frame the user closed is not part of that push: the menu entry carries the
+frame's id and the display restores the frame on the click.
 
 One field, ``_previous``, is the whole state machine. ``None`` means nothing is
 installed on the current connection; :meth:`disarm` restores that after luxd goes

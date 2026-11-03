@@ -6,16 +6,15 @@ three regions top to bottom: a **now-playing block** (album, track line), the
 frame is already titled "Music", so the scene renders no heading of its own. It is
 a deterministic, I/O-free function of its inputs (the gate's projection carve-out):
 the live track counts arrived already read, on the :class:`AlbumRoster` the player
-built at its own seam, so no cell here reaches for the disk. The album table carries a
-``publish`` decorator on its row selection -- selecting a row publishes
-``music.play``, which :class:`LuxSubscription` decodes on the other leg -- and the
-transport buttons each carry their own ``publish`` topic.
+built at its own seam, so no cell here reaches for the disk. Selecting an album row
+publishes ``music.play``, which :class:`LuxSubscription` decodes on the other leg,
+and the transport buttons each carry their own ``publish`` topic.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, ClassVar, final
 
 from punt_lux import RenderRequest, SeparatorElement, TextElement
 
@@ -46,6 +45,8 @@ class AlbumListScene:
     on the view, so :class:`PlayerView`'s invariants stay untouched -- and the
     projection stays a pure function of ``(roster, view, notice)``.
     """
+
+    FRAME_ID: ClassVar[str] = _SCENE_ID
 
     roster: AlbumRoster
     view: PlayerView

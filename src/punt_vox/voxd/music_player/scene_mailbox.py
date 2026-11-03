@@ -9,12 +9,10 @@ never back pressure the writer, and a burst of state changes collapses to one PU
 The *install intent* is sticky across that coalescing, and deliberately so. Most
 submits are refreshes, which patch the installed scene and leave the frame where
 the user put it; a menu click or a hub handshake instead asks for an install,
-which the publisher backs with both a ``show`` push and an explicit frame raise
-(DES-072 addendum: ``show`` alone does not reliably raise a frame already
-installed). If a click and three refreshes coalesce into one drain, dropping
-the click's intent would swallow the very gesture that meant "bring this window
-to me". So the intent is OR-ed in as scenes arrive and cleared only when the
-drainer takes the delivery.
+which the publisher serves with a full ``show`` push. If a click and three
+refreshes coalesce into one drain, dropping the click's intent would swallow the
+very gesture that meant "put the whole scene back". So the intent is OR-ed in as
+scenes arrive and cleared only when the drainer takes the delivery.
 """
 
 from __future__ import annotations

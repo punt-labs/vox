@@ -3,8 +3,8 @@
 Reads vox's current settings, applies a control change to the same config store
 and daemon RPCs the CLI and MCP tool already use, and pushes the confirmed scene.
 Satisfies :class:`punt_lux.applets.AppletService` structurally (``callback_id``,
-``label``, ``prefetch``, ``acknowledge``, ``service``) plus the extra methods
-:class:`~punt_vox.panel.leg.VoxPanelLeg` calls when a control event arrives.
+``label``, ``frame_id``, ``prefetch``, ``acknowledge``, ``service``) plus the extra
+methods :class:`~punt_vox.panel.leg.VoxPanelLeg` calls when a control event arrives.
 
 The held ``_state``/``_notice`` pair is read from more than one thread: a menu
 click and a control event each run their sync work on an ``asyncio.to_thread``
@@ -13,12 +13,10 @@ read-modify-write so one thread's commit is never overwritten.
 
 Reaching luxd is :class:`~punt_vox.panel.panel_push.PanelPush`'s job, not this
 one's. The two verbs it exposes differ in intent rather than content:
-:meth:`VoxPanelService.install_scene` shows the scene and then explicitly
-raises the frame, and is reached only from the ``Vox`` menu click;
-:meth:`VoxPanelService.push_scene` refreshes the panel where it already sits,
-which is what the confirm push behind a click and every control-change re-push
-want. Radio clicks used to take the ``show`` path, so changing a setting
-yanked the panel in front of whatever was on top of it.
+:meth:`VoxPanelService.install_scene` shows the whole scene and is reached only
+from the ``Vox`` menu click; :meth:`VoxPanelService.push_scene` refreshes the
+panel where it already sits, as the confirm push behind a click and every
+control-change re-push want.
 """
 
 from __future__ import annotations
@@ -95,6 +93,11 @@ class VoxPanelService:
         """The entry the display shows under this session's submenu."""
         return _LABEL
 
+    @property
+    def frame_id(self) -> str:
+        """The frame a click on the entry reopens if the user has closed it."""
+        return self._state.scene().FRAME_ID
+
     def prefetch(self) -> None:
         """Read settings once before any click, so the first click has some to show."""
         self.refresh()
@@ -102,8 +105,8 @@ class VoxPanelService:
     async def acknowledge(self, client: LuxClient, latency: ClickLatency) -> None:
         """Install the held scene now -- the visible half of the click.
 
-        This is the ``Vox`` menu entry answering, so showing the scene (and with
-        it raising the frame) is the answer, not a side effect.
+        This is the ``Vox`` menu entry answering, so showing the scene is the
+        answer, not a side effect.
         """
         with latency.answering():
             await self.install_scene(client)
@@ -111,8 +114,8 @@ class VoxPanelService:
     async def service(self, client: LuxClient, latency: ClickLatency) -> None:
         """Re-read settings fresh and refresh the scene with the confirmed ones.
 
-        A few milliseconds behind :meth:`acknowledge`, onto the same window it
-        just raised -- so this refreshes rather than installing again.
+        A few milliseconds behind :meth:`acknowledge`, onto the window it just
+        showed -- so this refreshes rather than installing again.
         """
         with latency.stage("refreshed"):
             await asyncio.to_thread(self.refresh)
@@ -124,7 +127,7 @@ class VoxPanelService:
             return replace(self._state.scene(), notice=self._notice)
 
     async def install_scene(self, client: LuxClient) -> None:
-        """Show the held scene outright, frame raise and all (a menu click)."""
+        """Show the held scene outright (a menu click)."""
         await self._push.install(client, self.scene().render_request())
 
     async def push_scene(self, client: LuxClient) -> None:
@@ -134,10 +137,9 @@ class VoxPanelService:
     async def correct_scene(self, client: LuxClient) -> None:
         """Reinstall the held scene in full, snapping back an optimistic widget.
 
-        Reached only after a control-change failure that a widget already
-        applied client-side before voxd answered -- see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct` for why a diff-based
-        refresh cannot express this correction.
+        Reached only after a control-change failure that a widget already applied
+        client-side before voxd answered; see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`.
         """
         await self._push.correct(client, self.scene().render_request())
 
@@ -162,10 +164,9 @@ class VoxPanelService:
     def note_rejection(self, detail: str) -> None:
         """Flag the scene with voxd's refusal, keeping the last-known settings.
 
-        Unlike :meth:`recover_from_write_failure` this does not re-sync:
-        voxd has just proved it answers this session with a refusal, so a
-        confirming read would either fail the same way or trade this
-        specific reason for a generic one.
+        Unlike :meth:`recover_from_write_failure` this does not re-sync: voxd has
+        just refused this session, so a confirming read would either fail the same
+        way or trade this specific reason for a generic one.
         """
         with self._lock:
             self._notice = PanelNotice.voxd_rejected(detail)

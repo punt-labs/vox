@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `punt-lux` floor raised to 0.33.0 for `client.callback.register(..., frame_id=...)`.
 - `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
   abbreviations are now family-friendly ("laughing my head off" and "what
   the heck", respectively) instead of profane.
@@ -19,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `Music` window and the `Vox` panel reopen from the Lux menu after
+  the user closes them.** Both menu entries were registered with no frame,
+  so a click had nothing to reopen, and a content push never reopens a
+  closed frame. Each entry now carries the frame its scene lands in
+  (`vox.music`, `vox.panel`), and the display restores that frame on the
+  click. The explicit `client.frame.raise_` call that stood in for this is
+  gone: luxd removed it (a 404 logged as "luxd refused to raise the
+  vox.music frame: Not Found"), and `FrameRaiser` and `FrameId` went with
+  it. Needs `punt-lux>=0.33.0`.
 - **`vox daemon install` no longer silently wipes a stored API key.** An
   empty or whitespace-only provider variable in the installing shell used to
   delete that key from `keys.env` with no message. The stored value is now

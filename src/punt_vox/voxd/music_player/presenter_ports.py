@@ -1,13 +1,12 @@
 """The scene-sink seams the receive leg drives: a quiet re-push, or a failure warning.
 
 The player's *read* seam is :class:`~punt_vox.voxd.music_player.ports.PlayerService`
-and its scene *sink* is
-:class:`~punt_vox.voxd.music_player.ports.ScenePublisher`. This module adds the two
-seams a *failed* click needs: :class:`FailurePresenter`, the sink an inbound event
-drives when its ``apply`` raised, and :class:`ScenePresenter`, the union the
-subscription holds so one object both repaints on demand and surfaces a click that
-could not be applied. They live apart from ``ports`` so each module carries one
-concern (PY-IC-6).
+and its scene *sink* is :class:`~punt_vox.voxd.music_player.ports.ScenePublisher`.
+This module adds the two seams a *failed* click needs: :class:`FailurePresenter`,
+the sink an inbound event drives when its ``apply`` raised, and
+:class:`ScenePresenter`, the union the subscription holds so one object both
+repaints on demand and surfaces a click that could not be applied. They live apart
+from ``ports`` so each module carries one concern (PY-IC-6).
 """
 
 from __future__ import annotations
@@ -65,20 +64,22 @@ class ScenePresenter(ChangeListener, FailurePresenter, Protocol):
     """The receive leg's full scene sink: repaint, install, or warn.
 
     It unites the :class:`ChangeListener` quiet repaint with the
-    :class:`FailurePresenter` warnings, so the subscription holds one object that
-    both refreshes on demand and surfaces a click that could not be applied --
-    plus :meth:`install`, the verb for the two moments that mean "put this window
-    in front of the user" rather than "the numbers in it changed".
+    :class:`FailurePresenter` warnings -- plus :meth:`install`, the verb for the
+    two moments that mean "put the whole scene back" rather than "the numbers in
+    it changed".
     """
 
+    def frame_id(self) -> str:
+        """Return the frame the scene lands in, which a menu click reopens."""
+        ...
+
     async def install(self) -> None:
-        """Project the scene and install it, raising its frame.
+        """Project the scene and install it in full.
 
         The Music menu was clicked, or a hub handshake reports a connection with
-        nothing on it. Both want the frame shown; every other trigger deliberately
-        does not, because raising a window the user parked behind another one is
-        the defect this verb exists to keep out of the refresh path. Async only to
-        satisfy this Protocol -- the concrete presenter never awaits here, so a
+        nothing on it. Every other trigger deliberately patches instead, so a
+        window the user parked behind another one is left where it is. Async only
+        to satisfy this Protocol -- the concrete presenter never awaits here, so a
         session lease is never held up by an inline disk read.
         """
         ...

@@ -3498,6 +3498,13 @@ The decision to keep two verbs (refresh vs. install) stands unchanged —
 only the assumption that install's raise came for free from `show` was
 wrong.
 
+**Superseded:** luxd removed the agent-facing `raise_frame` operation
+(agents read the display, only the user modifies it), so the explicit raise
+above answers 404. A closed frame is now reopened by the display itself when
+its menu entry is clicked: vox registers `Music` and `Vox` with the frame
+each scene lands in (`vox.music`, `vox.panel`), and `FrameRaiser` is deleted.
+A content push still never reopens a closed frame.
+
 ---
 
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI

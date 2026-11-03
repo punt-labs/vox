@@ -85,5 +85,5 @@ class PanelMenuEntry:
 
     async def _register_now(self) -> Ok | OpError:
         return await self._rest_factory().callback.register(
-            self._service.callback_id, self._service.label
+            self._service.callback_id, self._service.label, self._service.frame_id
         )

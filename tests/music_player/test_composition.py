@@ -17,7 +17,7 @@ import time
 from typing import TYPE_CHECKING, cast, final
 
 from punt_lux import OpError, SceneShown
-from punt_lux.operations import FrameRaise, Ok
+from punt_lux.operations import Ok
 
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player import composition
@@ -146,21 +146,11 @@ class _FakeCallbackAccessor:
     def __init__(self, outer: _FakeClient) -> None:
         self._outer = outer
 
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
-        self._outer.menus.append((callback_id, label))
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
+        self._outer.menus.append((callback_id, label, frame_id))
         return Ok()
-
-
-@final
-class _FakeFrameAccessor:
-    """Records every ``raise_`` call, answering each with a successful raise."""
-
-    def __init__(self, outer: _FakeClient) -> None:
-        self._outer = outer
-
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        self._outer.raised.append(frame_id)
-        return FrameRaise(frame_id=frame_id, raised=True)
 
 
 @final
@@ -170,11 +160,9 @@ class _FakeClient:
     def __init__(self) -> None:
         self.rendered: list[RenderRequest] = []
         self.patched: list[list[dict[str, object]]] = []
-        self.menus: list[tuple[str, str]] = []
-        self.raised: list[str] = []
+        self.menus: list[tuple[str, str, str | None]] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor(self)
-        self.frame = _FakeFrameAccessor(self)
 
 
 @final
@@ -186,14 +174,10 @@ class _BlockingSceneAccessor:
 
 @final
 class _BlockingCallbackAccessor:
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         return Ok()
-
-
-@final
-class _BlockingFrameAccessor:
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        return FrameRaise(frame_id=frame_id, raised=True)
 
 
 @final
@@ -203,7 +187,6 @@ class _BlockingClient:
     def __init__(self) -> None:
         self.scene = _BlockingSceneAccessor()
         self.callback = _BlockingCallbackAccessor()
-        self.frame = _BlockingFrameAccessor()
 
 
 @final
@@ -333,17 +316,15 @@ async def test_run_installs_the_initial_scene_then_patches_it_on_change(
     with caplog.at_level(logging.INFO):
         task = await _run(sub, settle=0.1)
         assert len(client.rendered) == 1  # the initial vox.music scene
-        # DES-072 addendum: the handshake's install ALSO makes an explicit
-        # frame raise -- ``show`` alone would not reliably raise it.
-        assert client.raised == ["vox.music"]
 
         service.set_status(playing_of(album, 1, 3))
         changes.emit()  # a state change, as the control channel / catalog fires it
         await asyncio.sleep(0.1)
         assert len(client.rendered) == 1  # NOT re-installed
         assert len(client.patched) == 1  # patched in place instead
-        assert client.raised == ["vox.music"]  # a patch-only change never raises
-        assert client.menus == [("music", "Music")]  # the receive leg registered
+        assert client.menus == [
+            ("music", "Music", "vox.music")
+        ]  # the receive leg registered
 
         await _stop(task)
     assert all(r.scene_id == "vox.music" for r in client.rendered)
@@ -408,7 +389,9 @@ async def test_a_failing_on_connect_projection_does_not_kill_the_publisher(
     with caplog.at_level(logging.ERROR):
         task = await _run(sub, settle=0.1)
         assert client.rendered == []  # the on_connect projection raised -> no push
-        assert client.menus == [("music", "Music")]  # menu still registered first
+        assert client.menus == [
+            ("music", "Music", "vox.music")
+        ]  # menu still registered first
 
         changes.emit()  # a later change re-projects onto the still-live drainer
         await asyncio.sleep(0.1)
