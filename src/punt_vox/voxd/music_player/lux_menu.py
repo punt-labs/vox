@@ -1,10 +1,10 @@
 """``LuxMenuRegistrar`` -- register voxd's ``Music`` menu entry, best-effort.
 
 The mirror of :class:`LuxScenePublisher` for the menu leg: a thin, guarded transport
-over the ``LuxClient`` facade. :meth:`register` builds the client, registers the
-entry, and swallows a down luxd or a refused registration into a log line: a missing
-menu entry must never crash the receive leg or the daemon. The lux lease keeps the
-entry alive once registered; a fresh voxd re-registers on start (*register-fresh*).
+over the ``LuxClient`` facade. :meth:`register` builds the client, registers the entry,
+and swallows a down luxd or a refused registration into a log line: a missing menu entry
+must never crash the receive leg or the daemon. The lux lease keeps the entry alive once
+registered; a fresh voxd re-registers on start (Z model *register-fresh*).
 """
 
 from __future__ import annotations
@@ -39,8 +39,9 @@ class LuxMenuRegistrar:
     def __new__(
         cls,
         connect: Callable[[], LuxClient],
-        # None: throttle alone. The composition injects the receive leg's log so
-        # one luxd outage escalates once across both sites, not twice.
+        # None means the registrar throttles its own registrations; the
+        # composition injects the receive-leg's outage log so a single luxd
+        # outage escalates once across both sites, not twice.
         outage: HubOutageLog | None = None,
     ) -> Self:
         self = super().__new__(cls)
@@ -71,8 +72,6 @@ class LuxMenuRegistrar:
             logger.exception("[lux] %r menu registration failed", entry.label)
             return
         if isinstance(result, OpError):
-            _trace.error(
-                "luxd rejected the %r menu registration: %s", entry.label, result.reason
-            )
+            _trace.error("luxd rejected the menu entry %r: %s", entry, result.reason)
             return
         _trace.info("registered the menu entry %r", entry)
