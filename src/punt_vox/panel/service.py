@@ -18,8 +18,8 @@ one's. The two verbs it exposes differ in intent rather than content:
 :meth:`VoxPanelService.install_scene` shows the whole scene, and is reached only
 from the ``Vox`` menu click; :meth:`VoxPanelService.push_scene` refreshes the
 panel where it already sits, which is what the confirm push behind a click and
-every control-change re-push want. Radio clicks used to take the ``show`` path,
-so changing a setting yanked the panel in front of whatever was on top of it.
+every control-change re-push want. Radio clicks take the refresh path: a ``show``
+replaces the whole tree, where a patch leaves focus and tab state alone.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class VoxPanelService:
         self._notice = PanelNotice.silent()
         self._lock = threading.Lock()
         self._push = PanelPush()
-        self._voice_preview = VoicePreview(client, store)
+        self._voice_preview = VoicePreview(client, store, logger)
         return self
 
     @property

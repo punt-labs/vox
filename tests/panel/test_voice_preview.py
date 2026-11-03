@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast, final
 
 import pytest
@@ -14,6 +15,8 @@ from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
     from punt_vox.panel.ports import PanelDaemonClient, SettingsStore
+
+_LOGGER = logging.getLogger("test.voice-preview")
 
 
 @final
@@ -64,7 +67,9 @@ class _Store:
 
 def _preview(daemon: _Daemon, provider: str | None = "elevenlabs") -> VoicePreview:
     return VoicePreview(
-        cast("PanelDaemonClient", daemon), cast("SettingsStore", _Store(provider))
+        cast("PanelDaemonClient", daemon),
+        cast("SettingsStore", _Store(provider)),
+        _LOGGER,
     )
 
 
@@ -94,6 +99,25 @@ def test_an_undeclared_provider_is_refused_before_voxd_is_asked() -> None:
     notice = _preview(daemon, provider=None).play("aria")
 
     assert (notice.is_present, daemon.spoken) == (True, [])
+
+
+@pytest.mark.parametrize(
+    ("daemon", "provider"),
+    [
+        (_Daemon(VoxdConnectionError("voxd unreachable")), "elevenlabs"),
+        (_Daemon(), None),
+    ],
+    ids=["unreachable", "refused"],
+)
+def test_a_failed_preview_warns_under_the_injected_logger(
+    caplog: pytest.LogCaptureFixture, daemon: _Daemon, provider: str | None
+) -> None:
+    with caplog.at_level(logging.WARNING, logger=_LOGGER.name):
+        _preview(daemon, provider).play("aria")
+
+    assert [(r.name, r.levelno) for r in caplog.records] == [
+        (_LOGGER.name, logging.WARNING)
+    ]
 
 
 def test_a_real_bug_propagates() -> None:

@@ -77,10 +77,14 @@ class PanelMenuEntry:
         return False
 
     def _landed(self, result: Ok | OpError) -> bool:
-        """Answer whether *result* put the entry up, logging a refusal loud."""
+        """Answer whether *result* put the entry up, logging it and its frame."""
+        entry = self._service.entry
         if isinstance(result, OpError):
-            self._logger.error("the panel's menu entry was refused: %s", result.reason)
+            self._logger.error(
+                "the panel's menu entry %r was refused: %s", entry, result.reason
+            )
             return False
+        self._logger.info("registered the panel's menu entry %r", entry)
         return True
 
     async def _register_now(self) -> Ok | OpError:

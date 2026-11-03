@@ -152,4 +152,8 @@ async def test_register_logs_a_refused_registration(
     with caplog.at_level(logging.ERROR):
         await LuxMenuRegistrar(lambda: _as_client(_RefusingClient())).register(_MUSIC)
 
-    assert any("rejected" in r.getMessage() for r in caplog.records)
+    rejections = [
+        r.getMessage() for r in caplog.records if "rejected" in r.getMessage()
+    ]
+    assert len(rejections) == 1
+    assert "'vox.music'" in rejections[0]
