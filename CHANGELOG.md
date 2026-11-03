@@ -92,8 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dnspython>=2.9.0`, and `fastmcp>=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*` (the
   fastmcp advisory also covers 4.0.0 through 4.1.1, so those releases and
   their post-releases are excluded; no upper cap, so a patched later major
-  still installs) — so an install from PyPI can no longer resolve a release
-  covered by these alerts.
+  still installs) — so an install from PyPI can no longer resolve a final or
+  post-release covered by these alerts. 4.1.2 pre-releases cannot be excluded
+  in PEP 508 without listing each; resolvers do not select a pre-release
+  unless asked, and punt-lux's `fastmcp<4` keeps all of 4.x out today.
 
 ## [5.0.5] - 2026-09-01
 
