@@ -82,7 +82,9 @@ def test_changed_value_patches() -> None:
     live.plan(_scene(_text("a", "1"), _text("b", "2")))
     push = live.plan(_scene(_text("a", "9"), _text("b", "2")))
     assert isinstance(push, PatchScene)
-    assert [patch.element_id for patch in push.patches.patches] == ["a"]
+    assert [(patch.element_id, patch.fields) for patch in push.patches.patches] == [
+        ("a", {"content": "9"})
+    ]
 
 
 def test_changed_child_value_patches_child() -> None:
@@ -90,14 +92,32 @@ def test_changed_child_value_patches_child() -> None:
     live.plan(_scene(_row("Play")))
     push = live.plan(_scene(_row("Pause")))
     assert isinstance(push, PatchScene)
-    assert push.patches.patches[0].element_id == "row.go"
-    assert "children" not in push.patches.patches[0].fields
+    # The whole sequence: one patch on the child, none on the group's roster.
+    assert [(patch.element_id, patch.fields) for patch in push.patches.patches] == [
+        ("row.go", {"label": "Pause"})
+    ]
 
 
-def test_roster_change_reinstalls() -> None:
+# Every surviving element keeps its value, so the roster is the only change.
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param(
+            _scene(_text("a", "1")),
+            _scene(_text("a", "1"), _text("b", "2")),
+            id="added",
+        ),
+        pytest.param(
+            _scene(_text("a", "1"), _text("b", "2")),
+            _scene(_text("a", "1")),
+            id="removed",
+        ),
+    ],
+)
+def test_roster_change_reinstalls(before: RenderRequest, after: RenderRequest) -> None:
     live = LiveScene()
-    live.plan(_scene(_text("a", "1")))
-    assert isinstance(live.plan(_scene(_text("a", "1"), _text("b", "2"))), InstallScene)
+    live.plan(before)
+    assert isinstance(live.plan(after), InstallScene)
 
 
 _ELEMENTS: list[dict[str, object]] = [_text("a", "1")]
