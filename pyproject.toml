@@ -52,9 +52,11 @@ dependencies = [
     # the noun-grouped facade with async accessors is the only supported entry.
     # Keep this floor at or above the locked version. It bounds installs from
     # below only: no install can resolve a lux older than the one CI exercises.
-    # It does NOT pin installs to the lock — a newer lux still resolves, so
-    # keeping the lock current is what keeps tests honest.
-    "punt-lux>=0.33.0",
+    # It does NOT pin installs to the lock — a newer patch still resolves, so
+    # keeping the lock current is what keeps tests honest. The ceiling is the
+    # next minor: lux is pre-1.0 and has removed an API in a minor release
+    # (client.frame.raise_), so a minor bump is a deliberate, tested move.
+    "punt-lux>=0.33.0,<0.34",
 ]
 
 [project.optional-dependencies]

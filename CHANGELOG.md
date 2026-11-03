@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `punt-lux` floor raised to 0.33.0 for `client.callback.register(..., frame_id=...)`.
+- `punt-lux` is now `>=0.33.0,<0.34`: the floor for
+  `client.callback.register(..., frame_id=...)`, the ceiling because lux is
+  pre-1.0 and has removed an API in a minor release.
 - `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
   abbreviations are now family-friendly ("laughing my head off" and "what
   the heck", respectively) instead of profane.
