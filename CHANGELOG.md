@@ -75,8 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures from an empty HMAC key, cross-client access through the RFC 7592
   client configuration endpoint, and OpenID Connect and ID-JAG validation
   gaps. dnspython moves 2.8.0 → 2.9.1, clearing #69 (excessive CPU use,
-  GHSA-45c3-73f7-pv4m). fastmcp moves 3.2.0 → 3.4.11, clearing #60. authlib
-  and fastmcp arrive through punt-lux → fastmcp, and dnspython through
+  GHSA-45c3-73f7-pv4m). fastmcp moves 3.2.0 → 3.4.11, clearing #60. All
+  three arrive through punt-lux: fastmcp directly, authlib through
+  fastmcp → fastmcp-slim, and dnspython through fastmcp-slim →
   pydantic[email] → email-validator; vox code imports none of them, and
   neither the `mic` MCP server nor voxd's lux client loads them. fastmcp 3.4
   is now a meta-package over fastmcp-slim, so the upgrade adds fastmcp-slim
