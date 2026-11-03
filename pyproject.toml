@@ -47,8 +47,9 @@ dependencies = [
     # LuxClient facade is a hard runtime dependency — identity/lease
     # (LuxClient.for_identity, ClientIdentity), scene push (client.scene.show),
     # session menu registration (client.callback.register, with the frame it
-    # reopens), and the subscribe/callback listener (client.listener) with per-handshake on_connect for
-    # register-fresh. LuxRestClient/LuxHubClient are gone from the public surface;
+    # reopens), and the subscribe/callback listener (client.listener) with
+    # per-handshake on_connect for register-fresh. LuxRestClient/LuxHubClient
+    # are gone from the public surface;
     # the noun-grouped facade with async accessors is the only supported entry.
     # Keep this floor at or above the locked version. It bounds installs from
     # below only: no install can resolve a lux older than the one CI exercises.
