@@ -1267,9 +1267,10 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.31.1"
+version = "0.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "mcp" },
@@ -1281,9 +1282,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/4d/540a8a7600378dd711e60540126c17e9854a8a8e1d6a736c22f399fa2361/punt_lux-0.31.1.tar.gz", hash = "sha256:7c4b15ca98cfa487dbb4867f4fc16bb16c8f007b218c2c30caac08286183a73f", size = 1012788, upload-time = "2026-08-25T23:15:33.149Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/b7/dd1ab6ca93c4cfc4e1366e59182462963c71ebff5d2a226e4b407a86ba1a/punt_lux-0.33.0.tar.gz", hash = "sha256:0adab63bb739bd6fb68557bb9df61c42bb315fb82f27468514a766bd23152471", size = 1266633, upload-time = "2026-11-03T23:33:50.052Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/71/786cb5bd5c49e3aa7ab3dc85410bab04340ff3d5fbb6909a3097e6f359ef/punt_lux-0.31.1-py3-none-any.whl", hash = "sha256:ba55e6aad29680b1318de947afde926791209417645f3b133ce9e841176bd55e", size = 1364991, upload-time = "2026-08-25T23:15:31.287Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/6c/70eaff9380a1fe13a84405183f2217ac1c68299178c9f710cc8c5e36eb45/punt_lux-0.33.0-py3-none-any.whl", hash = "sha256:f5da57b03cceae080b0b62ef207912972acedb3311416279942a050a29067bf3", size = 1684147, upload-time = "2026-11-03T23:33:48.245Z" },
 ]
 
 [[package]]
@@ -1335,7 +1336,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.30.0" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", specifier = ">=0.31.1" },
+    { name = "punt-lux", specifier = ">=0.33.0,<0.34" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "sounddevice", marker = "extra == 'call'", specifier = ">=0.5.6" },
     { name = "typer", specifier = ">=0.24.1" },
