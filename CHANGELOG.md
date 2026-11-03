@@ -69,8 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fastmcp, and vox code does not import it. The upgrade removes
   importlib-metadata 8.7.1 and zipp 3.23.0, which only opentelemetry-api
   required. `pyproject.toml` is unchanged; no other package version moved.
-- **Three transitive dependencies are upgraded in `uv.lock`, clearing
-  Dependabot alerts #60–#69 (1 critical, 3 high, 5 medium, 1 low).** authlib
+- **Three dependencies are upgraded, clearing Dependabot alerts #60–#69
+  (1 critical, 3 high, 5 medium, 1 low).** authlib
   moves 1.7.2 → 1.9.3, clearing #61–#68; it fixes forged HS256/384/512
   signatures from an empty HMAC key, cross-client access through the RFC 7592
   client configuration endpoint, and OpenID Connect and ID-JAG validation
@@ -80,8 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pydantic[email] → email-validator; vox code imports none of them, and
   neither the `mic` MCP server nor voxd's lux client loads them. fastmcp 3.4
   is now a meta-package over fastmcp-slim, so the upgrade adds fastmcp-slim
-  3.4.11 and griffelib 2.4.1. `pyproject.toml` is unchanged; no other package
-  version moved.
+  3.4.11 and griffelib 2.4.1. No other package version moved. Nothing upstream
+  floors these three above the vulnerable releases, so `pyproject.toml` adds
+  them as direct dependencies with security minimums — `authlib>=1.9.1`,
+  `dnspython>=2.9.0`, and `fastmcp>=3.4.10` — so an install from PyPI can no
+  longer resolve a release covered by these alerts.
 
 ## [5.0.5] - 2026-09-01
 

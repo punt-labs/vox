@@ -23,10 +23,22 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
+    # Security floor only: vox does not import authlib (it arrives through
+    # punt-lux -> fastmcp). authlib < 1.9.1 is covered by Dependabot alerts
+    # #61-#68; the floor keeps a PyPI install, which ignores uv.lock, off them.
+    "authlib>=1.9.1",
     "boto3>=1.35.0",
     "boto3-stubs[polly]>=1.35.0",
     "botocore-stubs>=1.35.0",
+    # Security floor only: vox does not import dnspython (it arrives through
+    # pydantic[email] -> email-validator). dnspython < 2.9.0 is covered by
+    # Dependabot alert #69; the floor keeps a PyPI install off it.
+    "dnspython>=2.9.0",
     "elevenlabs>=2.0.0",
+    # Security floor only: vox does not import fastmcp (punt-lux pulls it in
+    # with fastmcp>=3.0.0). fastmcp < 3.4.10 is covered by Dependabot alert
+    # #60; the floor keeps a PyPI install off it.
+    "fastmcp>=3.4.10",
     # Imported directly, not just through the SDKs: the providers classify
     # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
     # that the ElevenLabs SDK lets escape raw. Floors are the locked versions.

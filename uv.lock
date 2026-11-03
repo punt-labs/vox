@@ -1334,10 +1334,13 @@ version = "5.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "audioop-lts" },
+    { name = "authlib" },
     { name = "boto3" },
     { name = "boto3-stubs", extra = ["polly"] },
     { name = "botocore-stubs" },
+    { name = "dnspython" },
     { name = "elevenlabs" },
+    { name = "fastmcp" },
     { name = "httpx" },
     { name = "httpx2" },
     { name = "mcp" },
@@ -1368,10 +1371,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "audioop-lts", specifier = ">=0.2.1" },
+    { name = "authlib", specifier = ">=1.9.1" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "boto3-stubs", extras = ["polly"], specifier = ">=1.35.0" },
     { name = "botocore-stubs", specifier = ">=1.35.0" },
+    { name = "dnspython", specifier = ">=2.9.0" },
     { name = "elevenlabs", specifier = ">=2.0.0" },
+    { name = "fastmcp", specifier = ">=3.4.10" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx2", specifier = ">=2.14.0" },
     { name = "mcp", specifier = ">=1.30.0" },
