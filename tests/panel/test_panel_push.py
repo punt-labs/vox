@@ -1,8 +1,9 @@
 """Tests for :mod:`punt_vox.panel.panel_push`.
 
 The property that matters is the one the user sees: a refresh must not
-reinstall, because installing raises the frame -- everything else here is what
-has to hold for that to stay safe (a refusal or an outage leaves the panel's
+reinstall, because an install replaces the whole tree where a patch leaves
+focus and tab state alone -- everything else here is what has to hold for that
+to stay safe (a refusal or an outage leaves the panel's
 idea of what is installed *disarmed*, so the next push installs rather than
 patching a tree luxd never accepted).
 """
@@ -122,7 +123,7 @@ class TestRefresh:
         await push.refresh(_as_client(client), _scene())
         await push.refresh(_as_client(client), _scene("voxd is not reachable"))
 
-        assert len(client.scene.shown) == 1  # no second frame raise
+        assert len(client.scene.shown) == 1  # no second install
         assert client.scene.patched == [
             [{"id": "vox.panel.status", "set": {"content": "voxd is not reachable"}}]
         ]

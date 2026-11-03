@@ -420,7 +420,7 @@ class TestSuccessiveRendersArePatchable:
         self, album_of: AlbumFactory, playing_of: PlayingFactory
     ) -> None:
         # The most consequential refresh there is: the user just pressed play. An
-        # install here would raise the frame at exactly the wrong moment.
+        # install here would replace the whole tree at exactly the wrong moment.
         album = album_of("aa11bb", name="Techno Mix", tracks=12)
         idle = _scene((album,), PlayerView.idle())
         playing = _scene(

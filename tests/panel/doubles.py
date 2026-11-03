@@ -128,9 +128,9 @@ class FakeListener:
 class FakeSceneAccessor:
     """The ``client.scene`` verbs the panel's push path uses: ``show`` and ``update``.
 
-    Both are counted, and counted apart: an install raises the frame and a patch
-    must not, so a double that cannot tell them apart cannot see the difference
-    the panel now depends on.
+    Both are counted, and counted apart: an install replaces the whole tree and a
+    patch must leave focus and tab state alone, so a double that cannot tell them
+    apart cannot see the difference the panel now depends on.
     """
 
     def __init__(self, outer: FakeRest) -> None:

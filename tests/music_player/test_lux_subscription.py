@@ -97,8 +97,8 @@ class _FakeCommands:
 class _FakeOpener:
     """A ScenePresenter double: counts installs and refreshes, records failures.
 
-    The two are counted apart on purpose -- an install raises the frame and a
-    refresh must not, so a test that cannot tell them apart cannot see the bug.
+    The two are counted apart on purpose -- an install replaces the whole tree
+    and a refresh must not, so a test that cannot tell them apart cannot see the bug.
     """
 
     def __init__(self, *, boom: bool = False) -> None:

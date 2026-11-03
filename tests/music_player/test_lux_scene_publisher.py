@@ -2,10 +2,11 @@
 
 Two mandatory properties. The first (design 3.2): a slow or unreachable luxd
 must not stall the caller or the event loop, and a lux failure is logged and
-dropped, never raised into audio control. The second is vox-h777's: a *refresh*
-must not reinstall the scene, because installing raises the frame -- so a track
-change patches the installed tree and leaves the window exactly where the user
-put it, while a menu click still reinstalls it.
+dropped, never raised into audio control. The second: a *refresh* must not
+reinstall the scene, because an install replaces the whole tree where a patch
+leaves focus and tab state alone -- so a track change patches the installed
+tree and leaves the window exactly as the user left it, while a menu click
+still reinstalls it.
 """
 
 from __future__ import annotations
@@ -190,9 +191,9 @@ async def test_submit_neither_connects_nor_renders() -> None:
 
 class TestRefreshDoesNotReinstall:
     async def test_a_changed_value_patches_and_never_shows_again(self) -> None:
-        # The reported defect: a track change used to re-install the whole tree,
-        # which raises the frame and yanks the window in front of whatever the
-        # user had put on top of it.
+        # A track change must not re-install the whole tree: the window is
+        # already on screen, and only a patch leaves its focus and tab state
+        # where the user put them.
         client = _FakeClient()
         publisher = LuxScenePublisher(lambda: _as_client(client))
         task = asyncio.create_task(publisher.run())
@@ -225,8 +226,8 @@ class TestRefreshDoesNotReinstall:
         assert client.scene.patched == []
 
     async def test_reinstall_shows_even_when_nothing_changed(self) -> None:
-        # The Music menu entry's whole job: bring the window forward. It must keep
-        # showing, identical render or not.
+        # The Music menu click's answer is the whole scene -- the display reopens
+        # the window itself. It must keep showing, identical render or not.
         client = _FakeClient()
         publisher = LuxScenePublisher(lambda: _as_client(client))
         task = asyncio.create_task(publisher.run())

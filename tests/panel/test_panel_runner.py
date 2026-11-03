@@ -145,7 +145,7 @@ class TestChanged:
         assert service.applied == [(PanelTopic.NOTIFY.value, {"value": 1})]
         assert service.pushed == 1
         # The user is mid-interaction with a panel already on screen, so the
-        # re-push must not raise its frame.
+        # re-push must patch, not reinstall.
         assert service.installed == 0
 
     async def test_an_unchanged_event_does_not_re_push(

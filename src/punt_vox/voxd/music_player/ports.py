@@ -49,5 +49,5 @@ class ScenePublisher(Protocol):
         ...
 
     def reinstall(self, request: RenderRequest) -> None:
-        """Accept the newest scene as an install -- shown, and its frame raised."""
+        """Accept the newest scene as an install -- shown in full, not patched."""
         ...
