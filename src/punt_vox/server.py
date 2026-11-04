@@ -116,7 +116,10 @@ mcp = _LoggingFastMCP(
         "pass vibe_tags. No other output.\n\n"
         "Do NOT read or edit the content of .punt-labs/vox/vox.md or "
         "vox.local.md with Read, Write, Edit, or shell commands; use MCP tools "
-        "or hook context. git status, diff, and stash push/pop of them are fine."
+        "or hook context. Read-only git (status, diff) is fine. The one "
+        "sanctioned rewrite: when punt release preflight reports vox.md dirty, "
+        "run git stash push -- .punt-labs/vox/vox.md, release, then git stash "
+        "pop --index, with vox sessions stopped first."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]

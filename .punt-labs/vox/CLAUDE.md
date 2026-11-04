@@ -14,10 +14,12 @@ invocation) are two doors to one synthesizer, not a contradiction.
 Never read or edit the content of `.punt-labs/vox/vox.md` or
 `.punt-labs/vox/vox.local.md` with `Read`, `Write`, `Edit`, or a shell command
 (`cat`, `sed`, an `echo` redirect). All state is reachable through the `mic`
-tools (or the `vox` CLI); a direct edit races the daemon. Git operations that
-do not rewrite the content are fine: `git status`, `git diff`, and
-`git stash push -- .punt-labs/vox/vox.md` with a later `git stash pop --index`
-around a release.
+tools (or the `vox` CLI); a direct edit races the daemon. Read-only git
+(`git status`, `git diff`) is fine. The one sanctioned rewrite is the release
+step: when `punt release` preflight reports `vox.md` dirty, run
+`git stash push -- .punt-labs/vox/vox.md`, release, then
+`git stash pop --index`. Stop running vox sessions first; a daemon write between
+push and pop is lost or must be redone.
 
 ## Enabling vox in a repo
 
@@ -163,4 +165,4 @@ When a Stop hook blocks with a `♪` phrase, write 1–2 sentences summarizing
 what you just completed, then call `mic:unmute` with `ephemeral=true` (or, with
 no plugin, `vox say`). Mood tags are already resolved in config — do not pass
 `vibe_tags`. Emit no other output; the audio panel confirms.
-<!-- vox-guide-source-sha256: 4282ed17b0569ea62acca5509566a395042c02fcec0661ba71cdf0ea55c19579 -->
+<!-- vox-guide-source-sha256: 3da300902f83d5933109e025236ee06a633ac2abcde3bd01b7768ba706a16a01 -->
