@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast, final
+from typing import cast, final
 
+import pytest
 from punt_lux import HubUnavailableError, LuxClient, OpError
 from punt_lux.operations import Ok
 
 from punt_vox.lux_common import HubOutageLog, MenuEntry
+from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
-
-if TYPE_CHECKING:
-    import pytest
 
 
 @final
 class _OkCallbackAccessor:
+    """Record each registration's raw arguments; the test body asserts on them.
+
+    Asserting in here would be swallowed: the registrar logs and drops any
+    exception its client raises.
+    """
+
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str | None]] = []
 
     async def register(
         self, callback_id: str, label: str, frame_id: str | None = None
     ) -> Ok | OpError:
-        assert frame_id is not None
         self.calls.append((callback_id, label, frame_id))
         return Ok()
 
@@ -58,10 +62,22 @@ def _as_client(fake: object) -> LuxClient:
     return cast("LuxClient", fake)
 
 
-async def test_register_calls_the_client_on_success() -> None:
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _MUSIC,
+        MenuEntry("vox-panel", "Vox", PanelScene.FRAME_ID),
+        MenuEntry("another", "Another", "some.other.frame"),
+    ],
+    ids=["music", "panel", "arbitrary"],
+)
+async def test_register_hands_lux_the_whole_entry(entry: MenuEntry) -> None:
+    # The arbitrary entry is what catches a registrar that names its own frame.
     client = _OkClient()
-    await LuxMenuRegistrar(lambda: _as_client(client)).register(_MUSIC)
-    assert client.callback.calls == [("music", "Music", "vox.music")]
+
+    await LuxMenuRegistrar(lambda: _as_client(client)).register(entry)
+
+    assert client.callback.calls == [(entry.callback_id, entry.label, entry.frame_id)]
 
 
 async def test_register_logs_the_success_with_the_callback_id(
