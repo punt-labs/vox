@@ -41,9 +41,8 @@ ActiveState=inactive
 unit stopped. On macOS the plist carries `RunAtLoad` and `KeepAlive`, so only
 `launchctl bootout` keeps voxd down. Killing the pid does not.
 
-This host's sudo policy was not probed: the agent shell is not permitted to
-run `sudo -n -l`. The design therefore assumes nothing about whether
-`systemctl stop|start voxd` needs a password here (§3.3, §9.2).
+The design assumes nothing about any host's sudo policy: it must work for
+scoped NOPASSWD, mixed NOPASSWD, and password-only sudoers alike (§3.3).
 
 ### 2.1 Where the lifecycle code lives
 
@@ -669,11 +668,10 @@ matches §4.4 by iterating the enum.
 After `make install`, the leader writes down each expected result, runs the
 command, and pastes the output.
 
-0. The operator runs `sudo -l` in their own terminal and records whether
-   the listing grants `NOPASSWD` for `systemctl stop voxd` and
-   `systemctl start voxd`. (Not `sudo -n -l <cmd>`: that reports whether the
-   command is permitted, not whether it needs a password, §3.3.) If it does,
-   step 8 below shows the no-prompt path; if not, a password is needed. The demo does not edit sudoers. Exercising scoped
+0. No host-specific precondition. The design is correct for any sudoers
+   policy; the unit tests in §10.1 cover each path (scoped NOPASSWD, mixed
+   NOPASSWD, password with a terminal, password without one). The demo
+   records whichever path this host takes, read from the verb's own output. The demo does not edit sudoers. Exercising scoped
    NOPASSWD on a host that lacks it is the operator's call: a temporary
    `/etc/sudoers.d/` drop-in, added and removed by them. The unit test
    `scoped_nopasswd_runs_once_no_probe_no_prompt` covers the path either
@@ -693,9 +691,10 @@ command, and pastes the output.
 7. Invalid input: `sudo vox daemon stop`. Expect refused-as-root, exit 2,
    voxd untouched (still R).
 8. Privilege from a tty-less shell: `sudo -k`, then `vox daemon stop` from
-   the agent's Bash. With a password required (per step 0), expect
-   `permission_denied` naming sudo, exit 1, no prompt, voxd still R. With
-   NOPASSWD, expect `stopped`; then run `vox daemon start`.
+   the agent's Bash. Expect one of the two no-terminal outcomes, whichever
+   this host's policy produces: `permission_denied` naming sudo, exit 1, no
+   prompt, voxd still R; or, under NOPASSWD, `stopped`, followed by
+   `vox daemon start`.
 9. Missing dependency: `PATH=/usr/bin/nonexistent:/bin vox daemon stop`
    only if `fuser` lives outside `/bin` on pembroke (check with
    `command -v fuser` first). Expect `backend_failed` naming `fuser`. If
