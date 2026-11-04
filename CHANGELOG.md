@@ -101,11 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message with an unbounded `recipients` array could exhaust CPU through
   repeated RSA private-key decryption (GHSA-jpxq-7h8p-2q76); before 1.7.6,
   the compact JWS size guard allocated attacker-controlled segments before
-  rejecting them (GHSA-9pg5-8c7x-5hfx). joserfc arrives through punt-lux → fastmcp → fastmcp-slim, both
-  via authlib and directly from fastmcp-slim's server extra; vox code does not
-  import it. `pyproject.toml` adds `joserfc>=1.7.6` as a security floor, so an
-  install from PyPI can no longer resolve an affected release. No other
-  package version moved.
+  rejecting them (GHSA-9pg5-8c7x-5hfx). joserfc arrives through punt-lux →
+  fastmcp → fastmcp-slim, both via authlib and directly from fastmcp-slim's
+  server extra; vox code does not import it. `pyproject.toml` adds
+  `joserfc>=1.7.6` as a security floor, so an install from PyPI can no longer
+  resolve an affected release. No other package version moved.
 
 ## [5.0.5] - 2026-09-01
 
