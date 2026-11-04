@@ -96,6 +96,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   post-release covered by these alerts. 4.1.2 pre-releases cannot be excluded
   in PEP 508 without listing each; resolvers do not select a pre-release
   unless asked, and punt-lux's `fastmcp<4` keeps all of 4.x out today.
+- **joserfc is upgraded, clearing Dependabot alerts #70 (high) and #71
+  (medium).** joserfc moves 1.7.2 → 1.8.0. Before 1.7.5, a JWE General JSON
+  message with an unbounded `recipients` array could exhaust CPU through
+  repeated RSA private-key decryption (GHSA-jpxq-7h8p-2q76); before 1.7.6,
+  the compact JWS size guard allocated attacker-controlled segments before
+  rejecting them (GHSA-9pg5-8c7x-5hfx). joserfc arrives through punt-lux → fastmcp → fastmcp-slim, both
+  via authlib and directly from fastmcp-slim's server extra; vox code does not
+  import it. `pyproject.toml` adds `joserfc>=1.7.6` as a security floor, so an
+  install from PyPI can no longer resolve an affected release. No other
+  package version moved.
 
 ## [5.0.5] - 2026-09-01
 
