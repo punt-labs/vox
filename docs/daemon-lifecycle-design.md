@@ -1,8 +1,8 @@
 # `vox daemon stop` and `vox daemon start` — Daemon Lifecycle Design
 
-Bead: vox-9354. Status: design, revision 2 after djb's round-1 review,
-awaiting leader review and operator ratification. No code changes in this
-document's commit.
+Bead: vox-9354. Status: design, revision 2 after djb's round-1 review, plus
+a leader amendment for djb's round-2 finding (no `sudo -n -l` probe, §3.3)
+and its Low items; awaiting operator ratification. No code changes.
 
 ## 1. Problem
 
@@ -155,30 +155,33 @@ something the agent cannot read. Today's code runs plain `sudo systemctl …`
    `BackendCommandError` with "voxd.service not loaded; run
    `vox daemon install`". Neither status can come from sudo itself.
 3. Exit 1 is ambiguous: sudo returns 1 when it needs a password or refuses
-   the command, and systemctl returns 1 for a generic failure. To decide
-   which, run the one probe djb allows, `sudo -n -l systemctl <verb> voxd`,
-   with its output captured. It never prompts, and exits 0 only if sudo would run
-   that exact command without a password.
-   - Probe exits 0 → sudo was not the problem → `BackendCommandError`
-     (the systemctl failure, with stderr tail).
-   - Probe exits non-zero, and no controlling terminal is present
-     (`os.open("/dev/tty")` fails) → `PrivilegeDenied` ("sudo needs a
-     password; run `vox daemon <verb>` from a terminal, or grant NOPASSWD
-     for `systemctl <verb> voxd`").
-   - Probe exits non-zero, and a terminal is present → log the sudo notice,
-     then run the interactive `sudo systemctl <verb> voxd` once, with stderr
-     going to the terminal so the operator sees sudo's own messages. Exit 0
-     → return. Exit 4 → `PrivilegeDenied`. Any other non-zero → the lifecycle
-     observes again (§3.2). If the state did not change, the result is
-     `permission_denied` when `sudo -n -l` still exits non-zero (the operator
-     did not authenticate), and `backend_failed` otherwise.
+   the command, and systemctl returns 1 for a generic failure. There is no
+   probe that separates the two. `sudo -n -l <cmd>` reports whether the
+   command is *permitted*, not whether it runs without a password: under the
+   default `listpw=any`, one NOPASSWD entry anywhere in the user's sudoers
+   lets `sudo -l` answer without authenticating, so it exits 0 for a command
+   that still needs a password (sudoers(5), "listpw"). So no `-l` probe is
+   used:
+   - No controlling terminal (`os.open("/dev/tty")` fails) →
+     `PrivilegeDenied`, with the captured stderr tail verbatim and the text
+     "sudo could not run `systemctl <verb> voxd` non-interactively, or
+     systemctl failed (see detail); run `vox daemon <verb>` from a terminal,
+     or grant NOPASSWD for `systemctl <verb> voxd`".
+   - A terminal is present → log the sudo notice, then run the interactive
+     `sudo systemctl <verb> voxd` once, with stderr going to the terminal so
+     the operator sees sudo's own messages. Exit 0 → return. Exit 4 →
+     `PrivilegeDenied`. Exit 5 → `BackendCommandError` (not loaded). Any
+     other non-zero → the lifecycle observes again (§3.2): if the
+     postcondition holds, the verb continues; if not, the result is
+     `backend_failed` with the exit code, and the detail says sudo or
+     systemctl refused (the operator saw which on the terminal).
 
 Classification uses exit codes and observed state only. It never matches
 sudo's or systemctl's stderr text, which is localised and changes between
-versions. Known limit: with `timestamp_timeout=0`, a correct password
-followed by a systemctl exit-1 failure leaves `sudo -n -l` non-zero, so it
-is reported `permission_denied`. The stderr tail in `detail` shows the
-operator the real cause. This is stated in the report text, not hidden.
+versions. Known limit: without a terminal, an exit-1 systemctl failure and a
+sudo password requirement both report `permission_denied`; the stderr tail
+in `detail` shows the operator which one it was. This is stated in the
+report text, not hidden.
 
 macOS needs none of this. The LaunchAgent lives in the user's `gui/<uid>`
 domain, and `launchctl` needs no sudo.
@@ -232,6 +235,9 @@ by bare pid.
   `signal.pidfd_send_signal(fd, SIGTERM)`, waits on the pidfd (it becomes
   readable when the process exits) for 5 s, then sends `SIGKILL` the same
   way and waits 2 s. `exited()` returns true when the pidfd is readable.
+  If `os.pidfd_open` is unavailable (`AttributeError`, or `OSError` with
+  `ENOSYS` on a kernel older than 5.3), the handle uses the start-time
+  re-check described for macOS below.
 - *macOS* (no pidfd). Record the pid, its start time (`ps -o lstart= -p`)
   and its command line. Immediately before SIGTERM and again before
   SIGKILL, re-read both and send the signal only if both still match.
@@ -383,12 +389,13 @@ restart():
                                              # and T9 already passed inside
                                              # T2, so this process is the
                                              # manager's and runs the wheel
+    if t.outcome is already_running:         # pid == previous_pid: the stop
+        t = t.as_outcome(backend_failed,     # did not take effect; never ok
+                         detail="stop did not take effect")
     if t.outcome is started:
         return Report(restart, restarted, pid=t.pid,
                       previous_pid=s.previous_pid, ...)
-    return t.as_verb("restart")              # includes already_running with
-                                             # pid = previous_pid: the stop
-                                             # did not take effect
+    return t.as_verb("restart")
 ```
 
 `require_fresh` is the only difference between `start` and the start phase
@@ -451,9 +458,10 @@ grace, then a 2 s SIGKILL wait.
 - The daemon token goes only to the installed host on 8421, only from
   `serve.token`, and only when a visible voxd process owned by this user
   holds the port.
-- sudo is invoked as `sudo -n` first. The only probe is
-  `sudo -n -l systemctl <verb> voxd`. An interactive prompt happens only
-  when a terminal is present.
+- sudo is invoked as `sudo -n` first, and there is no privilege probe
+  (`sudo -v` and `sudo -n -l` both misreport scoped or mixed NOPASSWD
+  rules, §3.3). An interactive prompt happens only when a terminal is
+  present, at most once per verb.
 - A tool failure (`fuser`, `lsof`, `ps`) fails the verb. It is never read
   as "nothing there".
 
@@ -625,9 +633,15 @@ near lines 130–160) and `CHANGELOG.md`.
   voxd` exits 0. The call log has exactly that one call: no `sudo -v`, no
   `-l` probe, no interactive call.
 - `exit4_permission_denied`, `exit5_not_loaded_backend_failed`.
-- `exit1_probe_ok_is_backend_failed`.
-- `exit1_probe_fails_no_tty_permission_denied_no_prompt`.
-- `exit1_probe_fails_tty_interactive_once`.
+- `exit1_no_tty_permission_denied_no_prompt`: the detail carries the stderr
+  tail verbatim; the call log has no `-l` probe and no interactive call.
+- `exit1_tty_interactive_once`: exactly one interactive call follows the
+  `-n` call; its exit 0 returns, its exit 4 is `PrivilegeDenied`, its other
+  non-zero exits re-observe state.
+- `mixed_nopasswd_still_prompts`: a fake sudoers with one unrelated NOPASSWD
+  entry plus a password `ALL` entry; `sudo -n` exits 1, a terminal is
+  present, and the interactive call is made (the case a `-l` probe got
+  wrong).
 - `never_reads_stderr_text`: the same exit code with different stderr gives
   the same classification.
 
@@ -655,10 +669,11 @@ matches §4.4 by iterating the enum.
 After `make install`, the leader writes down each expected result, runs the
 command, and pastes the output.
 
-0. The operator runs `sudo -n -l systemctl stop voxd` in their own
-   terminal and records the result. Exit 0 means pembroke has NOPASSWD for
-   that command, so step 8 below shows the no-prompt path. Non-zero means a
-   password is needed. The demo does not edit sudoers. Exercising scoped
+0. The operator runs `sudo -l` in their own terminal and records whether
+   the listing grants `NOPASSWD` for `systemctl stop voxd` and
+   `systemctl start voxd`. (Not `sudo -n -l <cmd>`: that reports whether the
+   command is permitted, not whether it needs a password, §3.3.) If it does,
+   step 8 below shows the no-prompt path; if not, a password is needed. The demo does not edit sudoers. Exercising scoped
    NOPASSWD on a host that lacks it is the operator's call: a temporary
    `/etc/sudoers.d/` drop-in, added and removed by them. The unit test
    `scoped_nopasswd_runs_once_no_probe_no_prompt` covers the path either
