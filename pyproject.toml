@@ -54,8 +54,9 @@ dependencies = [
     # Security floor only: vox does not import joserfc (it arrives through
     # punt-lux -> fastmcp -> fastmcp-slim, both via authlib and directly from
     # fastmcp-slim's server extra). joserfc < 1.7.6 is covered by Dependabot
-    # alerts #70-#71 (JWE recipients DoS, patched in 1.7.5 and 1.7.6); the floor
-    # keeps a PyPI install off them.
+    # alerts #70 (JWE recipients CPU DoS, patched in 1.7.5) and #71 (compact JWS
+    # size guard allocating attacker-controlled segments before rejecting them,
+    # patched in 1.7.6); the floor keeps a PyPI install off them.
     "joserfc>=1.7.6",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
