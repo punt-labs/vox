@@ -22,6 +22,7 @@ from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.lux_common import MenuEntry
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.types_errors import ConfigValueError
 
@@ -127,9 +128,9 @@ class FakeListener:
 class FakeSceneAccessor:
     """The ``client.scene`` verbs the panel's push path uses: ``show`` and ``update``.
 
-    Both are counted, and counted apart: an install raises the frame and a patch
-    must not, so a double that cannot tell them apart cannot see the difference
-    the panel now depends on.
+    Both are counted, and counted apart: an install replaces the whole tree and a
+    patch must leave focus and tab state alone, so a double that cannot tell them
+    apart cannot see the difference the panel now depends on.
     """
 
     def __init__(self, outer: FakeRest) -> None:
@@ -153,10 +154,12 @@ class FakeCallbackAccessor:
     def __init__(self, outer: FakeRest) -> None:
         self._outer = outer
 
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         if self._outer.fail_at == "register":
             raise self._outer.error
-        self._outer.registered.append((callback_id, label))
+        self._outer.registered.append((callback_id, label, frame_id))
         return self._outer.register_result
 
 
@@ -175,7 +178,7 @@ class FakeRest:
         error: Exception | None = None,
     ) -> None:
         self.register_result = register_result if register_result is not None else Ok()
-        self.registered: list[tuple[str, str]] = []
+        self.registered: list[tuple[str, str, str | None]] = []
         self.rendered_count = 0
         self.patched_count = 0
         self.listener_built: FakeListener | None = None
@@ -204,8 +207,7 @@ class FakeService:
     _raise_on: Failure
 
     def __init__(self, *, raise_on: Failure = "") -> None:
-        self.callback_id = "vox-panel"
-        self.label = "Vox"
+        self.entry = MenuEntry("vox-panel", "Vox", "vox.panel")
         self.refusal = FAILURE_TEXT
         # Open unless a test closes it to stand in for a voxd slow to answer.
         self.prefetch_gate = threading.Event()

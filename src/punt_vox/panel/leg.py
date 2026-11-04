@@ -121,7 +121,7 @@ class VoxPanelLeg:
 
     async def _on_callback(self, callback_id: str) -> None:
         """Answer a menu click: acknowledge instantly, then push the fresh scene."""
-        if callback_id != self._service.callback_id:
+        if not self._service.entry.owns(callback_id):
             return
         self._start(self._runner.clicked())
 

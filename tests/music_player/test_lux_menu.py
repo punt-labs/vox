@@ -3,25 +3,32 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast, final
+from typing import cast, final
 
+import pytest
 from punt_lux import HubUnavailableError, LuxClient, OpError
 from punt_lux.operations import Ok
 
-from punt_vox.lux_common import HubOutageLog
+from punt_vox.lux_common import HubOutageLog, MenuEntry
+from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
-
-if TYPE_CHECKING:
-    import pytest
 
 
 @final
 class _OkCallbackAccessor:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+    """Record each registration's raw arguments; the test body asserts on them.
 
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
-        self.calls.append((callback_id, label))
+    Asserting in here would be swallowed: the registrar logs and drops any
+    exception its client raises.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
+        self.calls.append((callback_id, label, frame_id))
         return Ok()
 
 
@@ -35,7 +42,9 @@ class _OkClient:
 
 @final
 class _RefusingCallbackAccessor:
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         return OpError(code="invalid_request", reason="bad menu id")
 
 
@@ -45,24 +54,37 @@ class _RefusingClient:
         self.callback = _RefusingCallbackAccessor()
 
 
+_MUSIC = MenuEntry("music", "Music", "vox.music")
+
+
 def _as_client(fake: object) -> LuxClient:
     """Cast a duck-typed menu stand-in to the LuxClient type the seam wants."""
     return cast("LuxClient", fake)
 
 
-async def test_register_calls_the_client_on_success() -> None:
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _MUSIC,
+        MenuEntry("vox-panel", "Vox", PanelScene.FRAME_ID),
+        MenuEntry("another", "Another", "some.other.frame"),
+    ],
+    ids=["music", "panel", "arbitrary"],
+)
+async def test_register_hands_lux_the_whole_entry(entry: MenuEntry) -> None:
+    # The arbitrary entry is what catches a registrar that names its own frame.
     client = _OkClient()
-    await LuxMenuRegistrar(lambda: _as_client(client)).register("music", "Music")
-    assert client.callback.calls == [("music", "Music")]
+
+    await LuxMenuRegistrar(lambda: _as_client(client)).register(entry)
+
+    assert client.callback.calls == [(entry.callback_id, entry.label, entry.frame_id)]
 
 
 async def test_register_logs_the_success_with_the_callback_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.INFO):
-        await LuxMenuRegistrar(lambda: _as_client(_OkClient())).register(
-            "music", "Music"
-        )
+        await LuxMenuRegistrar(lambda: _as_client(_OkClient())).register(_MUSIC)
     registered = [
         r
         for r in caplog.records
@@ -79,7 +101,7 @@ async def test_register_swallows_a_down_luxd(
         raise HubUnavailableError("luxd down")
 
     with caplog.at_level(logging.WARNING):
-        await LuxMenuRegistrar(connect).register("music", "Music")  # must not raise
+        await LuxMenuRegistrar(connect).register(_MUSIC)  # must not raise
 
     assert any("not registered" in r.getMessage() for r in caplog.records)
 
@@ -95,9 +117,9 @@ async def test_register_throttles_repeat_outage_ticks_to_debug(
 
     registrar = LuxMenuRegistrar(connect)
     with caplog.at_level(logging.DEBUG):
-        await registrar.register("music", "Music")
-        await registrar.register("music", "Music")
-        await registrar.register("music", "Music")
+        await registrar.register(_MUSIC)
+        await registrar.register(_MUSIC)
+        await registrar.register(_MUSIC)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     debugs = [
@@ -124,7 +146,7 @@ async def test_register_shares_outage_window_with_the_subscription(
 
     registrar = LuxMenuRegistrar(connect, outage=shared)
     with caplog.at_level(logging.DEBUG, logger="test.shared-outage"):
-        await registrar.register("music", "Music")
+        await registrar.register(_MUSIC)
 
     warnings = [
         r
@@ -144,8 +166,10 @@ async def test_register_logs_a_refused_registration(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.ERROR):
-        await LuxMenuRegistrar(lambda: _as_client(_RefusingClient())).register(
-            "music", "Music"
-        )
+        await LuxMenuRegistrar(lambda: _as_client(_RefusingClient())).register(_MUSIC)
 
-    assert any("rejected" in r.getMessage() for r in caplog.records)
+    rejections = [
+        r.getMessage() for r in caplog.records if "rejected" in r.getMessage()
+    ]
+    assert len(rejections) == 1
+    assert "'vox.music'" in rejections[0]

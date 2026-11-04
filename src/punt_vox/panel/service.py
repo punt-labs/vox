@@ -2,9 +2,11 @@
 
 Reads vox's current settings, applies a control change to the same config store
 and daemon RPCs the CLI and MCP tool already use, and pushes the confirmed scene.
-Satisfies :class:`punt_lux.applets.AppletService` structurally (``callback_id``,
-``label``, ``prefetch``, ``acknowledge``, ``service``) plus the extra methods
-:class:`~punt_vox.panel.leg.VoxPanelLeg` calls when a control event arrives.
+It follows the phases of :class:`punt_lux.applets.AppletService` (an ``entry``,
+``prefetch``, ``acknowledge``, ``service``) without satisfying that protocol:
+its ``acknowledge`` and ``service`` are coroutines over a ``LuxClient``, so
+:class:`~punt_vox.panel.leg.VoxPanelLeg` drives it, along with the extra methods
+the leg calls when a control event arrives.
 
 The held ``_state``/``_notice`` pair is read from more than one thread: a menu
 click and a control event each run their sync work on an ``asyncio.to_thread``
@@ -13,12 +15,11 @@ read-modify-write so one thread's commit is never overwritten.
 
 Reaching luxd is :class:`~punt_vox.panel.panel_push.PanelPush`'s job, not this
 one's. The two verbs it exposes differ in intent rather than content:
-:meth:`VoxPanelService.install_scene` shows the scene and then explicitly
-raises the frame, and is reached only from the ``Vox`` menu click;
-:meth:`VoxPanelService.push_scene` refreshes the panel where it already sits,
-which is what the confirm push behind a click and every control-change re-push
-want. Radio clicks used to take the ``show`` path, so changing a setting
-yanked the panel in front of whatever was on top of it.
+:meth:`VoxPanelService.install_scene` shows the whole scene, and is reached only
+from the ``Vox`` menu click; :meth:`VoxPanelService.push_scene` refreshes the
+panel where it already sits, which is what the confirm push behind a click and
+every control-change re-push want. Radio clicks take the refresh path: a ``show``
+replaces the whole tree, where a patch leaves focus and tab state alone.
 """
 
 from __future__ import annotations
@@ -31,19 +32,16 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
 from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
+from punt_vox.lux_common import MenuEntry
 from punt_vox.panel.click_target import ClickTarget
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.panel_push import PanelPush
+from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
-from punt_vox.session_spec import SessionSpec
-from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
-)
+from punt_vox.panel.voice_preview import VoicePreview
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -51,16 +49,15 @@ if TYPE_CHECKING:
     from punt_lux import LuxClient
     from punt_lux.applets import ClickLatency
 
-    from punt_vox.panel.panel_scene import PanelScene
     from punt_vox.panel.ports import PanelDaemonClient, SettingsStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["VoxPanelService"]
 
-_CALLBACK_ID = "vox-panel"
-_LABEL = "Vox"
-_PREVIEW_TEXT = "This is my voice."
+# The frame is the scene's own, so a click on the entry reopens the window the
+# scene was pushed into after the user closed it.
+_ENTRY = MenuEntry("vox-panel", "Vox", PanelScene.FRAME_ID)
 
 
 @final
@@ -73,7 +70,16 @@ class VoxPanelService:
     _notice: PanelNotice
     _lock: threading.Lock
     _push: PanelPush
-    __slots__ = ("_client", "_lock", "_notice", "_push", "_state", "_store")
+    _voice_preview: VoicePreview
+    __slots__ = (
+        "_client",
+        "_lock",
+        "_notice",
+        "_push",
+        "_state",
+        "_store",
+        "_voice_preview",
+    )
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         self = super().__new__(cls)
@@ -83,17 +89,13 @@ class VoxPanelService:
         self._notice = PanelNotice.silent()
         self._lock = threading.Lock()
         self._push = PanelPush()
+        self._voice_preview = VoicePreview(client, store, logger)
         return self
 
     @property
-    def callback_id(self) -> str:
-        """The id the ``Vox`` menu entry's clicks carry back to this session."""
-        return _CALLBACK_ID
-
-    @property
-    def label(self) -> str:
-        """The entry the display shows under this session's submenu."""
-        return _LABEL
+    def entry(self) -> MenuEntry:
+        """The ``Vox`` menu entry this session registers, and whose clicks it serves."""
+        return _ENTRY
 
     def prefetch(self) -> None:
         """Read settings once before any click, so the first click has some to show."""
@@ -102,8 +104,8 @@ class VoxPanelService:
     async def acknowledge(self, client: LuxClient, latency: ClickLatency) -> None:
         """Install the held scene now -- the visible half of the click.
 
-        This is the ``Vox`` menu entry answering, so showing the scene (and with
-        it raising the frame) is the answer, not a side effect.
+        This is the ``Vox`` menu entry answering, so showing the scene is the
+        answer, not a side effect.
         """
         with latency.answering():
             await self.install_scene(client)
@@ -112,7 +114,7 @@ class VoxPanelService:
         """Re-read settings fresh and refresh the scene with the confirmed ones.
 
         A few milliseconds behind :meth:`acknowledge`, onto the same window it
-        just raised -- so this refreshes rather than installing again.
+        just showed -- so this refreshes rather than installing again.
         """
         with latency.stage("refreshed"):
             await asyncio.to_thread(self.refresh)
@@ -124,7 +126,7 @@ class VoxPanelService:
             return replace(self._state.scene(), notice=self._notice)
 
     async def install_scene(self, client: LuxClient) -> None:
-        """Show the held scene outright, frame raise and all (a menu click)."""
+        """Show the held scene outright, the whole tree at once (a menu click)."""
         await self._push.install(client, self.scene().render_request())
 
     async def push_scene(self, client: LuxClient) -> None:
@@ -429,11 +431,9 @@ class VoxPanelService:
     def _preview(self) -> ControlPush:
         """Play the held voice back; answer the push the notice band needs.
 
-        Builds the wire spec through :class:`SessionSpec` off a fresh read of
-        the config store, so the preview sends the provider state declares
-        rather than letting voxd guess. An unconfigured or misconfigured
-        state surfaces on the notice band via
-        :meth:`PanelNotice.voxd_rejected`.
+        :class:`~punt_vox.panel.voice_preview.VoicePreview` speaks the line
+        and names the notice its outcome earns; this method only decides what
+        that notice does to the band.
 
         A preview the caller just *heard* is the strongest evidence there is
         that voxd is reachable, so success clears any warning still standing
@@ -449,22 +449,12 @@ class VoxPanelService:
             with self._lock:
                 self._notice = PanelNotice.no_voice_selected()
             return ControlPush.REFRESH
-        try:
-            spec = SessionSpec(self._store.read()).fill(SynthesisSpec(voice=voice))
-        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
-            logger.warning("vox-panel: voice preview refused: %s", exc)
-            with self._lock:
-                self._notice = PanelNotice.voxd_rejected(str(exc))
-            return ControlPush.REFRESH
-        try:
-            self._client.synthesize(_PREVIEW_TEXT, spec)
-        except VoxdConnectionError:
-            logger.warning("vox-panel: voice preview failed -- voxd is not reachable")
-            with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
-            return ControlPush.REFRESH
+        notice = self._voice_preview.play(voice)
         with self._lock:
-            return self._cleared_notice()
+            if not notice.is_present:
+                return self._cleared_notice()
+            self._notice = notice
+            return ControlPush.REFRESH
 
     def _resync(
         self,

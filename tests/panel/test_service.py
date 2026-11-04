@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from punt_lux import HubUnavailableError, OpError
-from punt_lux.operations import FrameRaise, Ok
+from punt_lux.operations import Ok
 
 from punt_vox.client_errors import (
     VoxdConnectionError,
@@ -112,20 +113,10 @@ class _FakeSceneAccessor:
 
 @final
 class _FakeCallbackAccessor:
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         raise NotImplementedError
-
-
-@final
-class _FakeFrameAccessor:
-    """Records every ``raise_`` call, answering each with a successful raise."""
-
-    def __init__(self) -> None:
-        self.raised: list[str] = []
-
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        self.raised.append(frame_id)
-        return FrameRaise(frame_id=frame_id, raised=True)
 
 
 @final
@@ -162,7 +153,8 @@ class _FakeRest:
     """A ``PanelRestClient`` double recording shows and patches apart.
 
     They are recorded apart because they mean different things on screen: a show
-    raises the frame, a patch must leave it exactly where the user put it.
+    replaces the whole tree, a patch must leave focus and tab state exactly where
+    the user put them.
     """
 
     def __init__(self, *, refuse: bool = False) -> None:
@@ -171,7 +163,6 @@ class _FakeRest:
         self.patched: list[list[dict[str, object]]] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor()
-        self.frame = _FakeFrameAccessor()
 
     def listener(
         self,
@@ -368,6 +359,21 @@ class TestApplyEvent:
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert changed is ControlPush.REFRESH
         assert service.scene().notice == PanelNotice.voxd_unavailable()
+
+    def test_voice_preview_warns_under_the_service_logger(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The preview is one of the panel's controls; its warning must read
+        # under the same logger name as every other control's.
+        service = VoxPanelService(
+            _FakeDaemonClient(raise_on_synth=True), _FakeStore(_config())
+        )
+        service.prefetch()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.panel.service"):
+            service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        assert [
+            r.name for r in caplog.records if "voice preview" in r.getMessage()
+        ] == ["punt_vox.panel.service"]
 
     def test_provider_writes_the_name_and_cascades_model_and_voice(self) -> None:
         """Cascade rule (vox-s5uv): provider + first-model + first-voice, atomic."""
@@ -901,8 +907,8 @@ class TestPushScene:
 
 class TestRefreshDoesNotReinstall:
     async def test_a_second_push_of_a_changed_scene_patches(self) -> None:
-        # The reported defect: every control change re-showed the panel, which
-        # raises its frame -- so a radio click yanked the window forward.
+        # Every control change must patch, not re-show: a re-show replaces the
+        # whole tree under a radio button the user is still clicking.
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
         rest = _FakeRest()
 
@@ -944,7 +950,8 @@ class TestRefreshDoesNotReinstall:
 
 class TestInstallScene:
     async def test_install_shows_even_when_nothing_changed(self) -> None:
-        # The Vox menu entry's whole job: bring the window forward.
+        # The Vox menu click's answer is the whole scene, shown in full; the
+        # display reopens the window itself.
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
         rest = _FakeRest()
 
@@ -953,9 +960,6 @@ class TestInstallScene:
 
         assert len(rest.rendered) == 2
         assert rest.patched == []
-        # DES-072 addendum: ``show`` alone does not reliably raise a frame the
-        # scene is not new to -- ``install_scene`` must ALSO raise explicitly.
-        assert rest.frame.raised == ["vox.panel"]
 
 
 class TestCorrectScene:
@@ -1179,7 +1183,6 @@ class TestAcknowledgeAndService:
         rest = _FakeRest()
         await service.acknowledge(cast("LuxClient", rest), ClickLatency("vox-panel"))
         assert len(rest.rendered) == 1
-        assert rest.frame.raised == ["vox.panel"]  # the click's frame raise
 
     async def test_service_refreshes_then_pushes(self) -> None:
         from punt_lux.applets import ClickLatency

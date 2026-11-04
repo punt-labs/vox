@@ -118,7 +118,7 @@ class TestRegister:
         service = FakeService()
         leg = build_leg(service, lambda: rest)
         await leg._register()
-        assert rest.registered == [("vox-panel", "Vox")]
+        assert rest.registered == [("vox-panel", "Vox", "vox.panel")]
         await wait_until(lambda: service.prefetch_called)
 
     async def test_the_warm_up_never_holds_the_handshake(
