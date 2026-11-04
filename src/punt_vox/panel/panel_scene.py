@@ -23,7 +23,7 @@ size must be correct from the panel's very first render.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import final
+from typing import ClassVar, final
 
 from punt_lux import RenderRequest, SeparatorElement, TextElement
 from punt_lux.operations.models import FrameSpec
@@ -54,6 +54,8 @@ _FRAME_SIZE = (340, 340)
 @dataclass(frozen=True, slots=True)
 class PanelScene:
     """Project the panel's current settings and notice onto the ``vox.panel`` scene."""
+
+    FRAME_ID: ClassVar[str] = _SCENE_ID
 
     notify: str
     speak: str

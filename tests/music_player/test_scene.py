@@ -420,7 +420,7 @@ class TestSuccessiveRendersArePatchable:
         self, album_of: AlbumFactory, playing_of: PlayingFactory
     ) -> None:
         # The most consequential refresh there is: the user just pressed play. An
-        # install here would raise the frame at exactly the wrong moment.
+        # install here would replace the whole tree at exactly the wrong moment.
         album = album_of("aa11bb", name="Techno Mix", tracks=12)
         idle = _scene((album,), PlayerView.idle())
         playing = _scene(
@@ -464,3 +464,14 @@ class TestSuccessiveRendersArePatchable:
         patched = self._patched(playing.render_request(), idle.render_request())
 
         assert patched["music.albums"] == {"selected_row_ids": []}
+
+
+def test_the_frame_id_is_the_frame_the_scene_lands_in(
+    album_of: AlbumFactory,
+) -> None:
+    # The menu entry names this frame so the display can reopen it; if the scene
+    # were ever pushed into a differently-named frame, the entry would reopen
+    # nothing.
+    request = _scene((album_of("aa11bb"),), PlayerView.idle()).render_request()
+    named = request.frame.frame_id if request.frame is not None else None
+    assert (named or request.scene_id) == AlbumListScene.FRAME_ID

@@ -1,15 +1,12 @@
 """Tests for LuxScenePublisher: async render, down/slow luxd never blocks.
 
-Three mandatory properties. The first (design 3.2): a slow or unreachable luxd
+Two mandatory properties. The first (design 3.2): a slow or unreachable luxd
 must not stall the caller or the event loop, and a lux failure is logged and
-dropped, never raised into audio control. The second is vox-h777's: a *refresh*
-must not reinstall the scene, because installing raises the frame -- so a track
-change patches the installed tree and leaves the window exactly where the user
-put it, while a menu click still shows and brings it forward. The third is the
-DES-072 addendum: ``show`` alone does not reliably raise/unminimize a frame
-already installed, so an install-intent delivery must ALSO make an explicit
-``client.frame.raise_`` call -- and it must do so even when the scene was not
-new to luxd, which is exactly the case a second-and-later menu click hits.
+dropped, never raised into audio control. The second: a *refresh* must not
+reinstall the scene, because an install replaces the whole tree where a patch
+leaves focus and tab state alone -- so a track change patches the installed
+tree and leaves the window exactly as the user left it, while a menu click
+still reinstalls it.
 """
 
 from __future__ import annotations
@@ -19,7 +16,6 @@ import logging
 from typing import TYPE_CHECKING, cast, final
 
 from punt_lux import HubUnavailableError, LuxClient, OpError, RenderRequest, SceneShown
-from punt_lux.operations import FrameRaise
 
 from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
 
@@ -57,43 +53,11 @@ class _FakeSceneAccessor:
 
 
 @final
-class _FakeFrameAccessor:
-    """Records every ``raise_`` call, answering each with a successful raise."""
-
-    def __init__(self) -> None:
-        self.raised: list[str] = []
-
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        self.raised.append(frame_id)
-        return FrameRaise(frame_id=frame_id, raised=True)
-
-
-@final
-class _UnexpectedFrameAccessor:
-    """A ``frame`` stand-in that raises if it is ever called -- fixture-only guard.
-
-    Not a substitute for an assertion: :meth:`LuxScenePublisher.run`'s own
-    ``except Exception`` boundary would catch and silently swallow an
-    ``AssertionError`` raised from here just as it would any other exception,
-    so a test whose only check IS "no exception escaped" proves nothing (see
-    ``TestExplicitFrameRaise.test_a_refused_install_push_skips_the_raise`` and
-    its sibling, fixed to assert ``client.frame.raised == []`` against a
-    recording ``_FakeFrameAccessor`` instead). Retained only where no test
-    presently asserts on frame-raise behavior through this fixture at all.
-    """
-
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        msg = f"client.frame.raise_({frame_id!r}) should not have been called here"
-        raise AssertionError(msg)
-
-
-@final
 class _FakeClient:
-    """A LuxClient stand-in exposing the ``scene`` and ``frame`` accessors."""
+    """A LuxClient stand-in exposing the ``scene`` accessor."""
 
     def __init__(self) -> None:
         self.scene = _FakeSceneAccessor()
-        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -113,13 +77,6 @@ class _DownClient:
 
     def __init__(self) -> None:
         self.scene = _DownSceneAccessor()
-        # A down luxd fails inside ``show``/``update`` themselves, so the
-        # publisher never reaches the raise step. A recording double, not an
-        # asserting one: ``run()``'s own ``except Exception`` boundary would
-        # catch and swallow an ``AssertionError`` raised from here just like
-        # any other exception, silently defeating the check -- the test must
-        # assert on ``raised == []`` instead of relying on one never firing.
-        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -137,13 +94,6 @@ class _RejectingSceneAccessor:
 class _RejectingClient:
     def __init__(self) -> None:
         self.scene = _RejectingSceneAccessor()
-        # A refused scene push must not be followed by a raise attempt. A
-        # recording double, not an asserting one: ``run()``'s own ``except
-        # Exception`` boundary would catch and swallow an ``AssertionError``
-        # raised from here just like any other exception, silently defeating
-        # the check -- the test must assert on ``raised == []`` instead of
-        # relying on one never firing.
-        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -169,9 +119,6 @@ class _RestartedSceneAccessor:
 class _RestartedClient:
     def __init__(self) -> None:
         self.scene = _RestartedSceneAccessor()
-        # Every push in this scenario is a plain ``submit``, never a
-        # ``reinstall``; a raise attempt here would be a regression.
-        self.frame = _UnexpectedFrameAccessor()
 
 
 @final
@@ -244,9 +191,9 @@ async def test_submit_neither_connects_nor_renders() -> None:
 
 class TestRefreshDoesNotReinstall:
     async def test_a_changed_value_patches_and_never_shows_again(self) -> None:
-        # The reported defect: a track change used to re-install the whole tree,
-        # which raises the frame and yanks the window in front of whatever the
-        # user had put on top of it.
+        # A track change must not re-install the whole tree: the window is
+        # already on screen, and only a patch leaves its focus and tab state
+        # where the user put them.
         client = _FakeClient()
         publisher = LuxScenePublisher(lambda: _as_client(client))
         task = asyncio.create_task(publisher.run())
@@ -279,8 +226,8 @@ class TestRefreshDoesNotReinstall:
         assert client.scene.patched == []
 
     async def test_reinstall_shows_even_when_nothing_changed(self) -> None:
-        # The Music menu entry's whole job: bring the window forward. It must keep
-        # showing, identical render or not.
+        # The Music menu click's answer is the whole scene -- the display reopens
+        # the window itself. It must keep showing, identical render or not.
         client = _FakeClient()
         publisher = LuxScenePublisher(lambda: _as_client(client))
         task = asyncio.create_task(publisher.run())
@@ -293,105 +240,6 @@ class TestRefreshDoesNotReinstall:
         await asyncio.gather(task, return_exceptions=True)
 
         assert len(client.scene.rendered) == 2
-        # DES-072 addendum: ``show`` alone does not reliably raise a frame the
-        # scene is not new to -- the reinstall must ALSO make an explicit raise.
-        assert client.frame.raised == ["vox.music"]
-
-
-class TestExplicitFrameRaise:
-    """DES-072 addendum: ``show`` only raises a frame the scene is new to.
-
-    A menu click's ``reinstall`` must make its own explicit
-    ``client.frame.raise_`` call after the push lands -- and, crucially, the
-    raise must fire on the second and later clicks, when the scene is already
-    known to luxd and ``show``'s own raise would (per the bug) stay silent.
-    """
-
-    async def test_raises_even_when_the_scene_was_not_new_to_luxd(self) -> None:
-        client = _FakeClient()
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        task = asyncio.create_task(publisher.run())
-
-        publisher.submit(_scene("vox.music"))  # first: the scene becomes "known"
-        await asyncio.sleep(0.05)
-        publisher.reinstall(_scene("vox.music"))  # a later menu click, re-clicked
-        await asyncio.sleep(0.05)
-        publisher.reinstall(_scene("vox.music"))  # and again -- still not new
-        await asyncio.sleep(0.05)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-        assert client.frame.raised == ["vox.music", "vox.music"]
-
-    async def test_a_plain_refresh_never_raises_the_frame(self) -> None:
-        client = _FakeClient()
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        task = asyncio.create_task(publisher.run())
-
-        publisher.submit(_scene("vox.music", "1 of 12"))
-        await asyncio.sleep(0.05)
-        publisher.submit(_scene("vox.music", "2 of 12"))
-        await asyncio.sleep(0.05)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-        assert client.frame.raised == []
-
-    async def test_a_refused_install_push_skips_the_raise(self) -> None:
-        client = _RejectingClient()
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        publisher.reinstall(_scene("vox.music"))
-        await _drain_once(publisher)
-
-        assert client.frame.raised == []
-
-    async def test_a_down_luxd_on_the_scene_push_skips_the_raise(self) -> None:
-        client = _DownClient()
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        publisher.reinstall(_scene("vox.music"))
-        await _drain_once(publisher)
-
-        assert client.frame.raised == []
-
-    async def test_a_refused_raise_is_logged_and_swallowed(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        @final
-        class _RefusingFrameAccessor:
-            async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-                return OpError(code="rejected", reason="no such frame")
-
-        client = _FakeClient()
-        client.frame = _RefusingFrameAccessor()  # type: ignore[assignment]
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        publisher.reinstall(_scene("vox.music"))
-        with caplog.at_level(logging.WARNING):
-            await _drain_once(publisher)
-
-        assert any(
-            "[lux]" in r.getMessage() and "refused to raise" in r.getMessage()
-            for r in caplog.records
-        )
-
-    async def test_an_unreachable_raise_is_logged_and_swallowed(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        @final
-        class _DownFrameAccessor:
-            async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-                raise HubUnavailableError("luxd is not running")
-
-        client = _FakeClient()
-        client.frame = _DownFrameAccessor()  # type: ignore[assignment]
-        publisher = LuxScenePublisher(lambda: _as_client(client))
-        publisher.reinstall(_scene("vox.music"))
-        with caplog.at_level(logging.WARNING):
-            await _drain_once(publisher)
-
-        assert any(
-            "[lux]" in r.getMessage() and "unavailable" in r.getMessage()
-            for r in caplog.records
-        )
 
 
 async def test_a_down_lux_is_dropped_then_reinstalls_on_the_new_connection() -> None:
@@ -482,7 +330,6 @@ async def test_an_unexpected_error_disarms_the_live_scene() -> None:
     class _BoomOnceOnUpdateClient:
         def __init__(self) -> None:
             self.scene = _BoomOnceOnUpdateSceneAccessor()
-            self.frame = _FakeFrameAccessor()
 
     client = _BoomOnceOnUpdateClient()
     publisher = LuxScenePublisher(lambda: _as_client(client))

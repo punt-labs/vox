@@ -145,7 +145,7 @@ class PanelGuard:
         :meth:`repush`'s diff -- computed against the last render this session
         successfully landed -- would see nothing to patch and leave the
         widget's wrong guess on screen. A full reinstall reasserts every field,
-        the control's included, with no frame raise (see
+        the control's included, correcting what is already on screen (see
         :meth:`~punt_vox.panel.panel_push.PanelPush.correct`).
         """
         with self.outage("luxd unavailable; dropped the panel correction"):

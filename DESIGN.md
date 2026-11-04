@@ -3498,6 +3498,25 @@ The decision to keep two verbs (refresh vs. install) stands unchanged —
 only the assumption that install's raise came for free from `show` was
 wrong.
 
+**Superseded:** luxd removed the agent-facing `raise_frame` operation
+(agents read the display, only the user modifies it), so the explicit raise
+above answers 404. A closed frame is now reopened by the display itself when
+its menu entry is clicked: vox registers `Music` and `Vox` with the frame
+each scene lands in (`vox.music`, `vox.panel`), and `FrameRaiser` is deleted.
+A content push still never reopens a closed frame.
+
+Observability moved with the reopen. `FrameRaiser` logged a refused or
+missing raise in `vox.log`; now the reopen happens inside the display on the
+click, and the hub accepts a menu entry's `frame_id` without checking that a
+frame of that name exists. So `vox.log` records only which frame each entry
+was registered for (the registration and refusal lines carry the entry, frame
+included). A reopen that does nothing — a frame id that drifted from the
+scene's, a failed restore in the display, or a luxd too old to act on
+`frame_id` — shows up only on the lux side (`error.ls`, `event.ls`). Drift is
+caught at CI time by `tests/test_lux_common/test_menu_frame_contract.py`,
+which compares lux's own computation of the registered frame with the frame
+the scene lands in.
+
 ---
 
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI

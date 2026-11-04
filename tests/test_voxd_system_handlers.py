@@ -7,10 +7,13 @@ import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from unittest.mock import MagicMock
 
 import pytest
+from elevenlabs.core import ApiError
 from starlette.websockets import WebSocketDisconnect
 
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
@@ -462,4 +465,40 @@ class TestVoicesHandler:
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "vf5"
         assert ws.sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_provider_key_crosses_as_a_concise_reason(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 401 on the roster fetch reaches the client as its reason.
+
+        The roster fetch is the panel's first call, so it meets a bad key first;
+        the client must read the refusal and its code, not ``"operation failed"``.
+        """
+        client = MagicMock()
+        client.voices.get_all.side_effect = ApiError(
+            status_code=401,
+            headers={"content-type": "application/json", "server": "envoy"},
+            body={
+                "detail": {"status": "invalid_api_key", "message": "Invalid API key"}
+            },
+        )
+        provider = ElevenLabsProvider(client=client)
+
+        def factory(*_args: object, **_kwargs: object) -> object:
+            return provider
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", factory)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await VoicesHandler()(
+                {"id": "v401", "provider": "elevenlabs"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["message"] == (
+            "provider 'elevenlabs' refused the request "
+            "(HTTP 401: invalid_api_key); run `vox doctor`"
+        )
         assert not any("operation failed" in r.getMessage() for r in caplog.records)

@@ -1,17 +1,13 @@
 """``PanelPush`` -- how the panel's held scene reaches luxd, and with what intent.
 
 Three verbs, because a push carries an intent as well as a tree. :meth:`install`
-shows the scene and then EXPLICITLY raises its frame, and is the answer to the
-``Vox`` menu click -- the user asked to see the panel, so bringing it forward is
-the point. The explicit raise matters because ``scene.show`` only
-raises/unminimizes a frame the scene is genuinely new to (DES-072 addendum): the
-panel scene stays installed on this object's ``LiveScene`` after the first
-click, so every later click would otherwise call ``show`` against a frame that
-already holds the scene and get no raise at all. :meth:`refresh` writes the
-changed fields onto the installed scene and touches frame, focus, and tab state
-not at all, which is what the confirm push behind a click and every
-control-change re-push want: the panel is already on screen, and where the user
-put it is where it should stay.
+shows the whole scene, and is the answer to the ``Vox`` menu click. Reopening a
+panel the user closed is not done here: the menu entry is registered with the
+frame's id and the display reopens the frame itself on the click.
+:meth:`refresh` writes the changed fields onto the installed scene and touches
+frame, focus, and tab state not at all, which is what the confirm push behind a
+click and every control-change re-push want: the panel is already on screen, and
+where the user put it is where it should stay.
 
 :meth:`correct` is the third verb, and it exists because ``refresh``'s diff is
 computed against the wrong tree for a failure snap-back. A control widget
@@ -25,10 +21,9 @@ that last push (the common case: only the notice text differs, or nothing at
 all in the malformed-event path), the diff finds nothing to patch and the
 widget never gets snapped back. :meth:`correct` disarms ``_live`` first, so
 the plan has no ``_previous`` to diff against and falls back to a full
-reinstall that reasserts every field, control included. It must NOT raise the
-frame the way :meth:`install` does: a snap-back corrects what the display
-shows, it is not a "bring this window to me" gesture, and stealing focus for
-one would be its own regression of the bug ``refresh`` was written to fix.
+reinstall that reasserts every field, control included. Unlike
+:meth:`install` it answers no menu click: it corrects what the display already
+shows.
 
 Talking to luxd is a different job from holding the session's settings, so it
 lives here rather than on :class:`~punt_vox.panel.service.VoxPanelService` --
@@ -61,7 +56,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.lux_common import FrameRaiser, LiveScene
+from punt_vox.lux_common import LiveScene
 
 if TYPE_CHECKING:
     from punt_lux import LuxClient, RenderRequest
@@ -77,34 +72,26 @@ logger = logging.getLogger(__name__)
 class PanelPush:
     """Send the panel's scene to luxd, installing or refreshing as asked."""
 
-    __slots__ = ("_live", "_lock", "_raiser")
+    __slots__ = ("_live", "_lock")
     _live: LiveScene
     # Held across plan-and-apply, never merely around the plan: the window the
     # lock exists to close is the await between claiming a render and landing it.
     _lock: asyncio.Lock
-    _raiser: FrameRaiser
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._live = LiveScene()
         self._lock = asyncio.Lock()
-        self._raiser = FrameRaiser(lambda msg: logger.warning("vox-panel: %s", msg))
         return self
 
     async def install(self, client: LuxClient, request: RenderRequest) -> None:
-        """Show ``request`` and then explicitly raise its frame (a menu click).
+        """Show ``request`` in full, whether or not it changed (a menu click).
 
-        ``show`` alone only raises/unminimizes a frame the scene is new to; the
-        panel scene stays installed on this object's ``LiveScene`` past the
-        first click, so ``show``'s raise stops firing right when a later click
-        needs it most. The explicit :class:`~punt_vox.lux_common.FrameRaiser`
-        call below is what actually brings a minimized or buried window forward
-        (DES-072 addendum).
+        The display reopens a closed frame on the click itself, so this push only
+        has to make sure the content is there.
         """
         async with self._lock:
-            landed = await self._complete(client, self._live.install(request))
-        if landed:
-            await self._raiser.raise_frame(client, request)
+            await self._complete(client, self._live.install(request))
 
     async def refresh(self, client: LuxClient, request: RenderRequest) -> None:
         """Carry ``request`` onto the installed scene by the cheapest correct push.
@@ -123,16 +110,15 @@ class PanelPush:
         its own to diff against and falls back to a full install unconditionally
         -- ``refresh``'s diff would otherwise compare against the last render
         this object successfully pushed, which is the value a failure snap-back
-        needs reasserted, not skipped as unchanged. No frame raise: unlike
-        :meth:`install`, a snap-back corrects what is already on screen, it does
-        not ask to be brought forward.
+        needs reasserted, not skipped as unchanged. Unlike :meth:`install`, a
+        snap-back corrects what is already on screen; it answers no menu click.
         """
         async with self._lock:
             self._live.disarm()
             await self._complete(client, self._live.plan(request))
 
-    async def _complete(self, client: LuxClient, push: ScenePush) -> bool:
-        """Complete ``push``, logging a refusal; return whether it landed.
+    async def _complete(self, client: LuxClient, push: ScenePush) -> None:
+        """Complete ``push``, logging a refusal.
 
         A refusal disarms the live scene: luxd kept whatever it had, so what we
         believe is installed is now a guess and the next push must install afresh
@@ -152,5 +138,3 @@ class PanelPush:
         if refusal is not None:
             self._live.disarm()
             logger.error("vox-panel: luxd rejected the scene: %s", refusal.reason)
-            return False
-        return True

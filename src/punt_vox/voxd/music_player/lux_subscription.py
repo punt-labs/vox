@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
 
-from punt_vox.lux_common import HubOutageLog
+from punt_vox.lux_common import HubOutageLog, MenuEntry
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.player_event_codec import (
     AnchorUnresolvedError,
@@ -51,8 +51,6 @@ __all__ = ["LuxSubscription"]
 logger = logging.getLogger(__name__)
 _trace = LuxTrace(logger)
 
-_MENU_CALLBACK_ID = "music"
-_MENU_LABEL = "Music"
 _RETRY_SECONDS = 5.0
 
 
@@ -63,6 +61,7 @@ class LuxSubscription:
     __slots__ = (
         "_codec",
         "_connect_hub",
+        "_entry",
         "_menu",
         "_outage",
         "_presenter",
@@ -71,6 +70,7 @@ class LuxSubscription:
     _service: ProgramSeam
     _presenter: ScenePresenter
     _menu: MenuRegistrar
+    _entry: MenuEntry
     _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
     _codec: PlayerEventCodec
     _outage: HubOutageLog
@@ -92,6 +92,7 @@ class LuxSubscription:
         self._service = service
         self._presenter = presenter
         self._menu = menu
+        self._entry = MenuEntry("music", "Music", presenter.frame_id())
         self._connect_hub = connect_hub
         self._codec = PlayerEventCodec()
         self._outage = outage if outage is not None else HubOutageLog(logger)
@@ -229,9 +230,9 @@ class LuxSubscription:
 
         This is one of the two sites that install rather than refresh, and the
         reason is the whole point of the entry: the user clicked *Music* to see
-        the window, so raising its frame is the answer, not a side effect.
+        the window, so showing its whole scene is the answer, not a side effect.
         """
-        if callback_id != _MENU_CALLBACK_ID:
+        if not self._entry.owns(callback_id):
             return
         _trace.info("Music menu clicked; installing the scene")
         try:
@@ -258,7 +259,7 @@ class LuxSubscription:
         # The handshake is the ground-truth "luxd is back" signal for both legs,
         # so it closes the shared outage window before the menu register runs.
         self._outage.clear()
-        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
+        await self._menu.register(self._entry)
         try:
             await self._presenter.install()
         except Exception:
