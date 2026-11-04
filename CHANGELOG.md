@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is refused, and the lock file is never followed through a symlink. Rules
   older versions put in `~/.claude/settings.json` are left in place; delete
   them by hand if you want them gone. Dev-plugin rules are not granted.
+
+## [5.0.6] - 2026-11-04
+
+### Changed
+
+- `punt-lux` is now `>=0.33.0,<0.34`: the floor for
+  `client.callback.register(..., frame_id=...)`, the ceiling because lux is
+  pre-1.0 and has removed an API in a minor release.
 - `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
   abbreviations are now family-friendly ("laughing my head off" and "what
   the heck", respectively) instead of profane.
@@ -30,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `Music` window and the `Vox` panel reopen from the Lux menu after
+  the user closes them.** Both menu entries were registered with no frame,
+  so a click had nothing to reopen, and a content push never reopens a
+  closed frame. Each entry now carries the frame its scene lands in
+  (`vox.music`, `vox.panel`), and the display restores that frame on the
+  click. The explicit `client.frame.raise_` call that stood in for this is
+  gone: luxd removed it (a 404 logged as "luxd refused to raise the
+  vox.music frame: Not Found"), and `FrameRaiser` and `FrameId` went with
+  it. Needs `punt-lux>=0.33.0`.
 - **`vox daemon install` no longer silently wipes a stored API key.** An
   empty or whitespace-only provider variable in the installing shell used to
   delete that key from `keys.env` with no message. The stored value is now
@@ -80,6 +97,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fastmcp, and vox code does not import it. The upgrade removes
   importlib-metadata 8.7.1 and zipp 3.23.0, which only opentelemetry-api
   required. `pyproject.toml` is unchanged; no other package version moved.
+- **Three dependencies are upgraded, clearing Dependabot alerts #60–#69
+  (1 critical, 3 high, 5 medium, 1 low).** authlib
+  moves 1.7.2 → 1.9.3, clearing #61–#68: JWS/JWT signature forgery (empty
+  signatures accepted in JWS JSON deserialization, an empty HMAC key, and
+  algorithm confusion with prefixed public keys), SSRF through an unvalidated
+  JAR `request_uri` fetch, JWT bearer assertions accepted for the wrong
+  audience, OpenID implicit-grant scope and ID-token nonce validation gaps,
+  and a bypass of the `is_secure_transport()` loopback exemption. dnspython
+  moves 2.8.0 → 2.9.1, clearing #69 (excessive CPU use in
+  `dns.name.from_wire_parser()`, GHSA-45c3-73f7-pv4m). fastmcp moves 3.2.0 →
+  3.4.11, clearing #60 (post-transform component authorization skipped on
+  direct calls, GHSA-7xgj-8392-5q4r). All
+  three arrive through punt-lux: fastmcp directly, authlib through
+  fastmcp → fastmcp-slim, and dnspython through fastmcp-slim →
+  pydantic[email] → email-validator; vox code imports none of them, and
+  neither the `mic` MCP server nor voxd's lux client loads them. fastmcp 3.4
+  is now a meta-package over fastmcp-slim, so the upgrade adds fastmcp-slim
+  3.4.11 and griffelib 2.4.1. No other package version moved. Nothing upstream
+  floors these three above the vulnerable releases, so `pyproject.toml` adds
+  them as direct dependencies with security constraints — `authlib>=1.9.1`,
+  `dnspython>=2.9.0`, and `fastmcp>=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*` (the
+  fastmcp advisory also covers 4.0.0 through 4.1.1, so those releases and
+  their post-releases are excluded; no upper cap, so a patched later major
+  still installs) — so an install from PyPI can no longer resolve a final or
+  post-release covered by these alerts. 4.1.2 pre-releases cannot be excluded
+  in PEP 508 without listing each; resolvers do not select a pre-release
+  unless asked, and punt-lux's `fastmcp<4` keeps all of 4.x out today.
+- **joserfc is upgraded, clearing Dependabot alerts #70 (high) and #71
+  (medium).** joserfc moves 1.7.2 → 1.8.0. Before 1.7.5, a JWE General JSON
+  message with an unbounded `recipients` array could exhaust CPU through
+  repeated RSA private-key decryption (GHSA-jpxq-7h8p-2q76); before 1.7.6,
+  the compact JWS size guard allocated attacker-controlled segments before
+  rejecting them (GHSA-9pg5-8c7x-5hfx). joserfc arrives through punt-lux →
+  fastmcp → fastmcp-slim, both via authlib and directly from fastmcp-slim's
+  server extra; vox code does not import it. `pyproject.toml` adds
+  `joserfc>=1.7.6` as a security floor, so an install from PyPI can no longer
+  resolve an affected release. No other package version moved.
 
 ## [5.0.5] - 2026-09-01
 

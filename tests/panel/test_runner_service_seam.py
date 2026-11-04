@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast, final
 
-from punt_lux.operations import FrameRaise, Ok
+from punt_lux.operations import Ok
 
 from panel.doubles import PANEL_LOGGER
 from punt_vox.client_errors import VoxdConnectionError
@@ -125,14 +125,10 @@ class _SceneAccessor:
 
 @final
 class _CallbackAccessor:
-    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+    async def register(
+        self, callback_id: str, label: str, frame_id: str | None = None
+    ) -> Ok | OpError:
         raise NotImplementedError
-
-
-@final
-class _FrameAccessor:
-    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
-        return FrameRaise(frame_id=frame_id, raised=True)
 
 
 @final
@@ -144,7 +140,6 @@ class _Rest:
         self.patched: list[UpdateRequest | OpError] = []
         self.scene = _SceneAccessor(self)
         self.callback = _CallbackAccessor()
-        self.frame = _FrameAccessor()
 
     def listener(
         self,

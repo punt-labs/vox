@@ -30,7 +30,18 @@ class TestRegistered:
         rest = FakeRest()
         entry = build_entry(FakeService(), lambda: rest)
         assert await entry.registered() is True
-        assert rest.registered == [("vox-panel", "Vox")]
+        assert rest.registered == [("vox-panel", "Vox", "vox.panel")]
+
+    async def test_a_landed_entry_logs_the_frame_it_reopens(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        build_entry: Callable[..., PanelMenuEntry],
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
+        await build_entry(FakeService(), FakeRest).registered()
+        records = panel_records(caplog)
+        assert [r.levelno for r in records] == [logging.INFO]
+        assert "'vox.panel'" in records[0].getMessage()
 
     async def test_a_refusal_is_reported_down_and_logged(
         self,
@@ -41,7 +52,9 @@ class TestRegistered:
         rest = FakeRest(register_result=OpError(code="rejected", reason="taken"))
         entry = build_entry(FakeService(), lambda: rest)
         assert await entry.registered() is False
-        assert [r.levelno for r in panel_records(caplog)] == [logging.ERROR]
+        records = panel_records(caplog)
+        assert [r.levelno for r in records] == [logging.ERROR]
+        assert "'vox.panel'" in records[0].getMessage()
 
     async def test_hub_unavailable_is_reported_down_as_an_outage(
         self,

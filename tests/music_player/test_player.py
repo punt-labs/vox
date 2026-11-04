@@ -80,7 +80,8 @@ class _CapturingPublisher:
     """A ScenePublisher double recording refreshes and installs separately.
 
     They are recorded apart because they mean different things on screen: an
-    install raises the frame, a refresh must leave it alone.
+    install replaces the whole tree, a refresh must leave focus and tab state
+    alone.
     """
 
     def __init__(self) -> None:
@@ -181,7 +182,7 @@ class TestInstallVersusRefresh:
         MusicPlayer(service, publisher).notify_changed()
 
         assert len(publisher.submitted) == 1
-        assert publisher.installed == []  # no frame raise on a state change
+        assert publisher.installed == []  # no install on a state change
         await _settle()  # let the background refresh this scheduled drain cleanly
 
     async def test_install_installs_and_never_refreshes(
@@ -199,7 +200,8 @@ class TestInstallVersusRefresh:
         self, album_of: AlbumFactory
     ) -> None:
         # The user clicked *inside* this window, so it is already in front of
-        # them; the warning belongs in place, not behind a frame raise.
+        # them; the warning belongs in place, patched onto that tree, not in a
+        # reinstall.
         publisher = _CapturingPublisher()
         service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
         player = MusicPlayer(service, publisher)

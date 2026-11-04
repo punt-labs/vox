@@ -1,6 +1,6 @@
 [project]
 name = "punt-vox"
-version = "5.0.5"
+version = "5.0.6"
 description = "Text-to-speech CLI, MCP server, and Claude Code plugin (ElevenLabs, AWS Polly, OpenAI)"
 readme = "README.md"
 authors = [{ name = "Punt Labs", email = "hello@punt-labs.com" }]
@@ -23,10 +23,27 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
+    # Security floor only: vox does not import authlib (it arrives through
+    # punt-lux -> fastmcp). authlib < 1.9.1 is covered by Dependabot alerts
+    # #61-#68; the floor keeps a PyPI install, which ignores uv.lock, off them.
+    "authlib>=1.9.1",
     "boto3>=1.35.0",
     "boto3-stubs[polly]>=1.35.0",
     "botocore-stubs>=1.35.0",
+    # Security floor only: vox does not import dnspython (it arrives through
+    # pydantic[email] -> email-validator). dnspython < 2.9.0 is covered by
+    # Dependabot alert #69; the floor keeps a PyPI install off it.
+    "dnspython>=2.9.0",
     "elevenlabs>=2.0.0",
+    # Security floor only: vox does not import fastmcp (punt-lux pulls it in
+    # with fastmcp>=3.0.0,<4). Dependabot alert #60 covers fastmcp >=3.0.0,<3.4.10
+    # and >=4.0.0,<4.1.2. The floor keeps a PyPI install off the first range; the
+    # 4.x exclusions guard that path only if lux lifts its <4 cap. The 4.1.0.* /
+    # 4.1.1.* wildcards also exclude post-releases, which sit inside <4.1.2.
+    # 4.1.2 pre-releases (4.1.2rc1) cannot be excluded in PEP 508 without listing
+    # each; the resolver never selects a pre-release unless asked.
+    # No upper cap: a patched later major stays installable.
+    "fastmcp>=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*",
     # Imported directly, not just through the SDKs: the providers classify
     # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
     # that the ElevenLabs SDK lets escape raw. Floors are the locked versions.
@@ -34,6 +51,13 @@ dependencies = [
     # The OpenAI SDK rides on httpx2, httpx's fork, whose error classes are
     # distinct types: classifying OpenAI's transport faults needs them by name.
     "httpx2>=2.14.0",
+    # Security floor only: vox does not import joserfc (it arrives through
+    # punt-lux -> fastmcp -> fastmcp-slim, both via authlib and directly from
+    # fastmcp-slim's server extra). joserfc < 1.7.6 is covered by Dependabot
+    # alerts #70 (JWE recipients CPU DoS, patched in 1.7.5) and #71 (compact JWS
+    # size guard allocating attacker-controlled segments before rejecting them,
+    # patched in 1.7.6); the floor keeps a PyPI install off them.
+    "joserfc>=1.7.6",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
     "mcp>=1.30.0",
@@ -46,15 +70,18 @@ dependencies = [
     # voxd hosts the lux music-player app and the vox-panel applet: the public
     # LuxClient facade is a hard runtime dependency — identity/lease
     # (LuxClient.for_identity, ClientIdentity), scene push (client.scene.show),
-    # session menu registration (client.callback.register), and the subscribe/
-    # callback listener (client.listener) with per-handshake on_connect for
-    # register-fresh. LuxRestClient/LuxHubClient are gone from the public surface;
+    # session menu registration (client.callback.register, with the frame it
+    # reopens), and the subscribe/callback listener (client.listener) with
+    # per-handshake on_connect for register-fresh. LuxRestClient/LuxHubClient
+    # are gone from the public surface;
     # the noun-grouped facade with async accessors is the only supported entry.
     # Keep this floor at or above the locked version. It bounds installs from
     # below only: no install can resolve a lux older than the one CI exercises.
-    # It does NOT pin installs to the lock — a newer lux still resolves, so
-    # keeping the lock current is what keeps tests honest.
-    "punt-lux>=0.31.1",
+    # It does NOT pin installs to the lock — a newer patch still resolves, so
+    # keeping the lock current is what keeps tests honest. The ceiling is the
+    # next minor: lux is pre-1.0 and has removed an API in a minor release
+    # (client.frame.raise_), so a minor bump is a deliberate, tested move.
+    "punt-lux>=0.33.0,<0.34",
 ]
 
 [project.optional-dependencies]

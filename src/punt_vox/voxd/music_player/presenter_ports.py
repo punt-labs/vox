@@ -67,16 +67,20 @@ class ScenePresenter(ChangeListener, FailurePresenter, Protocol):
     It unites the :class:`ChangeListener` quiet repaint with the
     :class:`FailurePresenter` warnings, so the subscription holds one object that
     both refreshes on demand and surfaces a click that could not be applied --
-    plus :meth:`install`, the verb for the two moments that mean "put this window
-    in front of the user" rather than "the numbers in it changed".
+    plus :meth:`install`, the verb for the two moments that mean "show the whole
+    scene" rather than "the numbers in it changed".
     """
 
+    def frame_id(self) -> str:
+        """Return the frame the scene lands in, which a menu click reopens."""
+        ...
+
     async def install(self) -> None:
-        """Project the scene and install it, raising its frame.
+        """Project the scene and install it in full.
 
         The Music menu was clicked, or a hub handshake reports a connection with
-        nothing on it. Both want the frame shown; every other trigger deliberately
-        does not, because raising a window the user parked behind another one is
+        nothing on it. Both want the whole scene; every other trigger deliberately
+        does not, because reinstalling a window the user parked behind another is
         the defect this verb exists to keep out of the refresh path. Async only to
         satisfy this Protocol -- the concrete presenter never awaits here, so a
         session lease is never held up by an inline disk read.

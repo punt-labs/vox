@@ -15,7 +15,7 @@ transport buttons each carry their own ``publish`` topic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, ClassVar, final
 
 from punt_lux import RenderRequest, SeparatorElement, TextElement
 
@@ -46,6 +46,8 @@ class AlbumListScene:
     on the view, so :class:`PlayerView`'s invariants stay untouched -- and the
     projection stays a pure function of ``(roster, view, notice)``.
     """
+
+    FRAME_ID: ClassVar[str] = _SCENE_ID
 
     roster: AlbumRoster
     view: PlayerView

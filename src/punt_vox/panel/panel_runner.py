@@ -103,7 +103,7 @@ class PanelRunner:
             )
 
     async def _serviced(self) -> None:
-        latency = ClickLatency(self._service.callback_id)
+        latency = ClickLatency(self._service.entry.callback_id)
         rest = self._rest_factory()
         await self._service.acknowledge(rest, latency)
         async with self._guard.rejection("the settings read behind a panel click"):

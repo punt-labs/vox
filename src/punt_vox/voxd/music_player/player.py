@@ -88,12 +88,17 @@ class MusicPlayer:
         """
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
 
+    @staticmethod
+    def frame_id() -> str:
+        """Return the frame the scene lands in, which a menu click reopens."""
+        return AlbumListScene.FRAME_ID
+
     async def install(self) -> None:
         """Project the scene from cached track counts and install it at once.
 
         Differs from :meth:`notify_changed` in intent, not content: a menu
         click or fresh hub connection means "show this", so it installs
-        (raises the frame) rather than merely refreshing. Async only for
+        (the whole scene) rather than merely refreshing. Async only for
         :class:`~punt_vox.voxd.music_player.presenter_ports.ScenePresenter`;
         nothing here awaits -- this runs on the event loop that holds the hub
         connection's session lease, so it must never await the bounded-but-up-
@@ -151,7 +156,7 @@ class MusicPlayer:
         dict lookup, never a disk read, so this never blocks its caller -- and
         schedules the same background refresh :meth:`install` also triggers,
         converging once it lands. :meth:`install` does not call this: it
-        installs (raises the frame) rather than merely refreshing, so it
+        installs (the whole scene) rather than merely refreshing, so it
         repeats this shape against ``reinstall`` instead of ``submit``.
         """
         self._latest_notice = notice
