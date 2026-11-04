@@ -11,10 +11,15 @@ documented in the CLI section at the end. Both reach the same engine. The MCP
 `mic:unmute` (you flipping your own mic on) and the CLI `vox say` (a discrete
 invocation) are two doors to one synthesizer, not a contradiction.
 
-Never `Read`, `Write`, or `Bash` the config files
-`.punt-labs/vox/vox.md` or `.punt-labs/vox/vox.local.md`. All state is
-reachable through the `mic` tools (or the `vox` CLI); touching the files
-directly races the daemon.
+Never read or edit the content of `.punt-labs/vox/vox.md` or
+`.punt-labs/vox/vox.local.md` with `Read`, `Write`, `Edit`, or a shell command
+(`cat`, `sed`, an `echo` redirect). All state is reachable through the `mic`
+tools (or the `vox` CLI); a direct edit races the daemon. Read-only git
+(`git status`, `git diff`) is fine. The one sanctioned rewrite is the release
+step: when `punt release` preflight reports `vox.md` dirty, run
+`git stash push -- .punt-labs/vox/vox.md`, release, then
+`git stash pop --index`. Stop running vox sessions first; a daemon write between
+push and pop is lost or must be redone.
 
 ## Enabling vox in a repo
 
