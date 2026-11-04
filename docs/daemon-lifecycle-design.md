@@ -2,7 +2,7 @@
 
 Bead: vox-9354. Status: design, revision 2 after djb's round-1 review, plus
 a leader amendment for djb's round-2 finding (no `sudo -n -l` probe, §3.3)
-and its Low items; awaiting operator ratification. No code changes.
+and its Low items; ready for implementation. No code changes.
 
 ## 1. Problem
 
@@ -513,7 +513,7 @@ change that replaces them.
 
 ## 8. Formal model
 
-Recommendation: **yes, write a small Z model before implementation**, under
+Decided: **yes, write a small Z model before implementation**, under
 vox `CLAUDE.md` § Formal Modeling.
 
 The lifecycle has more than three modes: not-installed, stopped, running,
@@ -713,24 +713,24 @@ on pembroke, because they need a second account or an uninstall of the live
 service. Unit tests cover both. macOS is unit-tested; a demo there needs the
 operator's Mac.
 
-## 11. Open questions for the operator
+## 11. Decisions
 
-- **Q1. `stop` when the service is not installed.** Recommendation:
+- **Q1. `stop` when the service is not installed.** Decided:
   `not_installed`, exit 1, with no kill; the detail names any voxd on 8421.
   These are service verbs. A script running `stop` where nothing is
   installed should be told so rather than read success.
-- **Q2. Should `stop` disable the unit?** Recommendation: **no.** `stop`
+- **Q2. Should `stop` disable the unit?** Decided: **no.** `stop`
   affects the running daemon only. The unit stays `enabled` (Linux), and
   the plist stays with `RunAtLoad` (macOS). `vox daemon uninstall` is how
   you keep it down across reboots.
 - **Q3. Should `stop` terminate an unmanaged voxd on 8421 (S6)?**
-  Recommendation: **yes,** only after the backend reports down, only for
+  Decided: **yes,** only after the backend reports down, only for
   visible processes on 8421 whose command line is voxd, and only through
   the pidfd or start-time-checked `DaemonProcess` handle (§3.4). `restart`
   does this today via `ensure_port_free`; without it `restart` regresses on
   a host with a stray foreground voxd. Processes on other ports and holders
   vox cannot see are never signalled.
 - **Q4. Z model before implementation (§8), including the
-  T2-inside-restart property.** Recommendation: yes.
-- **Q5. Deadlines.** Recommendation: 10 s for stop and 10 s for start, up
+  T2-inside-restart property.** Decided: yes.
+- **Q5. Deadlines.** Decided: 10 s for stop and 10 s for start, up
   from today's 5 s restart poll.
