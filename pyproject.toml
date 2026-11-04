@@ -51,6 +51,13 @@ dependencies = [
     # The OpenAI SDK rides on httpx2, httpx's fork, whose error classes are
     # distinct types: classifying OpenAI's transport faults needs them by name.
     "httpx2>=2.14.0",
+    # Security floor only: vox does not import joserfc (it arrives through
+    # punt-lux -> fastmcp -> fastmcp-slim, both via authlib and directly from
+    # fastmcp-slim's server extra). joserfc < 1.7.6 is covered by Dependabot
+    # alerts #70 (JWE recipients CPU DoS, patched in 1.7.5) and #71 (compact JWS
+    # size guard allocating attacker-controlled segments before rejecting them,
+    # patched in 1.7.6); the floor keeps a PyPI install off them.
+    "joserfc>=1.7.6",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
     "mcp>=1.30.0",
