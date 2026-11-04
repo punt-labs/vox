@@ -61,8 +61,10 @@ process handles. Five properties are checked in every reachable state
 A sixth, P6, checks that each verb reports only outcomes the \S4.4 table
 assigns to it.
 
-A literal transcription of the tables fails P1 in five places, and P2 fails
+A literal transcription of the tables fails P1 in five places. P2 fails
 under one assumption about \texttt{launchd} that the design leaves open.
+P2 and P5 also fail under the design's own definition of
+\texttt{is\_active}, once the model admits a unit that is stopping.
 Wherever the design is silent or contradicts itself, the model below carries
 a stated resolution, so that P1--P6 can be checked to completion.
 Section~\ref{sec:findings} gives each defect with the state that triggers it,
@@ -145,16 +147,42 @@ the start request.
 
 \subsection{How the service manager stops}
 
-$syncStop$ records whether the service manager's stop returns only after the
-main process has exited. \texttt{systemctl stop} does: the unit is not
-inactive until its control group is empty. Whether \texttt{launchctl
+$syncStop$ records whether a stop that \emph{vox} requests returns only after
+the main process has exited. \texttt{systemctl stop} does: the job does not
+complete until the unit's control group is empty. Whether \texttt{launchctl
 bootout} does is not established by the design. The model is checked with
-$syncStop = ztrue$; Finding~F5 is the counterexample at $zfalse$.
+$syncStop = ztrue$; Finding~F5 is the counterexample at $zfalse$. A stop that
+a \emph{third party} has in flight is a different matter, and is modelled
+separately by $EnvUnitDeactivating$ (Finding~F6).
 
 \begin{axdef}
   syncStop : ZBOOL
 \where
   syncStop = ztrue
+\end{axdef}
+
+\subsection{What \texttt{is\_active()} reports}
+
+A unit that is stopping is in the world as $active = zfalse$ with its main
+process still alive and still reported ($mainpid \neq \emptyset$): systemd's
+\texttt{deactivating} state, in which \texttt{MainPID} is still set. The
+design's \texttt{is\_active} admits only \texttt{active}, \texttt{activating}
+and \texttt{reloading} (design \S3.2), so as written it reports a stopping
+unit as inactive. $deactActive$ selects the reading. At $zfalse$ it is the
+design as written, and Finding~F6 is its counterexample. At $ztrue$ it is
+the fix recommended there: a stopping unit counts as active. The model is
+checked at $ztrue$. $isActive$ is the observation every table receives in
+place of the raw $active$.
+
+\begin{axdef}
+  deactActive : ZBOOL \\
+  isActive : ZBOOL \cross \power PID \fun ZBOOL
+\where
+  deactActive = ztrue \\
+  isActive = \{ a : ZBOOL; mp : \power PID; r : ZBOOL | \\
+  \t1 (r = ztrue \iff (a = ztrue \lor
+    (deactActive = ztrue \land mp \neq \emptyset))) \\
+  \t1 @ (a, mp) \mapsto r \}
 \end{axdef}
 
 \subsection{The \texttt{stop} table}
@@ -308,7 +336,12 @@ where it sent a token, and what it signalled.
 
 $captured$ holds the handles \texttt{stop} took at its observation, $oldMain$
 the manager's main process at the same moment, and $doomed$ the handles S6
-marked for termination. Each is pruned when its process exits.
+marked for termination. $leftAlive$ is the manager's main process at the
+moment the \texttt{stop} half of \texttt{restart} declared success, whatever
+\texttt{stop} captured. It is what P2 uses to check without depending on the
+design's choice of what to capture. Each of the four is pruned when its
+process exits. The main process is not the same as $active$: a unit that is
+stopping has $active = zfalse$ and a main process that is still alive.
 
 The predicate is empty on purpose. In \texttt{probcli}'s reading of Z the
 state predicate guards every operation, so a violation would disable an
@@ -324,7 +357,7 @@ Section~\ref{sec:invariant}, which \texttt{probcli} checks in every state.
   phase : PHASE \\
   verb : VERB \\
   cold : ZBOOL \\
-  captured, oldMain, doomed : \power PID \\
+  captured, oldMain, doomed, leftAlive : \power PID \\
   outcome : OUTCOME \\
   reported, tokenTo, signalled : \power PID
 \end{schema}
@@ -343,7 +376,7 @@ open, so both installed and uninstalled hosts are explored.
   answering = \emptyset \land stale = \emptyset \\
   phase = phIdle \land verb = vNone \land cold = zfalse \\
   captured = \emptyset \land oldMain = \emptyset \land doomed = \emptyset \\
-  outcome = oNone \\
+  leftAlive = \emptyset \land outcome = oNone \\
   reported = \emptyset \land tokenTo = \emptyset \land signalled = \emptyset
 \end{schema}
 
@@ -356,7 +389,7 @@ takes the port, a new wheel is installed. These steps may fall between any two
 steps of a verb, which is how the model explores races.
 
 $EnvStep$ frames an environment step. It leaves the control alone, clears the
-record, and prunes the three handle sets of any process that has exited. When
+record, and prunes the four handle sets of any process that has exited. When
 no verb is running it also forgets the last verb's handles.
 
 \begin{schema}{EnvStep}
@@ -368,32 +401,50 @@ no verb is running it also forgets the last verb's handles.
   reported' = \emptyset \land tokenTo' = \emptyset \land
     signalled' = \emptyset \\
   phase = phIdle \implies (verb' = vNone \land captured' = \emptyset \land \\
-  \t1 oldMain' = \emptyset \land doomed' = \emptyset) \\
+  \t1 oldMain' = \emptyset \land doomed' = \emptyset \land
+    leftAlive' = \emptyset) \\
   phase \neq phIdle \implies (verb' = verb \land
     captured' = captured \cap alive' \land \\
-  \t1 oldMain' = oldMain \cap alive' \land doomed' = doomed \cap alive')
+  \t1 oldMain' = oldMain \cap alive' \land doomed' = doomed \cap alive'
+    \land \\
+  \t1 leftAlive' = leftAlive \cap alive')
 \end{schema}
 
-A third party starts the unit; the manager launches a new process.
+A third party starts the unit; the manager launches a new process. A unit
+that is still stopping has a main process, and is not started over it.
 
 \begin{schema}{EnvUnitStart}
   EnvStep \\
   p? : PID
 \where
-  installed = ztrue \land active = zfalse \land p? \notin alive \\
+  installed = ztrue \land active = zfalse \land mainpid = \emptyset \land
+    p? \notin alive \\
   active' = ztrue \land mainpid' = \{ p? \} \land
     alive' = alive \cup \{ p? \} \\
   onport' = onport \land foreign' = foreign \\
   answering' = answering \land stale' = stale
 \end{schema}
 
-A third party stops the unit. Under $syncStop$ the main process has exited
-when the stop returns; otherwise it may linger.
+A third party begins to stop the unit. The manager reports the unit
+inactive (\texttt{deactivating}, which the design's \texttt{is\_active}
+excludes), and the main process is still alive and still reported.
+
+\begin{schema}{EnvUnitDeactivating}
+  EnvStep
+\where
+  active = ztrue \land mainpid \neq \emptyset \\
+  active' = zfalse \land mainpid' = mainpid \land foreign' = foreign \\
+  alive' = alive \land onport' = onport \\
+  answering' = answering \land stale' = stale
+\end{schema}
+
+A stop completes: the unit was active, or was stopping. Under $syncStop$ the
+main process has exited when the stop returns; otherwise it may linger.
 
 \begin{schema}{EnvUnitStop}
   EnvStep
 \where
-  active = ztrue \\
+  active = ztrue \lor mainpid \neq \emptyset \\
   active' = zfalse \land mainpid' = \emptyset \land foreign' = foreign \\
   (alive' = alive \setminus mainpid \land onport' = onport \setminus mainpid
     \land \\
@@ -451,8 +502,9 @@ The holder of 8421 writes \texttt{serve.token} and starts answering health.
 \end{schema}
 
 A process exits: it crashed, or a signal took effect. If it was the main
-process the unit may stay active (\texttt{Restart=on-failure} is
-re-activating it) or become inactive.
+process of an active unit, the unit may stay active
+(\texttt{Restart=on-failure} is re-activating it) or become inactive. A
+stopping unit whose main process exits stays inactive.
 
 \begin{schema}{EnvExit}
   EnvStep \\
@@ -464,7 +516,7 @@ re-activating it) or become inactive.
   answering' = answering \setminus \{ p? \} \land
     stale' = stale \setminus \{ p? \} \\
   mainpid' = mainpid \setminus \{ p? \} \land foreign' = foreign \\
-  p? \notin mainpid \implies active' = active
+  (p? \notin mainpid \lor active = zfalse) \implies active' = active
 \end{schema}
 
 The manager respawns the main process of an active unit that has none.
@@ -566,16 +618,19 @@ the world alone unless another actor started the unit in the same instant.
 $StopEnd$ ends the \texttt{stop} half. Inside \texttt{restart}, a stop that
 reports $oStopped$ or $oAlreadyStopped$ passes control to \texttt{start}
 (design \S4.3); any other stop outcome is the \texttt{restart} outcome, and
-\texttt{start} never runs.
+\texttt{start} never runs. On the way into $phGap$ it records in $leftAlive$
+whatever main process the manager still has.
 
 \begin{schema}{StopEnd}
   \Delta Daemon \\
   res? : OUTCOME
 \where
   (verb' = vRestart \land res? \in \{ oStopped, oAlreadyStopped \} \land
-    phase' = phGap \land outcome' = oNone) \lor \\
+    phase' = phGap \land outcome' = oNone \land \\
+  \t1 leftAlive' = mainpid') \lor \\
   (\lnot (verb' = vRestart \land res? \in \{ oStopped, oAlreadyStopped \})
-    \land phase' = phIdle \land outcome' = res?)
+    \land phase' = phIdle \land outcome' = res? \land \\
+  \t1 leftAlive' = \emptyset)
 \end{schema}
 
 $StartEnd$ ends \texttt{start}. Inside \texttt{restart} it applies the \S4.3
@@ -588,7 +643,7 @@ by handle, not by process number; Finding~F4 explains why.
   \Delta Daemon \\
   res? : OUTCOME
 \where
-  phase' = phIdle \\
+  phase' = phIdle \land leftAlive' = \emptyset \\
   (verb' = vRestart \land (res? = oStarted \lor \\
   \t1 (res? = oAlreadyRunning \land reported' \cap captured = \emptyset))
     \land outcome' = oRestarted) \lor \\
@@ -614,7 +669,7 @@ with $vb? = vStop$ for \texttt{stop} and $vb? = vRestart$ for the first half of
   vb?: VERB; pe?: ZBOOL
 \where
   phase = phIdle \land vb? \in \{ vStop, vRestart \} \\
-  ((pe?, installed, active, onport, foreign) \mapsto sPE) \in stopPre \\
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign) \mapsto sPE) \in stopPre \\
   res? = oBackendFailed \land verb' = vb? \land cold' = cold \\
   captured' = \emptyset \land oldMain' = \emptyset \land doomed' = \emptyset \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -627,7 +682,7 @@ with $vb? = vStop$ for \texttt{stop} and $vb? = vRestart$ for the first half of
   vb?: VERB; pe?: ZBOOL
 \where
   phase = phIdle \land vb? \in \{ vStop, vRestart \} \\
-  ((pe?, installed, active, onport, foreign) \mapsto sS1) \in stopPre \\
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign) \mapsto sS1) \in stopPre \\
   res? = oNotInstalled \land verb' = vb? \land cold' = cold \\
   captured' = \emptyset \land oldMain' = \emptyset \land doomed' = \emptyset \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -640,7 +695,7 @@ with $vb? = vStop$ for \texttt{stop} and $vb? = vRestart$ for the first half of
   vb?: VERB; pe?: ZBOOL
 \where
   phase = phIdle \land vb? \in \{ vStop, vRestart \} \\
-  ((pe?, installed, active, onport, foreign) \mapsto sS2) \in stopPre \\
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign) \mapsto sS2) \in stopPre \\
   res? = oAlreadyStopped \land verb' = vb? \land cold' = cold \\
   captured' = \emptyset \land oldMain' = \emptyset \land doomed' = \emptyset \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -655,9 +710,10 @@ notes the manager's main process, and goes on to act.
   vb?: VERB; pe?: ZBOOL
 \where
   phase = phIdle \land vb? \in \{ vStop, vRestart \} \\
-  ((pe?, installed, active, onport, foreign) \mapsto sAct) \in stopPre \\
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign) \mapsto sAct) \in stopPre \\
   phase' = phStopAct \land verb' = vb? \land cold' = cold \\
   captured' = onport \land oldMain' = mainpid \land doomed' = \emptyset \\
+  leftAlive' = \emptyset \\
   outcome' = oNone \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
     signalled' = \emptyset
@@ -670,7 +726,7 @@ notes the manager's main process, and goes on to act.
   StopEnd
 \where
   phase = phStopAct \\
-  ((rsp?, active') \mapsto sS3) \in stopAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto sS3) \in stopAct \\
   res? = oPermissionDenied \land verb' = verb \land cold' = cold \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
@@ -683,7 +739,7 @@ notes the manager's main process, and goes on to act.
   StopEnd
 \where
   phase = phStopAct \\
-  ((rsp?, active') \mapsto sS4) \in stopAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto sS4) \in stopAct \\
   res? = oBackendFailed \land verb' = verb \land cold' = cold \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
@@ -695,8 +751,9 @@ notes the manager's main process, and goes on to act.
   StopReaction
 \where
   phase = phStopAct \\
-  ((rsp?, active') \mapsto sGo) \in stopAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto sGo) \in stopAct \\
   phase' = phStopWait \land verb' = verb \land cold' = cold \\
+  leftAlive' = \emptyset \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
   outcome' = oNone \\
@@ -715,7 +772,7 @@ explores every moment at which the deadline can fall.
   StopEnd
 \where
   phase = phStopWait \\
-  ((active, captured, onport, foreign) \mapsto sS5) \in stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS5) \in stopSettle \\
   res? = oStopped \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -728,9 +785,10 @@ S6 marks every visible voxd on 8421 for termination.
   Hold
 \where
   phase = phStopWait \\
-  ((active, captured, onport, foreign) \mapsto sS6) \in stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS6) \in stopSettle \\
   phase' = phStopKill \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = onport \\
+  leftAlive' = \emptyset \\
   outcome' = oNone \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
     signalled' = \emptyset
@@ -741,7 +799,7 @@ S6 marks every visible voxd on 8421 for termination.
   StopEnd
 \where
   phase = phStopWait \\
-  ((active, captured, onport, foreign) \mapsto sS7) \in stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS7) \in stopSettle \\
   res? = oTimeout \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -753,7 +811,7 @@ S6 marks every visible voxd on 8421 for termination.
   StopEnd
 \where
   phase = phStopWait \\
-  ((active, captured, onport, foreign) \mapsto sS8) \in stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS8) \in stopSettle \\
   res? = oTimeout \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -770,6 +828,7 @@ effect, or fail to, through $EnvExit$; then the verb confirms S5 or times out.
 \where
   phase = phStopKill \\
   phase' = phStopReap \land verb' = verb \land cold' = cold \\
+  leftAlive' = \emptyset \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   outcome' = oNone \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -781,7 +840,7 @@ effect, or fail to, through $EnvExit$; then the verb confirms S5 or times out.
   StopEnd
 \where
   phase = phStopReap \\
-  ((active, captured, onport, foreign) \mapsto sS5) \in stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS5) \in stopSettle \\
   res? = oStopped \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -793,7 +852,7 @@ effect, or fail to, through $EnvExit$; then the verb confirms S5 or times out.
   StopEnd
 \where
   phase = phStopReap \\
-  ((active, captured, onport, foreign) \mapsto sS5) \notin stopSettle \\
+  ((isActive~(active, mainpid), captured, onport, foreign) \mapsto sS5) \notin stopSettle \\
   res? = oTimeout \land verb' = verb \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -821,7 +880,7 @@ second half of \texttt{restart}, which keeps $verb = vRestart$ and so sets
   StartEnd \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tPE)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tPE)
     \in startPre \\
   res? = oBackendFailed \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
@@ -835,7 +894,7 @@ second half of \texttt{restart}, which keeps $verb = vRestart$ and so sets
   StartEnd \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tT1)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tT1)
     \in startPre \\
   res? = oNotInstalled \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
@@ -851,7 +910,7 @@ T4 reports the holder before any token goes out.
   StartEnd \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tT4)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tT4)
     \in startPre \\
   res? = oPortConflict \land cold' = cold \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
@@ -868,7 +927,7 @@ goes to that process; the decision is $startDecide$ on the warm path.
   StartEnd \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tT2)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tT2)
     \in startPre \\
   \exists d : TROW | ((zfalse, verb', answering, mainpid, stale) \mapsto d)
     \in startDecide @ \\
@@ -887,9 +946,10 @@ sends goes only to a visible holder.
   StartEntry \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tT3)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tT3)
     \in startPre \\
   phase' = phStartWait \land cold' = zfalse \\
+  leftAlive' = leftAlive \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   outcome' = oNone \\
   reported' = \emptyset \land tokenTo' = onport \land
@@ -903,9 +963,10 @@ The cold start: installed, inactive, and nothing on 8421.
   StartEntry \\
   pe?: ZBOOL
 \where
-  ((pe?, installed, active, onport, foreign, answering) \mapsto tCold)
+  ((pe?, installed, isActive~(active, mainpid), onport, foreign, answering) \mapsto tCold)
     \in startPre \\
   phase' = phStartAct \land cold' = ztrue \\
+  leftAlive' = leftAlive \\
   captured' = captured \land oldMain' = oldMain \land doomed' = doomed \\
   outcome' = oNone \\
   reported' = \emptyset \land tokenTo' = \emptyset \land
@@ -919,7 +980,7 @@ The cold start: installed, inactive, and nothing on 8421.
   StartEnd
 \where
   phase = phStartAct \\
-  ((rsp?, active') \mapsto tT5) \in startAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto tT5) \in startAct \\
   res? = oPermissionDenied \land verb' = verb \land cold' = cold \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
@@ -932,7 +993,7 @@ The cold start: installed, inactive, and nothing on 8421.
   StartEnd
 \where
   phase = phStartAct \\
-  ((rsp?, active') \mapsto tT6) \in startAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto tT6) \in startAct \\
   res? = oBackendFailed \land verb' = verb \land cold' = cold \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
@@ -944,8 +1005,9 @@ The cold start: installed, inactive, and nothing on 8421.
   StartReaction
 \where
   phase = phStartAct \\
-  ((rsp?, active') \mapsto tGo) \in startAct \\
+  ((rsp?, isActive~(active', mainpid')) \mapsto tGo) \in startAct \\
   phase' = phStartWait \land verb' = verb \land cold' = cold \\
+  leftAlive' = leftAlive \cap alive' \\
   captured' = captured \cap alive' \land oldMain' = oldMain \cap alive' \land
     doomed' = doomed \\
   outcome' = oNone \\
@@ -1009,21 +1071,23 @@ is the physics of the world; the remaining groups are P1--P6.
   Daemon
 \where
   \# mainpid \leq 1 \land mainpid \subseteq alive \\
-  mainpid \neq \emptyset \implies active = ztrue \\
-  active = ztrue \implies installed = ztrue \\
+  (active = ztrue \lor mainpid \neq \emptyset) \implies installed = ztrue \\
   onport \subseteq alive \land \# onport \leq 1 \\
   foreign = ztrue \implies onport = \emptyset \\
   answering \subseteq onport \land stale \subseteq alive \\
   captured \subseteq alive \land oldMain \subseteq alive \land
-    doomed \subseteq alive \\
+    doomed \subseteq alive \land leftAlive \subseteq alive \\
   \forall pe : ZBOOL @ \\
   \t1 (phase = phIdle \implies \\
-  \t2 \# \{ r : SROW | ((pe, installed, active, onport, foreign) \mapsto r)
-    \in stopPre \} = 1) \land \\
+  \t2 \# \{ r : SROW | ((pe, installed, isActive~(active, mainpid),
+    onport, foreign) \mapsto r) \\
+  \t3 \in stopPre \} = 1) \land \\
   \t1 ((phase = phIdle \lor phase = phGap) \implies \\
-  \t2 \# \{ r : TROW | ((pe, installed, active, onport, foreign, answering)
-    \mapsto r) \in startPre \} = 1) \\
-  (phase = phIdle \lor phase = phGap) \land active = ztrue \land
+  \t2 \# \{ r : TROW | ((pe, installed, isActive~(active, mainpid),
+    onport, foreign, answering) \\
+  \t3 \mapsto r) \in startPre \} = 1) \\
+  (phase = phIdle \lor phase = phGap) \land
+    isActive~(active, mainpid) = ztrue \land
     answering \neq \emptyset \implies \\
   \t1 (\forall vb : VERB | vb \in \{ vStart, vRestart \} @ \\
   \t2 \# \{ r : TROW | ((zfalse, vb, answering, mainpid, stale) \mapsto r)
@@ -1031,8 +1095,9 @@ is the physics of the world; the remaining groups are P1--P6.
   phase = phStopAct \implies (\forall rsp : RESP; a : ZBOOL @ \\
   \t1 \# \{ r : SROW | ((rsp, a) \mapsto r) \in stopAct \} = 1) \\
   phase \in \{ phStopWait, phStopReap \} \implies \\
-  \t1 \# \{ r : SROW | ((active, captured, onport, foreign) \mapsto r)
-    \in stopSettle \} = 1 \\
+  \t1 \# \{ r : SROW | ((isActive~(active, mainpid), captured, onport,
+    foreign) \mapsto r) \\
+  \t2 \in stopSettle \} = 1 \\
   phase = phStartAct \implies (\forall rsp : RESP; a : ZBOOL @ \\
   \t1 \# \{ r : TROW | ((rsp, a) \mapsto r) \in startAct \} = 1) \\
   phase = phStartWait \implies \\
@@ -1040,7 +1105,8 @@ is the physics of the world; the remaining groups are P1--P6.
     \in startDecide \} = 1 \\
   verb = vRestart \land phase \in \{ phGap, phStartAct, phStartWait \}
     \implies \\
-  \t1 captured = \emptyset \land oldMain = \emptyset \\
+  \t1 captured = \emptyset \land oldMain = \emptyset \land
+    leftAlive = \emptyset \\
   verb = vRestart \land outcome = oRestarted \implies \\
   \t1 reported \neq \emptyset \land reported \subseteq mainpid \land
     reported \cap stale = \emptyset \land \\
@@ -1062,46 +1128,76 @@ is the physics of the world; the remaining groups are P1--P6.
 The clauses read as follows.
 
 \begin{description}
-  \item[Physics.] At most one main process, alive, and only while the unit is
-    active; an active unit is installed; at most one visible holder of 8421,
-    alive, and none while an invisible holder listens; only the holder
-    answers; the handle sets name live processes only.
+  \item[Physics.] At most one main process, alive; a unit that is active or
+    still has a main process (one that is stopping) is installed; at most
+    one visible holder of 8421, alive, and none while an invisible holder
+    listens; only the holder answers; the handle sets name live processes
+    only.
   \item[P1.] At each stage of each verb, the observation, together with every
     response the manager might give and every re-observation it might
     produce, falls in exactly one row. At $phIdle$ both verbs' entry tables
     are checked, and when a warm process answers, the T2 decision is checked
     for \texttt{start} and for \texttt{restart}.
   \item[P2.] Between the two halves of \texttt{restart}, and while
-    \texttt{start} acts and waits inside it, no captured process is alive,
-    and neither is the manager's main process as \texttt{stop} observed it.
+    \texttt{start} acts and waits inside it, three things hold. No captured
+    process is alive. The manager's main process as \texttt{stop} observed
+    it is not alive. And no main process the manager still had at the
+    moment \texttt{stop} declared success is alive ($leftAlive$). The third
+    conjunct does not depend on what \texttt{stop} chose to capture, so it
+    catches a success declared over a process the design never looked at
+    (Finding~F6).
   \item[P3.] A \texttt{restarted} report names a process that is the
     manager's main process, runs the installed wheel, and is neither a
-    captured process nor the old main process.
+    captured process nor the old main process. The last conjunct is
+    subsumed by P2: $StartEnd$ leaves $captured$ and $oldMain$ as P2 found
+    them, empty. It is kept so that P3 reads whole on its own.
   \item[P4.] Any token went to the visible voxd holding 8421. With no visible
     holder, no token went anywhere.
   \item[P5.] A signal goes only to a handle that S6 marked when it saw it
-    holding 8421; no marked handle is the manager's main process. Because
-    the handle sets are pruned on exit, a reused process number is never
-    signalled.
+    holding 8421, and no marked handle is the manager's main process.
+    Because the handle sets are pruned on exit, a reused process number is
+    never signalled.
   \item[P6.] Each verb reports only outcomes the \S4.4 table assigns to it;
     in particular \texttt{restart} never reports \texttt{stopped},
     \texttt{already\_stopped}, \texttt{started} or \texttt{already\_running}.
 \end{description}
 
-Two further facts follow without a separate clause. P2 empties $captured$
-throughout \texttt{start} inside \texttt{restart}, so the second disjunct of
-$StartEnd$, ``stop did not take effect'', can never fire. The \S4.3 branch
-that reports it is dead code once the comparison is by handle (Finding~F4).
-P5 holds by construction: the only operation that signals is $StopKill$, and
-its target set is exactly $doomed$. The check confirms that no other
-operation assigns $signalled$, and that the handles S6 marks are never the
-manager's.
+\emph{What is checked, and what holds by construction.}
+P1, P2, P3 and P6 are properties of the tables and their composition. A
+change to a row, to the $isActive$ reading, or to the backend's stop
+semantics can break them, and the mutations of
+Section~\ref{sec:modelcheck} show it does.
+
+P4 holds by construction. The model does not choose a health target; it
+writes the gate of design \S3.5 directly into the operations, by assigning
+$tokenTo$ only from $onport$, which is empty when no visible voxd holds
+8421. So the check confirms only that no operation sends elsewhere. It
+cannot detect a design that sent the token ungated, because the model has
+no way to express one.
+
+The first conjunct of P5, $signalled \subseteq doomed$, also holds by
+construction: the only operation that signals is $StopKill$, and its target
+set is exactly $doomed$. The second conjunct,
+$doomed \cap mainpid = \emptyset$, is a real check, and it fails under the
+design's \texttt{is\_active} (Finding~F6).
+
+P2 empties $captured$ throughout \texttt{start} inside \texttt{restart}, so
+the second disjunct of $StartEnd$, ``stop did not take effect'', can never
+fire. The \S4.3 branch that reports it is dead code once the comparison is
+by handle. Finding~F4 says on what conditions.
+
+Every result in this document is for $PID = \{p1, p2, p3\}$. Three numbers
+cover every scenario the design names: the manager's process, an unmanaged
+voxd, and a fresh process started while both live. A fourth would admit
+interleavings that no table row distinguishes. That is an argument, not a
+proof; the model has not been checked over four.
 
 \section{Model Checking}
 \label{sec:modelcheck}
 
-\texttt{fuzz -t} accepts the specification with no errors. \texttt{probcli}
-explores it exhaustively over the three process handles:
+\texttt{fuzz -t} accepts the specification with no errors and exits 0.
+\texttt{probcli} explores it exhaustively over $PID = \{p1, p2, p3\}$, with
+$syncStop = ztrue$ and $deactActive = ztrue$:
 
 \begin{verbatim}
 probcli docs/daemon-lifecycle.tex -model_check -nodead \
@@ -1109,23 +1205,83 @@ probcli docs/daemon-lifecycle.tex -model_check -nodead \
 
 ALL OPERATIONS COVERED
 Model checking finished, all open states visited
-States analysed: 181105
-Transitions fired: 1974748
+States analysed: 259003
+Transitions fired: 2893462
 No counter example found. ALL states visited.
 \end{verbatim}
 
-All 36 operations are covered. Deadlock checking is off (\texttt{-nodead}):
+All 37 operations are covered. Deadlock checking is off (\texttt{-nodead}):
 the environment is always able to move, so a deadlock report would say
 nothing. A verb that sticks would show up as a P1 violation instead, because
 every stage that waits requires exactly one enabled row.
 
-The checks find violations when they should. Every mutation below was
-caught. Making a stale warm daemon count as running inside \texttt{restart}
-breaks P3. Reverting any one of the resolutions of F0--F3 in
-Section~\ref{sec:findings} breaks P1. Setting $syncStop = zfalse$ breaks
-P2. Comparing by process number, as in F4, breaks a clause that says
-``stop did not take effect'' is reported only while a captured process
-lives.
+\texttt{probcli} exits 0 whether or not it finds a counterexample, so the
+exit status says nothing. The verdict is the printed line,
+\texttt{No counter example found} or \texttt{*** COUNTER EXAMPLE FOUND ***},
+and every result below is read from that line.
+
+\subsection{Mutations}
+
+The checks find violations when they should. Each line below is a copy of
+this file with one change, model-checked with the same command. Every one
+printed \texttt{*** COUNTER EXAMPLE FOUND ***}, with the trace shown after
+\texttt{SETUP\_CONSTANTS} and \texttt{INITIALISATION} (which set
+\texttt{installed} as given).
+
+\begin{description}
+  \item[F0] S1 without ``probe did not fail''. Breaks P1 at $stopPre$ in the
+    initial state, $installed = zfalse$; the trace has no further steps.
+  \item[F1] S3 without ``still active''. Breaks P1 at $stopAct$:
+    \texttt{EnvForeignBind}, \texttt{StopObserve(zfalse,vStop)}.
+  \item[F1b] T5 without ``still inactive''. Breaks P1 at $startAct$:
+    \texttt{EnvSpawnUnmanaged(p2)},
+    \texttt{StopAlreadyStopped(zfalse,oAlreadyStopped,vRestart)},
+    \texttt{StartObserve(zfalse)}.
+  \item[F2] S8 only when active. Breaks P1 at $stopSettle$:
+    \texttt{EnvSpawnUnmanaged(p1)}, \texttt{EnvSpawnUnmanaged(p3)},
+    \texttt{EnvBind(p3)}, \texttt{StopObserve(zfalse,vRestart)},
+    \texttt{EnvUnbind}, \texttt{StopRequested(rspFailed)}.
+  \item[F3] T8 only when the manager reports a pid. Breaks P1 at the T2
+    decision: \texttt{EnvSpawnUnmanaged(p3)}, \texttt{EnvUnitStart(p2)},
+    \texttt{EnvUpgrade}, \texttt{StopObserve(zfalse,vStop)},
+    \texttt{EnvBind(p3)}, \texttt{StopCommandFailed}, \texttt{StartAwait},
+    \texttt{EnvServe}, \texttt{StartAnswered(oBackendFailed)},
+    \texttt{StopObserve(zfalse,vStop)}, \texttt{EnvExit(p2)},
+    \texttt{StopCommandFailed}. The final state has the unit active,
+    $mainpid = \emptyset$, and $p3$ answering.
+  \item[F4] Relabelling by process number. Breaks the clause ``stop did not
+    take effect only while a captured process lives'':
+    \texttt{EnvUnitStart(p1)}, \texttt{StopObserve(zfalse,vRestart)},
+    \texttt{StopRequested(rspDenied)}, \texttt{StopConfirmed(oStopped)},
+    \texttt{EnvUnitStart(p1)}, \texttt{EnvBind(p1)}, \texttt{StartAwait},
+    \texttt{EnvServe}, \texttt{EnvSpawnUnmanaged(p3)},
+    \texttt{StartAnswered(oAlreadyRunning)}.
+  \item[F5] $syncStop = zfalse$. Breaks P2 on $oldMain$:
+    \texttt{EnvUnitStart(p2)}, \texttt{EnvUpgrade},
+    \texttt{EnvSpawnUnmanaged(p3)}, \texttt{StartAwait},
+    \texttt{EnvUpgrade}, \texttt{StartTimeout},
+    \texttt{StopObserve(zfalse,vRestart)}, \texttt{StopRequested(rspOk)},
+    \texttt{StopConfirmed(oStopped)}.
+  \item[F6] $deactActive = zfalse$. Breaks P2 on $leftAlive$ in six steps:
+    \texttt{EnvUnitStart(p1)}, \texttt{EnvUnitDeactivating},
+    \texttt{EnvUpgrade},
+    \texttt{StopAlreadyStopped(zfalse,oAlreadyStopped,vRestart)}. With the
+    $leftAlive$ conjunct removed, the same model breaks P5 instead
+    ($doomed \cap mainpid = \emptyset$): \texttt{EnvUnitStart(p3)},
+    \texttt{EnvUnitDeactivating}, \texttt{EnvBind(p3)},
+    \texttt{StopObserve(zfalse,vRestart)}, \texttt{StopRequested(rspDenied)},
+    \texttt{StopEscalate}. With that conjunct removed as well, it breaks P2
+    on $oldMain$: \texttt{EnvUnitStart(p2)},
+    \texttt{StopObserve(zfalse,vRestart)}, \texttt{EnvSpawnUnmanaged(p1)},
+    \texttt{EnvUnitDeactivating}, \texttt{StopRequested(rspDenied)},
+    \texttt{StopConfirmed(oStopped)}.
+  \item[P3] A stale warm daemon counted as running inside \texttt{restart}
+    ($tStale \mapsto oAlreadyRunning$). Breaks P3:
+    \texttt{StopAlreadyStopped(zfalse,oAlreadyStopped,vRestart)},
+    \texttt{EnvUnitStart(p1)}, \texttt{EnvUpgrade}, \texttt{EnvBind(p1)},
+    \texttt{EnvServe}, \texttt{EnvSpawnUnmanaged(p3)},
+    \texttt{StartRunning(zfalse,oAlreadyRunning)}.
+\end{description}
 
 The model is small on purpose. It does not model time beyond ``the deadline
 may fall at any moment'', the macOS start-time race (\S3.4 states its
@@ -1212,10 +1368,15 @@ fixed by editing the design here; that is for the design's owner.
     \texttt{backend\_failed}, ``stop did not take effect'', about a stop
     that did take effect. \emph{Model:} the comparison is by handle. P2 then
     shows the branch unreachable (Section~\ref{sec:invariant}).
-    \emph{Recommend:} delete the branch. After \texttt{stopped} or
-    \texttt{already\_stopped} every captured handle has exited, so a fresh
-    \texttt{already\_running} inside \texttt{restart} is always a third
-    party's start and always \texttt{restarted}.
+    \emph{Recommend:} compare by handle. Once the fixes for F5 and F6 are
+    in, also delete the branch. Then, after \texttt{stopped} or
+    \texttt{already\_stopped}, every previous process has exited, captured
+    or not, so a fresh \texttt{already\_running} inside \texttt{restart} is
+    always a third party's start and always \texttt{restarted}. Without
+    those fixes the premise fails: under F5 or F6, \texttt{stop} can return
+    success with the manager's previous process alive. The branch must then
+    stay, compare by handle, and include that process among the handles it
+    compares.
 
   \item[\textbf{F5.}] \textbf{\S5's ``no new process is launched while the
     old one is alive'' rests on an unstated property of the backend.}
@@ -1228,13 +1389,62 @@ fixed by editing the design here; that is for the design's owner.
     $p3$ lingers. S5 holds, since nothing is captured and 8421 is free, and
     \texttt{start} acts while $p3$ is alive: P2 fails in state
     $(phase, captured, oldMain) = (phGap, \emptyset, \{p3\})$. When $p3$
-    then binds 8421 it collides with the new process. \texttt{systemctl
-    stop} returns only after the control group is empty, so Linux is safe.
-    The design does not establish the same for \texttt{launchctl bootout}.
-    \emph{Recommend:} capture the manager's main pid as a
+    then binds 8421 it collides with the new process. A \texttt{systemctl
+    stop} that vox itself issues returns only after the control group is
+    empty, so this path is closed on Linux \emph{for vox's own stop}. That
+    is not the same as ``Linux is safe'', as round~1 of this document said.
+    A stop that a third party has in flight leaves the unit reported
+    inactive while its main process lives, and that is Finding~F6. The
+    design does not establish the vox-issued case for \texttt{launchctl
+    bootout}. \emph{Recommend:} capture the manager's main pid as a
     \texttt{DaemonProcess} at observe time, alongside the 8421 holders, and
     include it in condition (c). That makes P2 hold whatever the backend
-    does.
+    does on this path.
+
+  \item[\textbf{F6.}] \textbf{A stopping unit is reported inactive, and
+    three rows take that as ``stopped''.} The design's \texttt{is\_active}
+    admits \texttt{active}, \texttt{activating} and \texttt{reloading}
+    (design \S3.2, the \texttt{ServiceBackend} sketch and the method table).
+    It excludes \texttt{deactivating}, in which systemd still reports a
+    \texttt{MainPID}, although \S8 names ``stopping'' as a mode. Under that
+    reading ($deactActive = zfalse$) the model finds three distinct defects.
+    \begin{enumerate}
+      \item \emph{S2 declares \texttt{already\_stopped} over a live main
+        process.} A third party starts the unit (main $p1$) and begins
+        stopping it, so the unit is deactivating. \texttt{restart} observes
+        an inactive unit, nothing on 8421 and no listener, which is S2. It
+        reports \texttt{already\_stopped} and passes to \texttt{start} with
+        $p1$ alive: P2 fails on $leftAlive = \{p1\}$, six steps from
+        initialisation (Section~\ref{sec:modelcheck}). The evaluator found
+        the same path through \texttt{start}: \texttt{StartObserve},
+        \texttt{StartRequested(p1,rspOk)}, \texttt{EnvUnitDeactivating},
+        \texttt{StartTimeout},
+        \texttt{StopAlreadyStopped(vRestart)}. S2 (design \S4.1) consults
+        neither $mainpid$ nor any handle, and captures nothing. So \S5's
+        ``both mean (a)--(d) held'' is vacuous for condition (c) on this
+        path. The round-1 P2 missed this for the same reason; the
+        $leftAlive$ conjunct was added to catch it.
+      \item \emph{S5 declares \texttt{stopped} over a live main process.}
+        \texttt{restart} observes the unit active with main $p2$ not yet on
+        8421. A third party's stop is in flight when vox's request is
+        refused, and the re-observation sees ``inactive''. The port is free
+        and nothing was captured, so S5 holds: P2 fails on
+        $oldMain = \{p2\}$.
+      \item \emph{S6 marks the manager's own process as an unmanaged
+        voxd.} The unit is deactivating with main $p3$ still holding 8421.
+        \texttt{stop} sees ``inactive, a visible voxd on 8421'', which is
+        S6, and marks $p3$ for termination, to be reported as ``killed
+        unmanaged voxd pid $p3$''. P5 fails on
+        $doomed \cap mainpid = \{p3\}$.
+    \end{enumerate}
+    \emph{Model:} $deactActive = ztrue$, so a unit with a live main process
+    counts as active in every table. All three paths close and the model is
+    clean (Section~\ref{sec:modelcheck}). \emph{Recommend:} the same.
+    \texttt{is\_active} should report \texttt{deactivating} as active (on
+    launchd, a loaded job whose pid is still present). Equivalently, treat
+    $main\_pid() \neq None$ as active in every row. The narrower fix, ``S2
+    requires $mainpid = None$'', closes only the first path; the second and
+    third need the same condition in S5 and S6.
 \end{enumerate}
 
 One reading the design leaves open, without a counterexample: \S4.1 does not
