@@ -114,10 +114,9 @@ mcp = _LoggingFastMCP(
         "summarizing what you completed and call the unmute tool with "
         "ephemeral=true. Mood tags are pre-resolved in config \u2014 do not "
         "pass vibe_tags. No other output.\n\n"
-        "Do NOT use Read, Write, or Bash tools to access "
-        ".punt-labs/vox/vox.md or .punt-labs/vox/vox.local.md. "
-        "All config state is available through "
-        "MCP tools or hook context."
+        "Do NOT read or edit the content of .punt-labs/vox/vox.md or "
+        "vox.local.md with Read, Write, Edit, or shell commands; use MCP tools "
+        "or hook context. git status, diff, and stash push/pop of them are fine."
     ),
 )
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]

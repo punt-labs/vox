@@ -893,6 +893,8 @@ itself.
    music program, and the recordings on disk; clients are thin controllers.
    Work that touches audio, audio files, or daemon-owned state routes through
    the daemon so it behaves the same whether the daemon is local or remote.
-10. **Never touch `vox.md` / `vox.local.md` directly.** The daemon writes
-    them; all state is reachable through the `mic` tools. Racing the files
-    corrupts state.
+10. **Never read or edit the content of `vox.md` / `vox.local.md`
+    directly.** The daemon writes them; all state is reachable through the
+    `mic` tools. Racing the files corrupts state. Git operations that do not
+    rewrite the content (`git status`, `git diff`, `git stash push --` the
+    file and a later `git stash pop --index` around a release) are fine.
