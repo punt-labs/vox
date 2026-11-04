@@ -100,8 +100,8 @@ lifecycle catches. It is a types module, per PY-IC-9.
 ```python
 class ServiceBackend(Protocol):
     def is_installed(self) -> bool: ...      # unit file / plist present
-    def is_active(self) -> bool: ...         # systemd: active|activating|reloading
-                                             # launchd: job loaded
+    def is_active(self) -> bool: ...         # systemd: active|activating|reloading|deactivating
+                                             # launchd: job loaded, or its pid present
     def main_pid(self) -> int | None: ...    # None: the manager reports no process
     def installed_bind(self) -> str: ...     # VOXD_BIND written into the unit/plist;
                                              # "" when the unit sets none
@@ -119,7 +119,7 @@ class PortProbeError(RuntimeError):          # fuser/lsof/ps missing, failed or 
 | Method | `SystemdBackend` | `LaunchdBackend` |
 |---|---|---|
 | `is_installed` | `/etc/systemd/system/voxd.service` exists | `~/Library/LaunchAgents/com.punt-labs.voxd.plist` exists |
-| `is_active` | `systemctl is-active voxd` ∈ {`active`, `activating`, `reloading`} | `LaunchctlAgent.is_loaded()` |
+| `is_active` | `systemctl is-active voxd` ∈ {`active`, `activating`, `reloading`, `deactivating`} | `LaunchctlAgent.is_loaded()` or `LaunchctlAgent.pid()` is not `None` |
 | `main_pid` | `systemctl show -p MainPID --value voxd`; `0` → `None` | `LaunchctlAgent.pid()` (new): `pid = N` from `launchctl print gui/<uid>/<label>`; absent → `None`; malformed → raise |
 | `installed_bind` | parse `Environment="VOXD_BIND=…"` from the unit file (mode 644, world-readable), undoing `%%` | `plistlib` read of `EnvironmentVariables.VOXD_BIND` from the plist |
 | `request_stop` | `PrivilegedRun(["systemctl", "stop", "voxd"])` (§3.3) | `LaunchctlAgent.bootout()`, which now raises `LaunchctlError` when the job was loaded and bootout exits non-zero; translated to `BackendCommandError` |
@@ -319,8 +319,9 @@ The observation `DaemonLifecycle` takes before acting:
 
 ```text
 installed : bool                      backend.is_installed()
-active    : bool                      backend.is_active()
 mainpid   : int | None                backend.main_pid()
+active    : bool                      backend.is_active() ∨ mainpid ≠ None
+main      : DaemonProcess | None      handle on mainpid, opened at observe time
 procs     : frozenset[DaemonProcess]  visible voxd processes on 8421
 listening : bool                      token-free TCP connect to host:8421
 serving   : HealthStatus | None       token-bearing health, gated (§3.5)
@@ -328,8 +329,14 @@ fresh     : bool                      serving.pid = mainpid
                                         ∧ serving.daemon_version = installed_version()
 ```
 
-If the probe raises `PortProbeError`, every verb returns `backend_failed`
-before acting. Preconditions run first for every verb: not root (otherwise
+`active` counts a stopping unit as active: a unit that is deactivating, or
+any unit whose manager still reports a main process, has not stopped
+(model finding F6; without this, S2, S5 and S6 can each report success, or
+signal the manager's own process, while the old main process lives).
+
+The probe runs first. If it raises `PortProbeError`, every verb returns
+`backend_failed` before any row is consulted, S1/T1 included (model finding
+F0). Preconditions run first for every verb: not root (otherwise
 `LifecycleRefused`, exit 2) and macOS or Linux (otherwise
 `LifecycleRefused`, exit 2).
 
@@ -339,10 +346,10 @@ before acting. Preconditions run first for every verb: not root (otherwise
 |---|---|---|---|
 | S1 | not `installed` | `not_installed`; the detail names any voxd on 8421 and says it was not touched (Q1) | 1 |
 | S2 | `installed`, not `active`, `procs` empty, not `listening` | `already_stopped`; no sudo call is made | 0 |
-| S3 | `request_stop()` raises `PrivilegeDenied` | `permission_denied` | 1 |
+| S3 | `request_stop()` raises `PrivilegeDenied`, and the re-observation still shows `active` (otherwise carry on as S5/S6, §3.2) | `permission_denied` | 1 |
 | S4 | `request_stop()` raises `BackendCommandError`, and the re-observation still shows `active` | `backend_failed`, with argv, exit code and stderr tail | 1 |
 | S5 | backend inactive, every previous `DaemonProcess.exited()`, `procs` empty and not `listening`, all within `STOP_DEADLINE_S` | `stopped`, with `previous_pid` | 0 |
-| S6 | backend inactive, but visible voxd processes remain on 8421 (an unmanaged voxd) | escalate: `DaemonProcess.terminate()` each one (pidfd on Linux; start-time re-check on macOS), remove `serve.port` if it names 8421, then confirm S5. Success → `stopped`, with "killed unmanaged voxd pid N" | 0 |
+| S6 | backend inactive, but visible voxd processes remain on 8421 (an unmanaged voxd), or a captured `DaemonProcess` has left the port but not exited (F2) | escalate: `DaemonProcess.terminate()` each one (pidfd on Linux; start-time re-check on macOS), remove `serve.port` if it names 8421, then confirm S5. Success → `stopped`, with "killed unmanaged voxd pid N" | 0 |
 | S7 | backend inactive, `procs` empty, but `listening` (a holder vox cannot see, likely another user's) | `timeout`: "port 8421 still accepts connections but no visible voxd process holds it". Nothing is signalled. | 1 |
 | S8 | backend still `active`, or a process survives `terminate()`, at `STOP_DEADLINE_S` | `timeout`; the detail names what is still up | 1 |
 
@@ -359,10 +366,10 @@ the port instead.
 | T4 | not `active`, and `procs` non-empty or `listening` | `port_conflict`, naming the visible pid or "a process vox cannot see"; the detail suggests `vox daemon stop` (which clears a visible one via S6) | 1 |
 | T2 | `active`, a visible voxd process holds 8421, and `serving` | apply T8 and T9 to the serving process first (below). If `fresh` → `already_running`. If its version is stale → `already_running` with a stale-version detail suggesting `vox daemon restart`, exit 0 for a standalone `start`, but `version_mismatch` when reached from `restart` (§4.3). If the pid differs from `mainpid` → `backend_failed` (T8). | 0 / 1 |
 | T3 | `active`, not yet `serving` (activating, or `serve.token` not yet written) | `wait_up`, then decide as T2; no answer by the deadline → `timeout` | 0 / 1 |
-| T5 | `request_start()` raises `PrivilegeDenied` | `permission_denied` | 1 |
+| T5 | `request_start()` raises `PrivilegeDenied`, and the re-observation still shows not `active` (otherwise carry on to T7–T10, §3.2) | `permission_denied` | 1 |
 | T6 | `request_start()` raises `BackendCommandError`, and the re-observation shows not `active` | `backend_failed` | 1 |
 | T7 | no health answer within `START_DEADLINE_S` (including a unit that crashes on startup and loops on `Restart=on-failure`) | `timeout`, pointing at `vox.log` | 1 |
-| T8 | health answers, `serving.pid ≠ mainpid` (when the backend reports a pid) | `backend_failed`: "port 8421 answered by pid X, service manager runs pid Y" | 1 |
+| T8 | health answers, and `serving.pid ≠ mainpid` or the backend reports no main pid (F3) | `backend_failed`: "port 8421 answered by pid X, service manager runs pid Y" (or "runs no process") | 1 |
 | T9 | health answers, `serving.daemon_version ≠ installed_version()` after a fresh start | `version_mismatch` | 1 |
 | T10 | health answers and `fresh` | `started`, with pid, port and version | 0 |
 
@@ -382,15 +389,16 @@ restart():
                                              # running daemon as
                                              # version_mismatch / backend_failed,
                                              # never already_running
-    if t.outcome is already_running and t.pid != s.previous_pid:
+    if t.outcome is already_running:
         t = t.as_outcome(started)            # a third party started voxd
                                              # after our confirmed stop; T8
-                                             # and T9 already passed inside
-                                             # T2, so this process is the
-                                             # manager's and runs the wheel
-    if t.outcome is already_running:         # pid == previous_pid: the stop
-        t = t.as_outcome(backend_failed,     # did not take effect; never ok
-                         detail="stop did not take effect")
+                                             # and T9 passed inside T2, so
+                                             # it is the manager's process
+                                             # and runs the wheel. It cannot
+                                             # be the previous process: stop
+                                             # confirmed every captured
+                                             # handle, the main one included,
+                                             # exited (F4, given F5 and F6)
     if t.outcome is started:
         return Report(restart, restarted, pid=t.pid,
                       previous_pid=s.previous_pid, ...)
@@ -428,7 +436,9 @@ A backend command's exit code is never trusted on its own.
 
 - **stop** succeeds only when all four hold at once: (a) the backend
   reports not active; (b) no visible voxd process holds 8421; (c) every
-  `DaemonProcess` captured at observe time reports `exited()`; (d) 8421
+  `DaemonProcess` captured at observe time reports `exited()`, including the
+  handle on the manager's main process (F5: a stop vox did not issue may
+  still be in flight); (d) 8421
   does not accept connections. Condition (c) uses the handle, not
   `os.kill(pid, 0)`. On Linux the pidfd identifies the original process
   exactly. On macOS a reused pid has a different start time, so it counts as
@@ -523,7 +533,13 @@ transitions. Invariants must hold across those transitions, and a wrong
 transition has already shipped once: the launchd exit-5 race left voxd down
 after a "restarted".
 
-`docs/daemon-lifecycle.tex` would contain:
+**Done:** `docs/daemon-lifecycle.tex` (commit 7bb7712, jms; evaluated and
+accepted by jra). `fuzz -t` is clean, and ProB over PID = {p1,p2,p3}
+reports "No counter example found. ALL states visited." (259,003 states)
+for this design with model findings F0–F6 applied. The fixes are written
+into §3.2 (`is_active`), §4 (observation, F0, F6), rows S3, S6, T5, T8,
+§4.3 and §5(c). Each finding's counterexample against the unfixed design,
+and every mutation trace, is quoted in the spec. The model contains:
 
 - A state schema over the §4 observation (`installed`, `active`, `mainpid`,
   `procs`, `listening`, `serving`, `fresh`), with the invariant that at most
@@ -619,8 +635,14 @@ near lines 130–160) and `CHANGELOG.md`.
   `restart_from_stopped_reports_restarted`,
   `restart_third_party_start_requires_fresh`,
   `restart_running_stale_version_is_version_mismatch`,
-  `restart_same_pid_after_stop_is_failure`,
-  `restart_start_failure_prefixed_start`.
+  `restart_start_failure_prefixed_start`,
+  `restart_waits_for_deactivating_main_process` (F6),
+  `stop_deactivating_unit_is_not_already_stopped` (F6),
+  `stop_never_signals_manager_main_process` (F6),
+  `stop_kills_captured_process_off_port_not_exited` (F2),
+  `start_serving_without_main_pid_is_backend_failed` (F3),
+  `stop_permission_denied_but_unit_went_down_is_stopped` (F1),
+  `probe_failure_precedes_not_installed` (F0).
 - **probe failure:** `probe_tool_missing_is_backend_failed`, for each verb,
   with no backend call made.
 - **preconditions:** root refused and unsupported platform refused, neither
