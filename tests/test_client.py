@@ -2367,3 +2367,41 @@ async def test_a_redirect_to_a_fragment_never_carries_the_token() -> None:
         with pytest.raises(VoxdConnectionError) as caught:
             await client.connect()
     assert _SECRET not in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# The token never crosses a proxy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_ignores_a_proxy_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With http_proxy set, GET /ws?token=... still goes straight to voxd."""
+    with socket.socket() as dead:
+        dead.bind(("127.0.0.1", 0))
+        proxy_port = dead.getsockname()[1]
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{proxy_port}")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    server = await _answer_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token=_SECRET)
+        with pytest.raises(VoxdConnectionError, match="403"):
+            await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_asks_websockets_for_no_proxy() -> None:
+    with patch(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=_refused(),
+    ) as connect:
+        client = VoxClient(host="127.0.0.1", port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError):
+            await client.connect()
+    assert connect.call_args.kwargs["proxy"] is None

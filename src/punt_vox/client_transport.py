@@ -68,14 +68,21 @@ class VoxdTransport:
         self._ws = None
         return self
 
-    async def connect(self) -> None:
-        """Connect to voxd WebSocket. Call once before sending messages."""
+    async def connect(self) -> websockets.asyncio.client.ClientConnection:
+        """Connect to voxd and return the connection, which this transport keeps.
+
+        Never through a proxy: the URI carries the token, and websockets
+        otherwise honours ``http_proxy`` / ``all_proxy`` from the environment,
+        loopback included, so ``GET /ws?token=...`` would cross the proxy.
+        """
         uri = self._endpoint.uri()
         try:
             # all_errors: a host with several addresses fails as one
             # ExceptionGroup of per-address errors, so a refusal on every
             # address can be told from one that timed out or was unreachable.
-            self._ws = await websockets.asyncio.client.connect(uri, all_errors=True)
+            self._ws = await websockets.asyncio.client.connect(
+                uri, all_errors=True, proxy=None
+            )
         except (
             OSError,
             ExceptionGroup,
@@ -86,6 +93,7 @@ class VoxdTransport:
             # a bad token or Origin, or not speaking HTTP at all.
             endpoint = uri.split("?")[0]
             raise ConnectFailure(endpoint, exc).error() from exc
+        return self._ws
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
@@ -109,13 +117,7 @@ class VoxdTransport:
                 self._ws = None
 
         # The endpoint re-reads port and token from disk unless given.
-        await self.connect()
-        # connect() sets self._ws or raises VoxdConnectionError.
-        ws = self._ws
-        if ws is None:
-            msg = "connect() succeeded but self._ws is None"
-            raise VoxdConnectionError(msg)
-        return ws
+        return await self.connect()
 
     async def send_and_recv(
         self,
