@@ -69,26 +69,41 @@ class SystemdUnit:
 
         PulseAudio/PipeWire need XDG_RUNTIME_DIR to find the user socket.
         """
-        lines: list[str] = []
-        for name in self._AUDIO_VARS:
-            value = os.environ.get(name)
-            if not value:
-                continue
-            if not self.safe_value(value):
-                logger.warning("Skipping %s: value contains unsafe characters", name)
-                continue
-            lines.append(f'Environment="{name}={value.replace("%", "%%")}"')
-        # Deterministic fallback for XDG_RUNTIME_DIR.
+        lines = [line for name in self._AUDIO_VARS if (line := self._env_line(name))]
         if not any(line.startswith('Environment="XDG_RUNTIME_DIR=') for line in lines):
-            try:
-                uid = pwd.getpwnam(user).pw_uid
-                lines.insert(0, f'Environment="XDG_RUNTIME_DIR=/run/user/{uid}"')
-            except KeyError:
-                logger.warning(
-                    "User %s not found — cannot compute XDG_RUNTIME_DIR fallback",
-                    user,
-                )
+            lines[:0] = self._runtime_dir_fallback(user)
         return lines
+
+    @classmethod
+    def _env_line(cls, name: str) -> str:
+        """Return the ``Environment=`` line for *name*; ``""`` to leave it out.
+
+        An unset, empty, or unsafe value is left out -- the empty string is the
+        documented skip, filtered by the caller.
+        """
+        value = os.environ.get(name)
+        if not value:
+            return ""
+        if not cls.safe_value(value):
+            logger.warning("Skipping %s: value contains unsafe characters", name)
+            return ""
+        return f'Environment="{name}={value.replace("%", "%%")}"'
+
+    @staticmethod
+    def _runtime_dir_fallback(user: str) -> list[str]:
+        """Return the deterministic ``XDG_RUNTIME_DIR`` line for *user*.
+
+        Empty, with a warning, when *user* has no passwd entry to take a uid
+        from.
+        """
+        try:
+            uid = pwd.getpwnam(user).pw_uid
+        except KeyError:
+            logger.warning(
+                "User %s not found — cannot compute XDG_RUNTIME_DIR fallback", user
+            )
+            return []
+        return [f'Environment="XDG_RUNTIME_DIR=/run/user/{uid}"']
 
     def content(self, user: str) -> str:
         """Generate the unit file content for *user*."""

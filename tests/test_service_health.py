@@ -37,12 +37,19 @@ def test_health_target_empty_bind_maps_to_loopback(bind: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "wildcard",
-    [_IPV4_WILDCARD, _IPV6_WILDCARD, f"  {_IPV4_WILDCARD}  "],
+    ("wildcard", "loopback"),
+    [
+        (_IPV4_WILDCARD, "127.0.0.1"),
+        (f"  {_IPV4_WILDCARD}  ", "127.0.0.1"),
+        (_IPV6_WILDCARD, "::1"),
+    ],
 )
-def test_health_target_wildcard_bind_maps_to_loopback(wildcard: str) -> None:
-    """Wildcard (unspecified) binds resolve loopback -- voxd accepts it there."""
-    assert HealthTarget(wildcard).host == "127.0.0.1"
+def test_health_target_wildcard_bind_maps_to_its_family_loopback(
+    wildcard: str, loopback: str
+) -> None:
+    """A wildcard accepts loopback of its own family only: an IPv6-only
+    socket bound to ``::`` (IPV6_V6ONLY, the BSD default) refuses 127.0.0.1."""
+    assert HealthTarget(wildcard).host == loopback
 
 
 @pytest.mark.parametrize("bind", ["192.168.1.50", "  192.168.1.50  "])

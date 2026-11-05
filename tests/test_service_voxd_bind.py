@@ -6,6 +6,8 @@ health can poll, and a bind health would refuse never reaches a unit file.
 
 from __future__ import annotations
 
+import ipaddress
+
 import pytest
 
 from punt_vox.service.backend import PortProbeError
@@ -35,3 +37,19 @@ def test_from_environ_reads_voxd_bind_and_defaults_to_none_set() -> None:
     assert VoxdBind.from_environ({}).poll_host() == "127.0.0.1"
     with pytest.raises(PortProbeError):
         VoxdBind.from_environ({"VOXD_BIND": "localhost"})
+
+
+_IPV4_WILDCARD = str(ipaddress.IPv4Address(0))
+_IPV6_WILDCARD = str(ipaddress.IPv6Address(0))
+
+
+@pytest.mark.parametrize(
+    ("raw", "host"),
+    [
+        (_IPV4_WILDCARD, "127.0.0.1"),
+        (_IPV6_WILDCARD, "::1"),
+        (f" {_IPV6_WILDCARD} ", "::1"),
+    ],
+)
+def test_a_wildcard_polls_the_loopback_of_its_own_family(raw: str, host: str) -> None:
+    assert VoxdBind(raw).poll_host() == host

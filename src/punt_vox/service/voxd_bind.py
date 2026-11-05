@@ -11,7 +11,7 @@ predates the check. Both ask this class, so they cannot disagree.
 from __future__ import annotations
 
 import ipaddress
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.service.backend import PortProbeError
 
@@ -26,6 +26,10 @@ class VoxdBind:
     """An IP address voxd binds; empty means its loopback default."""
 
     __slots__ = ("_address",)
+
+    # A wildcard accepts loopback of its own family only: an IPv6 socket bound
+    # to ``::`` with IPV6_V6ONLY (the BSD default) refuses 127.0.0.1.
+    _LOOPBACK: ClassVar[dict[int, str]] = {4: "127.0.0.1", 6: "::1"}
 
     _address: ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -51,9 +55,10 @@ class VoxdBind:
     def poll_host(self) -> str:
         """Return the address a health request reaches voxd on.
 
-        A wildcard (unspecified) bind accepts loopback, so poll ``127.0.0.1``;
-        a concrete IP is the only address voxd listens on, so poll it exactly.
+        A wildcard (unspecified) bind accepts its family's loopback, so poll
+        ``127.0.0.1`` for ``0.0.0.0`` and ``::1`` for ``::``; a concrete IP is
+        the only address voxd listens on, so poll it exactly.
         """
         if self._address.is_unspecified:
-            return "127.0.0.1"
+            return self._LOOPBACK[self._address.version]
         return str(self._address)
