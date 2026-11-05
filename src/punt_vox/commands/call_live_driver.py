@@ -24,9 +24,9 @@ from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
+    from punt_vox.commands.call_wiring import CallWiring
     from punt_vox.voxd.conversation_mode.call_control import ApplyControlFn, CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
-    from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
@@ -110,28 +110,25 @@ class LiveCallDriver:
 
     def __new__(
         cls,
+        wiring: CallWiring,
         *,
-        session_attach: SessionAttach,
-        speak: SpeakFn,
-        chime: ChimeFn,
-        control: CallControl,
-        apply_control: ApplyControlFn,
         detector: TurnDetector,
         mic_source: MicAudioSource,
         stt_provider: STTProvider,
     ) -> Self:
         self = super().__new__(cls)
         self._mic_source = mic_source
-        self._speak = speak
-        self._chime = chime
-        self._control = control
-        self._apply_control = apply_control
+        self._speak = wiring.speak
+        self._chime = wiring.chime
+        self._control = wiring.control
+        self._apply_control = wiring.apply_control
         self._session = CallSession(
             turn_detector=detector,
             stt_provider=stt_provider,
-            session_attach=session_attach,
+            session_attach=wiring.session_attach,
             speak=self._speak_and_gate,
             chime=self._chime_and_gate,
+            turn_timer=wiring.turn_timer,
         )
         self._last_activity_at = time.monotonic()
         # 0.0, not time.monotonic(): the first chunk of the call should
@@ -142,23 +139,13 @@ class LiveCallDriver:
         return self
 
     @classmethod
-    async def create(
-        cls,
-        *,
-        session_attach: SessionAttach,
-        speak: SpeakFn,
-        chime: ChimeFn,
-        control: CallControl,
-        apply_control: ApplyControlFn,
-    ) -> Self:
+    async def create(cls, wiring: CallWiring) -> Self:
         """Build a driver with a real :class:`MicAudioSource`, calibrated first.
 
         Checks the STT provider's credentials before calibration even
         starts -- so a bad credential fails the call right here, rather
         than surviving 2s of mic calibration and the spoken "Listening."
         cue and only surfacing once the first turn's transcribe fails.
-        ``ANTHROPIC_API_KEY`` itself is checked by :mod:`~.call`'s ``_run``,
-        the one call site both this driver and the scripted driver share.
         """
         stt_provider = ElevenLabsSTTProvider()
         _require_healthy(stt_provider)
@@ -166,11 +153,7 @@ class LiveCallDriver:
         detector = TurnDetector()
         detector.calibrate(await mic_source.capture_seconds(_CALIBRATION_S))
         return cls(
-            session_attach=session_attach,
-            speak=speak,
-            chime=chime,
-            control=control,
-            apply_control=apply_control,
+            wiring,
             detector=detector,
             mic_source=mic_source,
             stt_provider=stt_provider,
@@ -225,8 +208,8 @@ class LiveCallDriver:
         """Return whether :attr:`_session` already applied ``EndCall()`` on its own.
 
         A rejected STT credential (``ProviderAuthError``, in
-        :meth:`~.call_session.CallSession._handle_turn_ended`) or a missing
-        ``ANTHROPIC_API_KEY`` (``BareAuthMissingError``, in
+        :meth:`~.call_session.CallSession._handle_turn_ended`) or a call
+        agent that ended (``CallAgentEndedError``, in
         :class:`~.reply_recovery.ReplyRecovery`) both apply ``EndCall()``
         from inside :meth:`~.call_session.CallSession.process_chunk`, with
         no way for :meth:`run` to learn about it except polling mode after
@@ -303,8 +286,7 @@ class LiveCallDriver:
 def _require_healthy(stt_provider: STTProvider) -> None:
     """Raise ``typer.BadParameter`` if *stt_provider* fails its own health check.
 
-    Mirrors :func:`~.call_spec.resolve_call_spec`'s and
-    :meth:`~.session_attach.BareAuthMissingError.check`'s
+    Mirrors :func:`~.call_spec.resolve_call_spec`'s
     fail-fast-before-the-call-starts pattern for the credentials a call
     needs -- module-level rather than a method because it takes an
     arbitrary :class:`STTProvider`, not :class:`LiveCallDriver`'s own state.

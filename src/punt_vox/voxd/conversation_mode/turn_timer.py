@@ -1,10 +1,10 @@
 """Per-turn latency diagnostics -- ``vox call start``'s turn-timer collaborator.
 
-Two real latency sources were confirmed live: Option D spawns a fresh
-``claude -p --resume`` subprocess per turn (28+ ``SessionStart`` hooks fire
-before the first real assistant frame), and a long reply's real ElevenLabs
-synthesis time can exceed the daemon client's own timeout. Neither is fixed
-here -- this module exists only to make where time goes *visible*, either by
+A turn's time goes to several places -- speech-to-text, the call agent's
+model round trip and any repository reads it makes, and synthesis of the
+reply, whose real ElevenLabs time can exceed the daemon client's own
+timeout. This module fixes none of them; it exists only to make where time
+goes *visible*, either by
 grepping ``vox.log`` after the fact or watching a call live with
 ``--trace-turns``. See :func:`punt_vox.logging_config.configure_turn_timer_logging`
 for how the two are wired: every mark below is an unconditional
@@ -13,7 +13,7 @@ for how the two are wired: every mark below is an unconditional
 :class:`TurnTimer` is a :data:`~typing.Protocol` (PY-DP-11: exactly one
 method), matching the trigger-observer shape :class:`CallActor` already uses
 for mode transitions -- except stages here are finer-grained than a mode
-transition (STT request/response, subprocess spawn, first reply frame) and
+transition (STT request/response, turn sent, first tool event) and
 carry an optional human-readable *detail* (a confidence score, an
 approximation caveat), so a dedicated small Protocol fits better than
 threading these through :class:`CallActor`'s existing transition-observer
@@ -33,18 +33,18 @@ __all__ = ["LoggingTurnTimer", "TurnStage", "TurnTimer"]
 logger = logging.getLogger(__name__)
 
 # The closed set of stages a human watching a live call cares about, in the
-# order a turn normally passes through them. ``claude_spawned`` and
-# ``first_reply_frame`` are approximations from CallSession's vantage point
-# -- it has no visibility into ClaudeSessionAttach's own subprocess spawn or
-# stream-json frame boundaries (see call_session.py's marks for exactly what
-# each approximates).
+# order a turn normally passes through them. ``first_tool_event`` is marked
+# by the call agent itself, the one component that sees its RPC stream, and
+# only on a turn that uses a tool -- it separates "the agent is reading the
+# repo" from "the model is slow to answer" in a long turn.
 type TurnStage = Literal[
     "speech_first_detected",
     "turn_ended",
     "stt_request_sent",
     "stt_response_received",
     "ack_spoken",
-    "claude_spawned",
+    "turn_sent",
+    "first_tool_event",
     "first_reply_frame",
     "reply_complete",
     "tts_request_sent",

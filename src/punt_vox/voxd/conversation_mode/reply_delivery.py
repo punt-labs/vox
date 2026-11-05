@@ -72,20 +72,11 @@ class ReplyDelivery:
         self._wait_cue = WaitCue(chime)
         return self
 
-    def replace_session_attach(self, session_attach: SessionAttach) -> None:
-        """Re-attach to a different session (``/call transfer``).
-
-        Takes effect on the next :meth:`deliver` call -- a turn already
-        mid-flight when a transfer request lands keeps talking to the
-        session it started with.
-        """
-        self._session_attach = session_attach
-
     async def deliver(self, turn: TranscribedTurn) -> None:
         """Run *turn* through session-attach and speak the (redacted) reply."""
-        # The per-turn claude subprocess spawn measured 13-25s median -- an
+        # A turn can take seconds before the call agent's first word -- an
         # instant acknowledgment covers the human's first few seconds of
-        # otherwise-dead silence, before the STT->claude->TTS round trip
+        # otherwise-dead silence, before the STT->agent->TTS round trip
         # even starts. Goes through self._speak, the same mic-gated channel
         # every other cue in this flow uses, so it is never captured as if
         # the human said it.
@@ -127,14 +118,11 @@ class ReplyDelivery:
         a permanent failure, ends the call itself) -- :meth:`deliver` treats
         that as nothing left to do for this turn.
         """
-        # "claude_spawned"/"first_reply_frame" approximate a subprocess this
-        # class has no visibility into: SessionAttach is a Protocol, and the
-        # production ClaudeSessionAttach spawns claude -p --resume as the
-        # very first thing send_turn does, before its first yield -- so
-        # marking just before iterating starts, and again on the first
-        # chunk received, is accurate for that implementation even though
-        # this class cannot see inside it.
-        self._turn_timer.mark("claude_spawned")
+        # The turn goes out the moment iteration starts: send_turn writes its
+        # prompt before its first yield. "first_reply_frame" is the first
+        # chunk of reply text back; a turn that reads the repo first marks
+        # "first_tool_event" in between, from inside the call agent.
+        self._turn_timer.mark("turn_sent")
         pieces: list[str] = []
         first_frame_seen = False
         try:

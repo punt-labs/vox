@@ -1,0 +1,317 @@
+"""Tests for :class:`PiCallAgent`, named for the call-agent Z model's operations.
+
+Each class names the Z operation (``Spawn``, ``SendTurn``, ``ReplyComplete``,
+``Teardown``, ``AbortTurn``) or invariant (``readOnly`` over the whole live
+extent) it checks. The process is a :class:`FakePiProcess` at the subprocess
+boundary; the channel, record parsing, and state machine run for real.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Generator
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from conversation_mode._pi_rpc_fakes import (
+    FakePiProcess,
+    PiReply,
+    SpawnRecorder,
+    ToolUse,
+)
+from punt_vox.voxd.conversation_mode import pi_call_agent as agent_module
+from punt_vox.voxd.conversation_mode.call_agent_errors import (
+    CallAgentEndedError,
+    CallAgentSpawnError,
+    SecretPathDeniedError,
+)
+from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
+from punt_vox.voxd.conversation_mode.call_agent_state import (
+    IllegalAgentTransitionError,
+)
+from punt_vox.voxd.conversation_mode.pi_call_agent import PiCallAgent
+from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
+from punt_vox.voxd.conversation_mode.session_attach import (
+    SessionAttach,
+    SessionAttachError,
+)
+from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
+from punt_vox.voxd.conversation_mode.turn_timer import TurnStage
+
+_EXEC = "punt_vox.voxd.conversation_mode.pi_rpc_channel.asyncio.create_subprocess_exec"
+
+
+class _SpyTimer:
+    def __init__(self) -> None:
+        self.stages: list[TurnStage] = []
+
+    def mark(self, stage: TurnStage, *, detail: str | None = None) -> None:
+        del detail
+        self.stages.append(stage)
+
+
+@contextmanager
+def _inactivity(seconds: float) -> Generator[None]:
+    with patch.object(agent_module, "REPLY_INACTIVITY_S", seconds):
+        yield
+
+
+async def _spawn(
+    tmp_path: Path, process: FakePiProcess, timer: _SpyTimer | None = None
+) -> tuple[PiCallAgent, SpawnRecorder]:
+    recorder = SpawnRecorder(process)
+    with patch(_EXEC, recorder):
+        agent = await PiCallAgent.spawn(
+            CallAgentLaunch(SecretPathPolicy(tmp_path)),
+            cwd=tmp_path,
+            opening_message="SNAPSHOT: we are fixing the music loop",
+            turn_timer=timer or _SpyTimer(),
+        )
+    return agent, recorder
+
+
+async def _reply(agent: PiCallAgent, text: str = "what does this do") -> str:
+    chunks: AsyncIterator[ReplyChunk] = agent.send_turn(TranscribedTurn(text=text))
+    return "".join([chunk.text async for chunk in chunks])
+
+
+def test_pi_call_agent_satisfies_the_session_attach_protocol(tmp_path: Path) -> None:
+    del tmp_path
+    assert issubclass(PiCallAgent, SessionAttach)
+
+
+class TestSpawn:
+    async def test_spawn_delivers_the_snapshot_as_the_opening_message(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess.answering("Ready.")
+        await _spawn(tmp_path, process)
+        assert "SNAPSHOT: we are fixing the music loop" in process.prompts[0]
+
+    async def test_spawn_returns_an_agent_ready_with_no_turns(
+        self, tmp_path: Path
+    ) -> None:
+        agent, _ = await _spawn(tmp_path, FakePiProcess.answering("Ready."))
+        assert (agent.can_accept_turn, agent.turns_handled) == (True, 0)
+
+    async def test_spawn_failure_kills_the_process_and_raises(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess([PiReply(error="401 invalid api key")])
+        with pytest.raises(CallAgentSpawnError, match="invalid api key"):
+            await _spawn(tmp_path, process)
+        assert process.killed
+
+    async def test_a_missing_pi_binary_is_a_spawn_error(self, tmp_path: Path) -> None:
+        with (
+            patch(_EXEC, side_effect=FileNotFoundError("pi")),
+            pytest.raises(CallAgentSpawnError, match="not found on PATH"),
+        ):
+            await PiCallAgent.spawn(
+                CallAgentLaunch(SecretPathPolicy(tmp_path)),
+                cwd=tmp_path,
+                opening_message="x",
+                turn_timer=_SpyTimer(),
+            )
+
+
+class TestSendTurnAndReplyComplete:
+    async def test_a_turn_streams_the_reply_and_returns_to_ready(
+        self, tmp_path: Path
+    ) -> None:
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess.answering("Ready.", "It returns the sum.")
+        )
+        assert await _reply(agent) == "It returns the sum."
+        assert (agent.can_accept_turn, agent.turns_handled) == (True, 1)
+
+    async def test_every_turn_goes_to_the_same_live_process(
+        self, tmp_path: Path
+    ) -> None:
+        """The persistence the design exists for: one process, many turns."""
+        process = FakePiProcess.answering("Ready.", "one", "two")
+        agent, _ = await _spawn(tmp_path, process)
+        await _reply(agent, "first")
+        await _reply(agent, "second")
+        assert process.prompts[1:] == ["first", "second"]
+
+    async def test_the_last_chunk_is_marked_final(self, tmp_path: Path) -> None:
+        agent, _ = await _spawn(tmp_path, FakePiProcess.answering("Ready.", "hi"))
+        chunks = [c async for c in agent.send_turn(TranscribedTurn(text="q"))]
+        assert [c.is_final for c in chunks] == [False, True]
+
+    async def test_send_turn_while_busy_is_refused(self, tmp_path: Path) -> None:
+        """SendTurn's precondition: never a second prompt while one is in flight."""
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess.answering("Ready.", "a long reply here")
+        )
+        first = agent.send_turn(TranscribedTurn(text="one"))
+        await anext(first)
+        second = agent.send_turn(TranscribedTurn(text="two"))
+        with pytest.raises(IllegalAgentTransitionError, match="SendTurn"):
+            await anext(second)
+        await first.aclose()
+
+    async def test_a_provider_error_is_transient_and_leaves_the_agent_ready(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess(
+            [PiReply(text="Ready."), PiReply(text="", error="529 overloaded")]
+        )
+        agent, _ = await _spawn(tmp_path, process)
+        with pytest.raises(SessionAttachError, match="529") as caught:
+            await _reply(agent)
+        assert not isinstance(caught.value, CallAgentEndedError)
+        assert agent.can_accept_turn
+
+
+class TestAbortTurn:
+    async def test_silence_past_the_inactivity_bound_aborts_the_turn(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess([PiReply(text="Ready."), PiReply(hang=True)])
+        agent, _ = await _spawn(tmp_path, process)
+        with _inactivity(0.05), pytest.raises(CallAgentEndedError, match="no event"):
+            await _reply(agent)
+        assert (process.killed, agent.can_accept_turn) == (True, False)
+
+    async def test_a_long_but_busy_reply_is_never_mistaken_for_a_hang(
+        self, tmp_path: Path
+    ) -> None:
+        """The bound is inactivity, not total time: each record restarts it."""
+        tools = tuple(ToolUse("read", {"path": f"src/m{i}.py"}) for i in range(4))
+        busy = PiReply(text="Found it in m3.", tools=tools, pace_s=0.03)
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), busy]))
+        with _inactivity(0.15):
+            assert await _reply(agent) == "Found it in m3."
+
+    async def test_a_process_that_dies_mid_turn_ends_the_agent(
+        self, tmp_path: Path
+    ) -> None:
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess([PiReply("Ready."), PiReply(die=True)])
+        )
+        with pytest.raises(CallAgentEndedError, match="fatal error"):
+            await _reply(agent)
+        assert not agent.can_accept_turn
+
+    async def test_a_refused_prompt_ends_the_agent(self, tmp_path: Path) -> None:
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess([PiReply("Ready."), PiReply(refuse="nope")])
+        )
+        with pytest.raises(CallAgentEndedError, match="nope"):
+            await _reply(agent)
+
+    async def test_abandoning_the_reply_stream_aborts_the_turn(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess.answering("Ready.", "a long reply here")
+        agent, _ = await _spawn(tmp_path, process)
+        stream = agent.send_turn(TranscribedTurn(text="q"))
+        await anext(stream)
+        await stream.aclose()
+        assert (process.killed, agent.can_accept_turn) == (True, False)
+
+
+class TestSecretPathDenyList:
+    async def test_reading_env_aborts_the_turn_and_ends_the_agent(
+        self, tmp_path: Path
+    ) -> None:
+        leak = PiReply(
+            text="The key is sk-spike-not-a-real-secret",
+            tools=(ToolUse("read", {"path": ".env"}, "FAKE_API_KEY=sk-spike"),),
+        )
+        process = FakePiProcess([PiReply("Ready."), leak])
+        agent, _ = await _spawn(tmp_path, process)
+        with pytest.raises(SecretPathDeniedError):
+            await _reply(agent, "read me the env file")
+        assert (process.killed, agent.can_accept_turn) == (True, False)
+
+    async def test_no_reply_text_from_a_denied_turn_is_ever_yielded(
+        self, tmp_path: Path
+    ) -> None:
+        leak = PiReply(
+            text="The key is sk-spike",
+            tools=(ToolUse("grep", {"pattern": "KEY", "glob": "**/.env*"}),),
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), leak]))
+        received: list[str] = []
+        stream = agent.send_turn(TranscribedTurn(text="q"))
+        with pytest.raises(SecretPathDeniedError):
+            received.append((await anext(stream)).text)
+        assert received == []
+
+
+class TestTurnTimer:
+    async def test_the_first_tool_event_is_marked_once(self, tmp_path: Path) -> None:
+        timer = _SpyTimer()
+        tools = (ToolUse("read", {"path": "a.py"}), ToolUse("ls", {"path": "src"}))
+        process = FakePiProcess([PiReply("Ready."), PiReply("done", tools=tools)])
+        agent, _ = await _spawn(tmp_path, process, timer)
+        await _reply(agent)
+        assert timer.stages == ["first_tool_event"]
+
+    async def test_a_turn_without_tools_marks_nothing(self, tmp_path: Path) -> None:
+        timer = _SpyTimer()
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess.answering("Ready.", "hi"), timer
+        )
+        await _reply(agent)
+        assert timer.stages == []
+
+
+class TestTeardown:
+    async def test_close_when_ready_ends_the_process_without_killing_it(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess.answering("Ready.")
+        agent, _ = await _spawn(tmp_path, process)
+        await agent.close()
+        assert (process.stdin.is_closing(), process.killed) == (True, False)
+
+    async def test_a_turn_after_teardown_is_refused(self, tmp_path: Path) -> None:
+        agent, _ = await _spawn(tmp_path, FakePiProcess.answering("Ready."))
+        await agent.close()
+        with pytest.raises(IllegalAgentTransitionError):
+            await _reply(agent)
+
+    async def test_final_turn_returns_its_text_unspoken(self, tmp_path: Path) -> None:
+        process = FakePiProcess.answering("Ready.", "## Decisions Made\n- None.")
+        agent, _ = await _spawn(tmp_path, process)
+        assert await agent.final_turn("summarize") == "## Decisions Made\n- None."
+
+
+class TestReadOnlyOverTheWholeLiveExtent:
+    async def test_the_process_is_launched_read_only(self, tmp_path: Path) -> None:
+        _, recorder = await _spawn(tmp_path, FakePiProcess.answering("Ready."))
+        argv = recorder.argv
+        assert argv[argv.index("--tools") + 1] == "read,grep,find,ls"
+
+    async def test_nothing_but_prompts_is_ever_sent(self, tmp_path: Path) -> None:
+        """No command could widen the tool surface after launch: only prompts."""
+        process = FakePiProcess.answering("Ready.", "a", "b", "summary")
+        agent, _ = await _spawn(tmp_path, process)
+        await _reply(agent)
+        await _reply(agent)
+        await agent.final_turn("summarize")
+        await agent.close()
+        assert {command["type"] for command in process.commands} == {"prompt"}
+
+    async def test_provider_keys_never_reach_the_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "el-secret")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
+        _, recorder = await _spawn(tmp_path, FakePiProcess.answering("Ready."))
+        assert (
+            not {
+                "ELEVENLABS_API_KEY",
+                "OPENAI_API_KEY",
+                "AWS_SECRET_ACCESS_KEY",
+            }
+            & recorder.env.keys()
+        )

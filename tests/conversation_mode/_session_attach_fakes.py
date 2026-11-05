@@ -52,12 +52,15 @@ class SessionAttachCall:
 class FakeSessionAttach:
     """A stateful, subprocess-free ``SessionAttach`` for Conversation Mode tests."""
 
-    __slots__ = ("_attach_error", "_calls", "_script")
+    __slots__ = ("_attach_error", "_calls", "_failing_turns", "_script")
     _script: tuple[ScriptedChunk, ...]
-    # When set, ``send_turn`` raises this as a session-unreachable/session-ended
-    # fault -- the path a real implementation hits when the agent session cannot
-    # be resumed or ends a turn abnormally (SessionAttachError's contract).
+    # When set, ``send_turn`` raises this as a transient turn failure -- the
+    # path a real call agent takes when a reply fails but the agent itself is
+    # still ready for the next turn (SessionAttachError's contract).
     _attach_error: str | None
+    # How many leading turns fail with ``_attach_error``; absent means every
+    # turn fails, the shape most failure tests want.
+    _failing_turns: int | None
     _calls: list[SessionAttachCall]
 
     def __new__(
@@ -65,16 +68,20 @@ class FakeSessionAttach:
         script: Sequence[ScriptedChunk] = (),
         *,
         attach_error: str | None = None,
+        failing_turns: int | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._script = tuple(script)
         self._attach_error = attach_error
+        self._failing_turns = failing_turns
         self._calls = []
         return self
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncIterator[ReplyChunk]:
         self._calls.append(SessionAttachCall(turn=turn))
-        if self._attach_error is not None:
+        if self._attach_error is not None and (
+            self._failing_turns is None or len(self._calls) <= self._failing_turns
+        ):
             raise SessionAttachError(self._attach_error)
         for scripted in self._script:
             if scripted.delay_s:

@@ -29,11 +29,10 @@ from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
+    from punt_vox.commands.call_wiring import CallWiring
     from punt_vox.types import HealthCheck
     from punt_vox.voxd.conversation_mode.call_control import ApplyControlFn, CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
-    from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
-    from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["ScriptedCallDriver", "ScriptedSTTProvider", "ScriptedTurn"]
 
@@ -94,9 +93,8 @@ class ScriptedTurn:
         """Parse a JSON Lines file of ``{"text": ..., "confidence": ...}`` entries.
 
         A malformed ``--script`` file (missing, bad JSON, missing keys) is
-        an expected usage error, the same class as a missing
-        ``ANTHROPIC_API_KEY`` a few lines up in :meth:`ScriptedCallDriver.create`
-        -- ``typer.BadParameter``, naming the file and the offending line,
+        an expected usage error -- ``typer.BadParameter``, naming the file
+        and the offending line,
         not a raw ``FileNotFoundError``/``JSONDecodeError``/``KeyError``
         that would otherwise land in :mod:`punt_vox.commands.call`'s generic
         crash boundary and get logged as a scary "call ended unexpectedly".
@@ -213,37 +211,23 @@ class ScriptedCallDriver:
         return self
 
     @classmethod
-    def create(
-        cls,
-        *,
-        script: Path,
-        session_attach: SessionAttach,
-        speak: SpeakFn,
-        chime: ChimeFn,
-        control: CallControl,
-        apply_control: ApplyControlFn,
-    ) -> Self:
-        """Build a driver from *script*.
-
-        ``ANTHROPIC_API_KEY`` itself is checked once, by :mod:`~.call`'s
-        ``_run`` -- the one call site this driver and
-        :class:`~punt_vox.commands.call_live_driver.LiveCallDriver` share --
-        rather than here.
-        """
+    def create(cls, script: Path, wiring: CallWiring) -> Self:
+        """Build a driver that plays *script* through *wiring*."""
         turns = ScriptedTurn.read_script(script)
         session = CallSession(
             turn_detector=ScriptedTurn.calibrated_detector(),
             stt_provider=ScriptedSTTProvider(turns),
-            session_attach=session_attach,
-            speak=speak,
-            chime=chime,
+            session_attach=wiring.session_attach,
+            speak=wiring.speak,
+            chime=wiring.chime,
+            turn_timer=wiring.turn_timer,
         )
         return cls(
             session=session,
             turns=turns,
-            control=control,
-            speak=speak,
-            apply_control=apply_control,
+            control=wiring.control,
+            speak=wiring.speak,
+            apply_control=wiring.apply_control,
         )
 
     async def run(self) -> None:
@@ -254,7 +238,7 @@ class ScriptedCallDriver:
         an exception out of ``process_chunk`` still reaches ``hangup()``
         rather than leaving :class:`~.call_actor.CallActor`'s mode stale.
         :meth:`~.call_session.CallSession.hangup_if_active`'s own guard
-        covers a mid-call ``BareAuthMissingError``, which already ends the
+        covers a call agent that ended mid-call, which already ends the
         call itself and speaks its own goodbye -- an unconditional
         ``hangup()`` would then raise ``IllegalTransitionError``.
         """

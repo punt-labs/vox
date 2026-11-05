@@ -2,10 +2,10 @@
 
 ``vox call start`` runs the call's loop in the foreground of the process
 that started it (FR-2's explicit-hangup and bounded-timeout paths handle
-ending it from *within* that process). ``vox call stop`` and ``vox call
-transfer`` run as separate, short-lived invocations -- this file is how
-they reach the running loop: one request written, read and cleared by the
-loop the next time it checks between turns.
+ending it from *within* that process). ``vox call stop`` runs as a
+separate, short-lived invocation -- this file is how it reaches the running
+loop: one request written, read and cleared by the loop the next time it
+checks between turns.
 """
 
 from __future__ import annotations
@@ -30,22 +30,22 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ApplyControlFn", "CallControl", "ControlRequest"]
 
-type ControlKind = Literal["stop", "transfer"]
+type ControlKind = Literal["stop"]
 
-# Consumes one pending stop/transfer request, speaking through *speak* on a
-# declined transfer; returns whether the drive loop should stop. Shared by
-# the live and scripted drivers (call_live_driver.py, call_scripted.py) as
-# a collaborator, rather than each duplicating transfer-resolution logic.
+# Consumes one pending request and returns whether the drive loop should
+# stop. Shared by the live and scripted drivers (call_live_driver.py,
+# call_scripted.py) as a collaborator, so both handle a request identically;
+# *speak* is the call's own gated channel, for a request that must answer
+# aloud.
 type ApplyControlFn = Callable[["CallControl", CallSession, "SpeakFn"], Awaitable[bool]]
 
 
 @final
 @dataclass(frozen=True, slots=True)
 class ControlRequest:
-    """One pending cross-process request: hang up, or re-attach to a session."""
+    """One pending cross-process request: hang up."""
 
     kind: ControlKind
-    target_session_id: str | None = None
 
 
 @final
@@ -75,12 +75,6 @@ class CallControl:
     def request_stop(self) -> None:
         """Ask the running call to hang up."""
         self._write(ControlRequest(kind="stop"))
-
-    def request_transfer(self, target_session_id: str | None) -> None:
-        """Ask the running call to re-attach to *target_session_id*, or re-discover."""
-        self._write(
-            ControlRequest(kind="transfer", target_session_id=target_session_id)
-        )
 
     def consume(self) -> ControlRequest | None:
         """Return and clear the pending request, or ``None`` if there is none.
@@ -120,26 +114,17 @@ class CallControl:
                     return None
                 obj = JsonObject.parse(raw, "call.control")
                 kind = obj.require_str("kind")
-                target_session_id = obj.opt_str("target_session_id")
                 # Validated, not trusted: a malformed mailbox file (a
                 # racing partial write, a hand-edited entry) with an
                 # unrecognized "kind" must land on the same discard-and-log
-                # path as every other unusable entry -- constructing a
-                # ControlRequest with an invalid kind would fall through
-                # both branches of call.py's _apply_control silently,
-                # dropping a "/call stop" with no log, no error, nothing.
-                # Branching on the literal values (rather than a runtime
-                # "not in" check plus a cast) is also what lets both mypy
-                # and pyright narrow ``kind`` to the ControlKind literal
-                # with no suppression needed.
+                # path as every other unusable entry, never be constructed
+                # into a request call.py's _apply_control would ignore
+                # silently. Branching on the literal value (rather than a
+                # runtime "not in" check plus a cast) is also what lets
+                # both mypy and pyright narrow ``kind`` to the ControlKind
+                # literal with no suppression needed.
                 if kind == "stop":
-                    return ControlRequest(
-                        kind="stop", target_session_id=target_session_id
-                    )
-                if kind == "transfer":
-                    return ControlRequest(
-                        kind="transfer", target_session_id=target_session_id
-                    )
+                    return ControlRequest(kind="stop")
                 msg = f"unrecognized control kind {kind!r}"
                 raise ValueError(msg)
             except (OSError, ValueError) as exc:
@@ -153,10 +138,10 @@ class CallControl:
     def _write(self, request: ControlRequest) -> None:
         # AtomicFile.replace, not a bare write_text: consume() polls this
         # file between turns, and a truncate-then-write leaves a window in
-        # which it could read a partial, unparseable file. A transfer
-        # request carries a session id -- capability-like for --resume --
-        # so this lands at 0o600 under a 0o700 dir, not AtomicFile's
-        # default (0o644 world-readable).
-        payload = {"kind": request.kind, "target_session_id": request.target_session_id}
+        # which it could read a partial, unparseable file. 0o600 under a
+        # 0o700 dir, not AtomicFile's default (0o644 world-readable): the
+        # mailbox steers a live call, so no other local user may read or
+        # race it.
+        payload = {"kind": request.kind}
         PrivateState(self._path).ensure_private_tree()
         AtomicFile(self._path).replace(json.dumps(payload), mode=0o600)

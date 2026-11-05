@@ -1,12 +1,12 @@
-"""Mask secret-shaped substrings in a Claude reply before it is spoken.
+"""Mask secret-shaped substrings in a call agent's reply before it is spoken.
 
-Threat model: :class:`~.claude_session_attach.ClaudeSessionAttach` resumes a
-full interactive Claude Code session for each turn, not a read-only agent --
-a human's spoken turn can ask it to read back a local secret (``.env``, a
-credentials file, an API key committed somewhere), and without a pass over
-the reply that secret is synthesized to speech verbatim, in whatever room
-the human is in. This is a reasonable, documented pattern set that
-meaningfully reduces that risk -- not a universal secret detector. The
+Threat model: the call agent reads the repository, and a spoken turn can ask
+it to read back a local secret (``.env``, a credentials file, an API key
+committed somewhere); unmasked, that secret is synthesized to speech in
+whatever room the human is in. The secret deny-list
+(:class:`~.secret_path_policy.SecretPathPolicy`) ends such a turn before its
+reply is spoken; this is the last line, over whatever text does reach speech
+-- a reasonable, documented pattern set, not a universal secret detector. The
 caller (:meth:`~.reply_delivery.ReplyDelivery.deliver`) logs the original,
 unredacted text to the 0600 ``vox.log`` separately; only the redacted text
 ever reaches :class:`~.speak_fn.SpeakFn`.

@@ -116,24 +116,6 @@ async def test_ready_cue_is_spoken_while_still_in_speaking_mode() -> None:
     assert actor.mode is Mode.LISTENING  # ReplyEnds applied only afterward
 
 
-async def test_replace_session_attach_takes_effect_on_the_next_deliver() -> None:
-    speak = _Recorder()
-    first = FakeSessionAttach((ScriptedChunk(ReplyChunk(text="old", is_final=True)),))
-    second = FakeSessionAttach((ScriptedChunk(ReplyChunk(text="new", is_final=True)),))
-    actor = _actor_waiting()
-    delivery = ReplyDelivery(
-        session_attach=first, speak=speak, actor=actor, turn_timer=LoggingTurnTimer()
-    )
-
-    await delivery.deliver(TranscribedTurn(text="one"))
-    delivery.replace_session_attach(second)
-    actor.apply(TurnDetected())  # back to waiting for the next turn
-    await delivery.deliver(TranscribedTurn(text="two"))
-
-    assert first.turns() == ["one"]
-    assert second.turns() == ["two"]
-
-
 async def test_secret_shaped_reply_is_redacted_before_speaking_and_logged_verbatim(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

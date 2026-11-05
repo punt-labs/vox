@@ -1,11 +1,10 @@
 """``vox call``'s Typer option aliases -- extracted so ``call.py`` stays under
-the module-size threshold as the CLI's own surface (``--trace-turns`` for the
-turn-timer trace, alongside the pre-existing ``--script``/``--session``) has
-grown. Pure declarative ``Annotated`` aliases, no logic; mirrors how the
-option aliases for other multi-verb CLIs in this package (``cli_rec.py``) sit
-alongside their own commands rather than in a shared module -- these differ
-only in that ``call.py`` had grown past the size where keeping them inline
-was still readable.
+the module-size threshold as the CLI's own surface (``--context`` for the
+call agent's opening snapshot, ``--script`` for the dev/test path,
+``--trace-turns`` for the turn-timer trace) has grown. Pure declarative
+``Annotated`` aliases, no logic; mirrors how the option aliases for other
+multi-verb CLIs in this package (``cli_rec.py``) sit alongside their own
+commands rather than in a shared module.
 """
 
 from __future__ import annotations
@@ -15,8 +14,21 @@ from typing import Annotated
 
 import typer
 
-__all__ = ["ScriptOpt", "SessionOpt", "TraceTurnsOpt", "TransferSessionOpt"]
+__all__ = ["ContextOpt", "ScriptOpt", "TraceTurnsOpt"]
 
+ContextOpt = Annotated[
+    Path,
+    typer.Option(
+        "--context",
+        help=(
+            "The context snapshot the call agent opens with: what you are "
+            "working on and what the call is about, written by your main "
+            "session (/vox:call start <topic> builds it). A file path, or "
+            "'-' to read it from stdin. Required -- the call agent does not "
+            "see your session, only this snapshot."
+        ),
+    ),
+]
 ScriptOpt = Annotated[
     Path | None,
     typer.Option(
@@ -31,18 +43,6 @@ ScriptOpt = Annotated[
             "provider must still be configured to speak the reply -- "
             "resolved the same way for both paths, before the call starts."
         ),
-    ),
-]
-SessionOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--session", help="Attach to this session id instead of discovering one."
-    ),
-]
-TransferSessionOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--session", help="Re-attach to this session id, or re-discover if omitted."
     ),
 ]
 # --verbose/-v was rejected: vox already establishes that name/short form as
@@ -63,10 +63,10 @@ TraceTurnsOpt = Annotated[
         "--trace-turns",
         help=(
             "Also print the turn-by-turn latency trace live to the terminal "
-            "(speech detected, turn ended, STT sent/received, claude "
-            "spawned, reply received, TTS sent/playback starts). Always "
-            "recorded to vox.log at DEBUG regardless of this flag; this "
-            "only adds the live terminal echo."
+            "(speech detected, turn ended, STT sent/received, turn sent, "
+            "first tool event, first reply text, reply complete, TTS "
+            "sent/playback starts). Always recorded to vox.log at DEBUG "
+            "regardless of this flag; this only adds the live terminal echo."
         ),
     ),
 ]
