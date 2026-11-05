@@ -87,17 +87,7 @@ class ProcessManager:
         :class:`StalePortFile`). Returns what it did; a lock, read or removal
         failure raises ``PortProbeError`` so the caller can report it.
         """
-        return StalePortFile(self._run_dir() / "serve.port").discard(port)
-
-    def remove_port_file(self) -> None:
-        """Remove the daemon port file; warn (never claim removal) on failure."""
-        port_file = self._run_dir() / "serve.port"
-        try:
-            port_file.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning("Could not remove %s: %s", port_file, exc)
-            return
-        logger.info("Removed port file %s", port_file)
+        return StalePortFile.as_found(self._run_dir() / "serve.port").discard(port)
 
     def find_pid_on_port(self, port: int) -> list[int]:
         """Return all PIDs with connections to *port*.
@@ -221,10 +211,16 @@ class ProcessManager:
             raise PortProbeError(msg) from exc
 
     def kill_stale_daemon(self) -> bool:
-        """Kill a daemon process occupying the port.  Return True if killed."""
+        """Kill a daemon process occupying the port.  Return True if killed.
+
+        ``serve.port`` is looked at before the kill and cleared after it only
+        if it is still that file: a voxd the service manager respawns while
+        the old one dies publishes its own, which is left in place.
+        """
         port = self.read_port_file()
         if port is None:
             port = DEFAULT_PORT
+        stale = StalePortFile.as_found(self._run_dir() / "serve.port")
         pids = self.find_pid_on_port(port)
         if not pids:
             return False
@@ -238,7 +234,7 @@ class ProcessManager:
                 continue
             logger.info("Found stale daemon PID %d on port %d", pid, port)
             if self.kill_pid(pid):
-                self.remove_port_file()
+                stale.discard(port)
                 return True
             logger.warning("Failed to kill PID %d — leaving state files intact", pid)
             return False
@@ -251,8 +247,8 @@ class ProcessManager:
         The post-kill re-check must target the ACTUAL port the daemon was
         last known to bind, not ``DEFAULT_PORT``.  The port file read
         MUST happen before ``kill_stale_daemon`` runs, because a
-        successful kill calls ``remove_port_file`` -- which drops the
-        very value we need for the post-kill re-check.
+        successful kill clears ``serve.port`` -- which drops the very
+        value we need for the post-kill re-check.
         """
         target_port = self.read_port_file() or DEFAULT_PORT
         self.kill_stale_daemon()

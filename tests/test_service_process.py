@@ -19,6 +19,17 @@ from punt_vox.service.process import ProcessManager
 from punt_vox.service.termination import Termination
 from punt_vox.voxd.port_file import PortFile
 
+
+@pytest.fixture(autouse=True)
+def scratch_run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point ProcessManager at a scratch run dir, never the user's real one.
+
+    ``kill_stale_daemon`` clears ``serve.port`` itself; with only its process
+    calls mocked it would otherwise act on the operator's live run directory.
+    """
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # Exec args
 # ---------------------------------------------------------------------------
@@ -334,23 +345,41 @@ def test_kill_pid_survivor_reports_false(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---------------------------------------------------------------------------
 
 
-@patch.object(ProcessManager, "remove_port_file")
 @patch.object(ProcessManager, "kill_pid", return_value=True)
 @patch.object(ProcessManager, "is_vox_daemon_process", return_value=True)
 @patch.object(ProcessManager, "find_pid_on_port", return_value=[999])
 @patch.object(ProcessManager, "read_port_file", return_value=8421)
-def test_kill_stale_daemon_kills_process(
+def test_kill_stale_daemon_kills_process_and_clears_its_file(
     _mock_port: MagicMock,
     mock_find: MagicMock,
     _mock_is_vox: MagicMock,
     mock_kill: MagicMock,
-    mock_remove: MagicMock,
+    tmp_path: Path,
 ) -> None:
+    (tmp_path / "serve.port").write_text("8421")
     mgr = ProcessManager()
     assert mgr.kill_stale_daemon() is True
     mock_find.assert_called_once_with(8421)
     mock_kill.assert_called_once_with(999)
-    mock_remove.assert_called_once()
+    assert not (tmp_path / "serve.port").exists()
+
+
+def test_kill_stale_daemon_keeps_a_file_published_during_the_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A voxd the manager respawns while the old one dies keeps its file."""
+    (tmp_path / "serve.port").write_text("8421")
+
+    def kill_and_respawn(self: ProcessManager, pid: int) -> bool:
+        PortFile(tmp_path).write(8421)
+        return True
+
+    monkeypatch.setattr(ProcessManager, "read_port_file", lambda self: 8421)
+    monkeypatch.setattr(ProcessManager, "find_pid_on_port", lambda self, port: [999])
+    monkeypatch.setattr(ProcessManager, "is_vox_daemon_process", lambda self, p: True)
+    monkeypatch.setattr(ProcessManager, "kill_pid", kill_and_respawn)
+    assert ProcessManager().kill_stale_daemon() is True
+    assert (tmp_path / "serve.port").read_text() == "8421"
 
 
 @patch.object(ProcessManager, "find_pid_on_port", return_value=[])
@@ -362,7 +391,6 @@ def test_kill_stale_daemon_no_process(
     assert mgr.kill_stale_daemon() is False
 
 
-@patch.object(ProcessManager, "remove_port_file")
 @patch.object(ProcessManager, "kill_pid", return_value=True)
 @patch.object(ProcessManager, "is_vox_daemon_process", return_value=True)
 @patch.object(ProcessManager, "find_pid_on_port", return_value=[555])
@@ -372,7 +400,6 @@ def test_kill_stale_daemon_uses_default_port(
     mock_find: MagicMock,
     _mock_is_vox: MagicMock,
     mock_kill: MagicMock,
-    _mock_remove: MagicMock,
 ) -> None:
     mgr = ProcessManager()
     assert mgr.kill_stale_daemon() is True
@@ -394,7 +421,6 @@ def test_kill_stale_daemon_skips_non_vox_process(
     mock_kill.assert_not_called()
 
 
-@patch.object(ProcessManager, "remove_port_file")
 @patch.object(ProcessManager, "kill_pid", return_value=True)
 @patch.object(ProcessManager, "is_vox_daemon_process", side_effect=[False, True])
 @patch.object(ProcessManager, "find_pid_on_port", return_value=[100, 200])
@@ -404,17 +430,17 @@ def test_kill_stale_daemon_iterates_pids(
     _mock_find: MagicMock,
     mock_is_vox: MagicMock,
     mock_kill: MagicMock,
-    mock_remove: MagicMock,
+    tmp_path: Path,
 ) -> None:
     """First PID is a client (not vox), second is the daemon -- kills second."""
+    (tmp_path / "serve.port").write_text("8421")
     mgr = ProcessManager()
     assert mgr.kill_stale_daemon() is True
     assert mock_is_vox.call_count == 2
     mock_kill.assert_called_once_with(200)
-    mock_remove.assert_called_once()
+    assert not (tmp_path / "serve.port").exists()
 
 
-@patch.object(ProcessManager, "remove_port_file")
 @patch.object(ProcessManager, "kill_pid", return_value=False)
 @patch.object(ProcessManager, "is_vox_daemon_process", return_value=True)
 @patch.object(ProcessManager, "find_pid_on_port", return_value=[999])
@@ -424,13 +450,14 @@ def test_kill_stale_daemon_no_cleanup_on_kill_failure(
     _mock_find: MagicMock,
     _mock_is_vox: MagicMock,
     mock_kill: MagicMock,
-    mock_remove: MagicMock,
+    tmp_path: Path,
 ) -> None:
     """When kill_pid fails, state files are NOT removed."""
+    (tmp_path / "serve.port").write_text("8421")
     mgr = ProcessManager()
     assert mgr.kill_stale_daemon() is False
     mock_kill.assert_called_once_with(999)
-    mock_remove.assert_not_called()
+    assert (tmp_path / "serve.port").read_text() == "8421"
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +556,7 @@ def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
     def spy_kill(self: ProcessManager) -> bool:
         kill_called.append(True)
         # Simulate the real kill_stale_daemon happy-path: port file removed.
-        self.remove_port_file()
+        port_file.unlink()
         return True
 
     captured_port: list[int] = []
@@ -634,25 +661,6 @@ def test_read_port_file_read_error_is_surfaced(
     (tmp_path / "serve.port").mkdir()
     with pytest.raises(PortProbeError, match=r"serve\.port"):
         ProcessManager().read_port_file()
-
-
-def test_remove_port_file_failure_does_not_claim_removal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A failed unlink is warned about, never followed by "Removed"."""
-    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
-
-    def refuse(self: Path, missing_ok: bool = False) -> None:
-        raise PermissionError("read-only")
-
-    monkeypatch.setattr(Path, "unlink", refuse)
-    with caplog.at_level("INFO", logger="punt_vox.service.process"):
-        ProcessManager().remove_port_file()
-    messages = [r.getMessage() for r in caplog.records]
-    assert any("Could not remove" in m for m in messages)
-    assert not any(m.startswith("Removed") for m in messages)
 
 
 @pytest.mark.parametrize(
