@@ -32,6 +32,7 @@ from punt_vox.service.backend import (
 from punt_vox.service.kill_ledger import KillLedger
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.process import DEFAULT_PORT
+from punt_vox.service.still_up import StillUp
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import ProcessHandle
@@ -174,9 +175,9 @@ class StopVerb:
         if self._system.is_active():
             self._still_up = "voxd.service is still active"
             return False
-        up = self._clear_the_port()
-        if up:
-            self._still_up = f"voxd pid {self._join(up)} is still running"
+        still = StillUp(self._clear_the_port(), self._main_up())
+        if still:
+            self._still_up = still.line()
             return False
         if self._system.probe.port_listening():
             self._still_up = (
@@ -193,20 +194,26 @@ class StopVerb:
 
         A signalled process seen to exit is marked gone in the ledger here,
         on whichever tick sees it -- the tick of the signal or a later one.
-        The manager's main process counts as up until it exits, but is never
-        a target.
+
+        The manager's main process, captured before the request, is never a
+        target, even once the manager stops reporting it: launchd keeps no
+        cgroup, so on macOS ``service_owned`` cannot recognise a main process
+        still running its SIGTERM handler after ``bootout``. Stop only waits
+        for it; :meth:`_settled` names it if it outlives the deadline.
         """
         holders = self._system.probe.voxd_processes()
         watched = self._captured | self._ledger.unconfirmed()
         lingering = frozenset(h for h in watched if not h.exited())
         self._ledger.confirm(watched - lingering)
-        left = holders | lingering
+        left = (holders | lingering) - self._main
         if left:
             self._escalate(left)
         self._clear_port_file(holders)
-        up = {h.pid for h in left if not self._ledger.gone(h)}
-        up |= {h.pid for h in self._main if not h.exited()}
-        return sorted(up)
+        return [h.pid for h in left if not self._ledger.gone(h)]
+
+    def _main_up(self) -> list[int]:
+        """Return the manager's captured main pid while it has not exited."""
+        return [h.pid for h in self._main if not h.exited()]
 
     def _escalate(self, targets: frozenset[ProcessHandle]) -> None:
         """Terminate, once each, voxd processes the inactive manager left.
@@ -283,11 +290,6 @@ class StopVerb:
     def _pid_of(handle: ProcessHandle) -> int:
         return handle.pid
 
-    @staticmethod
-    def _join(pids: list[int]) -> str:
-        """Return *pids* comma-separated, for a report detail."""
-        return ", ".join(str(p) for p in pids)
-
     def _stopped_detail(self) -> str:
         detail = f"voxd.service stopped; port {DEFAULT_PORT} free"
         return detail + self._done() + self._off_port
@@ -308,7 +310,7 @@ class StopVerb:
         others = self._system.probe.off_port_voxd()
         if not others:
             return ""
-        pids = self._join(sorted(others))
+        pids = ", ".join(str(p) for p in sorted(others))
         return f"; voxd pid {pids} on another port was not touched"
 
     @staticmethod

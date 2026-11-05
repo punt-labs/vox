@@ -205,6 +205,47 @@ def test_stop_never_signals_manager_main_process() -> None:
     assert_p1_one_outcome(report)
 
 
+def _launchd_lets_go_while_main_lingers(world: FakeWorld) -> FakeProcess:
+    """macOS shape: launchd reports the job gone while its main process
+    still runs its SIGTERM handler on 8421, and no cgroup names it, so
+    ``service_owned`` is False for every pid."""
+    main = world.run_unit(100)
+
+    def bootout() -> None:
+        world.unit_active = False
+        world.mainpid = None
+
+    world.on_stop = bootout
+    return main
+
+
+def test_stop_never_signals_a_lingering_main_process_on_macos() -> None:
+    """P5 with no cgroup: the captured main process is waited for, not killed."""
+    world = FakeWorld()
+    main = _launchd_lets_go_while_main_lingers(world)
+    clock = FakeClock()
+    clock.at(2.0, main.exit)
+    report = lifecycle(world, clock).stop()
+    assert world.signalled == []
+    assert report.outcome is Outcome.STOPPED
+    assert "killed" not in report.detail
+    assert clock.monotonic() >= 2.0
+    assert_p1_one_outcome(report)
+
+
+def test_stop_names_a_main_process_that_never_exits_as_the_services_own() -> None:
+    """A main process alive at the deadline is a timeout, never an unmanaged kill."""
+    world = FakeWorld()
+    _launchd_lets_go_while_main_lingers(world)
+    report = lifecycle(world).stop()
+    assert world.signalled == []
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd.service's own process pid 100 did not exit" in report.detail
+    assert "unmanaged" not in report.detail
+    assert "voxd pid 100 is still running" not in report.detail
+    assert_p1_one_outcome(report)
+
+
 def test_stop_kills_captured_process_off_port_not_exited() -> None:
     """A captured voxd that released 8421 but did not exit is terminated."""
     world = FakeWorld()
