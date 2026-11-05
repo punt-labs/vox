@@ -2176,14 +2176,15 @@ class TestEnvVarResolution:
         client = VoxClient(token="tok")
         assert client._transport._endpoint._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
 
-    def test_voxd_port_invalid_falls_through(
+    def test_voxd_port_invalid_is_named_not_a_refusal(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("VOXD_PORT", "not_a_number")
         monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
         client = VoxClient(token="tok")
-        with pytest.raises(VoxdRefusedError, match=r"no serve\.port is published"):
+        with pytest.raises(VoxdConnectionError, match="VOXD_PORT") as caught:
             client._transport._endpoint._resolve_port()  # pyright: ignore[reportPrivateUsage]
+        assert not isinstance(caught.value, VoxdRefusedError)
 
     def test_voxd_port_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")

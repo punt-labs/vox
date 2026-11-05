@@ -2578,6 +2578,19 @@ class TestDaemonStatusCommand:
         assert payload["status"] == "unknown"
         assert "403" in str(payload["reason"])
 
+    def test_a_malformed_voxd_port_is_unknown_not_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``VOXD_PORT=abc vox daemon status``: the override is broken, which
+        says nothing about whether a daemon runs."""
+        monkeypatch.delenv("VOXD_HOST", raising=False)
+        monkeypatch.setenv("VOXD_PORT", "abc")
+        result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["status"] == "unknown"
+        assert "VOXD_PORT='abc'" in str(payload["reason"])
+
     def test_remote_protocol_error_is_unknown(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
