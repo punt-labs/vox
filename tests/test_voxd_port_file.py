@@ -9,6 +9,9 @@ or every client loses the running daemon.
 from __future__ import annotations
 
 import errno
+import fcntl
+import logging
+import os
 import threading
 from pathlib import Path
 
@@ -140,3 +143,42 @@ def test_removal_paused_after_its_check_never_deletes_a_newer_daemons_file(
     assert not remover.is_alive()
     assert not publisher.is_alive()
     assert (tmp_path / "serve.port").read_text() == "9000"
+
+
+def test_an_unreadable_port_file_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A stat that fails for any reason but "gone" names the path and the error."""
+    a = PortFile(tmp_path)
+    a.write(8421)
+    real_stat = Path.stat
+
+    def denied(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self.name == "serve.port":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", denied)
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.port_file"):
+        a.remove()
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert "serve.port" in warning.getMessage()
+    assert "Permission denied" in warning.getMessage()
+
+
+def test_a_lock_that_cannot_be_taken_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    a = PortFile(tmp_path)
+    a.write(8421)
+
+    def no_locks(fd: object, op: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", no_locks)
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.port_file"):
+        a.remove()
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert "serve.port" in warning.getMessage()
+    assert "No locks available" in warning.getMessage()
+    assert (tmp_path / "serve.port").read_text() == "8421"

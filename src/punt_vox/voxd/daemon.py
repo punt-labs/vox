@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator, Callable
@@ -206,8 +205,12 @@ class VoxDaemon:
             await producers.stop_all()
             service.shutdown()
             await consumer.stop_all()
-            with contextlib.suppress(Exception):
+            # Shutdown is the boundary: whatever the cleanup raises is logged
+            # with its traceback, never swallowed, and never stops the exit.
+            try:
                 self._port_file.remove()
+            except Exception:
+                logger.exception("Could not clean up serve.port at shutdown")
             logger.info("voxd stopped")
 
     @staticmethod

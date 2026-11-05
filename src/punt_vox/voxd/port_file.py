@@ -73,19 +73,30 @@ class PortFile:
         """Remove ``serve.port`` if it is still the file this daemon wrote.
 
         A file another voxd has written since -- the same port after a restart
-        or a different one -- is left in place.
+        or a different one -- is left in place. Runs at shutdown, so it never
+        raises: a lock, stat or unlink failure is logged naming the path.
         """
-        with self._lock.held():
-            try:
-                st = self._path.stat()
-            except FileNotFoundError:
-                return
-            if (st.st_dev, st.st_ino) != self._mine:
-                logger.info("%s now belongs to another voxd; left in place", self._path)
-                return
-            try:
-                self._path.unlink()
-            except OSError as exc:
-                logger.warning("Could not remove %s: %s", self._path, exc)
-                return
-        logger.info("Removed port file %s", self._path)
+        try:
+            with self._lock.held():
+                removed = self._remove_if_mine()
+        except OSError as exc:  # TimeoutError (a wedged lock) is an OSError
+            logger.warning("Could not remove %s: %s", self._path, exc)
+            return
+        if removed:
+            logger.info("Removed port file %s", self._path)
+
+    def _remove_if_mine(self) -> bool:
+        """Unlink ``serve.port`` when it is the file this daemon wrote.
+
+        Returns whether it did. Call with the lock held. A failure other than
+        "already gone" raises ``OSError``.
+        """
+        try:
+            st = self._path.stat()
+        except FileNotFoundError:
+            return False
+        if (st.st_dev, st.st_ino) != self._mine:
+            logger.info("%s now belongs to another voxd; left in place", self._path)
+            return False
+        self._path.unlink(missing_ok=True)
+        return True

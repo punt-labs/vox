@@ -18,6 +18,7 @@ from punt_vox.voxd.config import DaemonConfig
 from punt_vox.voxd.daemon import VoxDaemon
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.port_file import PortFile
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.synthesis import SynthesisPipeline
@@ -217,3 +218,31 @@ async def test_lifespan_cancels_tasks_on_exit(tmp_path: Path) -> None:
     await asyncio.sleep(0)
     # The three tasks were cancelled on exit -- back to the baseline count.
     assert len(asyncio.all_tasks()) <= before + 1
+
+
+async def test_lifespan_logs_a_port_file_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failure removing serve.port at shutdown is logged with its traceback."""
+
+    def broken(self: PortFile) -> None:
+        msg = "run directory vanished"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(PortFile, "remove", broken)
+    daemon = _daemon(tmp_path)
+    app = daemon.build_app()
+
+    with caplog.at_level(logging.ERROR, logger="punt_vox.voxd.daemon"):
+        async with daemon._lifespan(app):  # pyright: ignore[reportPrivateUsage]
+            await asyncio.sleep(0)
+
+    failures = [
+        r
+        for r in caplog.records
+        if r.name == "punt_vox.voxd.daemon" and r.levelno == logging.ERROR
+    ]
+    assert len(failures) == 1
+    assert "serve.port" in failures[0].getMessage()
+    assert failures[0].exc_info is not None
+    assert "run directory vanished" in str(failures[0].exc_info[1])
