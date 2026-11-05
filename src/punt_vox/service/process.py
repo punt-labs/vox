@@ -14,7 +14,7 @@ from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.port_file_cleanup import PortFileCleanup
+from punt_vox.service.port_file_cleanup import PortFileCleanup, StalePortFile
 from punt_vox.service.process_identity import ProcessIdentity
 from punt_vox.service.termination import Termination
 
@@ -61,10 +61,10 @@ class ProcessManager:
         """Read the daemon port from ``serve.port``.
 
         ``None`` is the documented answer when the file does not exist, and
-        when its content does not parse: voxd writes it non-atomically, so an
-        empty or partial file is a crash leftover -- a stale hint, warned
-        about and ignored. A read error other than not-found raises
-        ``PortProbeError``.
+        when its content does not parse: voxd publishes it by atomic rename,
+        so an empty or partial file is a leftover from something else -- a
+        stale hint, warned about and ignored. A read error other than
+        not-found raises ``PortProbeError``.
         """
         port_file = self._run_dir() / "serve.port"
         try:
@@ -83,28 +83,11 @@ class ProcessManager:
     def discard_port_file(self, port: int) -> PortFileCleanup:
         """Remove ``serve.port`` when it names *port* or does not parse.
 
-        An unparseable file is a crash leftover (voxd writes it
-        non-atomically), stale whoever wrote it; a file naming another port
-        belongs to another voxd and is left. Returns what it did. A read or
-        removal failure raises ``PortProbeError`` so the caller can report it.
+        Runs under the lock voxd publishes the file with (see
+        :class:`StalePortFile`). Returns what it did; a lock, read or removal
+        failure raises ``PortProbeError`` so the caller can report it.
         """
-        port_file = self._run_dir() / "serve.port"
-        try:
-            text = port_file.read_text()
-        except FileNotFoundError:
-            return PortFileCleanup.ABSENT
-        except OSError as exc:
-            msg = f"cannot read {port_file}: {exc}"
-            raise PortProbeError(msg) from exc
-        if text.strip().isdecimal() and int(text) != port:
-            return PortFileCleanup.OTHER_PORT
-        try:
-            port_file.unlink(missing_ok=True)
-        except OSError as exc:
-            msg = f"cannot remove {port_file}: {exc}"
-            raise PortProbeError(msg) from exc
-        logger.info("Removed stale port file %s", port_file)
-        return PortFileCleanup.REMOVED
+        return StalePortFile(self._run_dir() / "serve.port").discard(port)
 
     def remove_port_file(self) -> None:
         """Remove the daemon port file; warn (never claim removal) on failure."""

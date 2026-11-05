@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import ProcessManager
 from punt_vox.service.termination import Termination
+from punt_vox.voxd.port_file import PortFile
 
 # ---------------------------------------------------------------------------
 # Exec args
@@ -737,3 +739,38 @@ def test_probe_after_the_deadline_never_runs(
     with pytest.raises(PortProbeError, match="deadline"):
         mgr.identity(123)
     mock_run.assert_not_called()
+
+
+def test_discard_paused_after_its_check_never_deletes_a_publishing_voxds_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI cleanup and voxd's publish share one lock: no publish lands
+    between the cleanup's read of serve.port and its unlink."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text("8421")
+    checked, resume = threading.Event(), threading.Event()
+    real_unlink = Path.unlink
+
+    def unlink_after_a_pause(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "serve.port" and not checked.is_set():
+            checked.set()
+            resume.wait(timeout=5.0)
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink_after_a_pause)
+    outcome: list[PortFileCleanup] = []
+    cleaner = threading.Thread(
+        target=lambda: outcome.append(ProcessManager().discard_port_file(8421))
+    )
+    cleaner.start()
+    assert checked.wait(timeout=5.0)
+    publisher = threading.Thread(target=PortFile(tmp_path).write, args=(8421,))
+    publisher.start()
+    publisher.join(timeout=0.5)
+    resume.set()
+    cleaner.join(timeout=10.0)
+    publisher.join(timeout=10.0)
+    assert not cleaner.is_alive()
+    assert not publisher.is_alive()
+    assert outcome == [PortFileCleanup.REMOVED]
+    assert (tmp_path / "serve.port").read_text() == "8421"
