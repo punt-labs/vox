@@ -1,4 +1,7 @@
-"""Daemon configuration: paths, keys, auth tokens, port files (logging is elsewhere)."""
+"""Daemon configuration: paths, keys, auth tokens (logging is elsewhere).
+
+Writing and removing ``serve.port`` belongs to :mod:`punt_vox.voxd.port_file`.
+"""
 # pyright: reportUnusedFunction=false
 # The private helpers here are imported by daemon.py and the tests.
 
@@ -238,21 +241,6 @@ class DaemonConfig:
         logger.info("Generated auth token at %s", token_file)
         self._auth_token = token
         return token
-
-    def write_port_file(self, port: int) -> None:
-        """Write the daemon port to the run directory."""
-        port_file = self._run_dir / "serve.port"
-        port_file.write_text(str(port))
-        logger.info("Wrote port file: %s (port %d)", port_file, port)
-
-    def remove_port_file(self) -> None:
-        """Remove the port file from the run directory."""
-        port_file = self._run_dir / "serve.port"
-        try:
-            port_file.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Could not remove %s", port_file)
-        logger.info("Removed port file")
 
     def log_environment(self) -> None:
         """Log a short startup INFO; the full process/env dump goes to DEBUG."""

@@ -1,0 +1,71 @@
+"""voxd's ``serve.port``: written on bind, removed on shutdown only while it is ours.
+
+Every voxd for a user shares one run directory, and across a restart the old
+and new daemons serve the same port, so the file's text cannot say whose it
+is. Each write therefore lands as a new file (written beside it, then renamed
+over it), and the daemon remembers that file's identity -- device and inode.
+At shutdown it removes ``serve.port`` only if the file there is still the one
+it wrote. A daemon that exits after another voxd has written its own file
+leaves that file alone, so clients keep finding the running daemon.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import TYPE_CHECKING, Self, final
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["PortFile"]
+
+
+@final
+class PortFile:
+    """One daemon's claim on ``serve.port`` in its run directory."""
+
+    __slots__ = ("_mine", "_path")
+
+    _path: Path
+    _mine: tuple[int, int] | None  # (st_dev, st_ino) written; None: never written
+
+    def __new__(cls, run_dir: Path) -> Self:
+        self = super().__new__(cls)
+        self._path = run_dir / "serve.port"
+        self._mine = None
+        return self
+
+    def write(self, port: int) -> None:
+        """Publish *port* as a new file and remember it as this daemon's.
+
+        The rename is atomic, so a reader never sees a half-written file.
+        """
+        tmp = self._path.with_name(f".serve.port.{os.getpid()}")
+        tmp.write_text(str(port))
+        tmp.replace(self._path)
+        st = self._path.stat()
+        self._mine = (st.st_dev, st.st_ino)
+        logger.info("Wrote port file: %s (port %d)", self._path, port)
+
+    def remove(self) -> None:
+        """Remove ``serve.port`` if it is still the file this daemon wrote.
+
+        A file another voxd has written since -- the same port after a restart
+        or a different one -- is left in place.
+        """
+        try:
+            st = self._path.stat()
+        except FileNotFoundError:
+            return
+        if (st.st_dev, st.st_ino) != self._mine:
+            logger.info("%s now belongs to another voxd; left in place", self._path)
+            return
+        try:
+            self._path.unlink()
+        except OSError as exc:
+            logger.warning("Could not remove %s: %s", self._path, exc)
+            return
+        logger.info("Removed port file %s", self._path)
