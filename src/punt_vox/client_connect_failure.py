@@ -5,7 +5,9 @@ websockets' errors carry the URI: ``InvalidURI`` renders as
 ``"<uri> isn't a valid URI: ..."``. That text reaches ``vox daemon status``,
 start and restart reports, install verification and MCP replies, so a
 :class:`ConnectFailure` never renders a cause that can hold the URI, and
-redacts any ``token=`` value from the finished message as a backstop.
+redacts any ``token=`` value from the finished message as a backstop. Nor is
+such a cause chained: a traceback renders ``__cause__`` in full, so a failure
+to parse the URI is raised ``from None``.
 
 It also decides the error's type. A refusal on every address -- nothing
 listens -- is :class:`~punt_vox.client_errors.VoxdRefusedError`, the one
@@ -67,6 +69,16 @@ class ConnectFailure:
         )
         return self._kind()(msg)
 
+    def chainable(self, exc: Exception) -> Exception | None:
+        """Return *exc* as the error's ``__cause__``, or ``None`` to cut it.
+
+        ``None`` is the contract, not a miss: a URI-parse cause renders the
+        URI, token included, wherever the traceback is printed or logged.
+        """
+        if any(self._from_uri(cause) for cause in self._causes):
+            return None
+        return exc
+
     def _kind(self) -> type[VoxdConnectionError]:
         """Return the error type the causes call for."""
         if all(isinstance(cause, ConnectionRefusedError) for cause in self._causes):
@@ -75,24 +87,34 @@ class ConnectFailure:
             return VoxdHandshakeRejectedError
         return VoxdConnectionError
 
-    @staticmethod
-    def _rejected_handshake(cause: Exception) -> bool:
+    @classmethod
+    def _rejected_handshake(cls, cause: Exception) -> bool:
         """Return True when a listener answered the handshake and refused it.
 
         ``InvalidURI`` is a WebSocketException too, but it is the client's own
         URI that failed, before anything was reached.
         """
-        return isinstance(cause, WebSocketException) and not isinstance(
-            cause, InvalidURI
-        )
+        return isinstance(cause, WebSocketException) and not cls._from_uri(cause)
+
+    @staticmethod
+    def _from_uri(cause: Exception) -> bool:
+        """Return True when *cause* is the client failing to parse its own URI.
+
+        websockets raises ``InvalidURI``; urllib, underneath it, raises
+        ``ValueError`` for a port out of range or an unbalanced ``[``.
+        """
+        return isinstance(cause, InvalidURI | ValueError)
 
     @staticmethod
     def _describe(cause: Exception) -> str:
         """Return *cause* as text that names no URI.
 
         ``InvalidURI`` is the one cause whose text embeds the URI; its reason
-        (``cause.msg``) is kept, the URI is not.
+        (``cause.msg``) is kept, the URI is not. urllib's ``ValueError`` names
+        only the fault.
         """
         if isinstance(cause, InvalidURI):
             return f"invalid voxd URI ({cause.msg})"
+        if isinstance(cause, ValueError):
+            return f"invalid voxd URI ({cause})"
         return str(cause)

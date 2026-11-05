@@ -74,13 +74,15 @@ class VoxdTransport:
         except (
             OSError,
             ExceptionGroup,
+            ValueError,
             websockets.exceptions.WebSocketException,
         ) as exc:
             # A WebSocketException is voxd (or whatever holds the port)
             # answering the handshake with a refusal of its own -- HTTP 403 for
-            # a bad token or Origin, or not speaking HTTP at all.
-            endpoint = uri.split("?")[0]
-            raise ConnectFailure(endpoint, exc).error() from exc
+            # a bad token or Origin, or not speaking HTTP at all. A ValueError
+            # is urllib failing to parse the URI (a port out of range).
+            failure = ConnectFailure(uri.split("?")[0], exc)
+            raise failure.error() from failure.chainable(exc)
         return self._ws
 
     async def close(self) -> None:
@@ -202,12 +204,19 @@ class VoxdTransport:
             return await self._reassemble(ws, deadline, msg)
         except BaseException:
             # Poison the connection: stale chunk frames from this failed fetch
-            # must not be read by the next request. Suppress close errors -- the
-            # socket may already be gone; nulling _ws forces a clean reconnect.
-            with contextlib.suppress(Exception):
-                await ws.close()
-            self._ws = None
+            # must not be read by the next request.
+            await self._discard(ws)
             raise
+
+    async def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
+        """Close *ws* and forget it, so the next request reconnects cleanly.
+
+        Close errors are suppressed: the socket may already be gone, and the
+        caller is abandoning it either way.
+        """
+        with contextlib.suppress(Exception):
+            await ws.close()
+        self._ws = None
 
     async def _reassemble(
         self,
@@ -281,11 +290,7 @@ class VoxdTransport:
                 return responses
             if early_terminal is not None and resp_type == early_terminal:
                 # Server will still send terminal_type (e.g., 'done' after
-                # 'playing'). Close the connection so that stale message
-                # cannot be consumed by the next request on a reused
-                # connection. Suppress close errors — the connection may
-                # already be gone, but the audio is queued.
-                with contextlib.suppress(Exception):
-                    await ws.close()
-                self._ws = None
+                # 'playing'). Discard the connection so that stale message
+                # cannot be consumed by the next request on a reused one.
+                await self._discard(ws)
                 return responses
