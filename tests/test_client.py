@@ -1784,7 +1784,7 @@ class TestVoxClientSyncFrameDispatch:
     both the sync-to-async bridge in ``client_sync.py`` and VoxClient's
     own message assembly.
 
-    Each test wires ``punt_vox.client.websockets.asyncio.client.connect``
+    Each test wires ``punt_vox.client_transport.websockets.asyncio.client.connect``
     to an ``AsyncMock`` websocket that yields the RESPONSE frames the
     real daemon would send for the op under test. It calls the sync
     method with concrete arguments, then reads

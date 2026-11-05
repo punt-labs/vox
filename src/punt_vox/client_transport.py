@@ -230,28 +230,30 @@ class VoxdTransport:
         returning, so a short, reordered, or corrupted stream raises. The caller
         owns the connection-tainting on any raise from here.
         """
-        begin = self._decode(await self._recv(ws, deadline, "fetch_begin", msg))
+        begin = self._decode(await self._recv(ws, deadline, msg, "fetch_begin"))
         assembly = FetchAssembly.begin(begin)
         for seq in range(assembly.chunks):
-            frame = self._decode(await self._recv(ws, deadline, "chunk", msg))
+            frame = self._decode(await self._recv(ws, deadline, msg, "chunk"))
             assembly.append(frame, seq)
-        end = self._decode(await self._recv(ws, deadline, "fetch_end", msg))
+        end = self._decode(await self._recv(ws, deadline, msg, "fetch_end"))
         return assembly.finish(end)
 
     async def _recv(
         self,
         ws: websockets.asyncio.client.ClientConnection,
         deadline: float,
-        expected: str,
         msg: dict[str, object],
+        expected: str,
     ) -> object:
-        """Receive one frame before *deadline*, or raise a timeout protocol error."""
+        """Receive one frame before *deadline*, or raise a timeout protocol error.
+
+        *expected* names the frame awaited; the timeout names it in *msg*'s op.
+        """
+        timeout_msg = f"Timeout waiting for '{expected}' in '{msg.get('type', '')}'"
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            raise VoxdProtocolError(f"timeout waiting for '{expected}' in a fetch")
-        return await self._recv_frame(
-            ws, remaining, f"timeout waiting for '{expected}' in a fetch", msg
-        )
+            raise VoxdProtocolError(timeout_msg)
+        return await self._recv_frame(ws, remaining, timeout_msg, msg)
 
     async def send_and_drain(
         self,
@@ -275,14 +277,9 @@ class VoxdTransport:
         await self._send_frame(ws, msg)
         responses: list[dict[str, Any]] = []
         deadline = asyncio.get_running_loop().time() + timeout
-        # One message serves both timeout paths (deadline exceeded, recv timeout).
         expected = early_terminal or terminal_type
-        timeout_msg = f"Timeout waiting for '{expected}' in '{msg.get('type', '')}'"
         while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise VoxdProtocolError(timeout_msg)
-            raw = await self._recv_frame(ws, remaining, timeout_msg, msg)
+            raw = await self._recv(ws, deadline, msg, expected)
             resp = self._decode(raw)  # wraps bad JSON + error frames as VoxError
             responses.append(resp)
             resp_type = resp.get("type")

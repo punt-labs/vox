@@ -1,16 +1,18 @@
-"""Tests for punt_vox.client_transport.VoxdTransport's connect boundary."""
+"""Tests for punt_vox.client_transport.VoxdTransport: connect and receive."""
 
 from __future__ import annotations
 
 import asyncio
+import re
 import socket
 import tomllib
 import traceback
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -68,3 +70,42 @@ def test_an_unparseable_endpoint_is_a_connection_error_not_a_raw_value_error(
     error, text = _traceback_of(host, port)
     assert type(error) is VoxdConnectionError
     assert _TOKEN not in text
+
+
+async def _never() -> str:
+    await asyncio.Event().wait()
+    return ""
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        ("fetch", "Timeout waiting for 'fetch_begin' in 'rec_get'"),
+        ("drain", "Timeout waiting for 'playing' in 'synthesize'"),
+    ],
+)
+def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
+    call: str, expected: str
+) -> None:
+    """Fetch and drain share one deadline receive and one timeout wording."""
+    ws = MagicMock()
+    ws.send = AsyncMock()
+    ws.close = AsyncMock()
+    ws.recv = _never
+    transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
+
+    async def run() -> object:
+        if call == "fetch":
+            return await transport.fetch_stream({"type": "rec_get"}, timeout=0.05)
+        return await transport.send_and_drain(
+            {"type": "synthesize"}, timeout=0.05, early_terminal="playing"
+        )
+
+    with (
+        patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            AsyncMock(return_value=ws),
+        ),
+        pytest.raises(VoxdProtocolError, match=re.escape(expected)),
+    ):
+        asyncio.run(run())
