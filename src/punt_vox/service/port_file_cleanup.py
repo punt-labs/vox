@@ -76,10 +76,13 @@ class StalePortFile:
 
         An unparseable file is stale whoever wrote it (a crash leftover); a
         file naming another port belongs to another voxd and is left, as is a
-        file published since the cleanup looked. Returns what it did. A lock,
-        read or removal failure raises ``PortProbeError`` so the caller can
-        report it.
+        file published since the cleanup looked. Returns what it did. With no
+        file there it returns ``ABSENT`` before taking the lock, so a host with
+        no run directory gets none created. A lock, read or removal failure
+        raises ``PortProbeError`` so the caller can report it.
         """
+        if self._identity_of(self._path) is None:
+            return PortFileCleanup.ABSENT
         try:
             with self._lock.held():
                 return self._discard_held(port)

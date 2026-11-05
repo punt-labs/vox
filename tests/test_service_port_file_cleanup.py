@@ -73,3 +73,17 @@ def test_a_file_published_where_none_was_found_is_left(tmp_path: Path) -> None:
     port_file.write_text("8421")
     assert stale.discard(8421) is PortFileCleanup.REPLACED
     assert port_file.exists()
+
+
+def test_cleanup_with_no_run_dir_is_absent_and_creates_nothing(tmp_path: Path) -> None:
+    """stop on a host with no run dir writes nothing: no dir, no lock file."""
+    run_dir = tmp_path / "run"
+    stale = StalePortFile.as_found(run_dir / "serve.port")
+    assert stale.discard(8421) is PortFileCleanup.ABSENT
+    assert not run_dir.exists()
+
+
+def test_cleanup_with_no_port_file_takes_no_lock(tmp_path: Path) -> None:
+    port_file = tmp_path / "serve.port"
+    assert StalePortFile.as_found(port_file).discard(8421) is PortFileCleanup.ABSENT
+    assert list(tmp_path.iterdir()) == []
