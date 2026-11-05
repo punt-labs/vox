@@ -34,7 +34,7 @@ vox is usable in three ways, all driving the same `voxd` audio daemon --- so it 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ebaf2f7/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/dd6acb6/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -50,10 +50,10 @@ Install the `vox` CLI without the Claude Code plugin — for a non-Claude harnes
 
 ```bash
 # Flag form
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ebaf2f7/install.sh | sh -s -- --no-plugin
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/dd6acb6/install.sh | sh -s -- --no-plugin
 
 # Environment form (for argument-hostile contexts — CI templates, proxies)
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ebaf2f7/install.sh | VOX_NO_PLUGIN=1 sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/dd6acb6/install.sh | VOX_NO_PLUGIN=1 sh
 ```
 
 `VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The plugin also auto-skips when `claude` or `git` is absent.
@@ -73,7 +73,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ebaf2f7/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/dd6acb6/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh
@@ -155,7 +155,7 @@ uv tool upgrade punt-vox
 vox daemon restart
 ```
 
-Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/vox.log` on failure.
+Run `vox daemon restart` as your normal user, **not** under `sudo`. It refuses to run as root. On Linux it runs `sudo -n systemctl …` first and asks for your password once, only when a terminal is attached. `restart` is `vox daemon stop` followed by `vox daemon start`, and each is also a command of its own. `stop` succeeds only when the service is inactive, nothing holds port 8421, and every voxd it saw has exited. `start` succeeds only when the service manager's own process answers the authenticated health check with the installed wheel's version. Every run prints one outcome (`stopped`, `started`, `restarted`, `already running`, `timeout`, …) and names any process it had to signal, with `--json` for scripts. On failure it points you at `~/.punt-labs/vox/logs/vox.log`.
 
 To confirm the daemon and the installed wheel agree:
 
@@ -558,8 +558,11 @@ vox mcp                                        # Start MCP server (stdio)
 voxd                                           # Start audio daemon
 vox daemon install                             # Register voxd as system service + write API keys (prompts once for sudo)
 vox daemon uninstall                           # Remove the voxd system service
+vox daemon stop                                # Stop voxd and confirm it exited (--json)
+vox daemon start                               # Start voxd and confirm it serves this wheel (--json)
+vox daemon restart                             # stop, then start (--json)
 vox daemon status --json                       # Daemon health as JSON (mic:status daemon block shape)
-vox daemon status                              # Check if daemon is running
+vox daemon status                              # running | unresponsive | unknown | not_running (exit 0 only when running)
 ```
 
 ## Environment Variables
@@ -572,7 +575,7 @@ vox daemon status                              # Check if daemon is running
 | `VOXD_HOST` | Remote voxd host (client) | `127.0.0.1` |
 | `VOXD_PORT` | Remote voxd port (client) | read `serve.port` file |
 | `VOXD_TOKEN` | Remote voxd auth token (client) | read `serve.token` file |
-| `VOXD_BIND` | voxd bind address (server) | `127.0.0.1` |
+| `VOXD_BIND` | voxd bind address (server); must be an IP address, not a hostname | `127.0.0.1` |
 
 Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.punt-labs/vox/keys.env`, not in your shell rc. See [Configure providers](#configure-providers) for the full walkthrough.
 

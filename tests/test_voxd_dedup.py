@@ -172,7 +172,7 @@ class TestOnceDedup:
     ) -> None:
         """Each caller's own ttl_seconds decides if an entry is fresh enough.
 
-        Copilot reviewer 3053861452: the first caller's TTL should NOT
+        The first caller's TTL should NOT
         silently extend the dedup window for a later caller that asks
         for a shorter one. Each caller answers its own question of
         "was this played in the last N seconds?"

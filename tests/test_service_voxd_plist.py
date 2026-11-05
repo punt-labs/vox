@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import plistlib
 import stat
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
+from punt_vox.service.backend import BackendCommandError
 from punt_vox.service.voxd_plist import VoxdPlist
 
 if TYPE_CHECKING:
@@ -239,3 +243,60 @@ def test_remove_tolerates_an_absent_file(tmp_path: Path) -> None:
 def test_path_reports_where_the_plist_lives(tmp_path: Path) -> None:
     expected = tmp_path / "LaunchAgents" / "com.punt-labs.voxd.plist"
     assert _plist(tmp_path).path == expected
+
+
+# ---------------------------------------------------------------------------
+# The plist is well-formed XML, and its bind reads back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bind", ["", "10.0.0.5"])
+def test_content_parses_as_a_plist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind: str
+) -> None:
+    """The XML declaration is at column 0, so plistlib accepts it."""
+    monkeypatch.setenv("VOXD_BIND", bind)
+    plist = VoxdPlist(
+        "com.punt-labs.voxd",
+        tmp_path / "p.plist",
+        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+    )
+    content = plist.content()
+    assert content.startswith('<?xml version="1.0"')
+    data = plistlib.loads(content.encode())
+    assert data["ProgramArguments"] == ["/usr/local/bin/voxd", "--port", "8421"]
+    assert data["RunAtLoad"] is True
+    assert data["KeepAlive"] is True
+    assert data["EnvironmentVariables"].get("VOXD_BIND", "") == bind
+    plist.write()
+    assert plist.installed_bind() == bind
+
+
+def test_installed_bind_unparseable_plist_is_typed(tmp_path: Path) -> None:
+    """A corrupt plist is a backend failure, not a raw parser error."""
+    path = tmp_path / "p.plist"
+    path.write_text("not a plist")
+    plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        plist.installed_bind()
+
+
+@pytest.mark.parametrize(
+    "body", [b'<?xml version="1.0"?><plist><dict><key>', b"<?xml garbage"]
+)
+def test_installed_bind_malformed_xml_is_typed(tmp_path: Path, body: bytes) -> None:
+    """An XML parser error is a backend failure, not an escaping ExpatError."""
+    path = tmp_path / "p.plist"
+    path.write_bytes(body)
+    plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        plist.installed_bind()
+
+
+def test_installed_bind_unreadable_plist_is_typed(tmp_path: Path) -> None:
+    """A read error is a backend failure too."""
+    path = tmp_path / "p.plist"
+    path.mkdir()
+    plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        plist.installed_bind()

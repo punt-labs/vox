@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
 from punt_vox.service import DEFAULT_PORT
+from punt_vox.service.backend import BackendCommandError
+from punt_vox.service.clock import SystemClock
+from punt_vox.service.launchctl import LaunchctlAgent
+from punt_vox.service.launchctl_query import LaunchctlError
 from punt_vox.service.launchd import LaunchdBackend
-from punt_vox.service.process import ProcessManager
+from punt_vox.service.query_answer import QueryAnswer
 
 
 def _backend_with_mock_agent(
@@ -32,20 +38,14 @@ def _backend_with_mock_agent(
 
     monkeypatch.setattr("punt_vox.service.launchd.LaunchctlAgent", _make_agent)
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
     return be, agent
 
 
 @pytest.fixture()
 def backend() -> LaunchdBackend:
     """Create a LaunchdBackend with a stub exec-args function."""
-    return LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
+    return LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +118,7 @@ def test_launchd_plist_pins_to_aqua_session(backend: LaunchdBackend) -> None:
 
 @patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
 def test_launchd_plist_contains_path_from_env() -> None:
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/opt/homebrew/bin/voxd", "--port", "8421"],
-    )
+    be = LaunchdBackend(lambda: ["/opt/homebrew/bin/voxd", "--port", "8421"])
     content = be.plist_content()
     assert "<key>EnvironmentVariables</key>" in content
     assert "<key>PATH</key>" in content
@@ -143,10 +140,7 @@ def test_launchd_plist_bakes_the_ca_bundle_vars() -> None:
     that stopped consulting the captured environment would fail here even
     while the plist class still passed its own tests.
     """
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
     content = be.plist_content()
     assert "<key>SSL_CERT_FILE</key>" in content
     assert "<key>REQUESTS_CA_BUNDLE</key>" in content
@@ -155,41 +149,98 @@ def test_launchd_plist_bakes_the_ca_bundle_vars() -> None:
 
 @patch.dict("os.environ", {}, clear=True)
 def test_launchd_plist_omits_the_ca_bundle_vars_when_unset() -> None:
-    be = LaunchdBackend(
-        ProcessManager(),
-        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
-    )
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
     content = be.plist_content()
     assert "<key>SSL_CERT_FILE</key>" not in content
     assert "<key>REQUESTS_CA_BUNDLE</key>" not in content
 
 
 # ---------------------------------------------------------------------------
-# stop -- delegates to the composed LaunchctlAgent
+# the lifecycle seam -- delegates to the composed LaunchctlAgent
 # ---------------------------------------------------------------------------
 
 
-def test_launchd_stop_noop_when_plist_missing(
+def test_launchd_is_installed_follows_the_plist(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fresh install (no prior plist): stop skips the bootout delegation."""
-    plist = tmp_path / "com.punt-labs.voxd.plist"  # never created
-    be, agent = _backend_with_mock_agent(monkeypatch, plist)
-    be.stop()
-    agent.bootout.assert_not_called()
-
-
-def test_launchd_stop_delegates_bootout_when_plist_present(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Existing plist: stop delegates to the agent's race-free bootout."""
     plist = tmp_path / "com.punt-labs.voxd.plist"
+    be, _agent = _backend_with_mock_agent(monkeypatch, plist)
+    assert be.is_installed() is False
     plist.write_text("<plist/>")
-    be, agent = _backend_with_mock_agent(monkeypatch, plist)
-    be.stop()
+    assert be.is_installed() is True
+    assert be.service_path == str(plist)
+
+
+def test_launchd_request_stop_delegates_bootout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    be.request_stop()
     agent.bootout.assert_called_once_with()
+
+
+def test_launchd_request_stop_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed bootout of a loaded job leaves the backend as one typed error."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.bootout.side_effect = LaunchctlError("bootout failed (exit 37)")
+    with pytest.raises(BackendCommandError, match="bootout failed"):
+        be.request_stop()
+
+
+def test_launchd_request_start_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.start.side_effect = LaunchctlError("bootstrap failed (exit 5)")
+    with pytest.raises(BackendCommandError, match="launchctl bootstrap"):
+        be.request_start()
+    agent.start.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("loaded", "pid", "active"),
+    [(True, 42, True), (True, None, True), (False, 42, True), (False, None, False)],
+)
+def test_launchd_is_active_counts_a_lingering_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    loaded: bool,
+    pid: int | None,
+    active: bool,
+) -> None:
+    """A job still holding a pid has not stopped, whatever launchctl list says."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.is_loaded.return_value = loaded
+    agent.pid.return_value = pid
+    assert be.is_active() is active
+
+
+def test_launchd_main_pid_delegates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.pid.return_value = 4242
+    assert be.main_pid() == 4242
+
+
+def test_launchd_installed_bind_reads_the_plist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bind comes from the installed plist, not the calling shell."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    with patch.dict("os.environ", {"VOXD_BIND": "10.0.0.5"}):
+        be, _agent = _backend_with_mock_agent(monkeypatch, plist)
+        plist.write_text(be.plist_content())
+    with patch.dict("os.environ", {"VOXD_BIND": "10.0.0.9"}):
+        assert be.installed_bind() == "10.0.0.5"
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +258,7 @@ def test_launchd_install_writes_plist_and_starts(
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
 
-    be.install()
+    be.install("someone")
 
     assert plist.exists()
     agent.start.assert_called_once_with()
@@ -223,17 +274,14 @@ def test_launchd_reinstall_over_stale_agent_is_idempotent(
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
 
-    # First install writes the plist and starts.
-    be.install()
+    be.install("someone")
     assert plist.exists()
 
-    # Second install: a live agent exists, so stop() must bootout first.
-    be.stop()
-    be.install()
+    be.request_stop()
+    be.install("someone")
 
     assert agent.start.call_count == 2
     assert agent.bootout.call_count == 1
-    # The plist survives the idempotent reinstall.
     assert plist.exists()
 
 
@@ -254,81 +302,206 @@ def test_launchd_uninstall_boots_out_and_removes_plist(
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
 
-    with patch.object(
-        ProcessManager, "kill_stale_daemon", return_value=True
-    ) as mock_kill:
-        result = be.uninstall()
+    be.uninstall()
 
     assert not plist.exists()
-    agent.bootout.assert_called_once_with()
-    mock_kill.assert_called_once()
-    # uninstall must not discard the kill result — a live daemon that was
-    # killed reports True.
-    assert result is True
+    agent.bootout_confirmed.assert_called_once_with()
 
 
 def test_launchd_uninstall_noop_when_plist_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """uninstall skips bootout when no plist exists but still kills stale daemon."""
+    """uninstall skips bootout when no plist exists."""
     plist = tmp_path / "com.punt-labs.voxd.plist"  # never created
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
 
-    with patch.object(ProcessManager, "kill_stale_daemon") as mock_kill:
-        be.uninstall()
+    be.uninstall()
 
-    agent.bootout.assert_not_called()
-    mock_kill.assert_called_once()
+    agent.bootout_confirmed.assert_not_called()
 
 
-def test_launchd_uninstall_propagates_failed_kill(
+# ---------------------------------------------------------------------------
+# Every launchctl failure leaves the backend as BackendCommandError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "agent_call"),
+    [("is_active", "is_loaded"), ("main_pid", "pid")],
+)
+def test_launchd_query_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    agent_call: str,
+) -> None:
+    """A failed launchctl query is the lifecycle's typed error, not raw."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    getattr(agent, agent_call).side_effect = LaunchctlError("query failed (exit 1)")
+    with pytest.raises(BackendCommandError, match="query failed"):
+        getattr(be, method)()
+
+
+def test_launchd_install_failure_is_backend_command_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """uninstall returns False when the stale-daemon kill fails (survivor)."""
+    """Install's launchctl failure is typed, so install reports it."""
     agents_dir = tmp_path / "Library" / "LaunchAgents"
-    agents_dir.mkdir(parents=True)
-    plist = agents_dir / "com.punt-labs.voxd.plist"
-    plist.write_text("<plist/>")
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
-    be, _agent = _backend_with_mock_agent(monkeypatch, plist)
-
-    with patch.object(ProcessManager, "kill_stale_daemon", return_value=False):
-        result = be.uninstall()
-
-    # A failed kill must not be swallowed — the caller re-scans on False.
-    assert result is False
-    # The plist is removed regardless of the kill outcome.
-    assert not plist.exists()
+    be, agent = _backend_with_mock_agent(
+        monkeypatch, agents_dir / "com.punt-labs.voxd.plist"
+    )
+    agent.start.side_effect = LaunchctlError("bootstrap failed (exit 5)")
+    with pytest.raises(BackendCommandError, match="bootstrap failed"):
+        be.install("someone")
 
 
-# ---------------------------------------------------------------------------
-# status -- delegates the launchctl list probe to the composed agent
-# ---------------------------------------------------------------------------
-
-
-def test_launchd_status_true_when_agent_reports_loaded(
+def test_launchd_uninstall_failure_is_backend_command_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """status returns True by delegating to the agent's list probe."""
     plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
-    agent.is_loaded.return_value = True
+    agent.bootout_confirmed.side_effect = LaunchctlError("bootout failed (exit 37)")
+    with pytest.raises(BackendCommandError, match="bootout failed"):
+        be.uninstall()
+    assert plist.exists(), "a failed bootout must not remove the plist"
 
-    assert be.status() is True
-    agent.is_loaded.assert_called_once_with()
 
-
-def test_launchd_status_false_when_agent_reports_unloaded(
+def test_launchd_install_unwritable_plist_is_backend_command_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """status returns False when the agent reports the job is not loaded."""
-    plist = tmp_path / "com.punt-labs.voxd.plist"
-    be, agent = _backend_with_mock_agent(monkeypatch, plist)
-    agent.is_loaded.return_value = False
+    """A plist that cannot be written is typed, so install reports it."""
+    blocker = tmp_path / "LaunchAgents"
+    blocker.write_text("a file where the directory should be")
+    be, agent = _backend_with_mock_agent(monkeypatch, blocker / "p.plist")
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        be.install("someone")
+    agent.start.assert_not_called()
 
-    assert be.status() is False
-    agent.is_loaded.assert_called_once_with()
+
+def test_launchd_is_active_within_hands_the_budget_to_launchctl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded wait's remaining time reaches the launchctl queries."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.running_within.return_value = QueryAnswer.of(holds=True)
+    assert be.is_active_within(0.7).holds is True
+    agent.running_within.assert_called_once_with(0.7)
+
+
+def test_launchd_is_active_within_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.running_within.side_effect = LaunchctlError("query failed (exit 1)")
+    with pytest.raises(BackendCommandError, match="query failed"):
+        be.is_active_within(0.7)
+
+
+def test_launchd_uninstall_keeps_the_plist_when_bootout_is_unconfirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A print that times out after bootout fails uninstall, plist kept."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.005)
+    calls: list[str] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv[1])
+        if argv[1] == "bootout" or calls == ["print"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.01)
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="did not answer"):
+        be.uninstall()
+    assert plist.exists()
+
+
+def test_launchd_uninstall_names_a_job_that_stayed_despite_a_last_sliver_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prints that said "registered", then one cut short at the end ->
+    the reason is "still registered", not "did not answer"."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.1)
+    clock = FakeClock()
+
+    def monotonic(self: SystemClock) -> float:
+        return clock.monotonic()
+
+    def sleep(self: SystemClock, seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+    monkeypatch.setattr(SystemClock, "sleep", sleep)
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, float)
+        if argv[1] != "bootout" and timeout < 0.08:
+            raise subprocess.TimeoutExpired(cmd="launchctl", timeout=timeout)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="still registered") as info:
+        be.uninstall()
+    assert "stopped answering" not in str(info.value)
+    assert plist.exists()
+
+
+def test_launchd_uninstall_names_a_launchctl_that_answered_then_hung(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A print said "registered", then later prints hung with a full budget."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.1)
+    clock = FakeClock()
+
+    def monotonic(self: SystemClock) -> float:
+        return clock.monotonic()
+
+    def sleep(self: SystemClock, seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+    monkeypatch.setattr(SystemClock, "sleep", sleep)
+    prints = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[1] == "print":
+            prints[0] += 1
+            if prints[0] > 2:  # the was-loaded print and one wait print answer
+                raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.2)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="still registered") as info:
+        be.uninstall()
+    assert "was last seen still registered in gui/" in str(info.value)
+    assert "then launchctl print" in str(info.value)
+    assert "stopped answering before the 0.25s wait after bootout ended" in str(
+        info.value
+    )

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -13,12 +15,12 @@ import pytest
 from punt_vox.client import (
     CacheStatus,
     VoxClient,
-    read_port_file,
-    read_token_file,
 )
 from punt_vox.client_errors import (
     VoxdConnectionError,
+    VoxdHandshakeRejectedError,
     VoxdProtocolError,
+    VoxdRefusedError,
     VoxdRejectionError,
     VoxError,
 )
@@ -36,35 +38,6 @@ from punt_vox.types_synthesis import SynthesisSpec
 def test_run_dir_is_user_state() -> None:
     """The run dir is ``~/.punt-labs/vox/run`` — same on macOS and Linux."""
     assert run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
-
-
-# ---------------------------------------------------------------------------
-# Port / token file readers
-# ---------------------------------------------------------------------------
-
-
-def test_read_port_file(tmp_path: Path) -> None:
-    port_file = tmp_path / "serve.port"
-    port_file.write_text("9999")
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_port_file() == 9999
-
-
-def test_read_port_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_port_file() is None
-
-
-def test_read_token_file(tmp_path: Path) -> None:
-    token_file = tmp_path / "serve.token"
-    token_file.write_text("secret123")
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_token_file() == "secret123"
-
-
-def test_read_token_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_token_file() is None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +85,7 @@ class TestVoxClientConnect:
     async def test_connect_success(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -125,7 +98,7 @@ class TestVoxClientConnect:
     @pytest.mark.asyncio
     async def test_connect_refused_raises(self) -> None:
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             side_effect=OSError("Connection refused"),
         ):
@@ -142,9 +115,9 @@ class TestVoxClientConnect:
 
         mock_ws = _make_mock_ws()
         with (
-            patch("punt_vox.client._user_run_dir", return_value=tmp_path),
+            patch("punt_vox.client_endpoint._user_run_dir", return_value=tmp_path),
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ) as mock_connect,
@@ -159,9 +132,9 @@ class TestVoxClientConnect:
 
     @pytest.mark.asyncio
     async def test_connect_no_port_file_raises(self, tmp_path: Path) -> None:
-        with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
+        with patch("punt_vox.client_endpoint._user_run_dir", return_value=tmp_path):
             client = VoxClient()
-            with pytest.raises(VoxdConnectionError, match="port file not found"):
+            with pytest.raises(VoxdRefusedError, match=r"no serve\.port is published"):
                 await client.connect()
 
 
@@ -172,7 +145,7 @@ class TestVoxClientContextManager:
     async def test_enter_connects_and_returns_self(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -187,7 +160,7 @@ class TestVoxClientContextManager:
     async def test_exit_closes_even_when_body_raises(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -203,18 +176,18 @@ class TestVoxClientBuildUri:
 
     def test_uri_with_token(self) -> None:
         client = VoxClient(port=8421, token="abc")
-        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://127.0.0.1:8421/ws?token=abc"
 
     def test_uri_without_token(self) -> None:
-        with patch("punt_vox.client.read_token_file", return_value=None):
+        with patch("punt_vox.client_endpoint.RunFiles.token", return_value=None):
             client = VoxClient(port=8421)
-            uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+            uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
             assert uri == "ws://127.0.0.1:8421/ws"
 
     def test_uri_custom_host(self) -> None:
         client = VoxClient(host="10.0.0.1", port=9000, token="t")
-        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://10.0.0.1:9000/ws?token=t"
 
 
@@ -746,7 +719,9 @@ class TestVoxClientRecord:
                 },
             ]
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.send_and_drain", fake_drain
+        )
         client = VoxClient(port=8421, token="tok")
 
         result = await client.record("a" * 6000)
@@ -781,7 +756,9 @@ class TestVoxClientRecord:
                 }
             ]
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.send_and_drain", fake_drain
+        )
         client = VoxClient(port=8421, token="tok")
 
         # Uncapped this text would scale to ~50000s; the cap holds it at 600s.
@@ -876,7 +853,9 @@ class TestVoxClientPlayFetch:
             captured["timeout"] = timeout
             return b""
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.fetch_stream", fake_stream)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.fetch_stream", fake_stream
+        )
         client = VoxClient(port=8421, token="tok")
 
         await client.fetch("x.mp3")
@@ -1004,7 +983,7 @@ class TestVoxClientPlayFetch:
             await client.fetch("x.mp3")
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=second_ws,
         ):
@@ -1591,10 +1570,10 @@ class TestVoxClientReconnect:
         )
 
         with (
-            patch("punt_vox.client.read_port_file", return_value=8421),
-            patch("punt_vox.client.read_token_file", return_value="tok"),
+            patch("punt_vox.client_endpoint.RunFiles.port", return_value=8421),
+            patch("punt_vox.client_endpoint.RunFiles.token", return_value="tok"),
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws_new,
             ),
@@ -1627,13 +1606,33 @@ class TestVoxClientSync:
         mock_ws.recv = AsyncMock(return_value=json.dumps(health_resp))
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.health()
             assert result.status == "ok"
+
+    def test_health_timeout_bounds_a_voxd_that_never_answers(self) -> None:
+        """The bound holds the whole call, not the client's fixed 5 s recv wait."""
+
+        async def never() -> str:
+            await asyncio.sleep(30)
+            return ""
+
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=never)
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            started = time.monotonic()
+            with pytest.raises(VoxdProtocolError, match="no answer from voxd"):
+                sync_client.health(timeout=0.1)
+            assert time.monotonic() - started < 2.0
 
     def test_synthesize(self) -> None:
         mock_ws = _make_mock_ws()
@@ -1645,7 +1644,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1670,7 +1669,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1699,7 +1698,7 @@ class TestVoxClientSync:
 
         with (
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ),
@@ -1722,7 +1721,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1744,7 +1743,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1763,7 +1762,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1785,7 +1784,7 @@ class TestVoxClientSyncFrameDispatch:
     both the sync-to-async bridge in ``client_sync.py`` and VoxClient's
     own message assembly.
 
-    Each test wires ``punt_vox.client.websockets.asyncio.client.connect``
+    Each test wires ``punt_vox.client_transport.websockets.asyncio.client.connect``
     to an ``AsyncMock`` websocket that yields the RESPONSE frames the
     real daemon would send for the op under test. It calls the sync
     method with concrete arguments, then reads
@@ -1846,7 +1845,7 @@ class TestVoxClientSyncFrameDispatch:
         sync = cls._sync()
         mock_ws = cls._mock_ws_yielding(*response_frames)
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1998,7 +1997,7 @@ class TestVoxClientSyncFrameDispatch:
         )
         with (
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ),
@@ -2160,48 +2159,234 @@ class TestEnvVarResolution:
     def test_voxd_host_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(port=8421, token="tok")
-        assert client._transport._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VOXD_HOST", raising=False)
         client = VoxClient(port=8421, token="tok")
-        assert client._transport._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(host="192.168.1.1", port=8421, token="tok")
-        assert client._transport._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(token="tok")
-        assert client._transport._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
 
-    def test_voxd_port_invalid_falls_through(
+    def test_voxd_port_invalid_is_named_not_a_refusal(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("VOXD_PORT", "not_a_number")
-        monkeypatch.setattr("punt_vox.client._user_run_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
         client = VoxClient(token="tok")
-        with pytest.raises(VoxdConnectionError, match="port file not found"):
-            client._transport._resolve_port()  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(VoxdConnectionError, match="VOXD_PORT") as caught:
+            client._transport._endpoint._resolve_port()  # pyright: ignore[reportPrivateUsage]
+        assert not isinstance(caught.value, VoxdRefusedError)
 
     def test_voxd_port_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(port=1234, token="tok")
-        assert client._transport._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421)
-        assert client._transport._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421, token="local-secret")
-        assert client._transport._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_sync_client_inherits_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         sync_client = VoxClientSync(port=8421, token="tok")
         assert sync_client._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+
+
+# ---------------------------------------------------------------------------
+# Connect failures are typed: a refusal is not a timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_refused_is_a_refusal() -> None:
+    """Nothing listens at the endpoint: the one failure that means "not running"."""
+    with patch(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=ConnectionRefusedError(111, "Connection refused"),
+    ):
+        client = VoxClient(port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError, match="Cannot connect"):
+            await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_timeout_is_not_a_refusal() -> None:
+    """A handshake that never completes means something may be there."""
+    with patch(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=TimeoutError("timed out during opening handshake"),
+    ):
+        client = VoxClient(port=8421, token="tok")
+        with pytest.raises(VoxdConnectionError, match="opening handshake") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)
+
+
+async def _answer_once(reply: bytes) -> asyncio.Server:
+    """Serve one HTTP exchange on 127.0.0.1: read the request, send *reply*."""
+
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(reply)
+        await writer.drain()
+        writer.close()
+
+    return await asyncio.start_server(handle, "127.0.0.1", 0)
+
+
+@pytest.mark.asyncio
+async def test_connect_handshake_rejection_is_not_a_refusal() -> None:
+    """voxd closing a bad-token handshake with HTTP 403 is no traceback."""
+    server = await _answer_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token="wrong")
+        with pytest.raises(VoxdHandshakeRejectedError, match="403") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)
+
+
+@pytest.mark.asyncio
+async def test_connect_to_a_non_websocket_listener_is_a_connection_error() -> None:
+    server = await _answer_once(b"SSH-2.0-OpenSSH_9.6\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token="tok")
+        with pytest.raises(VoxdConnectionError, match="Cannot connect") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)
+
+
+# ---------------------------------------------------------------------------
+# A host with several addresses is refused only when every address refused
+# ---------------------------------------------------------------------------
+
+
+def _refused() -> ConnectionRefusedError:
+    return ConnectionRefusedError(111, "Connection refused")
+
+
+@pytest.mark.asyncio
+async def test_connect_refused_on_every_address_is_a_refusal() -> None:
+    """The per-address errors reach the classifier, never a bare aggregate."""
+    group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
+    with patch(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=group,
+    ) as connect:
+        client = VoxClient(host="localhost", port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError):
+            await client.connect()
+    assert connect.call_args.kwargs["all_errors"] is True
+
+
+@pytest.mark.asyncio
+async def test_connect_to_a_closed_local_port_is_a_refusal() -> None:
+    """A real refused connect, through websockets and asyncio, unmocked."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = VoxClient(host="127.0.0.1", port=port, token="tok")
+    with pytest.raises(VoxdRefusedError):
+        await client.connect()
+
+
+# ---------------------------------------------------------------------------
+# The voxd token never reaches an error message
+# ---------------------------------------------------------------------------
+
+_SECRET = "SEKRIT-token-0451"
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_uri_never_carries_the_token() -> None:
+    """websockets' InvalidURI embeds the whole URI, query string included."""
+    client = VoxClient(host="box#frag", port=8421, token=_SECRET)
+    with pytest.raises(VoxdConnectionError) as caught:
+        await client.connect()
+    assert _SECRET not in str(caught.value)
+    assert "invalid" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_bare_ipv6_host_connects_without_leaking_the_token() -> None:
+    """VOXD_HOST=::1 once built ws://::1:port/ws?token=..., an InvalidURI."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = VoxClient(host="::1", port=port, token=_SECRET)
+    with pytest.raises(VoxdConnectionError) as caught:
+        await client.connect()
+    assert _SECRET not in str(caught.value)
+    assert "isn't a valid URI" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_a_fragment_never_carries_the_token() -> None:
+    server = await _answer_once(
+        b"HTTP/1.1 302 Found\r\nLocation: #x\r\nContent-Length: 0\r\n\r\n"
+    )
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token=_SECRET)
+        with pytest.raises(VoxdConnectionError) as caught:
+            await client.connect()
+    assert _SECRET not in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# The token never crosses a proxy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_ignores_a_proxy_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With http_proxy set, GET /ws?token=... still goes straight to voxd."""
+    with socket.socket() as dead:
+        dead.bind(("127.0.0.1", 0))
+        proxy_port = dead.getsockname()[1]
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{proxy_port}")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    server = await _answer_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token=_SECRET)
+        with pytest.raises(VoxdConnectionError, match="403"):
+            await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_asks_websockets_for_no_proxy() -> None:
+    with patch(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=_refused(),
+    ) as connect:
+        client = VoxClient(host="127.0.0.1", port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError):
+            await client.connect()
+    assert connect.call_args.kwargs["proxy"] is None

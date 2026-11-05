@@ -3,37 +3,62 @@
 :class:`DoctorCheck` runs each sub-check and gathers a list of
 :class:`CheckResult` values. The result type and the render-into-JSON
 collection (:class:`~punt_vox.doctor_result.CheckResults`) live in
-:mod:`punt_vox.doctor_result`; the mpv sub-check lives in
-:mod:`punt_vox.doctor_mpv`.
+:mod:`punt_vox.doctor_result`; the mpv, Claude Desktop, and deposited-guide
+sub-checks live in :mod:`punt_vox.doctor_mpv`, :mod:`punt_vox.doctor_desktop`,
+and :mod:`punt_vox.doctor_guide`.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import shutil
 import sys
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Self
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdHandshakeRejectedError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import (
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
-    find_repo_root,
 )
+from punt_vox.doctor_desktop import DesktopCheck
+from punt_vox.doctor_guide import GuideCheck
 from punt_vox.doctor_mpv import MpvCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
-from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from punt_vox.types_health import HealthStatus
 
 __all__ = ["DoctorCheck"]
+
+# How each connection failure reads, most specific first: the daemon-health
+# line (formatted with the error) and the provider-readiness skip reason.
+# Only a refusal is "not running"; a rejected handshake is a live voxd whose
+# token or origin check failed, so the fix is a restart, never an install.
+_CONNECTION_FAILURES: tuple[tuple[type[VoxdConnectionError], str, str], ...] = (
+    (
+        VoxdRefusedError,
+        "Daemon: not running — start with 'vox daemon start'",
+        "voxd not running",
+    ),
+    (
+        VoxdHandshakeRejectedError,
+        (
+            "Daemon: running but rejected the connection (token/origin) — {exc};"
+            " run 'vox daemon restart'"
+        ),
+        "voxd rejected the connection",
+    ),
+    (VoxdConnectionError, "Daemon: unreachable — {exc}", "voxd unreachable"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -128,42 +153,55 @@ class DoctorCheck:
 
     def check_daemon_health(self) -> list[CheckResult]:
         """Check voxd daemon is running and version matches."""
-        results: list[CheckResult] = []
         client = self._client or VoxClientSync()
         try:
             health = client.health()
-        except VoxdConnectionError:
-            results.append(
-                CheckResult.fail(
-                    "Daemon: not running — start with 'vox daemon install'"
-                )
-            )
-            return results
-        except VoxdProtocolError as exc:
-            results.append(CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}"))
-            return results
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            return [self._unanswered(exc)]
+        return [self._answered(health)]
 
-        port = health.port
-        running_version = health.daemon_version
-        wheel_version = installed_version()
+    @staticmethod
+    def _unanswered(exc: VoxdConnectionError | VoxdProtocolError) -> CheckResult:
+        """Return the line for a health request voxd did not answer.
 
-        if running_version and running_version != wheel_version:
-            results.append(
-                CheckResult.warn(
-                    f"Daemon: running on port {port} (version {running_version}"
-                    f" — wheel has {wheel_version},"
-                    f" run 'vox daemon restart' to refresh)"
-                )
+        Only a refused connection is "not running". Anything else on the
+        connection -- a voxd that rejected the handshake, a timeout -- means
+        something may hold the endpoint, so 'vox daemon install' is not the fix.
+        """
+        if isinstance(exc, VoxdConnectionError):
+            line, _ = DoctorCheck._connection_failure(exc)
+            return CheckResult.fail(line.format(exc=exc))
+        return CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}")
+
+    @staticmethod
+    def _connection_failure(exc: VoxdConnectionError) -> tuple[str, str]:
+        """Return the health-line template and readiness reason for ``exc``.
+
+        The table ends on ``VoxdConnectionError`` itself, so every connection
+        failure matches a row.
+        """
+        return next(
+            (line, why)
+            for kind, line, why in _CONNECTION_FAILURES
+            if isinstance(exc, kind)
+        )
+
+    @staticmethod
+    def _answered(health: HealthStatus) -> CheckResult:
+        """Return the line for a voxd that answered, warning on a stale wheel.
+
+        Provider readiness lives on the ``provider_status`` op; the daemon has
+        no provider of its own, so the line reports the version and port only.
+        """
+        running = health.daemon_version
+        wheel = installed_version()
+        if running and running != wheel:
+            return CheckResult.warn(
+                f"Daemon: running on port {health.port} (version {running}"
+                f" — wheel has {wheel}, run 'vox daemon restart' to refresh)"
             )
-        else:
-            # Provider readiness lives on the ``provider_status`` op; the
-            # daemon has no provider of its own, so the health line reports
-            # the version-and-port fact only.
-            version_note = f", version {running_version}" if running_version else ""
-            results.append(
-                CheckResult.ok(f"Daemon: running on port {port}{version_note}")
-            )
-        return results
+        version_note = f", version {running}" if running else ""
+        return CheckResult.ok(f"Daemon: running on port {health.port}{version_note}")
 
     def check_provider_readiness(self) -> list[CheckResult]:
         """Report the daemon's readiness verdict for every registered provider.
@@ -185,17 +223,15 @@ class DoctorCheck:
         client = self._client or VoxClientSync()
         try:
             payload = client.provider_status()
-        except VoxdConnectionError:
-            # Daemon down is already a fail from ``check_daemon_health``;
-            # here it would be a duplicate hard-fail with the same cause.
-            # Report it as informational so the readiness section
-            # explains why it is empty rather than pretending nothing
-            # was asked.
+        except VoxdConnectionError as exc:
+            # Daemon down or unreachable is already a fail from
+            # ``check_daemon_health``; here it would be a duplicate hard-fail
+            # with the same cause. Report it as informational so the
+            # readiness section explains why it is empty.
+            _, why = self._connection_failure(exc)
             return [
                 CheckResult.of(
-                    OPTIONAL,
-                    "Provider readiness: skipped (voxd not running)",
-                    required=False,
+                    OPTIONAL, f"Provider readiness: skipped ({why})", required=False
                 )
             ]
         except VoxdProtocolError as exc:
@@ -281,71 +317,10 @@ class DoctorCheck:
     def check_claude_desktop(self) -> list[CheckResult]:
         """Check Claude Desktop config and MCP registration.
 
-        ``config_path`` is a *partial* function: it names the file only on the
-        platforms vox has verified Claude Desktop's location for, and raises
-        for the rest rather than guessing one. Every other sub-check still has
-        an answer on such a host, so the refusal degrades to a single optional
-        row -- a doctor run that aborts on an uncheckable optional dependency
-        reports nothing about the ones that matter. This mirrors
-        :meth:`~punt_vox.service.installer.ServiceInstaller.detect_platform`,
-        whose ``SystemExit`` Typer renders as one clean line.
+        The check lives in :class:`~punt_vox.doctor_desktop.DesktopCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        try:
-            config_path = DesktopInstaller.config_path()
-        except ValueError as exc:
-            return [CheckResult.of(OPTIONAL, f"Claude Desktop: {exc}", required=False)]
-
-        if not config_path.exists():
-            return [
-                CheckResult.of(
-                    OPTIONAL, "Claude Desktop config: not found", required=False
-                ),
-                self._not_registered(),
-            ]
-
-        # Out of jail (under ~/Library or $XDG_CONFIG_HOME, neither data root):
-        # present/absent verdict only -- the absolute config path never crosses
-        # to a client.
-        return [
-            CheckResult.of(OK, "Claude Desktop config: present", required=False),
-            self._registration_verdict(config_path),
-        ]
-
-    @staticmethod
-    def _not_registered() -> CheckResult:
-        """Return the "no vox entry" row, with the command that creates one."""
-        return CheckResult.of(
-            OPTIONAL,
-            "Claude Desktop MCP: not registered (run 'vox desktop install')",
-            required=False,
-        )
-
-    @classmethod
-    def _registration_verdict(cls, config_path: Path) -> CheckResult:
-        """Return whether an existing config registers the vox MCP server.
-
-        Reading someone else's config file is a system boundary: unparseable
-        JSON, an unreadable file, bytes that are not UTF-8, or a top level that
-        is not a JSON object are all reported as "could not read", never as a
-        crash and never as a false "not registered". The non-object case is the
-        one that bites silently -- ``json.loads`` accepts a bare list or string
-        happily and only the ``mcpServers`` lookup afterwards would raise.
-        """
-        parsed: object
-        try:
-            parsed = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            # Unreadable and non-object share one verdict, so a parse failure
-            # falls through to the same gate rather than duplicating the row.
-            parsed = None
-        if not isinstance(parsed, dict):
-            return CheckResult.of(
-                OPTIONAL, "Claude Desktop MCP: could not read config", required=False
-            )
-        servers = cast("dict[str, object]", parsed).get("mcpServers")
-        if isinstance(servers, dict) and "vox" in servers:
-            return CheckResult.of(OK, "Claude Desktop MCP: registered", required=False)
-        return cls._not_registered()
+        return DesktopCheck().run()
 
     def check_output_dir(self) -> list[CheckResult]:
         """Check the output dir -- writable verdict, no abs path or raw OSError.
@@ -367,52 +342,7 @@ class DoctorCheck:
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.
 
-        The deposited guide (``.punt-labs/vox/CLAUDE.md``) is @-imported by the
-        repo's own ``CLAUDE.md``, so it is what every agent working in the repo
-        actually reads. Nothing else surfaces whether it has fallen behind the
-        packaged source; a stale copy silently teaches agents tools that have
-        been retired. This check reads the source-hash stamp
-        (:class:`~punt_vox.guide_stamp.GuideStamp`) embedded on deposit and
-        compares it to a fresh hash of the packaged asset.
-
-        Four verdicts, distinct on purpose:
-
-        * outside a repo, or in a repo with no deposited guide (vox not
-          enabled): return an empty list -- not applicable, not a failure;
-        * ``AGREE``: pass -- the deposited copy matches the packaged asset;
-        * ``ABSENT_STAMP``: warn -- a copy from before this stamping existed
-          (or one hand-edited beyond recognition). Unknown, not a false pass;
-        * ``DIVERGE``: fail -- the deposit is provably behind the packaged
-          source and re-``enable`` is needed.
+        The check lives in :class:`~punt_vox.doctor_guide.GuideCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        root = find_repo_root()
-        if root is None:
-            return []
-        deposited = root / ".punt-labs" / "vox" / "CLAUDE.md"
-        # ``is_file`` swallows ENOENT / ENOTDIR / EBADF / ELOOP but propagates
-        # OSError variants like PermissionError (e.g. an unreadable parent
-        # directory) -- the same class of failure the deposit-read guard in
-        # ``GuideStamp.read`` handles. A check whose job is to say the deposit
-        # is in a bad state must not crash the whole ``vox doctor`` run when
-        # it hits one; treat "cannot see the deposit" as not-applicable, the
-        # same as "vox not enabled here".
-        try:
-            deposited_present = deposited.is_file()
-        except OSError:
-            return []
-        if not deposited_present:
-            return []
-        verdict = GuideStamp.for_packaged_asset().verify(deposited)
-        return [self._verdict_to_result(verdict)]
-
-    @staticmethod
-    def _verdict_to_result(verdict: GuideStampVerdict) -> CheckResult:
-        """Turn a :class:`GuideStampVerdict` into the matching check line."""
-        remediation = " — run 'vox enable' (or mic:enablement action=enable) to refresh"
-        if verdict is GuideStampVerdict.AGREE:
-            return CheckResult.ok("deposited guide: up to date")
-        if verdict is GuideStampVerdict.DIVERGE:
-            return CheckResult.fail(f"deposited guide: out of date{remediation}")
-        return CheckResult.warn(
-            f"deposited guide: unstamped, freshness unknown{remediation}"
-        )
+        return GuideCheck().run()

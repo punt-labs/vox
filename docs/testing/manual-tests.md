@@ -203,7 +203,7 @@ revisiting — see the design doc's fallback candidates). Repeat the
 - Summarize: which steps passed, which raised findings.
 - For every operator answer that revealed a defect, confirm a bead was filed.
 - For every step that emitted unexpected error or warning log lines, capture them and decide whether to file.
-- Stop the temporary test-flight daemon if you launched one: `pkill -f 'voxd --port' 2>/dev/null || true`. (This kills only a manually-launched instance; the installed LaunchAgent/systemd daemon is managed by `vox daemon restart`.)
+- Stop the temporary test-flight daemon if you launched one: `pkill -f 'voxd --port' 2>/dev/null || true`. (This kills only a manually-launched instance; the installed LaunchAgent/systemd daemon is managed by `vox daemon stop`, `vox daemon start`, and `vox daemon restart` -- `stop` would also terminate this unmanaged voxd once the service is down, reporting "killed unmanaged voxd pid N".)
 
 ## Known issues affecting this flight
 

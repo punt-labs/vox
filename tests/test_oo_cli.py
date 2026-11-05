@@ -85,7 +85,7 @@ class TestActionExclusivity:
 
     def test_log_and_json_are_actions_not_silently_ignored(self) -> None:
         # --log/--json are views: combining with another action is an error,
-        # not a silent no-op (Copilot #2).
+        # not a silent no-op.
         with pytest.raises(SystemExit):
             Options.parse(["src", "--check", "--log"])
         with pytest.raises(SystemExit):

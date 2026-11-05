@@ -75,8 +75,7 @@ class TestCacheKey:
         # pre-v4.2.1 format, which was
         # ``md5(f"{text}\\0{voice}\\0{provider}".encode())``.
         #
-        # This test also proves confirmation (3) for the PR #175
-        # round-4 fix: the api_key parameter has been removed from
+        # This test also proves that the api_key parameter has been removed from
         # the cache key computation, and the anonymous filename for an
         # ordinary (text, voice, provider) call is exactly what the
         # pre-PR code produced. Per-call api_key scopes do not reach

@@ -399,8 +399,7 @@ class TestConcurrentDispatchCapturesItsOwnGeneration:
     2 (B's bump, not A's own 1), commit A's STALE data labelled generation
     2, and permanently block B's genuinely FRESHER, later-dispatched write
     (``2 > 2`` is ``False``) -- silently, with no log line. This is the
-    scenario both round-5 reviewers (silent-failure-hunter,
-    type-design-analyzer) independently reproduced.
+    scenario this test reproduces.
     """
 
     async def test_a_slow_to_start_first_dispatch_still_loses_to_a_later_one(

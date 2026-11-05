@@ -1,6 +1,6 @@
 """The seam between a real :class:`VoxPanelService` and a real ``PanelRunner``.
 
-vox-h777 round 11: ``PanelRunner._applied`` collapsed
+``PanelRunner._applied`` once collapsed
 :meth:`~punt_vox.panel.service.VoxPanelService.apply_event`'s three-way
 :class:`~punt_vox.panel.control_push.ControlPush` answer back down to a bare
 truthy check (``ControlPush.REFRESH if changed else ControlPush.NONE``).
@@ -188,7 +188,7 @@ class TestRunnerServiceSeam:
 
         # The widget already shows "espeak" the instant the click fires; the
         # roster fetch behind this commit then fails, so ``_state`` never
-        # moves off "elevenlabs" -- the round-10 regression this seam test
+        # moves off "elevenlabs" -- the regression this seam test
         # guards: a diff-based re-push always looked like the right answer
         # against a fake that couldn't tell REFRESH from CORRECT.
         espeak_index = PROVIDER_NAMES.index("espeak") + 1
