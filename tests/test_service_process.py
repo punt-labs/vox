@@ -11,6 +11,7 @@ import pytest
 
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import ProcessManager
@@ -705,3 +706,34 @@ def test_discard_port_file_read_failure_raises(
     (tmp_path / "serve.port").mkdir()
     with pytest.raises(PortProbeError, match=r"serve\.port"):
         ProcessManager().discard_port_file(8421)
+
+
+# ---------------------------------------------------------------------------
+# A bounded manager: every probe command shares one deadline
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+@patch("punt_vox.service.process.subprocess.run")
+def test_probe_timeout_is_cut_to_what_the_deadline_leaves(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    clock = [0.0]
+    mgr = ProcessManager().within(Deadline(lambda: clock[0], 5.0))
+    clock[0] = 3.5
+    mock_run.return_value = _ran(1)
+    assert mgr.find_pid_on_port(8421) == []
+    assert mock_run.call_args.kwargs["timeout"] == pytest.approx(1.5)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+@patch("punt_vox.service.process.subprocess.run")
+def test_probe_after_the_deadline_never_runs(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    clock = [0.0]
+    mgr = ProcessManager().within(Deadline(lambda: clock[0], 5.0))
+    clock[0] = 5.0
+    with pytest.raises(PortProbeError, match="deadline"):
+        mgr.identity(123)
+    mock_run.assert_not_called()

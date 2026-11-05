@@ -26,6 +26,7 @@ from punt_vox.service.backend import (
     PrivilegeDeniedError,
 )
 from punt_vox.service.clock import Poll
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
@@ -219,6 +220,10 @@ class FakeWorld:
     # a hung health request: each one blocks this long (cut to the budget it
     # is handed), then fails with ``health_error``; 0: health answers at once
     health_blocks_s: float = 0.0
+    # a slow port or process probe (fuser, lsof, ps, a connect): each
+    # blocks this long, cut to what its deadline leaves, then times out
+    # if that cut it short; 0: probes answer at once
+    probe_blocks_s: float = 0.0
     # an actor other than vox: replaces the manager's stop, acts between the
     # stop and start halves of restart (at the second observation), or acts
     # once, just before the probe next lists the port holders
@@ -350,18 +355,39 @@ class FakeBackend:
 class FakeProbe:
     """A ``LifecycleProbe`` over the shared world."""
 
-    __slots__ = ("_miss", "_world")
+    __slots__ = ("_deadline", "_miss", "_world")
 
     _world: FakeWorld
     _miss: str
+    _deadline: Deadline
 
     def __new__(cls, world: FakeWorld) -> Self:
         self = super().__new__(cls)
         self._world = world
         self._miss = ""
+        self._deadline = Deadline.never()
         return self
 
+    def within(self, deadline: Deadline) -> FakeProbe:
+        """Return a probe over the same world whose probes share *deadline*."""
+        bounded = FakeProbe(self._world)
+        bounded._deadline = deadline
+        return bounded
+
+    def _block(self, what: str) -> None:
+        """Block like a real probe command: cut to the deadline, then time out."""
+        blocks = self._world.probe_blocks_s
+        if not blocks:
+            return
+        cut = self._deadline.cap(blocks, f"cannot run {what}")
+        assert self._world.clock is not None
+        self._world.clock.advance(cut)
+        if cut < blocks:
+            msg = f"cannot run {what}: timed out after {cut:g}s"
+            raise PortProbeError(msg)
+
     def _check(self) -> None:
+        self._block("fuser")
         if self._world.probe_error:
             raise PortProbeError(self._world.probe_error)
 
@@ -408,6 +434,7 @@ class FakeProbe:
         return PortFileCleanup.OTHER_PORT
 
     def port_listening(self) -> bool:
+        self._block("connect")
         self._fail("port_listening")
         return self._world.foreign_listener or self._world.holder() is not None
 

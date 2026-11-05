@@ -7,10 +7,16 @@ Only an answer is ``running``; a visible voxd that does not answer is
 
 from __future__ import annotations
 
-from _lifecycle_fakes import FakeWorld, assert_p4_token_only_to_visible_voxd, lifecycle
+from _lifecycle_fakes import (
+    FakeClock,
+    FakeWorld,
+    assert_p4_token_only_to_visible_voxd,
+    lifecycle,
+)
 
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_status import DaemonState
+from punt_vox.service.lifecycle import DaemonLifecycle
 
 
 def test_status_a_voxd_that_answers_is_running() -> None:
@@ -68,3 +74,25 @@ def test_status_a_listener_check_that_fails_is_unknown() -> None:
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
     assert reading.reason == "connect timed out"
+
+
+def test_status_slow_probes_cannot_push_status_past_its_deadline() -> None:
+    """Port and process probes and the health request share one bound."""
+    world = FakeWorld(probe_blocks_s=3.0, health_blocks_s=60.0)
+    world.health_error = "no answer from voxd within the time left"
+    world.run_unit(100)
+    clock = FakeClock()
+    reading = lifecycle(world, clock).status()
+    assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
+    assert reading.state is DaemonState.UNRESPONSIVE
+
+
+def test_status_deadline_spent_on_probes_is_unknown_and_sends_no_token() -> None:
+    world = FakeWorld(probe_blocks_s=60.0)
+    world.run_unit(100)
+    clock = FakeClock()
+    reading = lifecycle(world, clock).status()
+    assert clock.monotonic() == DaemonLifecycle.STATUS_DEADLINE_S
+    assert reading.state is DaemonState.UNKNOWN
+    assert "timed out" in reading.reason
+    assert world.tokens_to == []

@@ -13,6 +13,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.types_health import HealthStatus
@@ -254,3 +255,46 @@ def test_wait_up_never_outlives_its_deadline_on_a_hung_health_check() -> None:
     assert budgets
     assert all(b is not None and b > 0 for b in budgets)
     assert isinstance(probe.health_miss(), VoxdProtocolError)
+
+
+def test_within_bounds_the_process_probes_by_the_deadline() -> None:
+    mgr = MagicMock()
+    deadline = Deadline.never()
+    bounded = _probe(mgr).within(deadline)
+    mgr.within.assert_called_once_with(deadline)
+    mgr.within.return_value.find_pid_on_port.return_value = []
+    assert bounded.voxd_processes() == frozenset()
+
+
+def test_port_listening_connect_is_cut_to_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    asked: list[float] = []
+
+    def connect(address: object, timeout: float) -> object:
+        asked.append(timeout)
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    probe = _probe(MagicMock()).within(Deadline(lambda: clock[0], 5.0))
+    clock[0] = 4.9
+    assert probe.port_listening() is False
+    assert asked == [pytest.approx(0.1)]
+
+
+def test_port_listening_after_the_deadline_never_connects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    connect = MagicMock()
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    probe = _probe(MagicMock()).within(Deadline(lambda: clock[0], 5.0))
+    clock[0] = 6.0
+    with pytest.raises(PortProbeError, match="deadline"):
+        probe.port_listening()
+    connect.assert_not_called()

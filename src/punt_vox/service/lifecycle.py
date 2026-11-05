@@ -35,7 +35,9 @@ class DaemonLifecycle:
 
     STOP_DEADLINE_S: ClassVar[float] = 10.0
     START_DEADLINE_S: ClassVar[float] = 10.0
-    # One health request for ``status``: a snapshot, not a wait for voxd.
+    # The whole of ``status`` -- port and process probes, the listener
+    # check, and one health request -- finishes within this: a snapshot, not
+    # a wait for voxd.
     STATUS_DEADLINE_S: ClassVar[float] = 5.0
 
     _system: LifecycleSystem

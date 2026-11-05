@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -36,7 +37,7 @@ __all__ = ["DaemonProbe"]
 class DaemonProbe:
     """The real :class:`~punt_vox.service.backend.LifecycleProbe`."""
 
-    __slots__ = ("_miss", "_poll", "_process_mgr", "_target")
+    __slots__ = ("_deadline", "_miss", "_poll", "_process_mgr", "_target")
 
     _CONNECT_TIMEOUT_S: ClassVar[float] = 0.5
     _PROC: ClassVar[Path] = Path("/proc")
@@ -49,6 +50,7 @@ class DaemonProbe:
     _target: Callable[[], HealthTarget]
     _poll: Poll
     _miss: Exception | None
+    _deadline: Deadline
 
     def __new__(
         cls,
@@ -63,6 +65,7 @@ class DaemonProbe:
         self._target = target
         self._poll = poll
         self._miss = None
+        self._deadline = Deadline.never()
         return self
 
     @classmethod
@@ -73,6 +76,19 @@ class DaemonProbe:
             lambda: HealthTarget(backend.installed_bind()),
             Poll(SystemClock()),
         )
+
+    def within(self, deadline: Deadline) -> DaemonProbe:
+        """Return this probe with every check bounded by *deadline*.
+
+        Each port, process and connect check finishes by *deadline*; one
+        started after it raises ``PortProbeError``. The health request takes
+        its bound from the caller.
+        """
+        bounded = DaemonProbe(
+            self._process_mgr.within(deadline), self._target, self._poll
+        )
+        bounded._deadline = deadline
+        return bounded
 
     @property
     def target(self) -> HealthTarget:
@@ -151,8 +167,11 @@ class DaemonProbe:
         """
         target = self._target()
         address = (target.host, target.port)
+        timeout = self._deadline.cap(
+            self._CONNECT_TIMEOUT_S, f"cannot connect to {address[0]}:{address[1]}"
+        )
         try:
-            with socket.create_connection(address, timeout=self._CONNECT_TIMEOUT_S):
+            with socket.create_connection(address, timeout=timeout):
                 return True
         except ConnectionRefusedError:
             return False

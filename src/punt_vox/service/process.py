@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, ClassVar, Self
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process_identity import ProcessIdentity
 from punt_vox.service.termination import Termination
@@ -30,13 +31,27 @@ DEFAULT_PORT = 8421
 class ProcessManager:
     """Manage voxd daemon processes: find, verify, kill, and port-file I/O."""
 
-    __slots__ = ()
+    __slots__ = ("_deadline",)
 
     # SIGTERM grace plus the SIGKILL wait for an install/uninstall kill.
     _KILL_BUDGET_S: ClassVar[float] = 7.0
 
+    _deadline: Deadline
+
     def __new__(cls) -> Self:
-        return super().__new__(cls)
+        self = super().__new__(cls)
+        self._deadline = Deadline.never()
+        return self
+
+    def within(self, deadline: Deadline) -> ProcessManager:
+        """Return a manager whose probe commands all finish by *deadline*.
+
+        Each ``fuser``/``lsof``/``ps`` run is cut to what the deadline leaves,
+        and one started after it raises ``PortProbeError`` without running.
+        """
+        bounded = ProcessManager()
+        bounded._deadline = deadline
+        return bounded
 
     @staticmethod
     def _run_dir() -> Path:
@@ -197,18 +212,21 @@ class ProcessManager:
             and not result.stderr.strip()
         )
 
-    @staticmethod
-    def _probe(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    def _probe(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
         """Run one probe command; raise ``PortProbeError`` if it cannot run.
 
-        The C locale fixes ``ps -o lstart`` at its 24-character form.
+        The C locale fixes ``ps -o lstart`` at its 24-character form. The run
+        is cut to what this manager's deadline leaves.
         """
+        timeout = self._deadline.cap(
+            _SUBPROCESS_TIMEOUT_SECONDS, f"cannot run {cmd[0]}"
+        )
         try:
             return subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                timeout=timeout,
                 env={**os.environ, "LC_ALL": "C"},
             )
         except FileNotFoundError as exc:

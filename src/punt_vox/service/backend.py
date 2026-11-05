@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol, Self, final
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from punt_vox.service.deadline import Deadline
     from punt_vox.service.port_file_cleanup import PortFileCleanup
     from punt_vox.service.query_answer import QueryAnswer
     from punt_vox.service.termination import Termination
@@ -126,6 +127,14 @@ class ProcessHandle(Protocol):
 
 class LifecycleProbe(Protocol):
     """What the lifecycle observes about voxd on its port."""
+
+    def within(self, deadline: Deadline) -> LifecycleProbe:
+        """Return this probe with every port and process check bounded.
+
+        Each check finishes by *deadline*; one started after it raises
+        ``PortProbeError``. The health request takes its own ``within_s``.
+        """
+        ...
 
     def voxd_processes(self) -> frozenset[ProcessHandle]:
         """Return handles on the visible voxd processes holding the port."""

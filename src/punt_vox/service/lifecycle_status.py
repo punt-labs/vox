@@ -2,7 +2,9 @@
 
 voxd is found the way ``stop`` and ``start`` find it -- the installed bind,
 port 8421, a token only from ``serve.token``, sent only to a visible voxd on
-the port. What the probe sees decides the state:
+the port. One :class:`Deadline`, started when the reading starts, bounds the
+whole of it: every port and process probe, the listener check, and the health
+request each get only what is left. What the probe sees decides the state:
 
 - a visible voxd answered health: ``running``;
 - a visible voxd did not answer (timeout, no token, rejected, socket error):
@@ -12,7 +14,8 @@ the port. What the probe sees decides the state:
   is sent to it;
 - no voxd and no listener: ``not_running``, naming any voxd on the port
   ``serve.port`` names, as ``stop`` does;
-- a port, process or unit vox cannot inspect: ``unknown``.
+- a port, process or unit vox cannot inspect, or a deadline spent before
+  voxd could be asked: ``unknown``.
 """
 
 from __future__ import annotations
@@ -21,10 +24,11 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
+from punt_vox.service.deadline import Deadline
 from punt_vox.service.process import DEFAULT_PORT
 
 if TYPE_CHECKING:
-    from punt_vox.service.backend import ProcessHandle
+    from punt_vox.service.backend import LifecycleProbe, ProcessHandle
     from punt_vox.service.lifecycle_system import LifecycleSystem
 
 __all__ = ["StatusCheck"]
@@ -32,17 +36,18 @@ __all__ = ["StatusCheck"]
 
 @final
 class StatusCheck:
-    """Read voxd's state on the service port once."""
+    """Read voxd's state on the service port once, within one deadline."""
 
-    __slots__ = ("_system", "_within_s")
+    __slots__ = ("_deadline", "_probe")
 
-    _system: LifecycleSystem
-    _within_s: float
+    _deadline: Deadline
+    _probe: LifecycleProbe
 
     def __new__(cls, system: LifecycleSystem, within_s: float) -> Self:
+        """Start the reading's deadline: *within_s* seconds from now."""
         self = super().__new__(cls)
-        self._system = system
-        self._within_s = within_s
+        self._deadline = Deadline(system.poll.now, within_s)
+        self._probe = system.probe.within(self._deadline)
         return self
 
     def run(self) -> DaemonStatus:
@@ -54,7 +59,7 @@ class StatusCheck:
 
     def _read(self) -> DaemonStatus:
         """Classify the port by who holds it, and who answers."""
-        probe = self._system.probe
+        probe = self._probe
         holders = probe.voxd_processes()
         if holders:
             return self._ask(holders)
@@ -70,8 +75,9 @@ class StatusCheck:
 
     def _ask(self, holders: frozenset[ProcessHandle]) -> DaemonStatus:
         """Ask the visible voxd for health; no answer is ``unresponsive``."""
-        probe = self._system.probe
-        health = probe.health(holders, self._within_s)
+        probe = self._probe
+        left = self._deadline.cap(self._deadline.remaining(), "health request")
+        health = probe.health(holders, left)
         if health is not None:
             return DaemonStatus.running(health)
         why = probe.health_miss() or "no reply"
