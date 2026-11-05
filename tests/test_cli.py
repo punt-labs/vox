@@ -16,7 +16,12 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.cli_daemon import build_daemon_app
-from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+    VoxdRejectionError,
+)
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -2502,19 +2507,54 @@ class TestDaemonStatusCommand:
         mock_client_cls.assert_called_once_with()
         mock_lifecycle.assert_not_called()
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_remote_not_running_is_not_running(
-        self, mock_client_cls: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @staticmethod
+    def _remote_status(
+        failure: Exception, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Result, dict[str, object]]:
+        """Run ``daemon status --json`` against VOXD_HOST whose health fails."""
         monkeypatch.setenv("VOXD_HOST", "remote.example.com")
-        mock_client_cls.return_value.health.side_effect = VoxdProtocolError(
-            "Timeout waiting for response to 'health'"
-        )
-        result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        with patch(f"{_CLI_DAEMON}.VoxClientSync") as mock_client_cls:
+            mock_client_cls.return_value.health.side_effect = failure
+            result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        return result, json.loads(result.output)
+
+    def test_remote_refused_is_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only a refused connection means nothing is there."""
+        refused = VoxdRefusedError("Cannot connect to voxd: Connection refused")
+        result, payload = self._remote_status(refused, monkeypatch)
         assert result.exit_code == 1
-        payload = json.loads(result.output)
         assert payload["status"] == "not_running"
-        assert "Timeout" in payload["reason"]
+        assert "refused" in str(payload["reason"])
+
+    def test_remote_rejection_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A peer that answered "no" is there: never not_running."""
+        rejected = VoxdRejectionError("unauthorized")
+        result, payload = self._remote_status(rejected, monkeypatch)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
+        assert "unauthorized" in str(payload["reason"])
+
+    def test_remote_connect_timeout_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        timed_out = VoxdConnectionError(
+            "Cannot connect to voxd at ws://remote:8421/ws: "
+            "timed out during opening handshake"
+        )
+        result, payload = self._remote_status(timed_out, monkeypatch)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
+        assert "opening handshake" in str(payload["reason"])
+
+    def test_remote_protocol_error_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        garbled = VoxdProtocolError("invalid JSON from voxd")
+        result, payload = self._remote_status(garbled, monkeypatch)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
 
     def test_refused_as_root_exits_2(self) -> None:
         refusal = LifecycleRefusedError("vox daemon must run as your normal user")

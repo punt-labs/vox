@@ -15,6 +15,26 @@ class VoxError(Exception):
 class VoxdConnectionError(VoxError):
     """Raised when the client cannot connect to voxd."""
 
+    @classmethod
+    def of_connect(cls, endpoint: str, exc: OSError) -> VoxdConnectionError:
+        """Return the error for a connect to *endpoint* that raised *exc*.
+
+        A refusal -- nothing listens there -- is :class:`VoxdRefusedError`;
+        every other socket failure (a timeout, a reset, an unreachable host)
+        is a plain :class:`VoxdConnectionError`, since something may be there.
+        """
+        msg = f"Cannot connect to voxd at {endpoint}: {exc}"
+        if isinstance(exc, ConnectionRefusedError):
+            return VoxdRefusedError(msg)
+        return cls(msg)
+
+
+class VoxdRefusedError(VoxdConnectionError):
+    """Raised when the endpoint refused the connection: nothing listens there.
+
+    The one connect failure that says voxd is not running at the endpoint.
+    """
+
 
 class VoxdProtocolError(VoxError):
     """Raised when voxd returns an unexpected response."""

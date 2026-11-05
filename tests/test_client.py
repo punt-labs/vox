@@ -20,6 +20,7 @@ from punt_vox.client import (
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
+    VoxdRefusedError,
     VoxdRejectionError,
     VoxError,
 )
@@ -2226,3 +2227,35 @@ class TestEnvVarResolution:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         sync_client = VoxClientSync(port=8421, token="tok")
         assert sync_client._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+
+
+# ---------------------------------------------------------------------------
+# Connect failures are typed: a refusal is not a timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_refused_is_a_refusal() -> None:
+    """Nothing listens at the endpoint: the one failure that means "not running"."""
+    with patch(
+        "punt_vox.client.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=ConnectionRefusedError(111, "Connection refused"),
+    ):
+        client = VoxClient(port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError, match="Cannot connect"):
+            await client.connect()
+
+
+@pytest.mark.asyncio
+async def test_connect_timeout_is_not_a_refusal() -> None:
+    """A handshake that never completes means something may be there."""
+    with patch(
+        "punt_vox.client.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=TimeoutError("timed out during opening handshake"),
+    ):
+        client = VoxClient(port=8421, token="tok")
+        with pytest.raises(VoxdConnectionError, match="opening handshake") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)

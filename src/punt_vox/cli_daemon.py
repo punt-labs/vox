@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Annotated, Self, final
 
 import typer
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdRefusedError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service import (
     DaemonLifecycle,
@@ -215,9 +215,8 @@ class DaemonCli:
         """Return a reading of the configured daemon, else the local service.
 
         ``VOXD_HOST`` or ``VOXD_PORT`` names a daemon the operator chose
-        (possibly remote), so the client reaches it as ``vox status`` does
-        and any failure is ``not_running``; otherwise the lifecycle probe
-        reads the installed service.
+        (possibly remote), so the client reaches it as ``vox status`` does;
+        otherwise the lifecycle probe reads the installed service.
         """
         if any(os.environ.get(name, "").strip() for name in _ENDPOINT_ENV):
             return cls._client_status()
@@ -225,11 +224,18 @@ class DaemonCli:
 
     @staticmethod
     def _client_status() -> DaemonStatus:
-        """Return the configured daemon's reading; any failure is ``not_running``."""
+        """Return the configured daemon's reading.
+
+        Only a refused connection is ``not_running``: nothing listens there.
+        A rejection, a malformed reply, a timeout or any other failure means
+        something holds the endpoint, so it is ``unknown``, with the reason.
+        """
         try:
             return DaemonStatus.running(VoxClientSync().health())
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
+        except VoxdRefusedError as exc:
             return DaemonStatus.not_running(str(exc))
+        except VoxError as exc:
+            return DaemonStatus.unknown(str(exc))
 
     @staticmethod
     def _lifecycle() -> DaemonLifecycle:

@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from punt_vox.client_call import BoundedCall
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 
 if TYPE_CHECKING:
     from punt_vox.client import VoxClient
@@ -98,6 +102,7 @@ def test_a_timeout_inside_the_bound_names_its_own_cause() -> None:
     client.connect.side_effect = TimeoutError("timed out during opening handshake")
     with pytest.raises(VoxdConnectionError) as caught:
         asyncio.run(BoundedCall(5.0).run(client, _answer))
+    assert not isinstance(caught.value, VoxdRefusedError)
     message = str(caught.value)
     assert "no answer from voxd within" not in message
     assert "timed out during opening handshake" in message

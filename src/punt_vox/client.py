@@ -264,8 +264,8 @@ class _VoxdTransport:
         try:
             self._ws = await websockets.asyncio.client.connect(uri)
         except OSError as exc:
-            msg = f"Cannot connect to voxd at {uri.split('?')[0]}: {exc}"
-            raise VoxdConnectionError(msg) from exc
+            endpoint = uri.split("?")[0]
+            raise VoxdConnectionError.of_connect(endpoint, exc) from exc
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
