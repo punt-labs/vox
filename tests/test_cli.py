@@ -1395,7 +1395,7 @@ class TestDoctorCommand:
             patch(f"{_mpv}.platform.system", return_value=system_platform),
             # Isolate the config-path helper from the real filesystem.
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
-            patch("punt_vox.doctor.find_repo_root", return_value=None),
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1551,7 +1551,7 @@ class TestDoctorCommand:
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
-            patch("punt_vox.doctor.find_repo_root", return_value=None),
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1639,7 +1639,7 @@ class TestDoctorCommand:
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
-            patch("punt_vox.doctor.find_repo_root", return_value=None),
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1713,7 +1713,7 @@ class TestDoctorCommand:
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
-            patch("punt_vox.doctor.find_repo_root", return_value=None),
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",

@@ -126,7 +126,7 @@ class VoxdEndpoint:
             )
         return VoxdNotPublishedError(
             "voxd is not running: no serve.port is published. "
-            "Start it with: vox daemon install"
+            "Start it with: vox daemon start"
         )
 
     def _resolve_token(self) -> str | None:

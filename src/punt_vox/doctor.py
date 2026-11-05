@@ -3,8 +3,9 @@
 :class:`DoctorCheck` runs each sub-check and gathers a list of
 :class:`CheckResult` values. The result type and the render-into-JSON
 collection (:class:`~punt_vox.doctor_result.CheckResults`) live in
-:mod:`punt_vox.doctor_result`; the mpv sub-check lives in
-:mod:`punt_vox.doctor_mpv`.
+:mod:`punt_vox.doctor_result`; the mpv, Claude Desktop, and deposited-guide
+sub-checks live in :mod:`punt_vox.doctor_mpv`, :mod:`punt_vox.doctor_desktop`,
+and :mod:`punt_vox.doctor_guide`.
 """
 
 from __future__ import annotations
@@ -25,12 +26,11 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.dirs import (
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
-    find_repo_root,
 )
 from punt_vox.doctor_desktop import DesktopCheck
+from punt_vox.doctor_guide import GuideCheck
 from punt_vox.doctor_mpv import MpvCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
-from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
 
@@ -46,7 +46,7 @@ __all__ = ["DoctorCheck"]
 _CONNECTION_FAILURES: tuple[tuple[type[VoxdConnectionError], str, str], ...] = (
     (
         VoxdRefusedError,
-        "Daemon: not running — start with 'vox daemon install'",
+        "Daemon: not running — start with 'vox daemon start'",
         "voxd not running",
     ),
     (
@@ -342,52 +342,7 @@ class DoctorCheck:
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.
 
-        The deposited guide (``.punt-labs/vox/CLAUDE.md``) is @-imported by the
-        repo's own ``CLAUDE.md``, so it is what every agent working in the repo
-        actually reads. Nothing else surfaces whether it has fallen behind the
-        packaged source; a stale copy silently teaches agents tools that have
-        been retired. This check reads the source-hash stamp
-        (:class:`~punt_vox.guide_stamp.GuideStamp`) embedded on deposit and
-        compares it to a fresh hash of the packaged asset.
-
-        Four verdicts, distinct on purpose:
-
-        * outside a repo, or in a repo with no deposited guide (vox not
-          enabled): return an empty list -- not applicable, not a failure;
-        * ``AGREE``: pass -- the deposited copy matches the packaged asset;
-        * ``ABSENT_STAMP``: warn -- a copy from before this stamping existed
-          (or one hand-edited beyond recognition). Unknown, not a false pass;
-        * ``DIVERGE``: fail -- the deposit is provably behind the packaged
-          source and re-``enable`` is needed.
+        The check lives in :class:`~punt_vox.doctor_guide.GuideCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        root = find_repo_root()
-        if root is None:
-            return []
-        deposited = root / ".punt-labs" / "vox" / "CLAUDE.md"
-        # ``is_file`` swallows ENOENT / ENOTDIR / EBADF / ELOOP but propagates
-        # OSError variants like PermissionError (e.g. an unreadable parent
-        # directory) -- the same class of failure the deposit-read guard in
-        # ``GuideStamp.read`` handles. A check whose job is to say the deposit
-        # is in a bad state must not crash the whole ``vox doctor`` run when
-        # it hits one; treat "cannot see the deposit" as not-applicable, the
-        # same as "vox not enabled here".
-        try:
-            deposited_present = deposited.is_file()
-        except OSError:
-            return []
-        if not deposited_present:
-            return []
-        verdict = GuideStamp.for_packaged_asset().verify(deposited)
-        return [self._verdict_to_result(verdict)]
-
-    @staticmethod
-    def _verdict_to_result(verdict: GuideStampVerdict) -> CheckResult:
-        """Turn a :class:`GuideStampVerdict` into the matching check line."""
-        remediation = " — run 'vox enable' (or mic:enablement action=enable) to refresh"
-        if verdict is GuideStampVerdict.AGREE:
-            return CheckResult.ok("deposited guide: up to date")
-        if verdict is GuideStampVerdict.DIVERGE:
-            return CheckResult.fail(f"deposited guide: out of date{remediation}")
-        return CheckResult.warn(
-            f"deposited guide: unstamped, freshness unknown{remediation}"
-        )
+        return GuideCheck().run()

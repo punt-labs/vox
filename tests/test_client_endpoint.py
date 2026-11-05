@@ -76,7 +76,7 @@ def test_no_published_port_is_a_refusal_naming_the_fix(
 ) -> None:
     """No serve.port, no VOXD_PORT: nothing published a port, so nothing listens."""
     _local_only(tmp_path, monkeypatch)
-    with pytest.raises(VoxdNotPublishedError, match="vox daemon install") as caught:
+    with pytest.raises(VoxdNotPublishedError, match="vox daemon start") as caught:
         VoxdEndpoint(None, None, "tok").uri()
     assert isinstance(caught.value, VoxdRefusedError)
 
