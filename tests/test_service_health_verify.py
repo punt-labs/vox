@@ -10,6 +10,8 @@ cause, when the unit never runs or the daemon never serves.
 
 from __future__ import annotations
 
+import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,14 +22,22 @@ from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.health import HealthTarget
 from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
+from punt_vox.service.launchd import LaunchdBackend
+from punt_vox.service.query_answer import QueryAnswer
+from punt_vox.service.systemd import PrivilegedRun, SystemdBackend
 from punt_vox.types_health import HealthStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from punt_vox.service.backend import InstallableBackend
 
 _SERVICE_PATH = "/Library/LaunchAgents/com.punt-labs.voxd.plist"
 
 
 def _backend(*, active: bool = True, bind: str = "") -> MagicMock:
     backend = MagicMock()
-    backend.is_active_within.return_value = active
+    backend.is_active_within.return_value = QueryAnswer.of(holds=active)
     backend.installed_bind.return_value = bind
     backend.service_path = _SERVICE_PATH
     return backend
@@ -108,9 +118,9 @@ def test_verify_never_lets_an_active_query_outlive_the_wait() -> None:
     probe.poll = Poll(clock)
     seen: list[tuple[float, float]] = []
 
-    def not_yet(within_s: float) -> bool:
+    def not_yet(within_s: float) -> QueryAnswer:
         seen.append((clock.monotonic(), within_s))
-        return False
+        return QueryAnswer.of(holds=False)
 
     backend = _backend()
     backend.is_active_within.side_effect = not_yet
@@ -119,3 +129,42 @@ def test_verify_never_lets_an_active_query_outlive_the_wait() -> None:
     assert seen
     assert all(budget > 0 and at + budget <= 5.0 for at, budget in seen)
     assert clock.monotonic() <= 5.0
+
+
+def _systemd_hung(monkeypatch: pytest.MonkeyPatch) -> InstallableBackend:
+    monkeypatch.setattr(
+        "punt_vox.service.systemd.subprocess.run",
+        MagicMock(side_effect=subprocess.TimeoutExpired("systemctl", 0.1)),
+    )
+    return SystemdBackend(
+        lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+    )
+
+
+def _launchd_hung(monkeypatch: pytest.MonkeyPatch) -> InstallableBackend:
+    monkeypatch.setattr(
+        "punt_vox.service.launchctl_query.subprocess.run",
+        MagicMock(side_effect=subprocess.TimeoutExpired("launchctl", 0.1)),
+    )
+    return LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+
+
+@pytest.mark.parametrize(
+    ("hung", "query"),
+    [
+        (_systemd_hung, "systemctl is-active voxd"),
+        (_launchd_hung, "launchctl list com.punt-labs.voxd"),
+    ],
+)
+def test_verify_names_a_manager_query_that_never_answered(
+    monkeypatch: pytest.MonkeyPatch,
+    hung: Callable[[pytest.MonkeyPatch], InstallableBackend],
+    query: str,
+) -> None:
+    """S2: a hung systemctl/launchctl is named, not blamed on voxd's logs."""
+    backend = hung(monkeypatch)
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match=f"{query} did not answer") as info:
+        HealthVerifier(backend, probe).verify()
+    assert "daemon logs" not in str(info.value)
+    probe.wait_up.assert_not_called()

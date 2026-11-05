@@ -375,7 +375,7 @@ def test_install_unwritable_state_dir_is_backend_command_error(
 @patch("punt_vox.service.systemd.subprocess.run")
 def test_is_active_within_bounds_the_query_by_the_budget(mock_run: MagicMock) -> None:
     mock_run.return_value = _ran(0, "active\n")
-    assert _backend().is_active_within(0.4) is True
+    assert _backend().is_active_within(0.4).holds is True
     assert mock_run.call_args.kwargs["timeout"] == 0.4
 
 
@@ -387,7 +387,9 @@ def test_is_active_within_a_query_cut_short_confirms_nothing(
     _mock_run: MagicMock,
 ) -> None:
     """A query the budget cut short is "not active yet", not a backend failure."""
-    assert _backend().is_active_within(0.4) is False
+    answer = _backend().is_active_within(0.4)
+    assert answer.holds is False
+    assert answer.unanswered == "systemctl is-active voxd"
 
 
 @patch("punt_vox.service.systemd.subprocess.run")

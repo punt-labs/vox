@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,8 +10,9 @@ import pytest
 
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import BackendCommandError
-from punt_vox.service.launchctl import LaunchctlError
+from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
 from punt_vox.service.launchd import LaunchdBackend
+from punt_vox.service.query_answer import QueryAnswer
 
 
 def _backend_with_mock_agent(
@@ -300,7 +302,7 @@ def test_launchd_uninstall_boots_out_and_removes_plist(
     be.uninstall()
 
     assert not plist.exists()
-    agent.bootout.assert_called_once_with()
+    agent.bootout_confirmed.assert_called_once_with()
 
 
 def test_launchd_uninstall_noop_when_plist_missing(
@@ -313,7 +315,7 @@ def test_launchd_uninstall_noop_when_plist_missing(
 
     be.uninstall()
 
-    agent.bootout.assert_not_called()
+    agent.bootout_confirmed.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +362,7 @@ def test_launchd_uninstall_failure_is_backend_command_error(
     plist = tmp_path / "com.punt-labs.voxd.plist"
     plist.write_text("<plist/>")
     be, agent = _backend_with_mock_agent(monkeypatch, plist)
-    agent.bootout.side_effect = LaunchctlError("bootout failed (exit 37)")
+    agent.bootout_confirmed.side_effect = LaunchctlError("bootout failed (exit 37)")
     with pytest.raises(BackendCommandError, match="bootout failed"):
         be.uninstall()
     assert plist.exists(), "a failed bootout must not remove the plist"
@@ -385,8 +387,8 @@ def test_launchd_is_active_within_hands_the_budget_to_launchctl(
 ) -> None:
     """The bounded wait's remaining time reaches the launchctl queries."""
     be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
-    agent.running_within.return_value = True
-    assert be.is_active_within(0.7) is True
+    agent.running_within.return_value = QueryAnswer.of(holds=True)
+    assert be.is_active_within(0.7).holds is True
     agent.running_within.assert_called_once_with(0.7)
 
 
@@ -398,3 +400,28 @@ def test_launchd_is_active_within_failure_is_backend_command_error(
     agent.running_within.side_effect = LaunchctlError("query failed (exit 1)")
     with pytest.raises(BackendCommandError, match="query failed"):
         be.is_active_within(0.7)
+
+
+def test_launchd_uninstall_keeps_the_plist_when_bootout_is_unconfirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S1: a print that times out after bootout fails uninstall, plist kept."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.005)
+    calls: list[str] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv[1])
+        if argv[1] == "bootout" or calls == ["print"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.01)
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="did not answer"):
+        be.uninstall()
+    assert plist.exists()

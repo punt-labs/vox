@@ -1,10 +1,12 @@
 """launchctl GUI-domain control for the voxd LaunchAgent.
 
 Owns every ``launchctl`` invocation for one agent job -- ``bootout``,
-``bootstrap``, ``kickstart``, the ``print`` registration probe, and the
-``list`` loaded-status probe -- so the plist-authoring backend
-(``LaunchdBackend``) and the ``vox daemon restart`` orchestrator share one
-race-free implementation and no caller shells out to ``launchctl`` directly.
+``bootstrap``, ``kickstart``, and, through the composed
+:class:`~punt_vox.service.launchctl_query.LaunchctlQuery`, the ``print``
+registration probe and the ``list`` loaded-status probe -- so the
+plist-authoring backend (``LaunchdBackend``) and the ``vox daemon restart``
+orchestrator share one race-free implementation and no caller shells out to
+``launchctl`` directly.
 
 The race this class exists to close: ``launchctl bootout`` is asynchronous.
 launchctl returns before launchd finishes tearing the job's registration out
@@ -22,37 +24,32 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-import subprocess
-from typing import ClassVar, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.service.clock import Poll, SystemClock
+from punt_vox.service.launchctl_query import LaunchctlError, LaunchctlQuery
+
+if TYPE_CHECKING:
+    import subprocess
+
+    from punt_vox.service.query_answer import QueryAnswer
 
 logger = logging.getLogger(__name__)
 
+# LaunchctlError is what every method here raises, so it is part of this
+# module's interface; it is defined beside the queries that raise it first.
 __all__ = ["LaunchctlAgent", "LaunchctlError"]
-
-
-@final
-class LaunchctlError(RuntimeError):
-    """A ``launchctl`` operation failed unrecoverably.
-
-    Raised when the job never leaves the GUI domain within the bound, or when
-    ``bootstrap`` still fails after the single exit-5 retry. The caller
-    translates this into a non-zero exit with a clear message.
-    """
-
-    __slots__ = ()
 
 
 @final
 class LaunchctlAgent:
     """Control one LaunchAgent job in the caller's ``gui/<uid>`` domain."""
 
-    __slots__ = ("_label", "_plist")
+    __slots__ = ("_label", "_plist", "_query")
 
     _label: str
     _plist: str
+    _query: LaunchctlQuery
 
     # bootout is async; poll `launchctl print` until the job leaves the domain
     # so a following bootstrap does not race the teardown (exit 5).
@@ -61,18 +58,12 @@ class LaunchctlAgent:
     # launchctl "Bootstrap failed: 5: Input/output error" -- the domain still
     # holds a registration for the label being bootstrapped.
     _IO_ERROR: ClassVar[int] = 5
-    # launchctl print/list: "Could not find service" -- the only exit that
-    # means the job is absent; every other non-zero exit is a failed query.
-    _NOT_FOUND: ClassVar[int] = 113
-    # A launchctl command that hangs must not hang the verb past its deadline.
-    _COMMAND_TIMEOUT_S: ClassVar[float] = 10.0
-    # The running pid in `launchctl print` output: a "pid = N" line.
-    _PID_LINE: ClassVar[re.Pattern[str]] = re.compile(r"^\s*pid = (\S+)\s*$", re.M)
 
     def __new__(cls, label: str, plist: str) -> Self:
         self = super().__new__(cls)
         self._label = label
         self._plist = plist
+        self._query = LaunchctlQuery(label, self._service_target())
         return self
 
     # -- domain targets ------------------------------------------------------
@@ -86,7 +77,7 @@ class LaunchctlAgent:
         """Return the ``gui/<uid>/<label>`` service target for this job."""
         return f"{self._domain()}/{self._label}"
 
-    # -- registration probe --------------------------------------------------
+    # -- queries -------------------------------------------------------------
 
     def is_registered(self) -> bool:
         """Return True if launchd still has this job in the GUI domain.
@@ -96,138 +87,57 @@ class LaunchctlAgent:
         failed query and raises ``LaunchctlError``: it is never read as
         "absent".
         """
-        return self._present(self._print())
+        return self._query.is_registered()
 
     def pid(self) -> int | None:
-        """Return the job's running pid, read from ``launchctl print``.
-
-        ``None`` is the documented answer when the job is not registered or is
-        registered with no running process. A failed query, or a ``pid = ...``
-        line that is not a number, raises ``LaunchctlError`` rather than
-        reading as "no process".
-        """
-        return self._pid_in(self._print())
-
-    def _pid_in(self, result: subprocess.CompletedProcess[str]) -> int | None:
-        """Return the pid a ``launchctl print`` *result* names.
-
-        ``None`` is the documented answer when the job is absent or has no
-        running process; a malformed ``pid = ...`` line raises.
-        """
-        if not self._present(result):
-            return None
-        found = self._PID_LINE.search(result.stdout)
-        if found is None:
-            return None
-        if not found.group(1).isdecimal():
-            msg = f"launchctl print {self._label}: malformed pid {found.group(1)!r}"
-            raise LaunchctlError(msg)
-        return int(found.group(1))
-
-    def _print(self) -> subprocess.CompletedProcess[str]:
-        """Run ``launchctl print`` on this job's service target."""
-        return self._run("print", self._service_target())
-
-    def running_within(self, within_s: float) -> bool:
-        """Return True when launchctl confirms, inside *within_s*, the job runs.
-
-        Running means loaded, or registered with a process -- what
-        ``LaunchdBackend.is_active`` reads -- and the two queries together take
-        at most *within_s*, so a bounded wait that asks this cannot overrun.
-        A query the budget cuts short confirms nothing (False); a query that
-        fails outright still raises ``LaunchctlError``.
-        """
-        poll = Poll(SystemClock())
-        deadline = poll.now() + within_s
-        try:
-            if self._present(self._spawn(("list", self._label), within_s)):
-                return True
-            remaining = deadline - poll.now()
-            if remaining <= 0:
-                return False
-            target = ("print", self._service_target())
-            return self._pid_in(self._spawn(target, remaining)) is not None
-        except subprocess.TimeoutExpired:
-            return False
+        """Return the job's running pid; ``None`` when it has no process."""
+        return self._query.pid()
 
     def is_loaded(self) -> bool:
         """Return True if launchd currently has this job loaded.
 
-        ``launchctl list <label>`` exits 0 while the job is loaded and 113
-        once it is gone; any other exit raises. Distinct from
-        ``is_registered()``: that probes the GUI-domain service target to
-        serialise the bootout/bootstrap race, whereas this is the external
-        "is voxd up?" status query keyed on the bare label.
+        Distinct from ``is_registered()``: that probes the GUI-domain service
+        target to serialise the bootout/bootstrap race, whereas this is the
+        external "is voxd up?" status query keyed on the bare label.
         """
-        return self._present(self._run("list", self._label))
+        return self._query.is_loaded()
 
-    def _present(self, result: subprocess.CompletedProcess[str]) -> bool:
-        """Classify a print/list query: 0 present, 113 absent, else raise."""
-        if result.returncode == 0:
-            return True
-        if result.returncode == self._NOT_FOUND:
-            return False
-        msg = (
-            f"launchctl query of {self._label} failed "
-            f"(exit {result.returncode}): {result.stderr.strip()}"
-        )
-        raise LaunchctlError(msg)
+    def running_within(self, within_s: float) -> QueryAnswer:
+        """Ask launchctl, inside *within_s*, whether the job runs.
+
+        Running means loaded, or registered with a process -- what
+        ``LaunchdBackend.is_active`` reads. A query the budget cuts short
+        confirms nothing and is named in the answer; a query that fails
+        outright still raises ``LaunchctlError``.
+        """
+        return self._query.running_within(within_s)
+
+    def wait_until_unregistered(self) -> QueryAnswer:
+        """Block until the job leaves the GUI domain, bounded.
+
+        The answer holds once ``launchctl print`` reports the job absent. If
+        the bound elapses first it does not hold, and it names the ``print``
+        when the last one did not answer in time -- so a caller can tell a
+        hung launchctl from a job that really stayed registered. Each print
+        is given only what is left of the bound, so a slow launchctl cannot
+        carry the wait past it.
+        """
+        poll = Poll(SystemClock(), self._UNREGISTER_POLL_S)
+        return poll.answer_within(self._query.left_within, self._UNREGISTER_TIMEOUT_S)
+
+    def _lingering(self, answer: QueryAnswer, when: str) -> str:
+        """Say why the job was not confirmed gone *when*: hung, or still there."""
+        bound = f"{self._UNREGISTER_TIMEOUT_S:g}s"
+        if answer.timed_out:
+            return (
+                f"{answer.unanswered} did not answer within the {bound} wait "
+                f"{when}; cannot confirm {self._label} left {self._domain()}"
+            )
+        return f"{self._label} was still registered in {self._domain()} {bound} {when}"
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run one ``launchctl`` command, bounded; raise if it cannot run."""
-        try:
-            return self._spawn(args, self._COMMAND_TIMEOUT_S)
-        except subprocess.TimeoutExpired as exc:
-            msg = f"launchctl {' '.join(args)} could not run: {exc}"
-            raise LaunchctlError(msg) from exc
-
-    @staticmethod
-    def _spawn(
-        args: tuple[str, ...], within_s: float
-    ) -> subprocess.CompletedProcess[str]:
-        """Run ``launchctl *args*`` for at most *within_s* seconds.
-
-        A launchctl that cannot start raises ``LaunchctlError``; one that has
-        not finished in time raises ``subprocess.TimeoutExpired`` so the caller
-        decides whether running out of time is a failure or "not yet".
-        """
-        argv = ["launchctl", *args]
-        try:
-            return subprocess.run(  # noqa: S603
-                argv,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=within_s,
-            )
-        except OSError as exc:
-            msg = f"{' '.join(argv)} could not run: {exc}"
-            raise LaunchctlError(msg) from exc
-
-    def wait_until_unregistered(self) -> bool:
-        """Block until the job leaves the GUI domain, bounded. Return success.
-
-        Returns True once ``launchctl print`` reports the job absent, or False
-        if it is still registered when the bound elapses. The bound is real
-        work, not a blind sleep: it polls the actual registration state and
-        returns the instant the job clears, and each ``print`` is given only
-        what is left of the bound, so a slow launchctl cannot carry the wait
-        past it.
-        """
-        poll = Poll(SystemClock(), self._UNREGISTER_POLL_S)
-        return poll.until_within(self._left_within, self._UNREGISTER_TIMEOUT_S)
-
-    def _left_within(self, within_s: float) -> bool:
-        """Return True when ``launchctl print`` reports the job absent in time.
-
-        A print the budget cuts short confirms nothing, so the wait reads it as
-        still registered; a print that fails outright still raises.
-        """
-        try:
-            result = self._spawn(("print", self._service_target()), within_s)
-        except subprocess.TimeoutExpired:
-            return False
-        return not self._present(result)
+        return self._query.run(*args)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -237,9 +147,29 @@ class LaunchctlAgent:
         Idempotent for a job that is not loaded: bootout exits non-zero and is
         logged at debug. For a job that *was* loaded, a non-zero exit raises
         ``LaunchctlError`` -- the job may still be running, and the caller must
-        not read that as stopped. The wait afterward is what makes a following
-        ``bootstrap`` race-free.
+        not read that as stopped. A job not confirmed gone afterwards is only
+        a warning here: ``stop`` confirms the outcome in its own settle loop.
         """
+        answer = self._boot_out()
+        if not answer.holds:
+            logger.warning(
+                "%s; a bootstrap may race the teardown",
+                self._lingering(answer, "after bootout"),
+            )
+
+    def bootout_confirmed(self) -> None:
+        """Boot the job out and raise ``LaunchctlError`` unless it is gone.
+
+        For ``uninstall``, which removes the plist next: a job still
+        registered -- or a launchctl that never answered -- must fail the
+        uninstall, not end in "uninstalled".
+        """
+        answer = self._boot_out()
+        if not answer.holds:
+            raise LaunchctlError(self._lingering(answer, "after bootout"))
+
+    def _boot_out(self) -> QueryAnswer:
+        """Run bootout and the unregister wait; return the wait's answer."""
         was_loaded = self.is_registered()
         result = self._run("bootout", self._service_target())
         if result.returncode != 0 and was_loaded:
@@ -252,11 +182,7 @@ class LaunchctlAgent:
             logger.info("Booted out %s", self._label)
         else:
             logger.debug("%s was not loaded; nothing to boot out", self._label)
-        if not self.wait_until_unregistered():
-            logger.warning(
-                "%s still registered after bootout; a bootstrap may race the teardown",
-                self._label,
-            )
+        return self.wait_until_unregistered()
 
     def bootstrap(self) -> None:
         """Bootstrap the job, idempotent against a stale registration.
@@ -266,11 +192,12 @@ class LaunchctlAgent:
         Raises ``LaunchctlError`` if the job never clears or bootstrap keeps
         failing -- the caller surfaces that as a non-zero exit.
         """
-        if not self.wait_until_unregistered():
+        cleared = self.wait_until_unregistered()
+        if not cleared.holds:
+            lingering = self._lingering(cleared, "before bootstrap")
             raise LaunchctlError(
-                f"{self._label} did not leave {self._domain()} within "
-                f"{self._UNREGISTER_TIMEOUT_S:.0f}s; refusing to bootstrap onto "
-                "a stale registration"
+                f"{self._label} did not leave {self._domain()}: {lingering}; "
+                "refusing to bootstrap onto a stale registration"
             )
         result = self._bootstrap_once()
         if result.returncode == 0:
@@ -281,11 +208,12 @@ class LaunchctlAgent:
                 "unregister and retrying once",
                 self._label,
             )
-            if not self.wait_until_unregistered():
+            cleared = self.wait_until_unregistered()
+            if not cleared.holds:
+                lingering = self._lingering(cleared, "after exit 5")
                 raise LaunchctlError(
                     f"{self._label} bootstrap hit exit 5 and the job did not "
-                    f"clear {self._domain()} within "
-                    f"{self._UNREGISTER_TIMEOUT_S:.0f}s"
+                    f"clear: {lingering}"
                 )
             result = self._bootstrap_once()
             if result.returncode == 0:

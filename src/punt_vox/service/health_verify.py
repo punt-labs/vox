@@ -18,6 +18,7 @@ from punt_vox.service.daemon_probe import DaemonProbe
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import InstallableBackend
+    from punt_vox.service.query_answer import QueryAnswer
     from punt_vox.types_health import HealthStatus
 
 logger = logging.getLogger(__name__)
@@ -79,21 +80,33 @@ class HealthVerifier:
         Raise ``ServiceHealthError``, chained to the last health failure, so
         the caller can surface a non-zero exit (or degrade gracefully).
         """
-        service = self._backend.service_path
         # Each is-active query gets only what is left of the wait, so a slow
         # systemctl/launchctl cannot carry install past its bound.
-        poll = self._probe.poll
-        if not poll.until_within(self._backend.is_active_within, _HEALTH_DEADLINE_S):
-            msg = (
-                f"voxd is not active {_HEALTH_DEADLINE_S:.0f}s after install. "
-                f"Service: {service}. Check the daemon logs in {_paths_log_dir()}."
-            )
-            raise ServiceHealthError(msg)
+        active = self._probe.poll.answer_within(
+            self._backend.is_active_within, _HEALTH_DEADLINE_S
+        )
+        if not active.holds:
+            raise ServiceHealthError(self._inactive(active))
         status = self._probe.wait_up(_HEALTH_DEADLINE_S)
         if status is not None:
             return status
         miss = self._probe.health_miss()
         raise ServiceHealthError(self._unreachable(miss)) from miss
+
+    def _inactive(self, answer: QueryAnswer) -> str:
+        """Return the never-active message: a hung manager, or a unit not running."""
+        service = self._backend.service_path
+        wait = f"{_HEALTH_DEADLINE_S:.0f}s"
+        if answer.timed_out:
+            return (
+                f"{answer.unanswered} did not answer within the {wait} wait after "
+                "install: the service manager is not responding, so whether voxd "
+                f"runs is unknown. Service: {service}."
+            )
+        return (
+            f"voxd is not active {wait} after install. Service: {service}. "
+            f"Check the daemon logs in {_paths_log_dir()}."
+        )
 
     def _unreachable(self, miss: Exception | None) -> str:
         """Return the never-reachable message, naming the last health failure."""

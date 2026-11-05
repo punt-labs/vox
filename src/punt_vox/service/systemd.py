@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.paths import user_state_dir as _paths_user_state_dir
 from punt_vox.service.backend import BackendCommandError, PrivilegeDeniedError
+from punt_vox.service.query_answer import QueryAnswer
 from punt_vox.service.systemd_unit import SystemdUnit
 
 if TYPE_CHECKING:
@@ -194,18 +195,19 @@ class SystemdBackend:
         """
         return self._active_state(_QUERY_TIMEOUT_S)
 
-    def is_active_within(self, within_s: float) -> bool:
-        """Return True when systemd confirms voxd is live inside *within_s*.
+    def is_active_within(self, within_s: float) -> QueryAnswer:
+        """Ask systemd, inside *within_s*, whether voxd is live.
 
         For a bounded wait: the query gets at most *within_s*, and one that
-        runs out of time confirms nothing (False) instead of failing the wait.
-        Any other query failure still raises.
+        runs out of time confirms nothing -- the answer names the command that
+        did not answer instead of failing the wait. Any other query failure
+        still raises.
         """
         try:
-            return self._active_state(within_s)
+            return QueryAnswer.of(holds=self._active_state(within_s))
         except BackendCommandError as exc:
             if exc.code == _TIMED_OUT:
-                return False
+                return QueryAnswer.no_answer("systemctl is-active voxd")
             raise
 
     def _active_state(self, within_s: float) -> bool:

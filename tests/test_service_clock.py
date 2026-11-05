@@ -5,6 +5,7 @@ from __future__ import annotations
 from _lifecycle_fakes import FakeClock
 
 from punt_vox.service.clock import Poll, SystemClock
+from punt_vox.service.query_answer import QueryAnswer
 
 
 def test_until_returns_the_moment_the_condition_holds() -> None:
@@ -55,22 +56,35 @@ def test_until_never_sleeps_past_the_deadline() -> None:
     assert clock.monotonic() == 2.5
 
 
-def test_until_within_hands_each_check_the_time_that_remains() -> None:
+def test_answer_within_hands_each_check_the_time_that_remains() -> None:
     """A check is given at most the budget left, so it cannot overrun the wait."""
     clock = FakeClock()
     seen: list[tuple[float, float]] = []
 
-    def check(within_s: float) -> bool:
+    def check(within_s: float) -> QueryAnswer:
         seen.append((clock.monotonic(), within_s))
-        return False
+        return QueryAnswer.of(holds=False)
 
-    assert Poll(clock, 1.0).until_within(check, 2.5) is False
+    assert Poll(clock, 1.0).answer_within(check, 2.5).holds is False
     assert seen
     assert all(budget > 0 and at + budget <= 2.5 for at, budget in seen)
     assert clock.monotonic() <= 2.5
 
 
-def test_until_within_returns_the_moment_the_check_holds() -> None:
+def test_answer_within_returns_the_moment_the_check_holds() -> None:
     clock = FakeClock()
-    assert Poll(clock, 0.5).until_within(lambda _: clock.monotonic() >= 1.0, 5.0)
+    poll = Poll(clock, 0.5)
+    answer = poll.answer_within(
+        lambda _: QueryAnswer.of(holds=clock.monotonic() >= 1.0), 5.0
+    )
+    assert answer.holds
     assert clock.monotonic() == 1.0
+
+
+def test_answer_within_returns_the_last_answer_when_none_holds() -> None:
+    """A wait that ran out says why: the last check timed out, or answered no."""
+    clock = FakeClock()
+    answers = iter([QueryAnswer.of(holds=False)] + [QueryAnswer.no_answer("q")] * 9)
+    answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.5)
+    assert answer.holds is False
+    assert answer.unanswered == "q"

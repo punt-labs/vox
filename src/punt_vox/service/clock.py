@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
+from punt_vox.service.query_answer import QueryAnswer
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -78,22 +80,27 @@ class Poll:
             self._nap(deadline)
         return fetch()
 
-    def until_within(
-        self, condition: Callable[[float], bool], deadline_s: float
-    ) -> bool:
-        """Return True once *condition* holds, handing it the seconds that remain.
+    def answer_within(
+        self, ask: Callable[[float], QueryAnswer], deadline_s: float
+    ) -> QueryAnswer:
+        """Ask until an answer holds, handing each ask the seconds that remain.
 
-        For a check that itself blocks (a ``systemctl`` or ``launchctl`` query):
-        each call gets the time left before the deadline as its own bound, so
-        no check can carry the wait past it. A check is never run with no time
-        left, so there is no extra check at the deadline.
+        For a check that itself blocks (a ``systemctl`` or ``launchctl``
+        query): each call gets the time left before the deadline as its own
+        bound, so no check can carry the wait past it. Returns the first
+        answer that holds, or else the last answer given -- which says whether
+        the wait ran out on a "no" or on a query that never answered. A check
+        is never run with no time left, so there is no extra check at the
+        deadline.
         """
         deadline = self._clock.monotonic() + deadline_s
+        answer = QueryAnswer.of(holds=False)
         while (remaining := deadline - self._clock.monotonic()) > 0:
-            if condition(remaining):
-                return True
+            answer = ask(remaining)
+            if answer.holds:
+                return answer
             self._nap(deadline)
-        return False
+        return answer
 
     def _nap(self, deadline: float) -> None:
         """Sleep one interval, cut short so the sleep never passes *deadline*."""

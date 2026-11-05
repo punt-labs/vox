@@ -20,6 +20,7 @@ from punt_vox.service.health_verify import HealthVerifier
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
+from punt_vox.service.query_answer import QueryAnswer
 from punt_vox.service.systemd import SystemdBackend
 from punt_vox.types_health import HealthStatus
 
@@ -122,7 +123,9 @@ def _fake_backend(
     monkeypatch.setattr(cls, "request_stop", lambda self: calls.append("request_stop"))
     monkeypatch.setattr(cls, "install", lambda self, user: calls.append("install"))
     monkeypatch.setattr(cls, "is_active", lambda self: active)
-    monkeypatch.setattr(cls, "is_active_within", lambda self, within_s: active)
+    monkeypatch.setattr(
+        cls, "is_active_within", lambda self, within_s: QueryAnswer.of(holds=active)
+    )
     monkeypatch.setattr(cls, "installed_bind", lambda self: bind)
     monkeypatch.setattr(
         ProcessManager, "ensure_port_free", lambda self: calls.append("port_free")

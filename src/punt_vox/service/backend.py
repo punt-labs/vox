@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol, Self, final
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from punt_vox.service.query_answer import QueryAnswer
     from punt_vox.types_health import HealthStatus
 
 __all__ = [
@@ -73,11 +74,12 @@ class InstallableBackend(ServiceBackend, Protocol):
         """Return the unit file or plist path this backend installs."""
         ...
 
-    def is_active_within(self, within_s: float) -> bool:
-        """Return True when the manager confirms the job active in *within_s*.
+    def is_active_within(self, within_s: float) -> QueryAnswer:
+        """Ask the manager, within *within_s*, whether the job is active.
 
-        The query takes at most *within_s*, for a bounded wait; one that runs
-        out of time confirms nothing and returns False. A failed query raises.
+        The query takes at most *within_s*, for a bounded wait. One that runs
+        out of time confirms nothing: the answer does not hold and names the
+        command that did not answer. A failed query raises.
         """
         ...
 

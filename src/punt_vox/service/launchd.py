@@ -13,6 +13,8 @@ from punt_vox.service.voxd_plist import VoxdPlist
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_vox.service.query_answer import QueryAnswer
+
 logger = logging.getLogger(__name__)
 
 _LABEL = "com.punt-labs.voxd"
@@ -64,11 +66,12 @@ class LaunchdBackend:
             self.main_pid() is not None
         )
 
-    def is_active_within(self, within_s: float) -> bool:
-        """Return True when launchd confirms the job is active inside *within_s*.
+    def is_active_within(self, within_s: float) -> QueryAnswer:
+        """Ask launchd, inside *within_s*, whether the job is active.
 
         For a bounded wait: the launchctl queries get no more than *within_s*
-        between them, and a query that runs out of time confirms nothing.
+        between them, and a query that runs out of time confirms nothing and
+        is named in the answer.
         """
         return self._query("list", lambda: self._agent.running_within(within_s))
 
@@ -81,7 +84,10 @@ class LaunchdBackend:
         return self._plist.installed_bind()
 
     def request_stop(self) -> None:
-        """Boot the job out; raise ``BackendCommandError`` if that fails."""
+        """Boot the job out; raise ``BackendCommandError`` if that fails.
+
+        A job not yet confirmed gone is left to ``stop``'s settle loop.
+        """
         self._drive("bootout", self._agent.bootout)
 
     def request_start(self) -> None:
@@ -108,7 +114,9 @@ class LaunchdBackend:
                 "No plist found at %s -- nothing to uninstall", self._plist.path
             )
             return
-        self._drive("bootout", self._agent.bootout)
+        # The plist goes only once launchd confirms the job is gone; a hung
+        # launchctl or a lingering job fails the uninstall instead.
+        self._drive("bootout", self._agent.bootout_confirmed)
         self._plist.remove()
 
     @staticmethod

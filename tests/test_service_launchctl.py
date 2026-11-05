@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from punt_vox.service.clock import SystemClock
 from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
 
 if TYPE_CHECKING:
@@ -94,7 +95,7 @@ def _dispatch(
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_is_registered_true_when_print_exits_zero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -103,7 +104,7 @@ def test_is_registered_true_when_print_exits_zero(
     assert agent.is_registered() is True
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_is_registered_false_when_print_nonzero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -112,7 +113,7 @@ def test_is_registered_false_when_print_nonzero(
     assert agent.is_registered() is False
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_is_loaded_true_when_list_exits_zero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -122,7 +123,7 @@ def test_is_loaded_true_when_list_exits_zero(
     assert _verb(mock_run.call_args_list[0]) == "list"
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_is_loaded_false_when_list_nonzero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -131,24 +132,24 @@ def test_is_loaded_false_when_list_nonzero(
     assert agent.is_loaded() is False
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_wait_returns_immediately_when_already_unregistered(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """A clear domain returns True on the first poll without sleeping."""
     mock_run.return_value = _completed(113)  # not registered
     with patch("punt_vox.service.clock.time.sleep") as mock_sleep:
-        assert agent.wait_until_unregistered() is True
+        assert agent.wait_until_unregistered().holds is True
     mock_sleep.assert_not_called()
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_wait_times_out_when_job_never_clears(
     mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
 ) -> None:
     """A job that stays registered makes the bounded wait report failure."""
     mock_run.return_value = _completed(0)  # always registered
-    assert agent.wait_until_unregistered() is False
+    assert agent.wait_until_unregistered().holds is False
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +157,7 @@ def test_wait_times_out_when_job_never_clears(
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootout_waits_for_unregister(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -171,7 +172,7 @@ def test_bootout_waits_for_unregister(
         assert call[0][0][0] == "launchctl"
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootout_of_loaded_job_failing_raises(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -181,7 +182,7 @@ def test_bootout_of_loaded_job_failing_raises(
         agent.bootout()
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootout_of_unloaded_job_is_idempotent(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -197,13 +198,13 @@ def test_bootout_of_unloaded_job_is_idempotent(
 _PRINT = "gui/501/com.punt-labs.voxd = {\n\tstate = running\n\tpid = 4242\n}\n"
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_pid_reads_running_pid(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     mock_run.return_value = _completed(0, stdout=_PRINT)
     assert agent.pid() == 4242
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_pid_absent_when_job_has_no_process(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -211,7 +212,7 @@ def test_pid_absent_when_job_has_no_process(
     assert agent.pid() is None
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_pid_absent_when_unregistered(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -219,7 +220,7 @@ def test_pid_absent_when_unregistered(
     assert agent.pid() is None
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_pid_malformed_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     mock_run.return_value = _completed(0, stdout="\tpid = four\n")
     with pytest.raises(LaunchctlError, match="malformed pid"):
@@ -231,7 +232,7 @@ def test_pid_malformed_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> Non
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootstrap_happy_path(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     """Clean domain, bootstrap succeeds first try -- no error, one bootstrap."""
     mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0])
@@ -243,7 +244,7 @@ def test_bootstrap_happy_path(mock_run: MagicMock, agent: LaunchctlAgent) -> Non
     assert bootstrap_call[0][0][2].startswith("gui/")
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootstrap_retries_once_on_exit_5(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -254,7 +255,7 @@ def test_bootstrap_retries_once_on_exit_5(
     assert verbs.count("bootstrap") == 2  # first hit 5, retry succeeded
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootstrap_raises_when_job_never_unregisters(
     mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
 ) -> None:
@@ -264,7 +265,7 @@ def test_bootstrap_raises_when_job_never_unregisters(
         agent.bootstrap()
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootstrap_raises_when_exit_5_persists(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -274,7 +275,7 @@ def test_bootstrap_raises_when_exit_5_persists(
         agent.bootstrap()
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootstrap_raises_on_non_io_error(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -291,7 +292,7 @@ def test_bootstrap_raises_on_non_io_error(
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_start_bootstraps_then_kickstarts(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -304,7 +305,7 @@ def test_start_bootstraps_then_kickstarts(
     assert verbs.index("bootstrap") < verbs.index("kickstart")
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_kickstart_failure_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     """A failed kickstart surfaces as LaunchctlError so start() reports it."""
     mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0], kickstart_rc=1)
@@ -318,7 +319,7 @@ def test_kickstart_failure_raises(mock_run: MagicMock, agent: LaunchctlAgent) ->
 
 
 @pytest.mark.parametrize("probe", ["is_registered", "is_loaded", "pid"])
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_failed_query_raises_not_absent(
     mock_run: MagicMock, agent: LaunchctlAgent, probe: str
 ) -> None:
@@ -329,7 +330,7 @@ def test_failed_query_raises_not_absent(
 
 
 @patch(
-    "punt_vox.service.launchctl.subprocess.run",
+    "punt_vox.service.launchctl_query.subprocess.run",
     side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=10),
 )
 def test_hung_launchctl_raises(_mock_run: MagicMock, agent: LaunchctlAgent) -> None:
@@ -338,7 +339,7 @@ def test_hung_launchctl_raises(_mock_run: MagicMock, agent: LaunchctlAgent) -> N
         agent.is_loaded()
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_every_launchctl_call_has_a_timeout(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
@@ -348,7 +349,7 @@ def test_every_launchctl_call_has_a_timeout(
     assert all(c.kwargs.get("timeout") for c in mock_run.call_args_list)
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_bootout_of_unloaded_job_does_not_claim_a_bootout(
     mock_run: MagicMock,
     agent: LaunchctlAgent,
@@ -366,63 +367,126 @@ def test_bootout_of_unloaded_job_does_not_claim_a_bootout(
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_wait_bounds_each_print_by_what_remains_of_the_wait(
     mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
 ) -> None:
     """Each print gets at most the time left in the 20 ms wait, not 10 s."""
     mock_run.return_value = _completed(0)  # always registered
-    assert agent.wait_until_unregistered() is False
+    assert agent.wait_until_unregistered().holds is False
     timeouts = [c.kwargs["timeout"] for c in mock_run.call_args_list]
     assert timeouts
     assert all(0 < t <= LaunchctlAgent._UNREGISTER_TIMEOUT_S for t in timeouts)
 
 
 @patch(
-    "punt_vox.service.launchctl.subprocess.run",
+    "punt_vox.service.launchctl_query.subprocess.run",
     side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=0.02),
 )
 def test_wait_reads_a_print_cut_short_by_the_wait_as_still_registered(
     _mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
 ) -> None:
     """A print that does not answer inside the wait confirms nothing."""
-    assert agent.wait_until_unregistered() is False
+    assert agent.wait_until_unregistered().holds is False
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_running_within_bounds_both_queries_by_the_budget(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """list and print together stay inside the caller's 0.3 s."""
     mock_run.side_effect = [_completed(113), _completed(0, stdout=_PRINT)]
-    assert agent.running_within(0.3) is True
+    assert agent.running_within(0.3).holds is True
     timeouts = [c.kwargs["timeout"] for c in mock_run.call_args_list]
     assert [_verb(c) for c in mock_run.call_args_list] == ["list", "print"]
     assert all(0 < t <= 0.3 for t in timeouts)
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_running_within_false_when_loaded_nowhere(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     mock_run.return_value = _completed(113)
-    assert agent.running_within(1.0) is False
+    assert agent.running_within(1.0).holds is False
 
 
 @patch(
-    "punt_vox.service.launchctl.subprocess.run",
+    "punt_vox.service.launchctl_query.subprocess.run",
     side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=0.3),
 )
 def test_running_within_a_query_cut_short_confirms_nothing(
     _mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
-    assert agent.running_within(0.3) is False
+    answer = agent.running_within(0.3)
+    assert answer.holds is False
+    assert answer.unanswered == f"launchctl list {_LABEL}"
 
 
-@patch("punt_vox.service.launchctl.subprocess.run")
+@patch("punt_vox.service.launchctl_query.subprocess.run")
 def test_running_within_a_failed_query_still_raises(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     mock_run.return_value = _completed(1, "launchctl: bootstrap port error")
     with pytest.raises(LaunchctlError, match="exit 1"):
         agent.running_within(1.0)
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_running_within_gives_print_only_what_list_left(
+    mock_run: MagicMock, agent: LaunchctlAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S6: a list that used 0.2 s of a 0.3 s budget leaves print at most 0.1 s."""
+    now = [100.0]
+
+    def monotonic(self: SystemClock) -> float:
+        return now[0]
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[1] == "list":
+            now[0] += 0.2
+            return _completed(113)
+        return _completed(0, stdout=_PRINT)
+
+    mock_run.side_effect = run
+    assert agent.running_within(0.3).holds is True
+    print_call = mock_run.call_args_list[-1]
+    assert _verb(print_call) == "print"
+    assert print_call.kwargs["timeout"] <= 0.1 + 1e-9
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_bootout_confirmed_raises_naming_a_print_that_timed_out(
+    mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
+) -> None:
+    """S1: a loaded job whose departure cannot be confirmed is not "gone"."""
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[1] == "bootout":
+            return _completed(0)
+        if mock_run.call_count == 1:  # the was-it-loaded print
+            return _completed(0)
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.01)
+
+    mock_run.side_effect = run
+    with pytest.raises(LaunchctlError, match="did not answer"):
+        agent.bootout_confirmed()
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_bootout_confirmed_raises_when_the_job_stays_registered(
+    mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
+) -> None:
+    mock_run.side_effect = _dispatch(print_rc=0, bootstrap_rcs=[])
+    with pytest.raises(LaunchctlError, match="still registered"):
+        agent.bootout_confirmed()
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_bootout_for_stop_only_warns_when_the_job_lingers(
+    mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
+) -> None:
+    """stop's request keeps its settle loop: bootout() itself does not raise."""
+    mock_run.side_effect = _dispatch(print_rc=0, bootstrap_rcs=[])
+    agent.bootout()
