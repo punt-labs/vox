@@ -9,25 +9,25 @@ collection (:class:`~punt_vox.doctor_result.CheckResults`) live in
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import shutil
 import sys
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.client_errors import (
     VoxdConnectionError,
+    VoxdHandshakeRejectedError,
     VoxdProtocolError,
     VoxdRefusedError,
 )
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import (
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
     find_repo_root,
 )
+from punt_vox.doctor_desktop import DesktopCheck
 from punt_vox.doctor_mpv import MpvCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
@@ -35,11 +35,30 @@ from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from punt_vox.types_health import HealthStatus
 
 __all__ = ["DoctorCheck"]
+
+# How each connection failure reads, most specific first: the daemon-health
+# line (formatted with the error) and the provider-readiness skip reason.
+# Only a refusal is "not running"; a rejected handshake is a live voxd whose
+# token or origin check failed, so the fix is a restart, never an install.
+_CONNECTION_FAILURES: tuple[tuple[type[VoxdConnectionError], str, str], ...] = (
+    (
+        VoxdRefusedError,
+        "Daemon: not running — start with 'vox daemon install'",
+        "voxd not running",
+    ),
+    (
+        VoxdHandshakeRejectedError,
+        (
+            "Daemon: running but rejected the connection (token/origin) — {exc};"
+            " run 'vox daemon restart'"
+        ),
+        "voxd rejected the connection",
+    ),
+    (VoxdConnectionError, "Daemon: unreachable — {exc}", "voxd unreachable"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -149,13 +168,23 @@ class DoctorCheck:
         connection -- a voxd that rejected the handshake, a timeout -- means
         something may hold the endpoint, so 'vox daemon install' is not the fix.
         """
-        if isinstance(exc, VoxdRefusedError):
-            return CheckResult.fail(
-                "Daemon: not running — start with 'vox daemon install'"
-            )
         if isinstance(exc, VoxdConnectionError):
-            return CheckResult.fail(f"Daemon: unreachable — {exc}")
+            line, _ = DoctorCheck._connection_failure(exc)
+            return CheckResult.fail(line.format(exc=exc))
         return CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}")
+
+    @staticmethod
+    def _connection_failure(exc: VoxdConnectionError) -> tuple[str, str]:
+        """Return the health-line template and readiness reason for ``exc``.
+
+        The table ends on ``VoxdConnectionError`` itself, so every connection
+        failure matches a row.
+        """
+        return next(
+            (line, why)
+            for kind, line, why in _CONNECTION_FAILURES
+            if isinstance(exc, kind)
+        )
 
     @staticmethod
     def _answered(health: HealthStatus) -> CheckResult:
@@ -199,11 +228,7 @@ class DoctorCheck:
             # ``check_daemon_health``; here it would be a duplicate hard-fail
             # with the same cause. Report it as informational so the
             # readiness section explains why it is empty.
-            why = (
-                "voxd not running"
-                if isinstance(exc, VoxdRefusedError)
-                else "voxd unreachable"
-            )
+            _, why = self._connection_failure(exc)
             return [
                 CheckResult.of(
                     OPTIONAL, f"Provider readiness: skipped ({why})", required=False
@@ -292,71 +317,10 @@ class DoctorCheck:
     def check_claude_desktop(self) -> list[CheckResult]:
         """Check Claude Desktop config and MCP registration.
 
-        ``config_path`` is a *partial* function: it names the file only on the
-        platforms vox has verified Claude Desktop's location for, and raises
-        for the rest rather than guessing one. Every other sub-check still has
-        an answer on such a host, so the refusal degrades to a single optional
-        row -- a doctor run that aborts on an uncheckable optional dependency
-        reports nothing about the ones that matter. This mirrors
-        :meth:`~punt_vox.service.installer.ServiceInstaller.detect_platform`,
-        whose ``SystemExit`` Typer renders as one clean line.
+        The check lives in :class:`~punt_vox.doctor_desktop.DesktopCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        try:
-            config_path = DesktopInstaller.config_path()
-        except ValueError as exc:
-            return [CheckResult.of(OPTIONAL, f"Claude Desktop: {exc}", required=False)]
-
-        if not config_path.exists():
-            return [
-                CheckResult.of(
-                    OPTIONAL, "Claude Desktop config: not found", required=False
-                ),
-                self._not_registered(),
-            ]
-
-        # Out of jail (under ~/Library or $XDG_CONFIG_HOME, neither data root):
-        # present/absent verdict only -- the absolute config path never crosses
-        # to a client.
-        return [
-            CheckResult.of(OK, "Claude Desktop config: present", required=False),
-            self._registration_verdict(config_path),
-        ]
-
-    @staticmethod
-    def _not_registered() -> CheckResult:
-        """Return the "no vox entry" row, with the command that creates one."""
-        return CheckResult.of(
-            OPTIONAL,
-            "Claude Desktop MCP: not registered (run 'vox desktop install')",
-            required=False,
-        )
-
-    @classmethod
-    def _registration_verdict(cls, config_path: Path) -> CheckResult:
-        """Return whether an existing config registers the vox MCP server.
-
-        Reading someone else's config file is a system boundary: unparseable
-        JSON, an unreadable file, bytes that are not UTF-8, or a top level that
-        is not a JSON object are all reported as "could not read", never as a
-        crash and never as a false "not registered". The non-object case is the
-        one that bites silently -- ``json.loads`` accepts a bare list or string
-        happily and only the ``mcpServers`` lookup afterwards would raise.
-        """
-        parsed: object
-        try:
-            parsed = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            # Unreadable and non-object share one verdict, so a parse failure
-            # falls through to the same gate rather than duplicating the row.
-            parsed = None
-        if not isinstance(parsed, dict):
-            return CheckResult.of(
-                OPTIONAL, "Claude Desktop MCP: could not read config", required=False
-            )
-        servers = cast("dict[str, object]", parsed).get("mcpServers")
-        if isinstance(servers, dict) and "vox" in servers:
-            return CheckResult.of(OK, "Claude Desktop MCP: registered", required=False)
-        return cls._not_registered()
+        return DesktopCheck().run()
 
     def check_output_dir(self) -> list[CheckResult]:
         """Check the output dir -- writable verdict, no abs path or raw OSError.

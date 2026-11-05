@@ -845,17 +845,29 @@ def test_a_daemon_that_rejects_the_handshake_is_never_not_running() -> None:
         thread.join(timeout=5.0)
     assert len(results) == 1
     assert results[0].passed is False
-    assert "not running" not in results[0].message
-    assert "unreachable" in results[0].message
-    assert "403" in results[0].message
+    message = results[0].message
+    assert "not running" not in message
+    assert message.startswith(
+        "Daemon: running but rejected the connection (token/origin) — "
+    )
+    assert "403" in message
+    assert message.endswith("; run 'vox daemon restart'")
+
+
+def test_a_rejected_handshake_reads_rejected_in_both_sections() -> None:
+    failure = VoxdHandshakeRejectedError("server rejected WebSocket connection: 403")
+    mock_client = MagicMock(spec=VoxClientSync)
+    mock_client.health.side_effect = failure
+    mock_client.provider_status.side_effect = failure
+    check = DoctorCheck(client=mock_client)
+    assert "rejected the connection" in check.check_daemon_health()[0].message
+    readiness = check.check_provider_readiness()[0].message
+    assert readiness == "Provider readiness: skipped (voxd rejected the connection)"
 
 
 @pytest.mark.parametrize(
     "failure",
-    [
-        VoxdHandshakeRejectedError("server rejected WebSocket connection: HTTP 403"),
-        VoxdConnectionError("Cannot connect to voxd at ws://box:8421/ws: timed out"),
-    ],
+    [VoxdConnectionError("Cannot connect to voxd at ws://box:8421/ws: timed out")],
 )
 def test_a_connection_failure_other_than_refusal_is_unreachable(
     failure: VoxdConnectionError,
