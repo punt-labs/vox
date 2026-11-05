@@ -8,12 +8,12 @@ or every client loses the running daemon.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import errno
+from pathlib import Path
+
+import pytest
 
 from punt_vox.voxd.port_file import PortFile
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_shutdown_removes_its_own_port_file(tmp_path: Path) -> None:
@@ -65,3 +65,37 @@ def test_a_daemon_that_never_wrote_removes_nothing(tmp_path: Path) -> None:
 def test_write_leaves_no_temporary_file(tmp_path: Path) -> None:
     PortFile(tmp_path).write(8421)
     assert [p.name for p in tmp_path.iterdir()] == ["serve.port"]
+
+
+def test_write_records_the_file_it_wrote_not_a_later_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second voxd renaming its file in just after ours is never ours."""
+    real_replace = Path.replace
+
+    def replace_then_newer_daemon(self: Path, target: Path) -> Path:
+        done = real_replace(self, target)
+        theirs = tmp_path / ".serve.port.other"
+        theirs.write_text("9000")
+        real_replace(theirs, target)
+        return done
+
+    a = PortFile(tmp_path)
+    monkeypatch.setattr(Path, "replace", replace_then_newer_daemon)
+    a.write(8421)
+    monkeypatch.undo()
+    a.remove()
+    assert (tmp_path / "serve.port").read_text() == "9000"
+
+
+def test_a_failed_rename_leaves_no_temporary_file_and_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(self: Path, target: Path) -> Path:
+        raise OSError(errno.EXDEV, "cross-device rename")
+
+    monkeypatch.setattr(Path, "replace", refuse)
+    with pytest.raises(OSError, match="cross-device"):
+        PortFile(tmp_path).write(8421)
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".serve.port.")]
+    assert not (tmp_path / "serve.port").exists()

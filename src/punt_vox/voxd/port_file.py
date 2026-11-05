@@ -41,12 +41,20 @@ class PortFile:
     def write(self, port: int) -> None:
         """Publish *port* as a new file and remember it as this daemon's.
 
-        The rename is atomic, so a reader never sees a half-written file.
+        The rename is atomic, so a reader never sees a half-written file. The
+        identity is read from the temporary file before the rename: read from
+        ``serve.port`` after it, a second voxd renaming its own file in between
+        would be recorded as this daemon's. A write that fails removes its
+        temporary file and raises.
         """
         tmp = self._path.with_name(f".serve.port.{os.getpid()}")
-        tmp.write_text(str(port))
-        tmp.replace(self._path)
-        st = self._path.stat()
+        try:
+            tmp.write_text(str(port))
+            st = tmp.stat()
+            tmp.replace(self._path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
         self._mine = (st.st_dev, st.st_ino)
         logger.info("Wrote port file: %s (port %d)", self._path, port)
 
