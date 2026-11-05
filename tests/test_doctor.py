@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdHandshakeRejectedError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.doctor import DoctorCheck
 from punt_vox.doctor_result import CheckResult, CheckResults
@@ -227,7 +234,7 @@ class TestCheckDaemonHealth:
 
     def test_daemon_not_running(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
-        mock_client.health.side_effect = VoxdConnectionError("refused")
+        mock_client.health.side_effect = VoxdRefusedError("refused")
         results = DoctorCheck(client=mock_client).check_daemon_health()
         assert len(results) == 1
         assert results[0].passed is False
@@ -308,7 +315,7 @@ class TestCheckProviderReadiness:
         # fail; this section reports informationally so the reader knows
         # why the walk was skipped.
         mock_client = MagicMock(spec=VoxClientSync)
-        mock_client.provider_status.side_effect = VoxdConnectionError("refused")
+        mock_client.provider_status.side_effect = VoxdRefusedError("refused")
         results = DoctorCheck(client=mock_client).check_provider_readiness()
         assert len(results) == 1
         assert results[0].required is False
@@ -802,3 +809,73 @@ class TestRunAll:
         for r in results:
             assert which_path not in r.message  # no binary install path
             assert str(config_path) not in r.message  # no absolute config path
+
+
+# ---------------------------------------------------------------------------
+# Only a refused connection is "not running"
+# ---------------------------------------------------------------------------
+
+
+def _answer_403_once() -> tuple[socket.socket, threading.Thread]:
+    """Listen on 127.0.0.1 and answer one WebSocket handshake with HTTP 403."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+
+    def answer() -> None:
+        conn, _ = server.accept()
+        with conn:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+
+    thread = threading.Thread(target=answer)
+    thread.start()
+    return server, thread
+
+
+def test_a_daemon_that_rejects_the_handshake_is_never_not_running() -> None:
+    """A 403 means voxd is there; 'vox daemon install' would kill it."""
+    server, thread = _answer_403_once()
+    with server:
+        port = server.getsockname()[1]
+        client = VoxClientSync(host="127.0.0.1", port=port, token="wrong")
+        results = DoctorCheck(client=client).check_daemon_health()
+        thread.join(timeout=5.0)
+    assert len(results) == 1
+    assert results[0].passed is False
+    assert "not running" not in results[0].message
+    assert "unreachable" in results[0].message
+    assert "403" in results[0].message
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        VoxdHandshakeRejectedError("server rejected WebSocket connection: HTTP 403"),
+        VoxdConnectionError("Cannot connect to voxd at ws://box:8421/ws: timed out"),
+    ],
+)
+def test_a_connection_failure_other_than_refusal_is_unreachable(
+    failure: VoxdConnectionError,
+) -> None:
+    mock_client = MagicMock(spec=VoxClientSync)
+    mock_client.health.side_effect = failure
+    mock_client.provider_status.side_effect = failure
+    check = DoctorCheck(client=mock_client)
+    health = check.check_daemon_health()[0].message
+    readiness = check.check_provider_readiness()[0].message
+    assert "not running" not in health
+    assert "unreachable" in health
+    assert "not running" not in readiness
+    assert "unreachable" in readiness
+
+
+def test_a_refused_connection_is_not_running() -> None:
+    mock_client = MagicMock(spec=VoxClientSync)
+    mock_client.health.side_effect = VoxdRefusedError("Connection refused")
+    mock_client.provider_status.side_effect = VoxdRefusedError("Connection refused")
+    check = DoctorCheck(client=mock_client)
+    assert "not running" in check.check_daemon_health()[0].message
+    assert "not running" in check.check_provider_readiness()[0].message

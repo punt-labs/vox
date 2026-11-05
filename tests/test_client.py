@@ -19,6 +19,7 @@ from punt_vox.client import (
 from punt_vox.client_connect_failure import ConnectFailure
 from punt_vox.client_errors import (
     VoxdConnectionError,
+    VoxdHandshakeRejectedError,
     VoxdProtocolError,
     VoxdRefusedError,
     VoxdRejectionError,
@@ -2259,7 +2260,7 @@ async def test_connect_handshake_rejection_is_not_a_refusal() -> None:
     port = server.sockets[0].getsockname()[1]
     async with server:
         client = VoxClient(host="127.0.0.1", port=port, token="wrong")
-        with pytest.raises(VoxdConnectionError, match="403") as caught:
+        with pytest.raises(VoxdHandshakeRejectedError, match="403") as caught:
             await client.connect()
     assert not isinstance(caught.value, VoxdRefusedError)
 

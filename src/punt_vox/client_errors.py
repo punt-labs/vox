@@ -27,6 +27,16 @@ class VoxdRefusedError(VoxdConnectionError):
     """
 
 
+class VoxdHandshakeRejectedError(VoxdConnectionError):
+    """Raised when something on the endpoint answered the WebSocket handshake
+    with a refusal of its own: an HTTP 403 for a bad token or Origin, or a
+    reply that is not HTTP at all.
+
+    Something is listening -- it is never "not running", and restarting the
+    service to fix it would stop a healthy daemon.
+    """
+
+
 class VoxdProtocolError(VoxError):
     """Raised when voxd returns an unexpected response."""
 

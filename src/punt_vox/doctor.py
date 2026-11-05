@@ -16,7 +16,11 @@ import shutil
 import sys
 from typing import TYPE_CHECKING, Self, cast
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import (
@@ -32,6 +36,8 @@ from punt_vox.types_provider import ProviderStatusPayload
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from punt_vox.types_health import HealthStatus
 
 __all__ = ["DoctorCheck"]
 
@@ -128,42 +134,45 @@ class DoctorCheck:
 
     def check_daemon_health(self) -> list[CheckResult]:
         """Check voxd daemon is running and version matches."""
-        results: list[CheckResult] = []
         client = self._client or VoxClientSync()
         try:
             health = client.health()
-        except VoxdConnectionError:
-            results.append(
-                CheckResult.fail(
-                    "Daemon: not running — start with 'vox daemon install'"
-                )
-            )
-            return results
-        except VoxdProtocolError as exc:
-            results.append(CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}"))
-            return results
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            return [self._unanswered(exc)]
+        return [self._answered(health)]
 
-        port = health.port
-        running_version = health.daemon_version
-        wheel_version = installed_version()
+    @staticmethod
+    def _unanswered(exc: VoxdConnectionError | VoxdProtocolError) -> CheckResult:
+        """Return the line for a health request voxd did not answer.
 
-        if running_version and running_version != wheel_version:
-            results.append(
-                CheckResult.warn(
-                    f"Daemon: running on port {port} (version {running_version}"
-                    f" — wheel has {wheel_version},"
-                    f" run 'vox daemon restart' to refresh)"
-                )
+        Only a refused connection is "not running". Anything else on the
+        connection -- a voxd that rejected the handshake, a timeout -- means
+        something may hold the endpoint, so 'vox daemon install' is not the fix.
+        """
+        if isinstance(exc, VoxdRefusedError):
+            return CheckResult.fail(
+                "Daemon: not running — start with 'vox daemon install'"
             )
-        else:
-            # Provider readiness lives on the ``provider_status`` op; the
-            # daemon has no provider of its own, so the health line reports
-            # the version-and-port fact only.
-            version_note = f", version {running_version}" if running_version else ""
-            results.append(
-                CheckResult.ok(f"Daemon: running on port {port}{version_note}")
+        if isinstance(exc, VoxdConnectionError):
+            return CheckResult.fail(f"Daemon: unreachable — {exc}")
+        return CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}")
+
+    @staticmethod
+    def _answered(health: HealthStatus) -> CheckResult:
+        """Return the line for a voxd that answered, warning on a stale wheel.
+
+        Provider readiness lives on the ``provider_status`` op; the daemon has
+        no provider of its own, so the line reports the version and port only.
+        """
+        running = health.daemon_version
+        wheel = installed_version()
+        if running and running != wheel:
+            return CheckResult.warn(
+                f"Daemon: running on port {health.port} (version {running}"
+                f" — wheel has {wheel}, run 'vox daemon restart' to refresh)"
             )
-        return results
+        version_note = f", version {running}" if running else ""
+        return CheckResult.ok(f"Daemon: running on port {health.port}{version_note}")
 
     def check_provider_readiness(self) -> list[CheckResult]:
         """Report the daemon's readiness verdict for every registered provider.
@@ -185,17 +194,19 @@ class DoctorCheck:
         client = self._client or VoxClientSync()
         try:
             payload = client.provider_status()
-        except VoxdConnectionError:
-            # Daemon down is already a fail from ``check_daemon_health``;
-            # here it would be a duplicate hard-fail with the same cause.
-            # Report it as informational so the readiness section
-            # explains why it is empty rather than pretending nothing
-            # was asked.
+        except VoxdConnectionError as exc:
+            # Daemon down or unreachable is already a fail from
+            # ``check_daemon_health``; here it would be a duplicate hard-fail
+            # with the same cause. Report it as informational so the
+            # readiness section explains why it is empty.
+            why = (
+                "voxd not running"
+                if isinstance(exc, VoxdRefusedError)
+                else "voxd unreachable"
+            )
             return [
                 CheckResult.of(
-                    OPTIONAL,
-                    "Provider readiness: skipped (voxd not running)",
-                    required=False,
+                    OPTIONAL, f"Provider readiness: skipped ({why})", required=False
                 )
             ]
         except VoxdProtocolError as exc:

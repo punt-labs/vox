@@ -1360,9 +1360,7 @@ class TestDoctorCommand:
                 health_payload["daemon_version"] = daemon_version
             mock_client.health.return_value = HealthStatus.from_wire(health_payload)
         else:
-            from punt_vox.client_errors import VoxdConnectionError
-
-            mock_client.health.side_effect = VoxdConnectionError("not running")
+            mock_client.health.side_effect = VoxdRefusedError("not running")
 
         # Create Music dir so the Music-directory doctor check passes.
         (tmp_path / "Music").mkdir(exist_ok=True)

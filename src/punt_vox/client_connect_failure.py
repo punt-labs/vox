@@ -9,9 +9,10 @@ redacts any ``token=`` value from the finished message as a backstop.
 
 It also decides the error's type. A refusal on every address -- nothing
 listens -- is :class:`~punt_vox.client_errors.VoxdRefusedError`, the one
-failure that means "not running". Anything else, from a timeout to a
-listener that rejected the handshake, is a plain
-:class:`~punt_vox.client_errors.VoxdConnectionError`: something may be there.
+failure that means "not running". A listener that rejected the handshake is
+:class:`~punt_vox.client_errors.VoxdHandshakeRejectedError`: something is
+there. Anything else, from a timeout to an unreachable host, is a plain
+:class:`~punt_vox.client_errors.VoxdConnectionError`.
 """
 
 from __future__ import annotations
@@ -19,9 +20,13 @@ from __future__ import annotations
 import re
 from typing import ClassVar, Self, cast, final
 
-from websockets.exceptions import InvalidURI
+from websockets.exceptions import InvalidURI, WebSocketException
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdRefusedError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdHandshakeRejectedError,
+    VoxdRefusedError,
+)
 
 __all__ = ["ConnectFailure"]
 
@@ -60,9 +65,26 @@ class ConnectFailure:
         msg = self._TOKEN.sub(
             "token=[REDACTED]", f"Cannot connect to voxd at {self._endpoint}: {detail}"
         )
+        return self._kind()(msg)
+
+    def _kind(self) -> type[VoxdConnectionError]:
+        """Return the error type the causes call for."""
         if all(isinstance(cause, ConnectionRefusedError) for cause in self._causes):
-            return VoxdRefusedError(msg)
-        return VoxdConnectionError(msg)
+            return VoxdRefusedError
+        if any(self._rejected_handshake(cause) for cause in self._causes):
+            return VoxdHandshakeRejectedError
+        return VoxdConnectionError
+
+    @staticmethod
+    def _rejected_handshake(cause: Exception) -> bool:
+        """Return True when a listener answered the handshake and refused it.
+
+        ``InvalidURI`` is a WebSocketException too, but it is the client's own
+        URI that failed, before anything was reached.
+        """
+        return isinstance(cause, WebSocketException) and not isinstance(
+            cause, InvalidURI
+        )
 
     @staticmethod
     def _describe(cause: Exception) -> str:
