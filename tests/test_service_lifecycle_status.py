@@ -123,3 +123,13 @@ def test_status_with_the_minimum_health_budget_left_still_asks_voxd() -> None:
     reading = lifecycle(world, clock).status()
     assert reading.state is DaemonState.RUNNING
     assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_sends_no_token_to_a_voxd_that_left_before_it_was_asked() -> None:
+    world = FakeWorld()
+    proc = world.run_unit(100)
+    world.before_token = proc.exit
+    reading = lifecycle(world).status()
+    assert world.tokens_to == []
+    assert reading.state is DaemonState.UNKNOWN
+    assert "left port 8421" in reading.reason

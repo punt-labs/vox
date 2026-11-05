@@ -177,6 +177,15 @@ class LifecycleProbe(Protocol):
         """
         ...
 
+    def wait_up(self, deadline_s: float) -> HealthStatus | None:
+        """Poll gated health until a visible voxd answers or *deadline_s* passes.
+
+        Each request is bounded by what is left of the deadline, so a hung
+        voxd cannot hold the wait past it. ``None`` is the documented answer
+        when nothing answered in time; :meth:`health_miss` says why.
+        """
+        ...
+
     def health_miss(self) -> Exception | None:
         """Return why the last health request got no answer.
 

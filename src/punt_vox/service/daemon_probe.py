@@ -20,7 +20,11 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.health import (
+    DaemonNotUpError,
+    HealthTarget,
+    HolderGoneError,
+)
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
 
@@ -194,6 +198,10 @@ class DaemonProbe:
                 f"no visible voxd process holds port {DEFAULT_PORT}"
             )
             return None
+        gone = self._gone(holders)
+        if gone is not None:
+            self._miss = gone
+            return None
         try:
             return self._target().client().health(timeout=within_s)
         except (
@@ -204,6 +212,23 @@ class DaemonProbe:
         ) as exc:
             self._miss = exc
             return None
+
+    def _gone(self, holders: frozenset[ProcessHandle]) -> HolderGoneError | None:
+        """Attribute the port again, immediately before the token goes out.
+
+        Returns why no request may be sent -- a holder seen at attribution no
+        longer holds the port, as the same pinned process -- or ``None`` when
+        every one still does. Narrows the window in which another process
+        could take the port between attribution and the token-bearing connect.
+        """
+        left = holders - self.voxd_processes()
+        if not left:
+            return None
+        pids = ", ".join(str(pid) for pid in sorted(h.pid for h in left))
+        return HolderGoneError(
+            f"voxd pid {pids} left port {DEFAULT_PORT} before it could be asked; "
+            "no token sent"
+        )
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""

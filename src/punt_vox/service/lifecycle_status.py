@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health import HolderGoneError
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import LifecycleProbe, ProcessHandle
@@ -91,4 +92,7 @@ class StatusCheck:
         if health is not None:
             return DaemonStatus.running(health)
         why = probe.health_miss() or "no reply"
+        if isinstance(why, HolderGoneError):
+            # It left before it was asked: nothing is known about the port now.
+            return DaemonStatus.unknown(str(why))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))

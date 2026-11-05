@@ -20,12 +20,23 @@ from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service.process import DEFAULT_PORT
 
-__all__ = ["DaemonNotUpError", "HealthTarget"]
+__all__ = ["DaemonNotUpError", "HealthTarget", "HolderGoneError"]
 
 
 @final
 class DaemonNotUpError(RuntimeError):
     """voxd has not written its token yet, so no health request is sent."""
+
+    __slots__ = ()
+
+
+@final
+class HolderGoneError(RuntimeError):
+    """The voxd attributed the port left it before the health request went out.
+
+    Recorded as the probe's ``health_miss`` only: no token-bearing request
+    was sent.
+    """
 
     __slots__ = ()
 

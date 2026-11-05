@@ -27,6 +27,7 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.clock import Poll
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health import HolderGoneError
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
@@ -231,6 +232,9 @@ class FakeWorld:
     on_start: Callable[[], None] | None = None
     between: Callable[[], None] | None = None
     before_holders: Callable[[], None] | None = None
+    # acts once, after the port's holders were attributed and before the
+    # token-bearing health request is sent
+    before_token: Callable[[], None] | None = None
     # the clock a lifecycle over this world polls on (set by ``lifecycle``)
     clock: FakeClock | None = None
     # probe calls that fail: method name -> error, or (method, pid) -> error
@@ -358,13 +362,13 @@ class FakeProbe:
     __slots__ = ("_deadline", "_miss", "_world")
 
     _world: FakeWorld
-    _miss: str
+    _miss: Exception | None
     _deadline: Deadline
 
     def __new__(cls, world: FakeWorld) -> Self:
         self = super().__new__(cls)
         self._world = world
-        self._miss = ""
+        self._miss = None
         self._deadline = Deadline.never()
         return self
 
@@ -442,24 +446,44 @@ class FakeProbe:
         self, holders: frozenset[ProcessHandle], within_s: float
     ) -> HealthStatus | None:
         if not holders:
-            self._miss = "no visible voxd process holds port 8421"
+            self._miss = RuntimeError("no visible voxd process holds port 8421")
+            return None
+        hook, self._world.before_token = self._world.before_token, None
+        if hook is not None:
+            hook()
+        current = frozenset(
+            FakeHandle(p) for p in self._world.procs.values() if p.on_port
+        )
+        if not holders <= current:
+            pids = ", ".join(str(h.pid) for h in holders - current)
+            self._miss = HolderGoneError(
+                f"voxd pid {pids} left port 8421 before it could be asked; "
+                "no token sent"
+            )
             return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
         if self._world.health_blocks_s:
             assert self._world.clock is not None
             self._world.clock.advance(min(self._world.health_blocks_s, within_s))
-            self._miss = self._world.health_error
+            self._miss = RuntimeError(self._world.health_error)
             return None
         holder = self._world.holder()
         if holder is None or not self._world.token_written:
-            self._miss = self._world.health_error
+            self._miss = RuntimeError(self._world.health_error)
             return None
         return HealthStatus(
             status="ok", port=8421, pid=holder.pid, daemon_version=holder.version
         )
 
     def health_miss(self) -> Exception | None:
-        return RuntimeError(self._miss) if self._miss else None
+        return self._miss
+
+    def wait_up(self, deadline_s: float) -> HealthStatus | None:
+        """The real probe's wait, on the world's fake clock."""
+        assert self._world.clock is not None
+        return Poll(self._world.clock).first(
+            lambda left: self.health(self.voxd_processes(), left), deadline_s
+        )
 
 
 @final

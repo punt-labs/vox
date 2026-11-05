@@ -14,7 +14,11 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.health import (
+    DaemonNotUpError,
+    HealthTarget,
+    HolderGoneError,
+)
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.types_health import HealthStatus
 
@@ -24,6 +28,15 @@ def _probe(
 ) -> DaemonProbe:
     pinned = target or HealthTarget("")
     return DaemonProbe(mgr, lambda: pinned, Poll(FakeClock()))
+
+
+def _holding() -> tuple[MagicMock, MagicMock]:
+    """Return a process manager whose port 8421 holder is one voxd handle."""
+    mgr = MagicMock()
+    held = MagicMock(pid=42)
+    mgr.find_pid_on_port.return_value = [42]
+    mgr.open_voxd.return_value = held
+    return mgr, held
 
 
 def test_voxd_processes_keeps_only_voxd_handles() -> None:
@@ -78,13 +91,15 @@ def test_health_answers_through_the_target() -> None:
     target = MagicMock()
     status = HealthStatus(status="ok", pid=42)
     target.client.return_value.health.return_value = status
-    assert _probe(MagicMock(), target).health(frozenset({MagicMock()}), 5.0) is status
+    mgr, held = _holding()
+    assert _probe(mgr, target).health(frozenset({held}), 5.0) is status
 
 
 def test_health_bounds_the_request_by_the_budget_it_is_handed() -> None:
     target = MagicMock()
     target.client.return_value.health.return_value = HealthStatus(status="ok")
-    _probe(MagicMock(), target).health(frozenset({MagicMock()}), 1.25)
+    mgr, held = _holding()
+    _probe(mgr, target).health(frozenset({held}), 1.25)
     target.client.return_value.health.assert_called_once_with(timeout=1.25)
 
 
@@ -94,7 +109,8 @@ def test_health_bounds_the_request_by_the_budget_it_is_handed() -> None:
 def test_health_no_answer_is_none(failure: Exception) -> None:
     target = MagicMock()
     target.client.side_effect = failure
-    assert _probe(MagicMock(), target).health(frozenset({MagicMock()}), 5.0) is None
+    mgr, held = _holding()
+    assert _probe(mgr, target).health(frozenset({held}), 5.0) is None
 
 
 def test_port_listening_sees_a_bare_listener() -> None:
@@ -137,9 +153,10 @@ def test_health_miss_keeps_the_last_cause() -> None:
     target = MagicMock()
     rejected = VoxdConnectionError("auth rejected (4401)")
     target.client.return_value.health.side_effect = rejected
-    probe = _probe(MagicMock(), target)
+    mgr, held = _holding()
+    probe = _probe(mgr, target)
     assert probe.health_miss() is None
-    assert probe.health(frozenset({MagicMock()}), 5.0) is None
+    assert probe.health(frozenset({held}), 5.0) is None
     assert probe.health_miss() is rejected
 
 
@@ -298,3 +315,30 @@ def test_port_listening_after_the_deadline_never_connects(
     with pytest.raises(PortProbeError, match="deadline"):
         probe.port_listening()
     connect.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The holder is attributed again immediately before the token goes out
+# ---------------------------------------------------------------------------
+
+
+def test_health_sends_no_token_when_the_attributed_voxd_left_the_port() -> None:
+    mgr, held = _holding()
+    mgr.find_pid_on_port.return_value = []
+    target = MagicMock()
+    probe = _probe(mgr, target)
+    assert probe.health(frozenset({held}), 5.0) is None
+    target.client.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, HolderGoneError)
+    assert "voxd pid 42" in str(miss)
+    assert "no token sent" in str(miss)
+
+
+def test_health_sends_no_token_when_another_process_took_the_port() -> None:
+    """Same pid number, different process: the pinned handles differ."""
+    mgr, held = _holding()
+    mgr.open_voxd.return_value = MagicMock(pid=42)
+    target = MagicMock()
+    assert _probe(mgr, target).health(frozenset({held}), 5.0) is None
+    target.client.assert_not_called()

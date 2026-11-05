@@ -84,7 +84,7 @@ class StartVerb:
             refused = self._request()
             if refused is not None:
                 return refused
-        return self._decide(self._wait_up(), cold=cold)
+        return self._decide(self._system.probe.wait_up(self._deadline_s), cold=cold)
 
     def _request(self) -> LifecycleReport | None:
         """Ask the manager to start; return a report only if it refused.
@@ -110,18 +110,6 @@ class StartVerb:
         """Record a refusal the re-observation contradicted."""
         logger.warning("start request failed, but the unit came up: %s", exc)
         self._notes.append(f"the start request failed ({exc}) but the unit came up")
-
-    def _wait_up(self) -> HealthStatus | None:
-        """Poll gated health until a visible voxd answers or the deadline passes.
-
-        Each request is bounded by what is left of the deadline, so a hung
-        voxd cannot hold ``start`` past its stated wait. ``None`` is the
-        documented answer when nothing answered in time.
-        """
-        probe = self._system.probe
-        return self._system.poll.first(
-            lambda left: probe.health(probe.voxd_processes(), left), self._deadline_s
-        )
 
     def _decide(self, status: HealthStatus | None, *, cold: bool) -> LifecycleReport:
         """Classify the health answer: timeout, foreign, stale, or fresh."""

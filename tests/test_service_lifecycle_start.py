@@ -253,3 +253,12 @@ def test_start_backend_command_error_in_request_is_backend_failed() -> None:
     )
     report = lifecycle(world).start()
     assert report.outcome is Outcome.BACKEND_FAILED
+
+
+def test_start_sends_no_token_to_a_voxd_that_left_before_it_was_asked() -> None:
+    """The holder seen at attribution exits before the request: nothing sent."""
+    world = FakeWorld(start_takes_effect=False)
+    proc = world.run_unit(100)
+    world.before_token = proc.exit
+    lifecycle(world).start()
+    assert frozenset({100}) not in world.tokens_to

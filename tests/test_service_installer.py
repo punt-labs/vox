@@ -138,10 +138,13 @@ def _on(monkeypatch: pytest.MonkeyPatch, plat: str) -> None:
 
 
 def _visible_voxd(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A voxd holds 8421, so the gated health request may go out."""
-    monkeypatch.setattr(
-        DaemonProbe, "voxd_processes", lambda self: frozenset({MagicMock()})
-    )
+    """A voxd holds 8421, so the gated health request may go out.
+
+    One handle, seen by every look -- attribution and the re-check made just
+    before the token goes out see the same process.
+    """
+    held = frozenset({MagicMock(pid=42)})
+    monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: held)
     monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
 
 
