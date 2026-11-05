@@ -19,7 +19,7 @@ from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import (
     DaemonNotUpError,
     HealthTarget,
-    HolderGoneError,
+    NotAskedError,
 )
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.types_health import HealthStatus
@@ -332,7 +332,7 @@ def test_health_sends_no_token_when_the_attributed_voxd_left_the_port() -> None:
     assert probe.health(frozenset({held}), 5.0) is None
     target.client.assert_not_called()
     miss = probe.health_miss()
-    assert isinstance(miss, HolderGoneError)
+    assert isinstance(miss, NotAskedError)
     assert "voxd pid 42" in str(miss)
     assert "no token sent" in str(miss)
 
@@ -344,6 +344,36 @@ def test_health_sends_no_token_when_another_process_took_the_port() -> None:
     target = MagicMock()
     assert _probe(mgr, target).health(frozenset({held}), 5.0) is None
     target.client.assert_not_called()
+
+
+def _slow_scan(scan_s: float) -> tuple[DaemonProbe, MagicMock, MagicMock]:
+    """A probe whose re-attribution scan (``fuser``/``ps``) takes *scan_s*."""
+    clock = FakeClock()
+    mgr, held = _holding()
+
+    def slow_scan(port: int) -> list[int]:
+        clock.advance(scan_s)
+        return [42] if port == 8421 else []
+
+    mgr.find_pid_on_port.side_effect = slow_scan
+    target = MagicMock()
+    target.client.return_value.health.return_value = HealthStatus(status="ok")
+    return DaemonProbe(mgr, lambda: target, Poll(clock)), target, held
+
+
+def test_health_is_handed_only_what_the_rescan_left_of_its_budget() -> None:
+    probe, target, held = _slow_scan(0.75)
+    probe.health(frozenset({held}), 1.25)
+    target.client.return_value.health.assert_called_once_with(timeout=0.5)
+
+
+def test_a_rescan_that_spends_the_budget_sends_no_token() -> None:
+    probe, target, held = _slow_scan(2.0)
+    assert probe.health(frozenset({held}), 1.25) is None
+    target.client.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, NotAskedError)
+    assert "no token sent" in str(miss)
 
 
 # ---------------------------------------------------------------------------

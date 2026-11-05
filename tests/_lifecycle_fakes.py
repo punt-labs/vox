@@ -27,7 +27,7 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.clock import Poll
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import HolderGoneError
+from punt_vox.service.health import NotAskedError
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
@@ -455,11 +455,7 @@ class FakeProbe:
             FakeHandle(p) for p in self._world.procs.values() if p.on_port
         )
         if not holders <= current:
-            pids = ", ".join(str(h.pid) for h in holders - current)
-            self._miss = HolderGoneError(
-                f"voxd pid {pids} left port 8421 before it could be asked; "
-                "no token sent"
-            )
+            self._miss = NotAskedError.left_port(h.pid for h in holders - current)
             return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
         if self._world.health_blocks_s:

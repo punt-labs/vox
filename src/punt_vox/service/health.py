@@ -14,14 +14,17 @@ value is pinned to a trusted source and none comes from the calling shell:
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.voxd_bind import VoxdBind
 
-__all__ = ["DaemonNotUpError", "HealthTarget", "HolderGoneError"]
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+__all__ = ["DaemonNotUpError", "HealthTarget", "NotAskedError"]
 
 
 @final
@@ -32,14 +35,32 @@ class DaemonNotUpError(RuntimeError):
 
 
 @final
-class HolderGoneError(RuntimeError):
-    """The voxd attributed the port left it before the health request went out.
+class NotAskedError(RuntimeError):
+    """voxd was never asked: no token-bearing health request went out.
 
-    Recorded as the probe's ``health_miss`` only: no token-bearing request
-    was sent.
+    The voxd attributed the port left it before the request, or vox's own
+    re-check of the port spent the request's budget. Recorded as the probe's
+    ``health_miss`` only; what it says about voxd is "unknown".
     """
 
     __slots__ = ()
+
+    @classmethod
+    def left_port(cls, pids: Iterable[int]) -> Self:
+        """Return the miss for attributed voxd *pids* that left the port."""
+        named = ", ".join(str(pid) for pid in sorted(pids))
+        return cls(
+            f"voxd pid {named} left port {DEFAULT_PORT} before it could be "
+            "asked; no token sent"
+        )
+
+    @classmethod
+    def budget_spent(cls) -> Self:
+        """Return the miss for a re-check of the port that spent the budget."""
+        return cls(
+            f"re-checking port {DEFAULT_PORT} spent the health budget before "
+            "voxd could be asked; no token sent"
+        )
 
 
 @final

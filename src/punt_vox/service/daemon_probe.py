@@ -23,7 +23,7 @@ from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import (
     DaemonNotUpError,
     HealthTarget,
-    HolderGoneError,
+    NotAskedError,
 )
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -117,7 +117,7 @@ class DaemonProbe:
         if port is None or port == DEFAULT_PORT:
             return frozenset()
         pids = mgr.find_pid_on_port(port)
-        return frozenset(p for p in pids if mgr.is_vox_daemon_process(p))
+        return frozenset(filter(mgr.is_vox_daemon_process, pids))
 
     def open_handle(self, pid: int) -> ProcessHandle | None:
         """Return a handle on *pid*; ``None`` when it is gone or is not voxd."""
@@ -190,20 +190,24 @@ class DaemonProbe:
 
         With no visible voxd holding the port, no connection is made. The
         request, connect included, is cut off after *within_s* seconds, so a
-        hung voxd cannot hold a wait past its deadline. ``None`` is the
-        documented answer for "no health reply"; :meth:`health_miss` says why.
+        hung voxd cannot hold a wait past its deadline. The bound starts
+        here: re-attributing the port before the token goes out spends from
+        it, and the request gets only what is left. ``None`` is the documented
+        answer for "no health reply"; :meth:`health_miss` says why.
         """
         if not holders:
             self._miss = DaemonNotUpError(
                 f"no visible voxd process holds port {DEFAULT_PORT}"
             )
             return None
-        gone = self._gone(holders)
-        if gone is not None:
-            self._miss = gone
+        bound = Deadline(self._poll.now, within_s)
+        target = self._target()
+        unasked = self._unasked(holders, bound)
+        if unasked is not None:
+            self._miss = unasked
             return None
         try:
-            return self._target().client().health(timeout=within_s)
+            return target.client().health(timeout=bound.remaining())
         except (
             DaemonNotUpError,
             VoxdConnectionError,
@@ -213,22 +217,22 @@ class DaemonProbe:
             self._miss = exc
             return None
 
-    def _gone(self, holders: frozenset[ProcessHandle]) -> HolderGoneError | None:
+    def _unasked(
+        self, holders: frozenset[ProcessHandle], bound: Deadline
+    ) -> NotAskedError | None:
         """Attribute the port again, immediately before the token goes out.
 
         Returns why no request may be sent -- a holder seen at attribution no
-        longer holds the port, as the same pinned process -- or ``None`` when
-        every one still does. Narrows the window in which another process
-        could take the port between attribution and the token-bearing connect.
+        longer holds the port, as the same pinned process, or the re-check
+        spent *bound* -- or ``None`` when voxd may be asked. Narrows the window
+        in which another process could take the port between attribution and
+        the token-bearing connect.
         """
-        left = holders - self.voxd_processes()
-        if not left:
+        if left := holders - self.voxd_processes():
+            return NotAskedError.left_port(h.pid for h in left)
+        if bound.remaining() > 0:
             return None
-        pids = ", ".join(str(pid) for pid in sorted(h.pid for h in left))
-        return HolderGoneError(
-            f"voxd pid {pids} left port {DEFAULT_PORT} before it could be asked; "
-            "no token sent"
-        )
+        return NotAskedError.budget_spent()
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""
