@@ -31,7 +31,7 @@ class ProcessIdentity:
     # voxd is a console script, so the kernel shows it either as itself or as
     # its interpreter followed by the script path.
     _PROGRAM: ClassVar[str] = "voxd"
-    _INTERPRETER: ClassVar[re.Pattern[str]] = re.compile(r"^python[0-9.]*$")
+    _INTERPRETER: ClassVar[re.Pattern[str]] = re.compile(r"^python[0-9.]*t?$")
 
     @classmethod
     def from_ps(cls, line: str) -> Self:
@@ -46,7 +46,10 @@ class ProcessIdentity:
     def is_voxd(self) -> bool:
         """Return True when the program is voxd, not merely an argument.
 
-        Accepts ``.../voxd ...`` and ``.../python[3.x] .../voxd ...``. A
+        Accepts ``.../voxd ...`` and ``.../python[3.x][t] .../voxd ...``
+        (``t``: a free-threaded build). Interpreter flags before the script
+        and spaces in the install path are rejected -- the unit and plist vox
+        installs never produce them, and rejecting fails closed. A
         process that only passes ``voxd`` as an argument (``--name voxd``,
         ``python -m tool voxd``) is not voxd.
         """

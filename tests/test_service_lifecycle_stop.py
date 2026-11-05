@@ -16,6 +16,7 @@ from _lifecycle_fakes import (
     lifecycle,
 )
 
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.lifecycle_report import LifecycleOutcome as Outcome
 
 
@@ -225,22 +226,28 @@ def test_s6_kill_named_once_though_handles_are_reopened() -> None:
 
 
 def test_stop_never_signals_a_main_process_started_mid_tick() -> None:
-    """A2, P5: a start between the activity read and the holder list is honored.
+    """A2, P5: a start between the settle read and the signal is honored.
 
-    The manager's new main process 600 lands on the port after stop read the
-    unit inactive; it is never signalled, and neither is anything else while
-    the unit is active.
+    The stop request takes the unit down, so ``_settled`` reads it inactive.
+    Then -- inside that same tick, as the probe lists the holders -- a third
+    party starts the unit with main pid 600 on the port. ``_escalate``'s
+    re-read sees it active, so neither 600 nor the unmanaged 200 is signalled.
     """
     world = FakeWorld()
+    world.run_unit(100)
     world.spawn(200)
 
     def third_party_start() -> None:
         world.run_unit(600)
 
-    world.before_holders = third_party_start
-    world.stop_takes_effect = False
+    def stop_then_arm() -> None:
+        world.unit_stops()
+        world.before_holders = third_party_start
+
+    world.on_stop = stop_then_arm
     report = lifecycle(world).stop()
-    assert_p5_no_signal(world, 600)
+    assert "request_stop" in world.calls
+    assert_p5_no_signal(world, 600, 200)
     assert world.signalled == []
     assert report.outcome is Outcome.TIMEOUT
     assert_p1_one_outcome(report)
@@ -358,3 +365,87 @@ def test_terminate_is_bounded_by_the_remaining_deadline() -> None:
     assert world.budgets
     assert 0 < world.budgets[0] <= 6.0 + 0.21
     assert world.signalled == [200]
+
+
+# -- round 3 ---------------------------------------------------------------
+
+
+def test_slow_request_does_not_eat_the_kill_budget() -> None:
+    """R2a: the deadline starts after the request, not before it.
+
+    The stop request blocks 11 s (a sudo prompt); a lingering unmanaged voxd
+    must still get a full SIGTERM grace, not a zero budget.
+    """
+    world = FakeWorld()
+    world.run_unit(100)
+    world.spawn(200)
+
+    def slow_stop() -> None:
+        assert world.clock is not None
+        world.clock.advance(11.0)
+        world.unit_stops()
+
+    world.on_stop = slow_stop
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.STOPPED
+    assert world.budgets
+    assert world.budgets[0] >= 9.0
+
+
+def test_failure_after_a_kill_names_the_kill() -> None:
+    """R3: a probe failure mid-escalation still reports what stop already did."""
+    world = FakeWorld(
+        probe_failures={("service_owned", 201): failed("cgroup read")},
+    )
+    world.spawn(200)
+    world.spawn(201)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.BACKEND_FAILED
+    assert "killed unmanaged voxd pid 200" in report.detail
+    assert world.signalled == [200]
+
+
+def test_failure_after_a_kill_and_a_request_says_both() -> None:
+    world = FakeWorld(
+        stop_error=denied(),
+        probe_failures={("service_owned", 201): failed("cgroup read")},
+    )
+    world.run_unit(100)
+    world.spawn(200)
+    world.spawn(201)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.BACKEND_FAILED
+    assert report.detail.startswith("after requesting stop: ")
+    assert "killed unmanaged voxd pid 200" in report.detail
+    assert "password is required" in report.detail
+
+
+def test_port_file_cleanup_failure_is_a_warning_not_a_failure() -> None:
+    """R3: once the kill succeeded, a serve.port cleanup error only warns."""
+    world = FakeWorld(
+        port_file=8421,
+        probe_failures={"clear_port_file": PortProbeError("cannot read serve.port")},
+    )
+    world.spawn(200)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.STOPPED
+    assert "killed unmanaged voxd pid 200" in report.detail
+    assert "cannot read serve.port" in report.detail
+
+
+def test_timeout_explains_a_spared_cgroup_member() -> None:
+    """R5: a voxd left alone because systemd owns it is named with the reason."""
+    world = FakeWorld(service_pids={300})
+    world.spawn(300)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 300 spared: voxd.service still owns it" in report.detail
+
+
+def test_timeout_explains_a_survivor() -> None:
+    """R5: a voxd that outlived terminate() is named with the reason."""
+    world = FakeWorld()
+    world.spawn(200, survives=True)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail

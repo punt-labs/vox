@@ -49,6 +49,7 @@ class StopVerb:
         "_main",
         "_notes",
         "_requested",
+        "_spared",
         "_system",
     )
 
@@ -61,6 +62,7 @@ class StopVerb:
     _doomed: set[ProcessHandle]
     _notes: list[str]
     _requested: bool
+    _spared: set[int]
 
     def __new__(cls, system: LifecycleSystem, deadline_s: float) -> Self:
         self = super().__new__(cls)
@@ -73,18 +75,21 @@ class StopVerb:
         self._doomed = set()
         self._notes = []
         self._requested = False
+        self._spared = set()
         return self
 
     def run(self, verb: LifecycleVerb) -> LifecycleReport:
         """Stop voxd and return the confirmed outcome.
 
         A failing probe or manager query ends the verb as ``backend_failed``,
-        saying whether the stop had already been requested.
+        saying whether the stop had already been requested and what it had
+        already done (processes killed or spared, refusals overruled).
         """
         try:
             return self._run(verb)
         except (PortProbeError, BackendCommandError) as exc:
             detail = f"after requesting stop: {exc}" if self._requested else str(exc)
+            detail += self._done()
             return self._report(verb, LifecycleOutcome.BACKEND_FAILED, detail)
 
     def _run(self, verb: LifecycleVerb) -> LifecycleReport:
@@ -103,6 +108,9 @@ class StopVerb:
         refused = self._request(verb) if obs.active else None
         if refused is not None:
             return refused.naming(previous_pid=previous)
+        # The kill budget runs from here: a slow request (a sudo prompt) must
+        # not leave a lingering voxd SIGKILLed with no SIGTERM grace.
+        self._deadline_at = self._system.poll.now() + self._deadline_s
         if self._system.poll.until(self._settled, self._deadline_s):
             done = self._report(verb, LifecycleOutcome.STOPPED, self._stopped_detail())
             return done.naming(previous_pid=previous)
@@ -111,7 +119,6 @@ class StopVerb:
     def _capture(self, obs: Observation) -> None:
         """Pin the port holders and the manager's main process before acting."""
         self._captured = obs.procs
-        self._deadline_at = self._system.poll.now() + self._deadline_s
         main = None
         if obs.mainpid is not None:
             main = self._system.probe.open_handle(obs.mainpid)
@@ -170,24 +177,58 @@ class StopVerb:
         for handle in sorted(targets, key=self._pid_of):
             if probe.service_owned(handle.pid):
                 logger.warning("voxd pid %d belongs to the service; spared", handle.pid)
+                self._spared.add(handle.pid)
                 continue
             self._doomed.add(handle)
-            self._killed.append(handle.pid)
             budget = max(0.0, self._deadline_at - self._system.poll.now())
-            handle.terminate(budget)
+            if handle.terminate(budget):
+                self._killed.append(handle.pid)
         if self._killed:
-            probe.clear_port_file()
+            self._clear_port_file()
+
+    def _clear_port_file(self) -> None:
+        """Remove a stale ``serve.port``; after a kill, a failure only warns."""
+        try:
+            self._system.probe.clear_port_file()
+        except PortProbeError as exc:
+            logger.warning("could not clear serve.port: %s", exc)
+            self._notes.append(f"could not clear serve.port: {exc}")
 
     @staticmethod
     def _pid_of(handle: ProcessHandle) -> int:
         return handle.pid
 
+    @staticmethod
+    def _join(pids: list[int]) -> str:
+        """Return *pids* comma-separated, for a report detail."""
+        return ", ".join(str(p) for p in pids)
+
     def _stopped_detail(self) -> str:
         detail = f"voxd.service stopped; port {DEFAULT_PORT} free"
+        return detail + self._done() + self._off_port_note()
+
+    def _done(self) -> str:
+        """Return what the stop did to voxd processes, and any carried notes.
+
+        Every report names this -- success, timeout or failure -- so a stop
+        that killed something never ends without saying so, and a voxd it
+        deliberately left alive is named with the reason.
+        """
+        parts: list[str] = []
         if self._killed:
-            pids = ", ".join(str(p) for p in self._killed)
-            detail += f"; killed unmanaged voxd pid {pids}"
-        return detail + self._off_port_note() + self._carried()
+            parts.append(f"killed unmanaged voxd pid {self._join(self._killed)}")
+        parts.extend(
+            f"voxd pid {pid} spared: voxd.service still owns it"
+            for pid in sorted(self._spared)
+        )
+        survivors = sorted(h.pid for h in self._doomed if not h.exited())
+        parts.extend(
+            f"voxd pid {pid} did not exit after SIGTERM/SIGKILL "
+            "(permission denied, or it ignored the signals)"
+            for pid in survivors
+        )
+        parts.extend(self._notes)
+        return "".join(f"; {part}" for part in parts)
 
     def _timeout(self, verb: LifecycleVerb) -> LifecycleReport:
         """Name what is still up at the deadline."""
@@ -197,19 +238,14 @@ class StopVerb:
             alive = {h.pid for h in self._captured | self._main if not h.exited()}
             alive |= {h.pid for h in self._system.probe.voxd_processes()}
             if alive:
-                pids = ", ".join(str(p) for p in sorted(alive))
-                what = f"voxd pid {pids} is still running"
+                what = f"voxd pid {self._join(sorted(alive))} is still running"
             else:
                 what = (
                     f"port {DEFAULT_PORT} still accepts connections but no "
                     "visible voxd process holds it"
                 )
-        detail = f"{what} after {self._deadline_s:.0f}s{self._carried()}"
+        detail = f"{what} after {self._deadline_s:.0f}s{self._done()}"
         return self._report(verb, LifecycleOutcome.TIMEOUT, detail)
-
-    def _carried(self) -> str:
-        """Return the overruled refusals, appended to the final detail."""
-        return "".join(f"; {note}" for note in self._notes)
 
     def _off_port_note(self) -> str:
         """Name any voxd on another port; it is never signalled."""

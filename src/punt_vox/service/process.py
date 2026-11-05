@@ -43,18 +43,25 @@ class ProcessManager:
     def read_port_file(self) -> int | None:
         """Read the daemon port from ``serve.port``.
 
-        ``None`` is the documented answer when the file does not exist. A file
-        that exists but cannot be read or parsed raises ``PortProbeError``: it
-        is never read as "no other port".
+        ``None`` is the documented answer when the file does not exist, and
+        when its content does not parse: voxd writes it non-atomically, so an
+        empty or partial file is a crash leftover -- a stale hint, warned
+        about and ignored. A read error other than not-found raises
+        ``PortProbeError``.
         """
         port_file = self._run_dir() / "serve.port"
         try:
-            return int(port_file.read_text().strip())
+            text = port_file.read_text()
         except FileNotFoundError:
             return None
-        except (OSError, ValueError) as exc:
+        except OSError as exc:
             msg = f"cannot read {port_file}: {exc}"
             raise PortProbeError(msg) from exc
+        try:
+            return int(text.strip())
+        except ValueError:
+            logger.warning("Ignoring stale %s: unparseable %r", port_file, text)
+            return None
 
     def remove_port_file(self) -> None:
         """Remove the daemon port file; warn (never claim removal) on failure."""
@@ -80,7 +87,9 @@ class ProcessManager:
         and no stderr) reads as an empty port.
         """
         if platform.system() == "Darwin":
-            cmd = ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"]
+            # -w: lsof's warnings (an unreadable mount) are not errors and
+            # must not fail the probe through a non-empty stderr.
+            cmd = ["lsof", "-w", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"]
         else:
             cmd = ["fuser", f"{port}/tcp"]
         result = self._probe(cmd)

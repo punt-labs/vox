@@ -358,3 +358,12 @@ def test_install_failure_is_backend_command_error(
     mock_run.side_effect = FileNotFoundError(2, "No such file: 'sudo'")
     with pytest.raises(BackendCommandError, match="sudo"):
         _backend().install("someone")
+
+
+def test_install_unwritable_state_dir_is_backend_command_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R7: the local tmp-unit write failing is typed, so install reports it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "missing-home"))
+    with pytest.raises(BackendCommandError, match=r"voxd\.service\.tmp"):
+        _backend().install("someone")

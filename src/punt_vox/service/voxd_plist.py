@@ -8,6 +8,7 @@ import os
 import plistlib
 import textwrap
 from typing import TYPE_CHECKING, Self, cast, final
+from xml.parsers.expat import ExpatError
 
 from punt_vox.service.backend import BackendCommandError
 
@@ -180,12 +181,10 @@ class VoxdPlist:
         read or parsed raises ``BackendCommandError``.
         """
         try:
-            raw = self._path.read_bytes()
+            return self._bind_in(plistlib.loads(self._path.read_bytes()))
         except FileNotFoundError:
             return ""
-        try:
-            return self._bind_in(plistlib.loads(raw))
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, ExpatError) as exc:
             argv = ["read", str(self._path)]
             raise BackendCommandError.of(argv, 1, str(exc)) from exc
 

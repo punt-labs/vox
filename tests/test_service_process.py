@@ -586,6 +586,7 @@ def test_find_pid_on_port_macos_lists_listeners_only(
     ProcessManager().find_pid_on_port(8421)
     assert mock_run.call_args.args[0] == [
         "lsof",
+        "-w",
         "-nP",
         "-t",
         "-iTCP:8421",
@@ -600,12 +601,31 @@ def test_read_port_file_missing_is_none(
     assert ProcessManager().read_port_file() is None
 
 
-def test_read_port_file_unparseable_is_surfaced(
+@pytest.mark.parametrize("content", ["", "84", "not-a-port"])
+def test_read_port_file_unparseable_is_a_stale_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    """R8: a partial serve.port (a crash leftover) warns and reads as absent."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text(content)
+    with caplog.at_level("WARNING", logger="punt_vox.service.process"):
+        port = ProcessManager().read_port_file()
+    if content == "84":
+        assert port == 84
+        return
+    assert port is None
+    assert any("serve.port" in r.getMessage() for r in caplog.records)
+
+
+def test_read_port_file_read_error_is_surfaced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A port file that cannot be read or parsed fails loudly (B16)."""
+    """B16/R8: a read error other than not-found still fails loudly."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
-    (tmp_path / "serve.port").write_text("not-a-port")
+    (tmp_path / "serve.port").mkdir()
     with pytest.raises(PortProbeError, match=r"serve\.port"):
         ProcessManager().read_port_file()
 

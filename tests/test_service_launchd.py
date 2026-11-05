@@ -364,3 +364,16 @@ def test_launchd_uninstall_failure_is_backend_command_error(
     with pytest.raises(BackendCommandError, match="bootout failed"):
         be.uninstall()
     assert plist.exists(), "a failed bootout must not remove the plist"
+
+
+def test_launchd_install_unwritable_plist_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7: a plist that cannot be written is typed, so install reports it."""
+    blocker = tmp_path / "LaunchAgents"
+    blocker.write_text("a file where the directory should be")
+    be, agent = _backend_with_mock_agent(monkeypatch, blocker / "p.plist")
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        be.install("someone")
+    agent.start.assert_not_called()

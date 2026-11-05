@@ -293,6 +293,27 @@ def test_start_time_terminate_is_bounded_by_the_budget(
     clock = FakeClock()
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), clock)
     assert handle is not None
-    assert handle.terminate(1.0) is False
-    assert clock.monotonic() <= 1.2
+    assert handle.terminate(2.0) is False
+    assert clock.monotonic() <= 2.2
     assert kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+
+
+@pytest.mark.parametrize("budget", [0.0, 0.5])
+def test_start_time_terminate_below_the_floor_sends_sigterm_only(
+    kills: list[tuple[int, int]], budget: float
+) -> None:
+    """R2b: no SIGKILL without a real SIGTERM grace first."""
+    handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
+    assert handle is not None
+    assert handle.terminate(budget) is False
+    assert kills == [(4242, signal.SIGTERM)]
+
+
+def test_pidfd_terminate_below_the_floor_sends_sigterm_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Pidfd(monkeypatch, exits_on=signal.SIGKILL)
+    handle = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert handle is not None
+    assert handle.terminate(0.0) is False
+    assert fake.sent == [signal.SIGTERM]

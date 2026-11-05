@@ -45,6 +45,8 @@ def test_a_reused_pid_is_a_different_identity() -> None:
         ("/usr/local/bin/voxd --port 8421", True),
         ("voxd", True),
         ("/opt/py/bin/python3.13 /home/u/.local/bin/voxd --port 8421", True),
+        ("/opt/py/bin/python3.13t /home/u/.local/bin/voxd --port 8421", True),
+        ("/usr/bin/python3 -X dev /home/u/.local/bin/voxd", False),
         ("/Library/Frameworks/Python.framework/Python /u/bin/voxd", True),
         ("/usr/bin/someserver --name voxd", False),
         ("/usr/bin/python3 -m tool voxd", False),

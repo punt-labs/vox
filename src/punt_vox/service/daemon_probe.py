@@ -39,8 +39,10 @@ class DaemonProbe:
 
     _CONNECT_TIMEOUT_S: ClassVar[float] = 0.5
     _PROC: ClassVar[Path] = Path("/proc")
-    # systemd puts every process the unit runs in this cgroup.
-    _SERVICE_CGROUP: ClassVar[str] = "/voxd.service"
+    # systemd puts every process the system unit vox installs in this cgroup
+    # (or a child of it). A user-scope voxd.service lives under user.slice
+    # and is not the installed service.
+    _SERVICE_CGROUP: ClassVar[str] = "/system.slice/voxd.service"
 
     _process_mgr: ProcessManager
     _target: Callable[[], HealthTarget]
@@ -114,7 +116,17 @@ class DaemonProbe:
         except OSError as exc:
             msg = f"cannot read {cgroup}: {exc}"
             raise PortProbeError(msg) from exc
-        return self._SERVICE_CGROUP in text
+        return any(self._in_service(line) for line in text.splitlines())
+
+    @classmethod
+    def _in_service(cls, line: str) -> bool:
+        """Return True when one ``/proc/<pid>/cgroup`` line names the unit.
+
+        The path is the field after the last ``:`` (cgroup v1 lines carry a
+        controller list before it).
+        """
+        path = line.rsplit(":", 1)[-1].strip()
+        return path == cls._SERVICE_CGROUP or path.startswith(cls._SERVICE_CGROUP + "/")
 
     def clear_port_file(self) -> None:
         """Remove ``serve.port`` when it names the service port."""

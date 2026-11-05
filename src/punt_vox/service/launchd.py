@@ -85,7 +85,11 @@ class LaunchdBackend:
     def install(self, user: str) -> None:
         """Write the plist and bring the job up.  No sudo required."""
         del user  # a LaunchAgent always runs as the logged-in session user
-        self._plist.write()
+        try:
+            self._plist.write()
+        except OSError as exc:
+            argv = ["write", str(self._plist.path)]
+            raise BackendCommandError.of(argv, 1, str(exc)) from exc
         self._drive("bootstrap", self._agent.start)
         logger.info("Bootstrapped and kickstarted %s into launchd", _LABEL)
 

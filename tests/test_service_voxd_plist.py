@@ -279,3 +279,24 @@ def test_installed_bind_unparseable_plist_is_typed(tmp_path: Path) -> None:
     plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
     with pytest.raises(BackendCommandError, match=r"p\.plist"):
         plist.installed_bind()
+
+
+@pytest.mark.parametrize(
+    "body", [b'<?xml version="1.0"?><plist><dict><key>', b"<?xml garbage"]
+)
+def test_installed_bind_malformed_xml_is_typed(tmp_path: Path, body: bytes) -> None:
+    """R4: an XML parser error is a backend failure, not an escaping ExpatError."""
+    path = tmp_path / "p.plist"
+    path.write_bytes(body)
+    plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        plist.installed_bind()
+
+
+def test_installed_bind_unreadable_plist_is_typed(tmp_path: Path) -> None:
+    """R4: a read error is a backend failure too."""
+    path = tmp_path / "p.plist"
+    path.mkdir()
+    plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
+    with pytest.raises(BackendCommandError, match=r"p\.plist"):
+        plist.installed_bind()

@@ -85,10 +85,15 @@ class FakeProcess:
         return not self.alive
 
     def terminate(self, within_s: float) -> bool:
-        self._world.signalled.append(self._pid)
-        self._world.budgets.append(within_s)
+        """Exit at once, or -- a survivor -- block the whole budget as the real
+        handle would, so the fake clock shows what the kill cost."""
+        world = self._world
+        world.signalled.append(self._pid)
+        world.budgets.append(within_s)
         if not self._survives:
             self.exit()
+        elif world.clock is not None:
+            world.clock.advance(within_s)
         return not self.alive
 
 
@@ -164,6 +169,10 @@ class FakeWorld:
     on_start: Callable[[], None] | None = None
     between: Callable[[], None] | None = None
     before_holders: Callable[[], None] | None = None
+    # the clock a lifecycle over this world polls on (set by ``lifecycle``)
+    clock: FakeClock | None = None
+    # probe calls that fail: method name -> error, or (method, pid) -> error
+    probe_failures: dict[str | tuple[str, int], Exception] = field(default_factory=dict)
     # recordings
     budgets: list[float] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
@@ -305,14 +314,23 @@ class FakeProbe:
         proc = self._world.procs.get(pid)
         return FakeHandle(proc) if proc is not None and proc.alive else None
 
+    def _fail(self, *keys: str | tuple[str, int]) -> None:
+        for key in keys:
+            failure = self._world.probe_failures.get(key)
+            if failure is not None:
+                raise failure
+
     def service_owned(self, pid: int) -> bool:
+        self._fail("service_owned", ("service_owned", pid))
         return pid in self._world.service_pids
 
     def clear_port_file(self) -> None:
+        self._fail("clear_port_file")
         if self._world.port_file == 8421:
             self._world.port_file = None
 
     def port_listening(self) -> bool:
+        self._fail("port_listening")
         return self._world.foreign_listener or self._world.holder() is not None
 
     def health(self, holders: frozenset[ProcessHandle]) -> HealthStatus | None:
@@ -353,6 +371,10 @@ class FakeClock:
 
     def monotonic(self) -> float:
         return self._now
+
+    def advance(self, seconds: float) -> None:
+        """Move time forward without firing events, as a blocking call does."""
+        self._now += seconds
 
     def sleep(self, seconds: float) -> None:
         self._now += seconds
@@ -459,7 +481,8 @@ def assert_p5_no_signal(world: FakeWorld, *forbidden: int) -> None:
 
 def lifecycle(world: FakeWorld, clock: FakeClock | None = None) -> DaemonLifecycle:
     """Return a lifecycle over *world*, polling on a fake clock."""
-    poll = Poll(clock if clock is not None else FakeClock())
+    world.clock = clock if clock is not None else FakeClock()
+    poll = Poll(world.clock)
     system = LifecycleSystem(FakeBackend(world), FakeProbe(world), poll, WHEEL)
     return DaemonLifecycle(system)
 

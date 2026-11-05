@@ -44,10 +44,21 @@ _TERM_GRACE_S = 5.0
 _KILL_WAIT_S = 2.0
 
 
-def _split(within_s: float) -> tuple[float, float]:
-    """Split a terminate budget into (SIGTERM grace, SIGKILL wait)."""
+# Below this budget there is no room for a real SIGTERM grace, so no SIGKILL
+# is sent: the process gets SIGTERM only and the caller sees it survive.
+_MIN_GRACE_S = 1.0
+
+
+def _split(within_s: float) -> tuple[float, float | None]:
+    """Split a terminate budget into (SIGTERM grace, SIGKILL wait).
+
+    The SIGKILL wait is ``None`` -- send no SIGKILL -- when the budget is
+    below ``_MIN_GRACE_S``: a SIGKILL with no grace before it is never sent.
+    """
+    if within_s < _MIN_GRACE_S:
+        return max(0.0, within_s), None
     kill_wait = min(_KILL_WAIT_S, within_s * 0.3)
-    return min(_TERM_GRACE_S, max(0.0, within_s - kill_wait)), kill_wait
+    return min(_TERM_GRACE_S, within_s - kill_wait), kill_wait
 
 
 type IdentityReader = Callable[[int], ProcessIdentity | None]
@@ -122,6 +133,8 @@ class PidfdProcess:
             return self.exited()
         if self._wait(grace):
             return True
+        if kill_wait is None:
+            return self.exited()
         logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
         if not self._send(signal.SIGKILL):
             return self.exited()
@@ -200,6 +213,8 @@ class StartTimeProcess:
             return self.exited()
         if self._poll.until(self.exited, grace):
             return True
+        if kill_wait is None:
+            return self.exited()
         logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
         if not self._send(signal.SIGKILL):
             return self.exited()

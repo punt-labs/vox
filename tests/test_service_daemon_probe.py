@@ -158,6 +158,29 @@ def test_service_owned_reads_the_cgroup(
     assert probe.service_owned(44) is False  # gone, or no /proc (macOS)
 
 
+@pytest.mark.parametrize(
+    ("line", "owned"),
+    [
+        ("0::/system.slice/voxd.service", True),
+        ("0::/system.slice/voxd.service/sub", True),
+        ("1:name=systemd:/system.slice/voxd.service", True),
+        (
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/voxd.service",
+            False,
+        ),
+        ("0::/system.slice/voxd.service-other", False),
+    ],
+)
+def test_service_owned_matches_the_system_unit_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, owned: bool
+) -> None:
+    """R9: only the system unit vox installs counts, not a user-scope voxd."""
+    monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
+    (tmp_path / "42").mkdir()
+    (tmp_path / "42" / "cgroup").write_text(line + "\n")
+    assert _probe(MagicMock()).service_owned(42) is owned
+
+
 def test_clear_port_file_only_for_the_service_port() -> None:
     """B6: serve.port is removed only when it names 8421."""
     mgr = MagicMock()

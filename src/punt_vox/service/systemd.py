@@ -227,7 +227,10 @@ class SystemdBackend:
         """
         logger.warning(_SUDO_NOTICE)
         tmp_unit = _paths_user_state_dir() / "voxd.service.tmp"
-        tmp_unit.write_text(self._unit.content(user))
+        try:
+            tmp_unit.write_text(self._unit.content(user))
+        except OSError as exc:
+            raise BackendCommandError.of(["write", str(tmp_unit)], 1, str(exc)) from exc
         logger.info("Wrote unit to %s", tmp_unit)
         target = str(self._unit.path)
         try:
