@@ -1,7 +1,8 @@
 """``vox daemon stop|start|restart|status``: the confirmed daemon lifecycle.
 
 Each changing verb returns a :class:`LifecycleReport`; the CLI only emits it
-and exits with its code. ``status`` reads health through the same probe.
+and exits with its code. ``status`` returns a :class:`DaemonStatus` read
+through the same probe.
 ``restart`` is ``stop`` then ``start(require_fresh=True)`` and adds no stop
 or start logic of its own: ``start`` runs only after ``stop`` confirmed every
 previous process exited.
@@ -11,16 +12,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_start import StartVerb
+from punt_vox.service.lifecycle_status import StatusCheck
 from punt_vox.service.lifecycle_stop import StopVerb
 from punt_vox.service.lifecycle_system import LifecycleSystem
-from punt_vox.service.process import DEFAULT_PORT
 
 if TYPE_CHECKING:
+    from punt_vox.service.daemon_status import DaemonStatus
     from punt_vox.service.lifecycle_report import LifecycleReport
-    from punt_vox.types_health import HealthStatus
 
 __all__ = ["DaemonLifecycle"]
 
@@ -54,23 +54,16 @@ class DaemonLifecycle:
         """
         return cls(LifecycleSystem.for_this_host())
 
-    def health(self) -> HealthStatus:
-        """Return the health of the voxd holding the service port.
+    def status(self) -> DaemonStatus:
+        """Return one reading of the voxd holding the service port.
 
         Found the way ``stop`` and ``start`` find it: the installed bind, port
         8421, a token only from ``serve.token``, sent only to a visible voxd
         on the port -- never ``serve.port``, never ``VOXD_*`` from the shell.
-        Raises ``VoxdConnectionError`` naming why no voxd answered, and
-        ``PortProbeError`` or ``BackendCommandError`` when the port or the
-        installed unit cannot be read.
+        Never raises for what it finds: a port or unit vox cannot read is an
+        ``unknown`` reading.
         """
-        probe = self._system.probe
-        status = probe.health(probe.voxd_processes(), self.STATUS_DEADLINE_S)
-        if status is not None:
-            return status
-        miss = probe.health_miss()
-        msg = f"no voxd answered health on port {DEFAULT_PORT}: {miss}"
-        raise VoxdConnectionError(msg) from miss
+        return StatusCheck(self._system, self.STATUS_DEADLINE_S).run()
 
     def stop(self) -> LifecycleReport:
         """Stop voxd and confirm it is gone."""

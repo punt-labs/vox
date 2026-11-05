@@ -28,7 +28,7 @@ from punt_vox.service import (
     install as svc_install,
     uninstall as svc_uninstall,
 )
-from punt_vox.service.backend import BackendCommandError, PortProbeError
+from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.lifecycle_report import LifecycleRefusedError
 
 if TYPE_CHECKING:
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
     from punt_vox.cli_io import OutputFlags
     from punt_vox.output_formatter import OutputFormatter
     from punt_vox.service.lifecycle_report import LifecycleReport
-    from punt_vox.types_health import HealthStatus
 
 __all__ = ["DaemonCli", "build_daemon_app"]
 
@@ -199,58 +198,38 @@ class DaemonCli:
         ``--json`` returns the daemon health snapshot (``status``, ``port``,
         ``pid``, ``daemon_version``, ``uptime_seconds``, ``queued``,
         ``active_sessions``) -- the same shape ``mic:status`` reports for the
-        daemon block. No answer is ``not_running``; a port or unit vox cannot
-        inspect is ``unknown``. Both exit 1.
+        daemon block. Otherwise it reports ``status`` and ``reason``:
+        ``unresponsive`` (a visible voxd that did not answer; ``pids`` names
+        it), ``unknown`` (a listener vox cannot attribute, or a port or unit
+        it cannot inspect), or ``not_running`` (``off_port_pids`` names any
+        voxd on another port). Each exits 1.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        try:
-            health = self._read_health()
-        except (
-            VoxdConnectionError,
-            VoxdProtocolError,
-            PortProbeError,
-            BackendCommandError,
-        ) as exc:
-            # No answer is "not running"; a probe vox could not run says
-            # nothing about voxd, so it is "unknown", never "not running".
-            down = isinstance(exc, VoxdConnectionError | VoxdProtocolError)
-            state = "not_running" if down else "unknown"
-            self._formatter.emit(
-                {"status": state, "reason": str(exc)},
-                f"Daemon: {state.replace('_', ' ')} ({exc})",
-            )
-            raise typer.Exit(code=1) from exc
-
-        payload: dict[str, object] = {
-            "status": health.status,
-            "port": health.port,
-            "pid": health.pid,
-            # ``provider`` is not on the health payload -- the daemon has
-            # no provider of its own; per-provider readiness moves to the
-            # ``provider_status`` op (design §3.6, delivered by PR 3).
-            "daemon_version": health.daemon_version,
-            "uptime_seconds": health.uptime_seconds,
-            "queued": health.queued,
-            "active_sessions": health.active_sessions,
-        }
-        text = (
-            f"Daemon: {health.status} on port {health.port}\n"
-            f"  Uptime:   {health.uptime_seconds}s\n"
-            f"  Sessions: {health.active_sessions}"
-        )
-        self._formatter.emit(payload, text)
+        reading = self._read_status()
+        self._formatter.emit(reading.to_json(), reading.text())
+        if reading.exit_code:
+            raise typer.Exit(code=reading.exit_code)
 
     @classmethod
-    def _read_health(cls) -> HealthStatus:
-        """Return health from the configured daemon, else the local service.
+    def _read_status(cls) -> DaemonStatus:
+        """Return a reading of the configured daemon, else the local service.
 
         ``VOXD_HOST`` or ``VOXD_PORT`` names a daemon the operator chose
-        (possibly remote), so the client reaches it as ``vox status`` does;
-        otherwise the lifecycle probe reads the installed service.
+        (possibly remote), so the client reaches it as ``vox status`` does
+        and any failure is ``not_running``; otherwise the lifecycle probe
+        reads the installed service.
         """
         if any(os.environ.get(name, "").strip() for name in _ENDPOINT_ENV):
-            return VoxClientSync().health()
-        return cls._lifecycle().health()
+            return cls._client_status()
+        return cls._lifecycle().status()
+
+    @staticmethod
+    def _client_status() -> DaemonStatus:
+        """Return the configured daemon's reading; any failure is ``not_running``."""
+        try:
+            return DaemonStatus.running(VoxClientSync().health())
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            return DaemonStatus.not_running(str(exc))
 
     @staticmethod
     def _lifecycle() -> DaemonLifecycle:

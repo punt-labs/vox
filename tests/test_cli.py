@@ -2396,9 +2396,50 @@ class TestDaemonStatusCommand:
         assert result.exit_code == 1
         assert payload == {
             "status": "not_running",
-            "reason": "no voxd answered health on port 8421: "
-            "no visible voxd process holds port 8421",
+            "reason": "no voxd process holds port 8421 and nothing listens on it",
         }
+
+    def test_status_names_an_off_port_voxd_when_not_running(self) -> None:
+        """A voxd on the port serve.port names is reported the way stop does."""
+        result, payload = self._status(FakeWorld(off_port=frozenset({777})))
+        assert result.exit_code == 1
+        assert payload["status"] == "not_running"
+        assert payload["off_port_pids"] == [777]
+        assert "voxd pid 777 on another port" in str(payload["reason"])
+
+    def test_status_visible_voxd_no_reply_is_unresponsive(self) -> None:
+        """A visible voxd that does not answer is never "not running"."""
+        world = FakeWorld(health_error="voxd has not written serve.token yet")
+        world.token_written = False
+        world.run_unit(100)
+        result, payload = self._status(world)
+        assert result.exit_code == 1
+        assert payload["status"] == "unresponsive"
+        assert payload["pids"] == [100]
+        assert "voxd pid 100" in str(payload["reason"])
+        assert "serve.token" in str(payload["reason"])
+
+    def test_status_unattributed_listener_is_unknown(self) -> None:
+        """A listener vox cannot attribute is unknown, and gets no token."""
+        world = FakeWorld(foreign_listener=True)
+        result, payload = self._status(world)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
+        assert "port 8421" in str(payload["reason"])
+        assert "no visible voxd" in str(payload["reason"])
+        assert world.tokens_to == []
+
+    def test_status_unresponsive_text_exits_nonzero(self) -> None:
+        world = FakeWorld(token_written=False, health_error="connection reset")
+        world.run_unit(100)
+        with patch(
+            f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
+            return_value=lifecycle(world),
+        ):
+            result = CliRunner().invoke(app, ["daemon", "status"])
+        assert result.exit_code == 1
+        assert "Daemon: unresponsive" in result.output
+        assert "connection reset" in result.output
 
     def test_a_broken_probe_is_unknown_not_not_running(self) -> None:
         world = FakeWorld(probe_error="cannot run fuser: not found (install psmisc)")
@@ -2506,13 +2547,13 @@ class TestDaemonStatusCommand:
         assert "provider" not in payload
         assert payload["daemon_version"] == "4.17.0"
 
-    def test_json_not_running_carries_the_refusal(self) -> None:
-        """A voxd that refuses the request is not_running, with the cause."""
+    def test_json_unresponsive_carries_the_refusal(self) -> None:
+        """A visible voxd that refuses the request is unresponsive, with the cause."""
         world = FakeWorld(token_written=False, health_error="connection refused")
         world.run_unit(100)
         result, payload = self._status(world)
         assert result.exit_code == 1, result.output
-        assert payload["status"] == "not_running"
+        assert payload["status"] == "unresponsive"
         assert "connection refused" in str(payload["reason"])
 
 
