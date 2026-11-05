@@ -14,6 +14,7 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.types_health import HealthStatus
 
 
@@ -185,7 +186,8 @@ def test_clear_port_file_discards_a_stale_service_port_file() -> None:
     """B6: with no visible voxd on 8421, serve.port naming it is discarded."""
     mgr = MagicMock()
     mgr.find_pid_on_port.return_value = []
-    _probe(mgr).clear_port_file()
+    mgr.discard_port_file.return_value = PortFileCleanup.REMOVED
+    assert _probe(mgr).clear_port_file() is PortFileCleanup.REMOVED
     mgr.discard_port_file.assert_called_once_with(8421)
 
 
@@ -194,7 +196,7 @@ def test_clear_port_file_leaves_the_file_of_a_voxd_on_the_port() -> None:
     mgr = MagicMock()
     mgr.find_pid_on_port.return_value = [20]
     mgr.open_voxd.return_value = MagicMock()
-    _probe(mgr).clear_port_file()
+    assert _probe(mgr).clear_port_file() is PortFileCleanup.HELD
     mgr.discard_port_file.assert_not_called()
 
 

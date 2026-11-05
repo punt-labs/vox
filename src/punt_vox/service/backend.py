@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Protocol, Self, final
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from punt_vox.service.port_file_cleanup import PortFileCleanup
     from punt_vox.service.query_answer import QueryAnswer
+    from punt_vox.service.termination import Termination
     from punt_vox.types_health import HealthStatus
 
 __all__ = [
@@ -112,11 +114,12 @@ class ProcessHandle(Protocol):
         """Return True once the pinned process has exited."""
         ...
 
-    def terminate(self, within_s: float) -> bool:
-        """SIGTERM, then SIGKILL after a grace; return whether it exited.
+    def terminate(self, within_s: float) -> Termination:
+        """SIGTERM, then SIGKILL after a grace; return what that came to.
 
         Takes at most *within_s* seconds, so a caller's deadline holds. Below
-        ``KILL_GRACE_FLOOR_S`` it sends SIGTERM only.
+        ``KILL_GRACE_FLOOR_S`` it sends SIGTERM only. A signal failure other
+        than "gone" or "permission denied" raises ``PortProbeError``.
         """
         ...
 
@@ -143,10 +146,10 @@ class LifecycleProbe(Protocol):
         """Return True when the service manager still counts *pid* as its own."""
         ...
 
-    def clear_port_file(self) -> None:
-        """Remove a stale ``serve.port`` naming the service port.
+    def clear_port_file(self) -> PortFileCleanup:
+        """Remove a stale ``serve.port`` naming the service port; say what it did.
 
-        Left alone while a visible voxd holds the port; an unparseable file is
+        Declined while a visible voxd holds the port; an unparseable file is
         stale and removed. Raises ``PortProbeError`` when it cannot be removed.
         """
         ...

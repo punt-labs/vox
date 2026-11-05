@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import (
+    KILL_GRACE_FLOOR_S,
     BackendCommandError,
     PortProbeError,
     PrivilegeDeniedError,
@@ -28,6 +29,8 @@ from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
+from punt_vox.service.port_file_cleanup import PortFileCleanup
+from punt_vox.service.termination import Termination
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
@@ -46,6 +49,7 @@ class FakeProcess:
         "_exiting",
         "_on_port",
         "_pid",
+        "_refuses",
         "_slow_exit",
         "_survives",
         "_world",
@@ -58,6 +62,7 @@ class FakeProcess:
     _on_port: bool
     _survives: bool
     _slow_exit: bool
+    _refuses: bool
     _exiting: bool
     alive: bool
     version: str
@@ -70,6 +75,7 @@ class FakeProcess:
         version: str = WHEEL,
         survives: bool = False,
         slow_exit: bool = False,
+        refuses: bool = False,
     ) -> Self:
         self = super().__new__(cls)
         self._world = world
@@ -77,6 +83,7 @@ class FakeProcess:
         self._on_port = False
         self._survives = survives
         self._slow_exit = slow_exit
+        self._refuses = refuses
         self._exiting = False
         self.alive = True
         self.version = version
@@ -111,23 +118,31 @@ class FakeProcess:
         self._settle()
         return not self.alive
 
-    def terminate(self, within_s: float) -> bool:
+    def terminate(self, within_s: float) -> Termination:
         """Exit at once, or -- a survivor or slow exiter -- block the whole
         budget as the real handle would, so the fake clock shows what the kill
         cost. A slow exiter is still alive when terminate() returns and gone
-        by the next look."""
+        by the next look. A process that refuses the signal is untouched.
+
+        The outcome follows the real handles: below the grace floor only
+        SIGTERM is sent.
+        """
         world = self._world
         world.signalled.append(self._pid)
         world.budgets.append(within_s)
         if world.on_signal is not None:
             world.on_signal(self._pid)
+        if self._refuses:
+            return Termination.REFUSED
         if not (self._survives or self._slow_exit):
             self.exit()
-            return True
+            return Termination.EXITED
         if world.clock is not None:
             world.clock.advance(within_s)
         self._exiting = self._slow_exit
-        return False
+        if within_s < KILL_GRACE_FLOOR_S:
+            return Termination.TERM_ONLY
+        return Termination.SURVIVED
 
 
 @final
@@ -162,7 +177,7 @@ class FakeHandle:
     def exited(self) -> bool:
         return self._proc.exited()
 
-    def terminate(self, within_s: float) -> bool:
+    def terminate(self, within_s: float) -> Termination:
         return self._proc.terminate(within_s)
 
 
@@ -195,6 +210,8 @@ class FakeWorld:
     port_file_stale: bool = False
     # called with the pid each time a process is signalled
     on_signal: Callable[[int], None] | None = None
+    # acts once, just before the probe clears serve.port
+    before_clear: Callable[[], None] | None = None
     # a manager query that fails (systemctl show, launchctl print)
     query_error: Exception | None = None
     # the cause the last gated health request failed with
@@ -225,9 +242,15 @@ class FakeWorld:
         version: str = WHEEL,
         survives: bool = False,
         slow_exit: bool = False,
+        refuses: bool = False,
     ) -> FakeProcess:
         proc = FakeProcess(
-            self, pid, version=version, survives=survives, slow_exit=slow_exit
+            self,
+            pid,
+            version=version,
+            survives=survives,
+            slow_exit=slow_exit,
+            refuses=refuses,
         )
         if on_port:
             proc.bind()
@@ -364,15 +387,22 @@ class FakeProbe:
         self._fail("service_owned", ("service_owned", pid))
         return pid in self._world.service_pids
 
-    def clear_port_file(self) -> None:
+    def clear_port_file(self) -> PortFileCleanup:
         world = self._world
         world.calls.append("clear_port_file")
+        hook, world.before_clear = world.before_clear, None
+        if hook is not None:
+            hook()
         self._fail("clear_port_file")
         if world.holder() is not None:
-            return
+            return PortFileCleanup.HELD
         if world.port_file_stale or world.port_file == 8421:
             world.port_file = None
             world.port_file_stale = False
+            return PortFileCleanup.REMOVED
+        if world.port_file is None:
+            return PortFileCleanup.ABSENT
+        return PortFileCleanup.OTHER_PORT
 
     def port_listening(self) -> bool:
         self._fail("port_listening")

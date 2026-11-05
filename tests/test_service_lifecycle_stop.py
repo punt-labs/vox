@@ -23,6 +23,7 @@ from _lifecycle_fakes import (
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle_report import LifecycleOutcome as Outcome
+from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -505,10 +506,10 @@ def test_probe_failure_after_a_signal_names_every_signalled_pid(
     real_terminate = FakeProcess.terminate
     real_exited = FakeHandle.exited
 
-    def terminate(self: FakeProcess, within_s: float) -> bool:
-        exited = real_terminate(self, within_s)
+    def terminate(self: FakeProcess, within_s: float) -> Termination:
+        outcome = real_terminate(self, within_s)
         state["boom"] = True
-        return exited
+        return outcome
 
     def exited(self: FakeHandle) -> bool:
         if state["boom"]:
@@ -661,3 +662,80 @@ def test_manager_is_asked_again_before_each_signal() -> None:
     assert_p5_no_signal(world, 201, 600)
     assert report.outcome is Outcome.TIMEOUT
     assert "killed unmanaged voxd pid 200" in report.detail
+
+
+# -- round 2 of the reporting mission ----------------------------------------
+
+
+def test_port_file_cleanup_declined_for_a_new_holder_is_retried() -> None:
+    """S3: a voxd that appears just before the clear defers it, not spends it.
+
+    The cleanup runs again on a later tick, after that voxd is killed and
+    confirmed gone, and the file is removed then.
+    """
+    world = FakeWorld(port_file=8421)
+    world.spawn(200)
+    world.before_clear = lambda: world.spawn(250).bind()
+    report = lifecycle(world).stop()
+    assert world.calls.count("clear_port_file") == 2
+    assert world.port_file is None
+    assert world.signalled == [200, 250]
+    assert report.outcome is Outcome.STOPPED
+
+
+def test_late_holder_given_sigterm_only_and_gone_next_tick_is_killed() -> None:
+    """S4: a voxd that took 8421 after stop observed is still followed.
+
+    It is not among the captured handles; only the ledger's unconfirmed set
+    brings it into the next tick's watch, where its exit is confirmed.
+    """
+    world = FakeWorld()
+    main = world.run_unit(100, on_port=False)
+    world.stop_takes_effect = False
+    clock = FakeClock()
+
+    def manager_stops_and_a_voxd_binds() -> None:
+        main.exit()
+        world.unit_active = False
+        world.mainpid = None
+        world.spawn(250, slow_exit=True)
+
+    clock.at(9.3, manager_stops_and_a_voxd_binds)
+    report = lifecycle(world, clock).stop()
+    assert world.budgets
+    assert world.budgets[0] < 1.0
+    assert report.outcome is Outcome.STOPPED
+    assert "killed unmanaged voxd pid 250" in report.detail
+    assert "SIGTERM only" not in report.detail
+
+
+def test_a_terminate_that_fails_after_signalling_still_names_the_pid() -> None:
+    """S5: the ledger entry is written before terminate(), which then raises."""
+    world = FakeWorld()
+    world.spawn(200)
+
+    def signal_then_fail(pid: int) -> None:
+        msg = f"cannot signal voxd pid {pid}: Invalid argument"
+        raise PortProbeError(msg)
+
+    world.on_signal = signal_then_fail
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.BACKEND_FAILED
+    assert world.signalled == [200]
+    assert "Invalid argument" in report.detail
+    assert (
+        "stop began signalling voxd pid 200; its exit was never confirmed"
+        in report.detail
+    )
+
+
+def test_a_refused_signal_is_reported_as_refused() -> None:
+    """S9: permission denied is not "got SIGTERM only" nor "ignored"."""
+    world = FakeWorld()
+    world.spawn(200, refuses=True)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 200 refused the signal: permission denied" in report.detail
+    assert "SIGTERM only" not in report.detail
+    assert "ignored the signals" not in report.detail
+    assert world.signalled == [200]

@@ -10,10 +10,13 @@ report into a traceback.
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Self, final
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Self, final
+
+from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from punt_vox.service.backend import ProcessHandle
 
@@ -25,7 +28,9 @@ class KillOutcome(Enum):
     """Where one judged voxd process stands; the value is its report line."""
 
     SPARED = "voxd pid {pid} spared: voxd.service still owns it"
-    SIGNALLING = "voxd pid {pid} was signalled, but its exit was never confirmed"
+    # Written before terminate(): its identity re-check can fail before any
+    # signal goes out, so this says stop began, not that a signal landed.
+    SIGNALLING = "stop began signalling voxd pid {pid}; its exit was never confirmed"
     SURVIVED = (
         "voxd pid {pid} did not exit after SIGTERM/SIGKILL "
         "(permission denied, or it ignored the signals)"
@@ -34,6 +39,7 @@ class KillOutcome(Enum):
         "voxd pid {pid} got SIGTERM only and had not exited: the stop deadline "
         "left no time for a grace period before SIGKILL"
     )
+    REFUSED = "voxd pid {pid} refused the signal: permission denied"
     GONE = "voxd pid {pid} killed"
 
     def line(self, pid: int) -> str:
@@ -58,6 +64,15 @@ class KillLedger:
 
     _entries: dict[ProcessHandle, KillOutcome]
 
+    _SETTLED: ClassVar[Mapping[Termination, KillOutcome]] = MappingProxyType(
+        {
+            Termination.EXITED: KillOutcome.GONE,
+            Termination.SURVIVED: KillOutcome.SURVIVED,
+            Termination.TERM_ONLY: KillOutcome.TERM_ONLY,
+            Termination.REFUSED: KillOutcome.REFUSED,
+        }
+    )
+
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._entries = {}
@@ -78,18 +93,9 @@ class KillLedger:
         """
         self._entries[handle] = KillOutcome.SIGNALLING
 
-    def settle(self, handle: ProcessHandle, *, exited: bool, full: bool) -> None:
-        """Record what ``terminate()`` returned for *handle*.
-
-        *full* says whether the budget allowed SIGTERM and then SIGKILL, or
-        only SIGTERM (a budget below the grace floor).
-        """
-        if exited:
-            self._entries[handle] = KillOutcome.GONE
-        elif full:
-            self._entries[handle] = KillOutcome.SURVIVED
-        else:
-            self._entries[handle] = KillOutcome.TERM_ONLY
+    def settle(self, handle: ProcessHandle, termination: Termination) -> None:
+        """Record what ``terminate()`` came to for *handle*."""
+        self._entries[handle] = self._SETTLED[termination]
 
     def unconfirmed(self) -> frozenset[ProcessHandle]:
         """Return the signalled handles not yet seen to exit."""

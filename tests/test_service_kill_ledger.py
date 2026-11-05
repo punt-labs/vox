@@ -5,6 +5,7 @@ from __future__ import annotations
 from _lifecycle_fakes import FakeHandle, FakeWorld
 
 from punt_vox.service.kill_ledger import KillLedger, KillOutcome
+from punt_vox.service.termination import Termination
 
 
 def _handle(world: FakeWorld, pid: int) -> FakeHandle:
@@ -27,9 +28,9 @@ def test_settle_records_the_signal_that_was_possible() -> None:
     gone, full, term_only = (_handle(world, p) for p in (200, 201, 202))
     for handle in (gone, full, term_only):
         ledger.signalling(handle)
-    ledger.settle(gone, exited=True, full=True)
-    ledger.settle(full, exited=False, full=True)
-    ledger.settle(term_only, exited=False, full=False)
+    ledger.settle(gone, Termination.EXITED)
+    ledger.settle(full, Termination.SURVIVED)
+    ledger.settle(term_only, Termination.TERM_ONLY)
     assert ledger.gone(gone)
     assert ledger.unconfirmed() == frozenset({full, term_only})
     assert ledger.account() == [
@@ -44,7 +45,7 @@ def test_a_signal_whose_terminate_failed_is_still_named() -> None:
     ledger = KillLedger()
     ledger.signalling(_handle(world, 200))
     assert ledger.account() == [
-        "voxd pid 200 was signalled, but its exit was never confirmed"
+        "stop began signalling voxd pid 200; its exit was never confirmed"
     ]
 
 
@@ -53,7 +54,7 @@ def test_confirm_moves_only_signalled_handles_to_gone() -> None:
     ledger = KillLedger()
     late, spared, stranger = (_handle(world, p) for p in (200, 300, 400))
     ledger.signalling(late)
-    ledger.settle(late, exited=False, full=False)
+    ledger.settle(late, Termination.TERM_ONLY)
     ledger.spare(spared)
     assert not ledger.any_gone()
     ledger.confirm([late, spared, stranger])
@@ -71,3 +72,15 @@ def test_term_only_reason_names_the_deadline_not_ignored_signals() -> None:
     line = KillOutcome.TERM_ONLY.line(7)
     assert "no time for a grace period" in line
     assert "ignored" not in line
+
+
+def test_a_refused_signal_is_its_own_outcome() -> None:
+    """S9: permission denied reads as refused, not "got SIGTERM only"."""
+    world = FakeWorld()
+    ledger = KillLedger()
+    refused = _handle(world, 200)
+    ledger.signalling(refused)
+    ledger.settle(refused, Termination.REFUSED)
+    assert ledger.account() == ["voxd pid 200 refused the signal: permission denied"]
+    ledger.confirm([refused])  # it exited on its own: stop did not kill it
+    assert not ledger.any_gone()

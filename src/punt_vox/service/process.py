@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, ClassVar, Self
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process_identity import ProcessIdentity
+from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import ProcessHandle
@@ -63,30 +65,31 @@ class ProcessManager:
             logger.warning("Ignoring stale %s: unparseable %r", port_file, text)
             return None
 
-    def discard_port_file(self, port: int) -> None:
+    def discard_port_file(self, port: int) -> PortFileCleanup:
         """Remove ``serve.port`` when it names *port* or does not parse.
 
         An unparseable file is a crash leftover (voxd writes it
         non-atomically), stale whoever wrote it; a file naming another port
-        belongs to another voxd and is left. A read or removal failure raises
-        ``PortProbeError`` so the caller can report it.
+        belongs to another voxd and is left. Returns what it did. A read or
+        removal failure raises ``PortProbeError`` so the caller can report it.
         """
         port_file = self._run_dir() / "serve.port"
         try:
             text = port_file.read_text()
         except FileNotFoundError:
-            return
+            return PortFileCleanup.ABSENT
         except OSError as exc:
             msg = f"cannot read {port_file}: {exc}"
             raise PortProbeError(msg) from exc
         if text.strip().isdecimal() and int(text) != port:
-            return
+            return PortFileCleanup.OTHER_PORT
         try:
             port_file.unlink(missing_ok=True)
         except OSError as exc:
             msg = f"cannot remove {port_file}: {exc}"
             raise PortProbeError(msg) from exc
         logger.info("Removed stale port file %s", port_file)
+        return PortFileCleanup.REMOVED
 
     def remove_port_file(self) -> None:
         """Remove the daemon port file; warn (never claim removal) on failure."""
@@ -179,7 +182,7 @@ class ProcessManager:
             logger.info("PID %d is gone or is not voxd; nothing to kill", pid)
             return True
         logger.info("Terminating voxd PID %d", pid)
-        return handle.terminate(self._KILL_BUDGET_S)
+        return handle.terminate(self._KILL_BUDGET_S) is Termination.EXITED
 
     @staticmethod
     def _found_nothing(result: subprocess.CompletedProcess[str]) -> bool:

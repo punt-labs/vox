@@ -12,7 +12,9 @@ import pytest
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.installer import ServiceInstaller
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import ProcessManager
+from punt_vox.service.termination import Termination
 
 # ---------------------------------------------------------------------------
 # Exec args
@@ -304,7 +306,7 @@ def test_is_vox_daemon_process_ps_failure_raises(mock_run: MagicMock) -> None:
 
 def test_kill_pid_terminates_through_handle(monkeypatch: pytest.MonkeyPatch) -> None:
     handle = MagicMock()
-    handle.terminate.return_value = True
+    handle.terminate.return_value = Termination.EXITED
     monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: handle)
     assert ProcessManager().kill_pid(100) is True
     handle.terminate.assert_called_once_with(7.0)
@@ -319,7 +321,7 @@ def test_kill_pid_gone_or_not_voxd_signals_nothing(
 
 def test_kill_pid_survivor_reports_false(monkeypatch: pytest.MonkeyPatch) -> None:
     handle = MagicMock()
-    handle.terminate.return_value = False
+    handle.terminate.return_value = Termination.SURVIVED
     monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: handle)
     assert ProcessManager().kill_pid(100) is False
 
@@ -650,16 +652,25 @@ def test_remove_port_file_failure_does_not_claim_removal(
 
 
 @pytest.mark.parametrize(
-    ("content", "kept"),
-    [("8421", False), ("", False), ("84x", False), ("9000", True)],
+    ("content", "kept", "outcome"),
+    [
+        ("8421", False, PortFileCleanup.REMOVED),
+        ("", False, PortFileCleanup.REMOVED),
+        ("84x", False, PortFileCleanup.REMOVED),
+        ("9000", True, PortFileCleanup.OTHER_PORT),
+    ],
 )
 def test_discard_port_file_removes_the_port_or_a_stale_leftover(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str, kept: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    kept: bool,
+    outcome: PortFileCleanup,
 ) -> None:
     """A file naming the port, or one that does not parse, is removed."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
     (tmp_path / "serve.port").write_text(content)
-    ProcessManager().discard_port_file(8421)
+    assert ProcessManager().discard_port_file(8421) is outcome
     assert (tmp_path / "serve.port").exists() is kept
 
 
@@ -667,7 +678,7 @@ def test_discard_port_file_without_a_file_is_a_no_op(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
-    ProcessManager().discard_port_file(8421)
+    assert ProcessManager().discard_port_file(8421) is PortFileCleanup.ABSENT
     assert not (tmp_path / "serve.port").exists()
 
 

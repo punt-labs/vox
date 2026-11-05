@@ -20,6 +20,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
 
 if TYPE_CHECKING:
@@ -128,17 +129,17 @@ class DaemonProbe:
         path = line.rsplit(":", 1)[-1].strip()
         return path == cls._SERVICE_CGROUP or path.startswith(cls._SERVICE_CGROUP + "/")
 
-    def clear_port_file(self) -> None:
+    def clear_port_file(self) -> PortFileCleanup:
         """Remove a stale ``serve.port`` that names the service port.
 
-        Left alone while a visible voxd holds the port, since the file may be
-        that voxd's. Removed when it names the service port or does not parse
-        (a crash leftover). Raises ``PortProbeError`` when the file cannot be
-        read or removed.
+        Declined (``HELD``) while a visible voxd holds the port, since the
+        file may be that voxd's. Removed when it names the service port or
+        does not parse (a crash leftover). Returns what it did; raises
+        ``PortProbeError`` when the file cannot be read or removed.
         """
         if self.voxd_processes():
-            return
-        self._process_mgr.discard_port_file(DEFAULT_PORT)
+            return PortFileCleanup.HELD
+        return self._process_mgr.discard_port_file(DEFAULT_PORT)
 
     def port_listening(self) -> bool:
         """Return True when anything accepts a TCP connection on the port.

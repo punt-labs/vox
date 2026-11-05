@@ -25,36 +25,20 @@ import sys
 import weakref
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
-from punt_vox.service.backend import KILL_GRACE_FLOOR_S, PortProbeError
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
+from punt_vox.service.signal_escalation import SignalEscalation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.service.backend import Clock, ProcessHandle
     from punt_vox.service.process_identity import ProcessIdentity
+    from punt_vox.service.termination import Termination
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["DaemonProcess", "PidfdProcess", "StartTimeProcess"]
-
-# SIGTERM grace, then the wait for SIGKILL to take effect, when the caller's
-# budget allows both in full.
-_TERM_GRACE_S = 5.0
-_KILL_WAIT_S = 2.0
-
-
-def _split(within_s: float) -> tuple[float, float | None]:
-    """Split a terminate budget into (SIGTERM grace, SIGKILL wait).
-
-    The SIGKILL wait is ``None`` -- send no SIGKILL -- when the budget is
-    below ``KILL_GRACE_FLOOR_S``: a SIGKILL with no grace before it is never
-    sent, and the caller sees the process survive.
-    """
-    if within_s < KILL_GRACE_FLOOR_S:
-        return max(0.0, within_s), None
-    kill_wait = min(_KILL_WAIT_S, within_s * 0.3)
-    return min(_TERM_GRACE_S, within_s - kill_wait), kill_wait
 
 
 type IdentityReader = Callable[[int], ProcessIdentity | None]
@@ -119,25 +103,19 @@ class PidfdProcess:
         """Return True once the pinned process has exited."""
         return self._wait(0.0)
 
-    def terminate(self, within_s: float) -> bool:
-        """SIGTERM through the pidfd, SIGKILL after the grace; return exited.
+    def terminate(self, within_s: float) -> Termination:
+        """SIGTERM through the pidfd, SIGKILL after the grace; say what came of it.
 
         The whole call takes at most *within_s* seconds.
         """
-        grace, kill_wait = _split(within_s)
-        if not self._send(signal.SIGTERM):
-            return self.exited()
-        if self._wait(grace):
-            return True
-        if kill_wait is None:
-            return self.exited()
-        logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
-        if not self._send(signal.SIGKILL):
-            return self.exited()
-        return self._wait(kill_wait)
+        return SignalEscalation(self._pid, self._send, self._wait).run(within_s)
 
     def _send(self, sig: signal.Signals) -> bool:
-        """Signal the pinned process; return False when permission is denied."""
+        """Signal the pinned process; return False when permission is denied.
+
+        Any other failure raises ``PortProbeError``: the caller reports it
+        with what it had already done, never as a traceback.
+        """
         if sys.platform != "linux":
             raise OSError(errno.ENOSYS, "pidfd_send_signal needs Linux")
         try:
@@ -147,11 +125,18 @@ class PidfdProcess:
         except PermissionError:
             logger.warning("No permission to signal voxd pid %d", self._pid)
             return False
+        except OSError as exc:
+            msg = f"cannot signal voxd pid {self._pid}: {exc}"
+            raise PortProbeError(msg) from exc
         return True
 
     def _wait(self, timeout: float) -> bool:
         """Return True when the pidfd turns readable (the process exited)."""
-        readable, _, _ = select.select([self._fd], [], [], timeout)
+        try:
+            readable, _, _ = select.select([self._fd], [], [], timeout)
+        except OSError as exc:
+            msg = f"cannot wait on voxd pid {self._pid}: {exc}"
+            raise PortProbeError(msg) from exc
         return bool(readable)
 
 
@@ -199,25 +184,23 @@ class StartTimeProcess:
         """Return True when the pid is gone or now names a different process."""
         return self._identity(self._pid) != self._seen
 
-    def terminate(self, within_s: float) -> bool:
+    def terminate(self, within_s: float) -> Termination:
         """SIGTERM, then SIGKILL after the grace, each after a re-check.
 
         The whole call takes at most *within_s* seconds.
         """
-        grace, kill_wait = _split(within_s)
-        if not self._send(signal.SIGTERM):
-            return self.exited()
-        if self._poll.until(self.exited, grace):
-            return True
-        if kill_wait is None:
-            return self.exited()
-        logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
-        if not self._send(signal.SIGKILL):
-            return self.exited()
-        return self._poll.until(self.exited, kill_wait)
+        return SignalEscalation(self._pid, self._send, self._wait).run(within_s)
+
+    def _wait(self, timeout: float) -> bool:
+        """Poll the identity until the process is gone or *timeout* passes."""
+        return self._poll.until(self.exited, timeout)
 
     def _send(self, sig: signal.Signals) -> bool:
-        """Signal the pid only if it is still the identified process."""
+        """Signal the pid only if it is still the identified process.
+
+        Returns False when permission is denied; any other failure raises
+        ``PortProbeError``.
+        """
         if self.exited():
             return True
         try:
@@ -227,6 +210,9 @@ class StartTimeProcess:
         except PermissionError:
             logger.warning("No permission to signal voxd pid %d", self._pid)
             return False
+        except OSError as exc:
+            msg = f"cannot signal voxd pid {self._pid}: {exc}"
+            raise PortProbeError(msg) from exc
         return True
 
 

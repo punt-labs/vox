@@ -25,7 +25,6 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import (
-    KILL_GRACE_FLOOR_S,
     BackendCommandError,
     PortProbeError,
     PrivilegeDeniedError,
@@ -237,27 +236,32 @@ class StopVerb:
         """
         budget = max(0.0, self._deadline_at - self._system.poll.now())
         self._ledger.signalling(handle)
-        exited = handle.terminate(budget)
-        self._ledger.settle(handle, exited=exited, full=budget >= KILL_GRACE_FLOOR_S)
+        self._ledger.settle(handle, handle.terminate(budget))
 
     def _clear_port_file(self, holders: frozenset[ProcessHandle]) -> None:
-        """Remove a stale ``serve.port``, once per stop.
+        """Remove a stale ``serve.port``, at most once per stop.
 
         Runs only after a signalled voxd is confirmed gone, and only while no
         visible voxd it has not killed holds the port (that voxd's file is
-        live). After the kill, a failure is a note in the detail, not a
-        failed stop.
+        live). It counts as done once the file is removed or there was nothing
+        to remove; a probe that declines because a voxd holds the port leaves
+        it to a later tick. After the kill, a failure is a note in the
+        detail, not a failed stop.
         """
         if self._port_file_done or not self._ledger.any_gone():
             return
         if any(not self._ledger.gone(h) for h in holders):
             return
-        self._port_file_done = True
         try:
-            self._system.probe.clear_port_file()
+            cleared = self._system.probe.clear_port_file()
         except PortProbeError as exc:
+            self._port_file_done = True
             logger.warning("could not clear serve.port: %s", exc)
             self._notes.append(f"could not clear serve.port: {exc}")
+            return
+        # A voxd that took the port since this tick looked is not spent on:
+        # the cleanup waits for a later tick.
+        self._port_file_done = cleared.settled
 
     @staticmethod
     def _pid_of(handle: ProcessHandle) -> int:

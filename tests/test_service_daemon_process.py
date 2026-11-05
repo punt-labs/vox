@@ -22,6 +22,8 @@ from punt_vox.service.daemon_process import (
 )
 from punt_vox.service.process import ProcessManager
 from punt_vox.service.process_identity import ProcessIdentity
+from punt_vox.service.signal_escalation import SignalEscalation
+from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,17 +82,17 @@ def test_pidfd_handle_signals_through_the_pidfd(
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
     assert handle.exited() is False
-    assert handle.terminate(7.0) is True
+    assert handle.terminate(7.0) is Termination.EXITED
     assert fake.sent == [signal.SIGTERM]
     assert handle.exited() is True
 
 
 def test_pidfd_handle_escalates_to_sigkill(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _Pidfd(monkeypatch, exits_on=signal.SIGKILL)
-    monkeypatch.setattr("punt_vox.service.daemon_process._TERM_GRACE_S", 0.01)
+    monkeypatch.setattr(SignalEscalation, "TERM_GRACE_S", 0.01)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
-    assert handle.terminate(7.0) is True
+    assert handle.terminate(7.0) is Termination.EXITED
     assert fake.sent == [signal.SIGTERM, signal.SIGKILL]
 
 
@@ -124,7 +126,7 @@ def test_pidfd_permission_denied_reports_not_exited(
     monkeypatch.setattr(signal, "pidfd_send_signal", _denied, raising=False)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
-    assert handle.terminate(7.0) is False
+    assert handle.terminate(7.0) is Termination.REFUSED
 
 
 def test_handle_terminates_a_real_process(tmp_path: Path) -> None:
@@ -139,7 +141,7 @@ def test_handle_terminates_a_real_process(tmp_path: Path) -> None:
     try:
         handle = DaemonProcess(SystemClock(), ProcessManager().identity).open(proc.pid)
         assert handle is not None
-        assert handle.terminate(7.0) is True
+        assert handle.terminate(7.0) is Termination.EXITED
         assert handle.exited() is True
     finally:
         proc.kill()
@@ -170,7 +172,7 @@ def test_start_time_handle_skips_sigkill_when_start_time_changed(
     identities = _Identities(_VOXD, _VOXD, _VOXD, _REUSED)
     handle = StartTimeProcess.open(4242, identities, FakeClock())
     assert handle is not None
-    assert handle.terminate(7.0) is True
+    assert handle.terminate(7.0) is Termination.EXITED
     assert kills == [(4242, signal.SIGTERM)]
 
 
@@ -191,7 +193,7 @@ def test_start_time_handle_escalates_when_same_process_survives(
 ) -> None:
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     assert handle is not None
-    assert handle.terminate(7.0) is False
+    assert handle.terminate(7.0) is Termination.SURVIVED
     assert kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
 
 
@@ -293,7 +295,7 @@ def test_start_time_terminate_is_bounded_by_the_budget(
     clock = FakeClock()
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), clock)
     assert handle is not None
-    assert handle.terminate(2.0) is False
+    assert handle.terminate(2.0) is Termination.SURVIVED
     assert clock.monotonic() <= 2.2
     assert kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
 
@@ -305,7 +307,7 @@ def test_start_time_terminate_below_the_floor_sends_sigterm_only(
     """R2b: no SIGKILL without a real SIGTERM grace first."""
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     assert handle is not None
-    assert handle.terminate(budget) is False
+    assert handle.terminate(budget) is Termination.TERM_ONLY
     assert kills == [(4242, signal.SIGTERM)]
 
 
@@ -315,5 +317,83 @@ def test_pidfd_terminate_below_the_floor_sends_sigterm_only(
     fake = _Pidfd(monkeypatch, exits_on=signal.SIGKILL)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
-    assert handle.terminate(0.0) is False
+    assert handle.terminate(0.0) is Termination.TERM_ONLY
     assert fake.sent == [signal.SIGTERM]
+
+
+# ---------------------------------------------------------------------------
+# a refused signal is its own outcome; any other OSError is a typed failure
+# ---------------------------------------------------------------------------
+
+
+def test_start_time_permission_denied_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S9: a signal the kernel refused is reported as refused, not survived."""
+
+    def denied(pid: int, sig: int) -> None:
+        raise PermissionError(errno.EPERM, "denied")
+
+    monkeypatch.setattr("punt_vox.service.daemon_process.os.kill", denied)
+    handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
+    assert handle is not None
+    assert handle.terminate(0.5) is Termination.REFUSED
+
+
+def test_pidfd_refused_below_the_floor_is_refused_not_term_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
+
+    def _denied(fd: int, sig: signal.Signals) -> None:
+        raise PermissionError(errno.EPERM, "denied")
+
+    monkeypatch.setattr(signal, "pidfd_send_signal", _denied, raising=False)
+    handle = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert handle is not None
+    assert handle.terminate(0.0) is Termination.REFUSED
+
+
+def test_pidfd_signal_oserror_is_port_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S7: a pidfd_send_signal failure other than ESRCH/EPERM is typed."""
+    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
+
+    def _einval(fd: int, sig: signal.Signals) -> None:
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    monkeypatch.setattr(signal, "pidfd_send_signal", _einval, raising=False)
+    handle = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert handle is not None
+    with pytest.raises(PortProbeError, match="Invalid argument"):
+        handle.terminate(7.0)
+
+
+def test_pidfd_wait_oserror_is_port_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S7: a select() failure while waiting on the pidfd is typed."""
+    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
+    handle = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert handle is not None
+
+    def _ebadf(*args: object) -> object:
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr("punt_vox.service.daemon_process.select.select", _ebadf)
+    with pytest.raises(PortProbeError, match="Bad file descriptor"):
+        handle.exited()
+
+
+def test_start_time_kill_oserror_is_port_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _einval(pid: int, sig: int) -> None:
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    monkeypatch.setattr("punt_vox.service.daemon_process.os.kill", _einval)
+    handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
+    assert handle is not None
+    with pytest.raises(PortProbeError, match="Invalid argument"):
+        handle.terminate(7.0)
