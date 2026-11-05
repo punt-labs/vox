@@ -216,6 +216,9 @@ class FakeWorld:
     query_error: Exception | None = None
     # the cause the last gated health request failed with
     health_error: str = "connection refused"
+    # a hung health request: each one blocks this long (cut to the budget it
+    # is handed), then fails with ``health_error``; 0: health answers at once
+    health_blocks_s: float = 0.0
     # an actor other than vox: replaces the manager's stop, acts between the
     # stop and start halves of restart (at the second observation), or acts
     # once, just before the probe next lists the port holders
@@ -408,11 +411,18 @@ class FakeProbe:
         self._fail("port_listening")
         return self._world.foreign_listener or self._world.holder() is not None
 
-    def health(self, holders: frozenset[ProcessHandle]) -> HealthStatus | None:
+    def health(
+        self, holders: frozenset[ProcessHandle], within_s: float
+    ) -> HealthStatus | None:
         if not holders:
             self._miss = "no visible voxd process holds port 8421"
             return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
+        if self._world.health_blocks_s:
+            assert self._world.clock is not None
+            self._world.clock.advance(min(self._world.health_blocks_s, within_s))
+            self._miss = self._world.health_error
+            return None
         holder = self._world.holder()
         if holder is None or not self._world.token_written:
             self._miss = self._world.health_error

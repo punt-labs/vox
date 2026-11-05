@@ -39,10 +39,11 @@ class SystemClock:
 class Poll:
     """Re-check a condition every interval until it holds or a deadline passes.
 
-    The check runs once more at the deadline, so a condition that becomes true
-    during the last sleep is not reported as a timeout. The poll returns the
-    moment the condition holds; it never sleeps out the rest of the window, and
-    its last sleep is cut to what remains, so the wait never runs past its bound.
+    The poll returns the moment the condition holds; it never sleeps out the
+    rest of the window, and its last sleep is cut to what remains. A check
+    that itself blocks (:meth:`first`, :meth:`answer_within`) is handed the
+    time left as its own bound and is never run once none remains, so it
+    cannot carry the wait past its deadline.
     """
 
     __slots__ = ("_clock", "_interval")
@@ -63,22 +64,32 @@ class Poll:
         return self._clock.monotonic()
 
     def until(self, condition: Callable[[], bool], deadline_s: float) -> bool:
-        """Return True once *condition* holds, False if it never does in time."""
-        return self.first(lambda: True if condition() else None, deadline_s) is True
+        """Return True once *condition* holds, False if it never does in time.
 
-    def first[T](self, fetch: Callable[[], T | None], deadline_s: float) -> T | None:
+        For a check that does not block (a pidfd or ``/proc`` read): it runs
+        once more at the deadline, so a condition that becomes true during the
+        last sleep is not reported as a timeout.
+        """
+        held = self.first(lambda _: True if condition() else None, deadline_s)
+        return held is True or condition()
+
+    def first[T](
+        self, fetch: Callable[[float], T | None], deadline_s: float
+    ) -> T | None:
         """Return the first value *fetch* produces, polling until the deadline.
 
-        ``None`` from *fetch* means "not yet"; ``None`` returned means nothing
-        was produced before the deadline.
+        For a fetch that itself blocks (a health request): each call is handed
+        the seconds left before the deadline as its own bound, and no call is
+        made once none are left. ``None`` from *fetch* means "not yet";
+        ``None`` returned means nothing was produced before the deadline.
         """
         deadline = self._clock.monotonic() + deadline_s
-        while self._clock.monotonic() < deadline:
-            value = fetch()
+        while (remaining := deadline - self._clock.monotonic()) > 0:
+            value = fetch(remaining)
             if value is not None:
                 return value
             self._nap(deadline)
-        return fetch()
+        return None
 
     def answer_within(
         self, ask: Callable[[float], QueryAnswer], deadline_s: float

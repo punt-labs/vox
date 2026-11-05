@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -1634,6 +1635,26 @@ class TestVoxClientSync:
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.health()
             assert result.status == "ok"
+
+    def test_health_timeout_bounds_a_voxd_that_never_answers(self) -> None:
+        """The bound holds the whole call, not the client's fixed 5 s recv wait."""
+
+        async def never() -> str:
+            await asyncio.sleep(30)
+            return ""
+
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=never)
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            started = time.monotonic()
+            with pytest.raises(VoxdProtocolError, match="no answer from voxd"):
+                sync_client.health(timeout=0.1)
+            assert time.monotonic() - started < 2.0
 
     def test_synthesize(self) -> None:
         mock_ws = _make_mock_ws()

@@ -114,11 +114,13 @@ class StartVerb:
     def _wait_up(self) -> HealthStatus | None:
         """Poll gated health until a visible voxd answers or the deadline passes.
 
-        ``None`` is the documented answer when nothing answered in time.
+        Each request is bounded by what is left of the deadline, so a hung
+        voxd cannot hold ``start`` past its stated wait. ``None`` is the
+        documented answer when nothing answered in time.
         """
         probe = self._system.probe
         return self._system.poll.first(
-            lambda: probe.health(probe.voxd_processes()), self._deadline_s
+            lambda left: probe.health(probe.voxd_processes(), left), self._deadline_s
         )
 
     def _decide(self, status: HealthStatus | None, *, cold: bool) -> LifecycleReport:

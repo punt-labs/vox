@@ -34,12 +34,41 @@ def test_until_checks_once_more_at_the_deadline() -> None:
 def test_first_returns_the_first_value() -> None:
     clock = FakeClock()
     values = iter([None, None, 7])
-    assert Poll(clock).first(lambda: next(values), 5.0) == 7
+    assert Poll(clock).first(lambda _: next(values), 5.0) == 7
     assert clock.monotonic() > 0
 
 
 def test_first_none_when_nothing_arrives() -> None:
-    assert Poll(FakeClock()).first(lambda: None, 1.0) is None
+    assert Poll(FakeClock()).first(lambda _: None, 1.0) is None
+
+
+def test_first_hands_each_fetch_the_time_that_remains() -> None:
+    """A blocking fetch is bounded by the budget left, and none runs at zero."""
+    clock = FakeClock()
+    seen: list[tuple[float, float]] = []
+
+    def fetch(within_s: float) -> None:
+        seen.append((clock.monotonic(), within_s))
+        clock.advance(within_s / 2)
+
+    assert Poll(clock, 1.0).first(fetch, 2.5) is None
+    assert seen
+    assert all(budget > 0 and at + budget <= 2.5 for at, budget in seen)
+    assert clock.monotonic() <= 2.5
+
+
+def test_first_makes_no_fetch_after_a_fetch_used_the_whole_budget() -> None:
+    """The old final attempt at the deadline is gone: it had no time to run in."""
+    clock = FakeClock()
+    calls: list[float] = []
+
+    def hang(within_s: float) -> None:
+        calls.append(within_s)
+        clock.advance(within_s)
+
+    assert Poll(clock).first(hang, 5.0) is None
+    assert calls == [5.0]
+    assert clock.monotonic() == 5.0
 
 
 def test_system_clock_is_monotonic() -> None:

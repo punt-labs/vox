@@ -19,6 +19,7 @@ from _lifecycle_fakes import (
 )
 
 from punt_vox.service.backend import BackendCommandError
+from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle_report import LifecycleOutcome as Outcome
 
 
@@ -129,6 +130,23 @@ def test_t7_timeout() -> None:
     assert "no health answer on port 8421 within 10s" in report.detail
     assert world.tokens_to == []
     assert "vox.log" in report.text()
+    assert_p1_one_outcome(report)
+
+
+def test_start_never_waits_past_its_deadline_on_a_hung_health_check() -> None:
+    """Each health attempt blocks 5 s; start still returns by its 10 s wait.
+
+    No attempt runs with no time left, and each is bounded by what remains,
+    so the verb ends within the deadline plus at most one poll interval.
+    """
+    world = FakeWorld(health_blocks_s=5.0)
+    world.run_unit(100)
+    clock = FakeClock()
+    report = lifecycle(world, clock).start()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "no health answer on port 8421 within 10s" in report.detail
+    assert "(last: connection refused)" in report.detail
+    assert clock.monotonic() <= 10.0 + Poll.INTERVAL_S
     assert_p1_one_outcome(report)
 
 

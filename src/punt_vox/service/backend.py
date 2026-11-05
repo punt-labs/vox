@@ -158,9 +158,12 @@ class LifecycleProbe(Protocol):
         """Return True when anything accepts a TCP connection on the port."""
         ...
 
-    def health(self, holders: frozenset[ProcessHandle]) -> HealthStatus | None:
+    def health(
+        self, holders: frozenset[ProcessHandle], within_s: float
+    ) -> HealthStatus | None:
         """Return voxd's health, sent only when *holders* is non-empty.
 
+        The request, connect included, takes at most *within_s* seconds.
         ``None`` is the documented answer for "no health reply".
         """
         ...

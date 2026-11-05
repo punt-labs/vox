@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from _lifecycle_fakes import FakeClock
 
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
@@ -69,7 +69,7 @@ def test_off_port_voxd_empty_without_another_port(port: int | None) -> None:
 def test_health_sends_no_request_without_a_visible_voxd() -> None:
     """P4: no visible voxd holder, no token-bearing connection at all."""
     target = MagicMock()
-    assert _probe(MagicMock(), target).health(frozenset()) is None
+    assert _probe(MagicMock(), target).health(frozenset(), 5.0) is None
     target.client.assert_not_called()
 
 
@@ -77,7 +77,14 @@ def test_health_answers_through_the_target() -> None:
     target = MagicMock()
     status = HealthStatus(status="ok", pid=42)
     target.client.return_value.health.return_value = status
-    assert _probe(MagicMock(), target).health(frozenset({MagicMock()})) is status
+    assert _probe(MagicMock(), target).health(frozenset({MagicMock()}), 5.0) is status
+
+
+def test_health_bounds_the_request_by_the_budget_it_is_handed() -> None:
+    target = MagicMock()
+    target.client.return_value.health.return_value = HealthStatus(status="ok")
+    _probe(MagicMock(), target).health(frozenset({MagicMock()}), 1.25)
+    target.client.return_value.health.assert_called_once_with(timeout=1.25)
 
 
 @pytest.mark.parametrize(
@@ -86,7 +93,7 @@ def test_health_answers_through_the_target() -> None:
 def test_health_no_answer_is_none(failure: Exception) -> None:
     target = MagicMock()
     target.client.side_effect = failure
-    assert _probe(MagicMock(), target).health(frozenset({MagicMock()})) is None
+    assert _probe(MagicMock(), target).health(frozenset({MagicMock()}), 5.0) is None
 
 
 def test_port_listening_sees_a_bare_listener() -> None:
@@ -131,13 +138,13 @@ def test_health_miss_keeps_the_last_cause() -> None:
     target.client.return_value.health.side_effect = rejected
     probe = _probe(MagicMock(), target)
     assert probe.health_miss() is None
-    assert probe.health(frozenset({MagicMock()})) is None
+    assert probe.health(frozenset({MagicMock()}), 5.0) is None
     assert probe.health_miss() is rejected
 
 
 def test_health_miss_names_the_closed_gate() -> None:
     probe = _probe(MagicMock())
-    assert probe.health(frozenset()) is None
+    assert probe.health(frozenset(), 5.0) is None
     assert "no visible voxd" in str(probe.health_miss())
 
 
@@ -219,3 +226,31 @@ def test_wait_up_returns_the_first_gated_answer() -> None:
         status,
     ]
     assert _probe(mgr, target).wait_up(5.0) is status
+
+
+def test_wait_up_never_outlives_its_deadline_on_a_hung_health_check() -> None:
+    """The install wait: a health request that hangs 5 s cannot carry it past 5 s.
+
+    Each attempt is handed the time that remains as its own bound, and no
+    attempt runs once none remains.
+    """
+    clock = FakeClock()
+    mgr = MagicMock()
+    mgr.find_pid_on_port.return_value = [42]
+    mgr.open_voxd.return_value = MagicMock()
+    budgets: list[float | None] = []
+
+    def hung(timeout: float | None = None) -> HealthStatus:
+        budgets.append(timeout)
+        clock.advance(5.0 if timeout is None else min(5.0, timeout))
+        msg = "Timeout waiting for response to 'health'"
+        raise VoxdProtocolError(msg)
+
+    target = MagicMock()
+    target.client.return_value.health.side_effect = hung
+    probe = DaemonProbe(mgr, lambda: target, Poll(clock))
+    assert probe.wait_up(5.0) is None
+    assert clock.monotonic() <= 5.0 + Poll.INTERVAL_S
+    assert budgets
+    assert all(b is not None and b > 0 for b in budgets)
+    assert isinstance(probe.health_miss(), VoxdProtocolError)

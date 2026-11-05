@@ -160,12 +160,15 @@ class DaemonProbe:
             msg = f"cannot connect to {address[0]}:{address[1]}: {exc}"
             raise PortProbeError(msg) from exc
 
-    def health(self, holders: frozenset[ProcessHandle]) -> HealthStatus | None:
+    def health(
+        self, holders: frozenset[ProcessHandle], within_s: float
+    ) -> HealthStatus | None:
         """Return voxd's health; send the token only to a visible voxd.
 
-        With no visible voxd holding the port, no connection is made. ``None``
-        is the documented answer for "no health reply"; :meth:`health_miss`
-        says why.
+        With no visible voxd holding the port, no connection is made. The
+        request, connect included, is cut off after *within_s* seconds, so a
+        hung voxd cannot hold a wait past its deadline. ``None`` is the
+        documented answer for "no health reply"; :meth:`health_miss` says why.
         """
         if not holders:
             self._miss = DaemonNotUpError(
@@ -173,7 +176,7 @@ class DaemonProbe:
             )
             return None
         try:
-            return self._target().client().health()
+            return self._target().client().health(timeout=within_s)
         except (
             DaemonNotUpError,
             VoxdConnectionError,
@@ -188,5 +191,10 @@ class DaemonProbe:
         return self._miss
 
     def wait_up(self, deadline_s: float) -> HealthStatus | None:
-        """Poll gated health until voxd answers; ``None`` if it never does."""
-        return self._poll.first(lambda: self.health(self.voxd_processes()), deadline_s)
+        """Poll gated health until voxd answers; ``None`` if it never does.
+
+        Each request is bounded by what is left of *deadline_s*.
+        """
+        return self._poll.first(
+            lambda left: self.health(self.voxd_processes(), left), deadline_s
+        )
