@@ -1309,7 +1309,7 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.33.0"
+version = "0.33.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -1324,9 +1324,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/b7/dd1ab6ca93c4cfc4e1366e59182462963c71ebff5d2a226e4b407a86ba1a/punt_lux-0.33.0.tar.gz", hash = "sha256:0adab63bb739bd6fb68557bb9df61c42bb315fb82f27468514a766bd23152471", size = 1266633, upload-time = "2026-11-03T23:33:50.052Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/8b/91d3d1e17a882382b14b4583347d90ca892e4f84524521182befa2f5b498/punt_lux-0.33.1.tar.gz", hash = "sha256:326edae5c57c0678fe38171c128c1b786c3525b505e29587c3dcd5e4cd513a15", size = 1269916, upload-time = "2026-11-04T01:18:42.948Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/6c/70eaff9380a1fe13a84405183f2217ac1c68299178c9f710cc8c5e36eb45/punt_lux-0.33.0-py3-none-any.whl", hash = "sha256:f5da57b03cceae080b0b62ef207912972acedb3311416279942a050a29067bf3", size = 1684147, upload-time = "2026-11-03T23:33:48.245Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/57/b54c6c38728b481cb983c778719a275a68af2e6324e6ae8260bf2bc24e63/punt_lux-0.33.1-py3-none-any.whl", hash = "sha256:c82be902d67f80c05b5854b2e65b24d3d9ff425d50d3c687be1dddda517e1a5f", size = 1688099, upload-time = "2026-11-04T01:18:40.588Z" },
 ]
 
 [[package]]
@@ -1386,7 +1386,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.30.0" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", specifier = ">=0.33.0,<0.34" },
+    { name = "punt-lux", specifier = ">=0.33.1,<0.34" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "sounddevice", marker = "extra == 'call'", specifier = ">=0.5.6" },
     { name = "typer", specifier = ">=0.24.1" },

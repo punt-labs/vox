@@ -77,6 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The voxd token no longer appears in error messages or tracebacks**, and
   the client never connects to voxd through an HTTP/SOCKS proxy from the
   environment.
+- **The music widget's play-pause button pauses again** (vox-u7gz). Every
+  press while an album played sent `music.resume`, so nothing happened. The
+  defect was in lux (a patched button kept publishing its old topic); vox
+  now requires punt-lux 0.33.1 or newer, which carries the fix.
 
 ## [5.0.6] - 2026-11-04
 
