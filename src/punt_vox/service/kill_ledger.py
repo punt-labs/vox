@@ -20,7 +20,36 @@ if TYPE_CHECKING:
 
     from punt_vox.service.backend import ProcessHandle
 
-__all__ = ["KillLedger", "KillOutcome"]
+__all__ = ["KillLedger", "KillOutcome", "LedgerInvariant"]
+
+
+@final
+class LedgerInvariant(Enum):
+    """The properties every ledger transition sequence keeps.
+
+    The ledger is a small state machine -- spare, or signalling, then
+    ``settle`` with a ``Termination``, then any number of ``confirm`` calls --
+    and the report is built from it alone, so these must hold after every
+    step. The test suite enumerates every sequence and asserts each by name.
+    """
+
+    K1_SIGNALLED_NAMED_UNTIL_GONE = (
+        "every signalled pid is named in account(), and once confirmed gone it "
+        "is never reported as still alive"
+    )
+    K2_REFUSED_NEVER_KILLED = (
+        "a process that refused the signal is never reported as killed"
+    )
+    K3_UNCONFIRMED_STAYS_WATCHED = (
+        "a signalled process stays in unconfirmed() until it is seen to exit, "
+        "and leaves it then"
+    )
+    K4_SPARED_NEVER_KILLED = (
+        "a spared process is never watched as signalled and never reported as killed"
+    )
+    K5_CONFIRM_MOVES_ONLY_UNCONFIRMED = (
+        "confirm() changes only unconfirmed outcomes, and never a spared one"
+    )
 
 
 @final
