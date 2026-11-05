@@ -2684,7 +2684,7 @@ class TestDaemonLifecycleCommands:
     def test_install_failure_json_is_a_payload_not_a_traceback(
         self, verb: str, key: str, target: str
     ) -> None:
-        """B11: a failed install/uninstall emits ``{key: false, reason}``."""
+        """A failed install/uninstall emits ``{key: false, reason}``."""
         failure = SystemExit("vox daemon install failed: launchctl bootstrap")
         with patch(f"{_CLI_DAEMON}.{target}", side_effect=failure):
             result = CliRunner().invoke(app, ["daemon", verb, "--json"])

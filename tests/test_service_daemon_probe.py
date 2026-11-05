@@ -101,9 +101,6 @@ def test_port_listening_sees_a_bare_listener() -> None:
     assert _probe(MagicMock(), target).port_listening() is False
 
 
-# -- round 2 ---------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "failure",
     [
@@ -115,7 +112,7 @@ def test_port_listening_sees_a_bare_listener() -> None:
 def test_port_listening_fails_closed_except_on_refusal(
     failure: OSError, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B2: only a refused connection means "nothing listens"."""
+    """Only a refused connection means "nothing listens"."""
 
     def connect(address: object, timeout: float) -> object:
         raise failure
@@ -128,7 +125,7 @@ def test_port_listening_fails_closed_except_on_refusal(
 
 
 def test_health_miss_keeps_the_last_cause() -> None:
-    """B9: the probe remembers why the last gated request got no answer."""
+    """The probe remembers why the last gated request got no answer."""
     target = MagicMock()
     rejected = VoxdConnectionError("auth rejected (4401)")
     target.client.return_value.health.side_effect = rejected
@@ -147,7 +144,7 @@ def test_health_miss_names_the_closed_gate() -> None:
 def test_service_owned_reads_the_cgroup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A2: a pid in voxd.service's cgroup is the manager's, not unmanaged."""
+    """A pid in voxd.service's cgroup is the manager's, not unmanaged."""
     monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
     (tmp_path / "42").mkdir()
     (tmp_path / "42" / "cgroup").write_text("0::/system.slice/voxd.service\n")
@@ -175,7 +172,7 @@ def test_service_owned_reads_the_cgroup(
 def test_service_owned_matches_the_system_unit_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, owned: bool
 ) -> None:
-    """R9: only the system unit vox installs counts, not a user-scope voxd."""
+    """Only the system unit vox installs counts, not a user-scope voxd."""
     monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
     (tmp_path / "42").mkdir()
     (tmp_path / "42" / "cgroup").write_text(line + "\n")
@@ -183,7 +180,7 @@ def test_service_owned_matches_the_system_unit_only(
 
 
 def test_clear_port_file_discards_a_stale_service_port_file() -> None:
-    """B6: with no visible voxd on 8421, serve.port naming it is discarded."""
+    """With no visible voxd on 8421, serve.port naming it is discarded."""
     mgr = MagicMock()
     mgr.find_pid_on_port.return_value = []
     mgr.discard_port_file.return_value = PortFileCleanup.REMOVED
@@ -201,7 +198,7 @@ def test_clear_port_file_leaves_the_file_of_a_voxd_on_the_port() -> None:
 
 
 def test_bind_is_read_lazily_inside_the_verb() -> None:
-    """A3: an unreadable unit fails when the probe is used, not when built."""
+    """An unreadable unit fails when the probe is used, not when built."""
 
     def unreadable() -> HealthTarget:
         raise PortProbeError("cannot read the unit")

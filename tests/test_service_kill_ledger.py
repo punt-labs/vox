@@ -75,7 +75,7 @@ def test_term_only_reason_names_the_deadline_not_ignored_signals() -> None:
 
 
 def test_a_refused_signal_is_its_own_outcome() -> None:
-    """S9: permission denied reads as refused, not "got SIGTERM only"."""
+    """Permission denied reads as refused, not "got SIGTERM only"."""
     world = FakeWorld()
     ledger = KillLedger()
     refused = _handle(world, 200)
@@ -85,7 +85,7 @@ def test_a_refused_signal_is_its_own_outcome() -> None:
 
 
 def test_a_refused_process_stays_watched_and_is_never_called_killed() -> None:
-    """L2: a refusal is watched until it exits; its exit is its own, not a kill."""
+    """A refusal is watched until it exits; its exit is its own, not a kill."""
     world = FakeWorld()
     ledger = KillLedger()
     refused = _handle(world, 200)
@@ -100,13 +100,13 @@ def test_a_refused_process_stays_watched_and_is_never_called_killed() -> None:
 
 
 def test_survived_wording_says_both_signals_were_delivered() -> None:
-    """L4: permission denied is REFUSED now, so SURVIVED does not mention it."""
+    """Permission denied is REFUSED now, so SURVIVED does not mention it."""
     line = KillOutcome.SURVIVED.line(7)
     assert line == "voxd pid 7 did not exit after SIGTERM and SIGKILL were delivered"
 
 
 def test_a_refused_sigkill_after_sigterm_says_so() -> None:
-    """L5: SIGTERM went out, then SIGKILL was refused."""
+    """SIGTERM went out, then SIGKILL was refused."""
     world = FakeWorld()
     ledger = KillLedger()
     handle = _handle(world, 200)

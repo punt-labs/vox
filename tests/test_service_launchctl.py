@@ -316,7 +316,7 @@ def test_kickstart_failure_raises(mock_run: MagicMock, agent: LaunchctlAgent) ->
 
 
 # ---------------------------------------------------------------------------
-# round 2: a failed query is never "absent"; every command is bounded
+# A failed query is never "absent"; every command is bounded
 # ---------------------------------------------------------------------------
 
 
@@ -325,7 +325,7 @@ def test_kickstart_failure_raises(mock_run: MagicMock, agent: LaunchctlAgent) ->
 def test_failed_query_raises_not_absent(
     mock_run: MagicMock, agent: LaunchctlAgent, probe: str
 ) -> None:
-    """B1: only exit 113 means absent; exit 1 is a failed query."""
+    """Only exit 113 means absent; exit 1 is a failed query."""
     mock_run.return_value = _completed(1, "launchctl: bootstrap port error")
     with pytest.raises(LaunchctlError, match="exit 1"):
         getattr(agent, probe)()
@@ -336,7 +336,7 @@ def test_failed_query_raises_not_absent(
     side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=10),
 )
 def test_hung_launchctl_raises(_mock_run: MagicMock, agent: LaunchctlAgent) -> None:
-    """B14: a launchctl that hangs is bounded and typed."""
+    """A launchctl that hangs is bounded and typed."""
     with pytest.raises(LaunchctlError, match="could not run"):
         agent.is_loaded()
 
@@ -357,7 +357,7 @@ def test_bootout_of_unloaded_job_does_not_claim_a_bootout(
     agent: LaunchctlAgent,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """B18: a non-zero bootout of a job that was not loaded logs no "Booted out"."""
+    """A non-zero bootout of a job that was not loaded logs no "Booted out"."""
     mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[], bootout_rc=3)
     with caplog.at_level("DEBUG", logger="punt_vox.service.launchctl"):
         agent.bootout()
@@ -437,7 +437,7 @@ def test_running_within_a_failed_query_still_raises(
 def test_running_within_gives_print_only_what_list_left(
     mock_run: MagicMock, agent: LaunchctlAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S6: a list that used 0.2 s of a 0.3 s budget leaves print at most 0.1 s."""
+    """A list that used 0.2 s of a 0.3 s budget leaves print at most 0.1 s."""
     now = [100.0]
 
     def monotonic(self: SystemClock) -> float:
@@ -462,7 +462,7 @@ def test_running_within_gives_print_only_what_list_left(
 def test_bootout_confirmed_raises_naming_a_print_that_timed_out(
     mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
 ) -> None:
-    """S1: a loaded job whose departure cannot be confirmed is not "gone"."""
+    """A loaded job whose departure cannot be confirmed is not "gone"."""
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if argv[1] == "bootout":

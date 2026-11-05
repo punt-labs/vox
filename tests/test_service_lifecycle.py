@@ -149,7 +149,7 @@ def test_restart_start_failure_prefixed_start() -> None:
 
 
 def test_restart_waits_for_deactivating_main_process() -> None:
-    """F6: a unit whose manager still reports a main process has not stopped."""
+    """A unit whose manager still reports a main process has not stopped."""
     world = FakeWorld(stop_takes_effect=False)
     main = world.run_unit(100, on_port=False)
     world.unit_active = False  # stopping: inactive, main pid still reported
@@ -167,7 +167,7 @@ def test_restart_waits_for_deactivating_main_process() -> None:
 
 
 def test_probe_failure_precedes_not_installed() -> None:
-    """F0: a broken probe is backend_failed even where nothing is installed."""
+    """A broken probe is backend_failed even where nothing is installed."""
     world = FakeWorld(installed=False, probe_error="cannot run fuser: not found")
     for report in (lifecycle(world).stop(), lifecycle(world).start()):
         assert report.outcome is Outcome.BACKEND_FAILED
@@ -253,7 +253,7 @@ def test_unsupported_platform_refused_before_touching_backend(
 
 
 def test_restart_carries_stop_detail() -> None:
-    """B15: restart's report keeps what its stop half did."""
+    """Restart's report keeps what its stop half did."""
     world = FakeWorld(port_file=8421)
     world.spawn(200)
     report = lifecycle(world).restart()

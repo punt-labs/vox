@@ -83,7 +83,7 @@ def test_a_refused_signal_is_refused() -> None:
 
 
 def test_a_refused_sigkill_after_a_delivered_sigterm_is_kill_refused() -> None:
-    """L5: SIGTERM went out; only SIGKILL was refused."""
+    """SIGTERM went out; only SIGKILL was refused."""
     target = _Target(exits_on=None, refuse_kill=True)
     assert target.escalation().run(7.0) is Termination.KILL_REFUSED
     assert target.sent == [signal.SIGTERM]

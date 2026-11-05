@@ -164,7 +164,7 @@ def test_t10_started() -> None:
 
 
 def test_start_serving_without_main_pid_is_backendfailed() -> None:
-    """F3: the manager is re-activating (no main pid) and a stray voxd answers."""
+    """The manager is re-activating (no main pid) and a stray voxd answers."""
     world = FakeWorld()
     world.unit_active = True
     world.spawn(200)
@@ -175,18 +175,15 @@ def test_start_serving_without_main_pid_is_backendfailed() -> None:
 
 
 def test_start_permission_denied_but_unit_came_up_is_started() -> None:
-    """F1 mirrored: a refused start while a third party started the unit."""
+    """A refused start while a third party started the unit."""
     world = FakeWorld(start_error=denied())
     report = lifecycle(world).start()
     assert report.outcome is Outcome.STARTED
     assert_p1_one_outcome(report)
 
 
-# -- round 2 ---------------------------------------------------------------
-
-
 def test_start_query_failure_is_backend_failed_not_a_traceback() -> None:
-    """A3: a failing manager query is a report, never an escaping exception."""
+    """A failing manager query is a report, never an escaping exception."""
     world = FakeWorld(query_error=failed("show"))
     report = lifecycle(world).start()
     assert report.outcome is Outcome.BACKEND_FAILED
@@ -215,7 +212,7 @@ def test_start_probe_error_type_reaches_the_report() -> None:
 
 
 def test_start_timeout_names_the_health_cause() -> None:
-    """B9: the last health failure's cause is in the timeout detail."""
+    """The last health failure's cause is in the timeout detail."""
     world = FakeWorld(token_written=False, health_error="auth rejected (4401)")
     world.run_unit(100)
     report = lifecycle(world).start()
@@ -224,7 +221,7 @@ def test_start_timeout_names_the_health_cause() -> None:
 
 
 def test_start_overruled_refusal_is_carried_into_the_detail() -> None:
-    """B10: a refusal contradicted by the re-observation is still reported."""
+    """A refusal contradicted by the re-observation is still reported."""
     world = FakeWorld(start_error=denied())
     report = lifecycle(world).start()
     assert report.outcome is Outcome.STARTED

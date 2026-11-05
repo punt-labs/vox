@@ -76,7 +76,7 @@ def test_verify_raises_service_health_error_on_deadline() -> None:
 
 
 def test_verify_carries_the_last_health_cause() -> None:
-    """B9: the cause is in the message and chained, not discarded."""
+    """The cause is in the message and chained, not discarded."""
     rejected = VoxdConnectionError("auth rejected (4401)")
     with pytest.raises(ServiceHealthError, match=r"auth rejected \(4401\)") as info:
         HealthVerifier(_backend(), _probe(None, rejected)).verify()
@@ -84,7 +84,7 @@ def test_verify_carries_the_last_health_cause() -> None:
 
 
 def test_verify_fails_when_the_unit_never_becomes_active() -> None:
-    """B12: an installed unit that is not running is a failure, not success."""
+    """An installed unit that is not running is a failure, not success."""
     probe = _probe(HealthStatus(status="ok"))
     with pytest.raises(ServiceHealthError, match="not active"):
         HealthVerifier(_backend(active=False), probe).verify()
@@ -161,7 +161,7 @@ def test_verify_names_a_manager_query_that_never_answered(
     hung: Callable[[pytest.MonkeyPatch], InstallableBackend],
     query: str,
 ) -> None:
-    """S2: a hung systemctl/launchctl is named, not blamed on voxd's logs."""
+    """A hung systemctl/launchctl is named, not blamed on voxd's logs."""
     backend = hung(monkeypatch)
     probe = _probe(HealthStatus(status="ok"))
     with pytest.raises(ServiceHealthError, match=f"{query} did not answer") as info:
@@ -189,7 +189,7 @@ def _answers_until_the_last_sliver(
 def test_verify_blames_the_unit_when_only_the_last_sliver_timed_out(
     monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:
-    """L1: real "inactive" answers, then a cut-short last query -> "not active"."""
+    """Real "inactive" answers, then a cut-short last query -> "not active"."""
     backend: InstallableBackend
     if platform == "systemd":
         ran = subprocess.CompletedProcess(["systemctl"], 3, "inactive\n", "")
@@ -215,7 +215,7 @@ def test_verify_blames_the_unit_when_only_the_last_sliver_timed_out(
 def test_verify_names_a_manager_that_answered_then_hung(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M2: one real "inactive", then full-budget hangs -> both are named."""
+    """One real "inactive", then full-budget hangs -> both are named."""
     calls = [0]
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

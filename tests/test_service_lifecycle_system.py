@@ -17,7 +17,7 @@ def _system(world: FakeWorld) -> LifecycleSystem:
 
 
 def test_observe_probes_the_port_before_the_manager() -> None:
-    """F0: a broken probe raises before the manager is asked anything."""
+    """A broken probe raises before the manager is asked anything."""
     world = FakeWorld(probe_error="cannot run fuser")
     with pytest.raises(PortProbeError):
         _system(world).observe()
@@ -25,7 +25,7 @@ def test_observe_probes_the_port_before_the_manager() -> None:
 
 
 def test_a_reported_main_process_counts_as_active() -> None:
-    """F6: inactive but still reporting a main pid is a stopping unit."""
+    """Inactive but still reporting a main pid is a stopping unit."""
     world = FakeWorld()
     world.run_unit(100, on_port=False)
     world.unit_active = False

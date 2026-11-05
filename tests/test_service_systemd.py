@@ -285,7 +285,7 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
 
 
 # ---------------------------------------------------------------------------
-# round 2: queries fail closed, sudo calls are bounded and typed
+# Queries fail closed, sudo calls are bounded and typed
 # ---------------------------------------------------------------------------
 
 
@@ -296,7 +296,7 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
 def test_is_active_query_error_raises(
     mock_run: MagicMock, code: int, stdout: str
 ) -> None:
-    """B12: a failed is-active query is an error, never "inactive"."""
+    """A failed is-active query is an error, never "inactive"."""
     mock_run.return_value = _ran(code, stdout, "bus error")
     with pytest.raises(BackendCommandError, match="is-active"):
         _backend().is_active()
@@ -307,7 +307,7 @@ def test_is_active_query_error_raises(
     side_effect=subprocess.TimeoutExpired(cmd="systemctl", timeout=10),
 )
 def test_hung_systemctl_query_raises(_mock_run: MagicMock) -> None:
-    """B14: a hung systemctl is bounded and typed."""
+    """A hung systemctl is bounded and typed."""
     with pytest.raises(BackendCommandError, match="could not run"):
         _backend().main_pid()
 
@@ -324,7 +324,7 @@ def test_every_systemctl_query_has_a_timeout(mock_run: MagicMock) -> None:
     side_effect=subprocess.TimeoutExpired(cmd="sudo", timeout=60),
 )
 def test_hung_sudo_is_backend_command_error(_mock_run: MagicMock) -> None:
-    """B14: the privileged call is bounded too."""
+    """The privileged call is bounded too."""
     with pytest.raises(BackendCommandError, match="could not run"):
         PrivilegedRun.on_this_host()("stop")
 
@@ -334,7 +334,7 @@ def test_hung_sudo_is_backend_command_error(_mock_run: MagicMock) -> None:
 def test_uninstall_failure_is_reported(
     mock_unit: MagicMock, mock_run: MagicMock
 ) -> None:
-    """B13: a failing disable or daemon-reload is not silently ignored."""
+    """A failing disable or daemon-reload is not silently ignored."""
     mock_unit.exists.return_value = True
 
     def run(argv: list[str], **kwargs: object) -> MagicMock:
@@ -351,7 +351,7 @@ def test_uninstall_failure_is_reported(
 def test_install_failure_is_backend_command_error(
     mock_run: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B11: a failing sudo step is typed, so install reports it."""
+    """A failing sudo step is typed, so install reports it."""
     fake_home = tmp_path / "home"
     (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(fake_home))
@@ -363,7 +363,7 @@ def test_install_failure_is_backend_command_error(
 def test_install_unwritable_state_dir_is_backend_command_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """R7: the local tmp-unit write failing is typed, so install reports it."""
+    """The local tmp-unit write failing is typed, so install reports it."""
     monkeypatch.setenv("HOME", str(tmp_path / "missing-home"))
     with pytest.raises(BackendCommandError, match=r"voxd\.service\.tmp"):
         _backend().install("someone")

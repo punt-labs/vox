@@ -82,7 +82,7 @@ def test_answer_within_returns_the_moment_the_check_holds() -> None:
 
 
 def test_answer_within_keeps_a_real_no_over_a_last_sliver_timeout() -> None:
-    """L1: a final query cut short by the last sliver does not erase a real "no"."""
+    """A final query cut short by the last sliver does not erase a real "no"."""
     clock = FakeClock()
     answers = iter([QueryAnswer.of(holds=False)] * 2 + [QueryAnswer.no_answer("q")])
     answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.5)
@@ -92,7 +92,7 @@ def test_answer_within_keeps_a_real_no_over_a_last_sliver_timeout() -> None:
 
 
 def test_answer_within_names_a_full_budget_hang_after_a_real_no() -> None:
-    """M2: answered "no", then hung on a query given a whole interval or more."""
+    """Answered "no", then hung on a query given a whole interval or more."""
     clock = FakeClock()
     answers = iter([QueryAnswer.of(holds=False), QueryAnswer.no_answer("q")])
     answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.0)

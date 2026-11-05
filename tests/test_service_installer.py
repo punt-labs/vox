@@ -225,7 +225,7 @@ def test_install_fails_when_the_unit_never_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B12: an installed unit that is not active is a failed install."""
+    """An installed unit that is not active is a failed install."""
     _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
     _on(monkeypatch, "macos")
     _fake_backend(monkeypatch, LaunchdBackend, active=False)
@@ -239,7 +239,7 @@ def test_install_launchctl_failure_is_a_clean_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B11: a launchctl failure during install never escapes as a traceback."""
+    """A launchctl failure during install never escapes as a traceback."""
     _setup_fake_env(tmp_path, monkeypatch)
     _on(monkeypatch, "macos")
     _fake_backend(monkeypatch, LaunchdBackend)

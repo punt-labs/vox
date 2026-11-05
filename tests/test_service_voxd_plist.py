@@ -246,7 +246,7 @@ def test_path_reports_where_the_plist_lives(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# round 2: the plist is well-formed XML, and its bind reads back
+# The plist is well-formed XML, and its bind reads back
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +254,7 @@ def test_path_reports_where_the_plist_lives(tmp_path: Path) -> None:
 def test_content_parses_as_a_plist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind: str
 ) -> None:
-    """B19: the XML declaration is at column 0, so plistlib accepts it."""
+    """The XML declaration is at column 0, so plistlib accepts it."""
     monkeypatch.setenv("VOXD_BIND", bind)
     plist = VoxdPlist(
         "com.punt-labs.voxd",
@@ -273,7 +273,7 @@ def test_content_parses_as_a_plist(
 
 
 def test_installed_bind_unparseable_plist_is_typed(tmp_path: Path) -> None:
-    """A3: a corrupt plist is a backend failure, not a raw parser error."""
+    """A corrupt plist is a backend failure, not a raw parser error."""
     path = tmp_path / "p.plist"
     path.write_text("not a plist")
     plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
@@ -285,7 +285,7 @@ def test_installed_bind_unparseable_plist_is_typed(tmp_path: Path) -> None:
     "body", [b'<?xml version="1.0"?><plist><dict><key>', b"<?xml garbage"]
 )
 def test_installed_bind_malformed_xml_is_typed(tmp_path: Path, body: bytes) -> None:
-    """R4: an XML parser error is a backend failure, not an escaping ExpatError."""
+    """An XML parser error is a backend failure, not an escaping ExpatError."""
     path = tmp_path / "p.plist"
     path.write_bytes(body)
     plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])
@@ -294,7 +294,7 @@ def test_installed_bind_malformed_xml_is_typed(tmp_path: Path, body: bytes) -> N
 
 
 def test_installed_bind_unreadable_plist_is_typed(tmp_path: Path) -> None:
-    """R4: a read error is a backend failure too."""
+    """A read error is a backend failure too."""
     path = tmp_path / "p.plist"
     path.mkdir()
     plist = VoxdPlist("com.punt-labs.voxd", path, lambda: ["voxd"])

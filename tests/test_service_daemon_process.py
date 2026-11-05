@@ -245,12 +245,12 @@ def _forbidden_kill(pid: int, sig: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# round 2: value identity, typed open failure, bounded terminate
+# Value identity, typed open failure, bounded terminate
 # ---------------------------------------------------------------------------
 
 
 def test_start_time_handles_on_one_process_are_equal() -> None:
-    """Two opens of one process compare equal, so a set holds it once (A1)."""
+    """Two opens of one process compare equal, so a set holds it once."""
     first = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     again = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     later = StartTimeProcess.open(4242, _Identities(_REUSED), FakeClock())
@@ -277,7 +277,7 @@ def test_pidfd_handles_on_one_process_are_equal(
 def test_pidfd_open_failure_is_port_probe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pidfd_open error other than ENOSYS fails the probe, typed (A3)."""
+    """A pidfd_open error other than ENOSYS fails the probe, typed."""
     monkeypatch.setattr("punt_vox.service.daemon_process.sys.platform", "linux")
 
     def _emfile(pid: int, flags: int = 0) -> int:
@@ -291,7 +291,7 @@ def test_pidfd_open_failure_is_port_probe_error(
 def test_start_time_terminate_is_bounded_by_the_budget(
     kills: list[tuple[int, int]],
 ) -> None:
-    """A survivor costs at most the budget it was given, not 5 s + 2 s (B14)."""
+    """A survivor costs at most the budget it was given, not 5 s + 2 s."""
     clock = FakeClock()
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), clock)
     assert handle is not None
@@ -304,7 +304,7 @@ def test_start_time_terminate_is_bounded_by_the_budget(
 def test_start_time_terminate_below_the_floor_sends_sigterm_only(
     kills: list[tuple[int, int]], budget: float
 ) -> None:
-    """R2b: no SIGKILL without a real SIGTERM grace first."""
+    """No SIGKILL without a real SIGTERM grace first."""
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     assert handle is not None
     assert handle.terminate(budget) is Termination.TERM_ONLY
@@ -329,7 +329,7 @@ def test_pidfd_terminate_below_the_floor_sends_sigterm_only(
 def test_start_time_permission_denied_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S9: a signal the kernel refused is reported as refused, not survived."""
+    """A signal the kernel refused is reported as refused, not survived."""
 
     def denied(pid: int, sig: int) -> None:
         raise PermissionError(errno.EPERM, "denied")
@@ -357,7 +357,7 @@ def test_pidfd_refused_below_the_floor_is_refused_not_term_only(
 def test_pidfd_signal_oserror_is_port_probe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S7: a pidfd_send_signal failure other than ESRCH/EPERM is typed."""
+    """A pidfd_send_signal failure other than ESRCH/EPERM is typed."""
     _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
 
     def _einval(fd: int, sig: signal.Signals) -> None:
@@ -373,7 +373,7 @@ def test_pidfd_signal_oserror_is_port_probe_error(
 def test_pidfd_wait_oserror_is_port_probe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S7: a select() failure while waiting on the pidfd is typed."""
+    """A select() failure while waiting on the pidfd is typed."""
     _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None

@@ -184,7 +184,7 @@ def test_s8b_timeout_process_survives() -> None:
 
 
 def test_stop_deactivating_unit_is_not_already_stopped() -> None:
-    """F6: S2 never fires while the manager still reports a main process."""
+    """S2 never fires while the manager still reports a main process."""
     world = FakeWorld()
     world.run_unit(100, on_port=False)
     world.unit_active = False
@@ -195,7 +195,7 @@ def test_stop_deactivating_unit_is_not_already_stopped() -> None:
 
 
 def test_stop_never_signals_manager_main_process() -> None:
-    """F6, P5: a stopping unit's main process on 8421 is not an unmanaged voxd."""
+    """P5: a stopping unit's main process on 8421 is not an unmanaged voxd."""
     world = FakeWorld(stop_takes_effect=False)
     world.run_unit(100)
     world.unit_active = False  # deactivating, still holding the port
@@ -206,7 +206,7 @@ def test_stop_never_signals_manager_main_process() -> None:
 
 
 def test_stop_kills_captured_process_off_port_not_exited() -> None:
-    """F2: a captured voxd that released 8421 but did not exit is terminated."""
+    """A captured voxd that released 8421 but did not exit is terminated."""
     world = FakeWorld()
     stray = world.spawn(200)
     world.on_stop = stray.unbind
@@ -217,7 +217,7 @@ def test_stop_kills_captured_process_off_port_not_exited() -> None:
 
 
 def test_stop_permission_denied_but_unit_went_down_is_stopped() -> None:
-    """F1: a refused request while another actor stopped the unit carries on."""
+    """A refused request while another actor stopped the unit carries on."""
     world = FakeWorld(stop_error=denied())
     world.run_unit(100)
     report = lifecycle(world).stop()
@@ -225,11 +225,8 @@ def test_stop_permission_denied_but_unit_went_down_is_stopped() -> None:
     assert_p1_one_outcome(report)
 
 
-# -- round 2 ---------------------------------------------------------------
-
-
 def test_s6_kill_named_once_though_handles_are_reopened() -> None:
-    """A1: the probe reopens handles every tick; the kill is still one kill."""
+    """The probe reopens handles every tick; the kill is still one kill."""
     world = FakeWorld()
     world.spawn(200)
     report = lifecycle(world).stop()
@@ -239,7 +236,7 @@ def test_s6_kill_named_once_though_handles_are_reopened() -> None:
 
 
 def test_stop_never_signals_a_main_process_started_mid_tick() -> None:
-    """A2, P5: a start between the settle read and the signal is honored.
+    """P5: a start between the settle read and the signal is honored.
 
     The stop request takes the unit down, so ``_settled`` reads it inactive.
     Then -- inside that same tick, as the probe lists the holders -- a third
@@ -267,7 +264,7 @@ def test_stop_never_signals_a_main_process_started_mid_tick() -> None:
 
 
 def test_stop_never_signals_a_process_in_the_service_cgroup() -> None:
-    """A2, P5: a process systemd still counts as voxd.service is not unmanaged."""
+    """P5: a process systemd still counts as voxd.service is not unmanaged."""
     world = FakeWorld(service_pids={300})
     world.spawn(300)
     report = lifecycle(world).stop()
@@ -278,7 +275,7 @@ def test_stop_never_signals_a_process_in_the_service_cgroup() -> None:
 
 
 def test_stop_query_failure_is_backend_failed_not_a_traceback() -> None:
-    """A3: a failing manager query is a report, never an escaping exception."""
+    """A failing manager query is a report, never an escaping exception."""
     world = FakeWorld(query_error=failed("show"))
     world.run_unit(100)
     report = lifecycle(world).stop()
@@ -289,7 +286,7 @@ def test_stop_query_failure_is_backend_failed_not_a_traceback() -> None:
 
 
 def test_stop_query_failure_after_request_names_the_request() -> None:
-    """A3: the detail says the stop was already requested when the query broke."""
+    """The detail says the stop was already requested when the query broke."""
     world = FakeWorld()
     world.run_unit(100)
 
@@ -319,7 +316,7 @@ def test_stop_probe_failure_mid_wait_is_backend_failed() -> None:
 
 
 def test_s6_removes_serve_port_naming_8421() -> None:
-    """B6: the killed unmanaged voxd's serve.port is removed when it names 8421."""
+    """The killed unmanaged voxd's serve.port is removed when it names 8421."""
     world = FakeWorld(port_file=8421)
     world.spawn(200)
     assert lifecycle(world).stop().outcome is Outcome.STOPPED
@@ -334,7 +331,7 @@ def test_s6_keeps_serve_port_naming_another_port() -> None:
 
 
 def test_s6_inactive_unit_needs_no_privilege() -> None:
-    """B7: only an unmanaged voxd holds 8421, so stop asks no one for sudo."""
+    """Only an unmanaged voxd holds 8421, so stop asks no one for sudo."""
     world = FakeWorld(stop_takes_effect=False, stop_error=denied())
     world.spawn(200)
     report = lifecycle(world).stop()
@@ -344,14 +341,14 @@ def test_s6_inactive_unit_needs_no_privilege() -> None:
 
 
 def test_stop_checks_installed_before_querying_the_manager() -> None:
-    """B8: an absent unit is not_installed even when systemctl show fails."""
+    """An absent unit is not_installed even when systemctl show fails."""
     world = FakeWorld(installed=False, query_error=failed("show"))
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.NOT_INSTALLED
 
 
 def test_stop_overruled_refusal_is_carried_into_the_detail() -> None:
-    """B10: a refusal the re-observation contradicts is reported, not dropped."""
+    """A refusal the re-observation contradicts is reported, not dropped."""
     world = FakeWorld(stop_error=denied())
     world.run_unit(100)
     report = lifecycle(world).stop()
@@ -360,7 +357,7 @@ def test_stop_overruled_refusal_is_carried_into_the_detail() -> None:
 
 
 def test_terminate_is_bounded_by_the_remaining_deadline() -> None:
-    """B14: escalating at t=4 gives the kill at most the 6 s that remain."""
+    """Escalating at t=4 gives the kill at most the 6 s that remain."""
     world = FakeWorld()
     main = world.run_unit(100, on_port=False)
     world.spawn(200, survives=True)
@@ -380,11 +377,8 @@ def test_terminate_is_bounded_by_the_remaining_deadline() -> None:
     assert world.signalled == [200]
 
 
-# -- round 3 ---------------------------------------------------------------
-
-
 def test_slow_request_does_not_eat_the_kill_budget() -> None:
-    """R2a: the deadline starts after the request, not before it.
+    """The deadline starts after the request, not before it.
 
     The stop request blocks 11 s (a sudo prompt); a lingering unmanaged voxd
     must still get a full SIGTERM grace, not a zero budget.
@@ -406,7 +400,7 @@ def test_slow_request_does_not_eat_the_kill_budget() -> None:
 
 
 def test_failure_after_a_kill_names_the_kill() -> None:
-    """R3: a probe failure mid-escalation still reports what stop already did."""
+    """A probe failure mid-escalation still reports what stop already did."""
     world = FakeWorld(
         probe_failures={("service_owned", 201): failed("cgroup read")},
     )
@@ -434,7 +428,7 @@ def test_failure_after_a_kill_and_a_request_says_both() -> None:
 
 
 def test_port_file_cleanup_failure_is_a_warning_not_a_failure() -> None:
-    """R3: once the kill succeeded, a serve.port cleanup error only warns."""
+    """Once the kill succeeded, a serve.port cleanup error only warns."""
     world = FakeWorld(
         port_file=8421,
         probe_failures={"clear_port_file": PortProbeError("cannot read serve.port")},
@@ -447,7 +441,7 @@ def test_port_file_cleanup_failure_is_a_warning_not_a_failure() -> None:
 
 
 def test_timeout_explains_a_spared_cgroup_member() -> None:
-    """R5: a voxd left alone because systemd owns it is named with the reason."""
+    """A voxd left alone because systemd owns it is named with the reason."""
     world = FakeWorld(service_pids={300})
     world.spawn(300)
     report = lifecycle(world).stop()
@@ -456,7 +450,7 @@ def test_timeout_explains_a_spared_cgroup_member() -> None:
 
 
 def test_timeout_explains_a_survivor() -> None:
-    """R5: a voxd that outlived terminate() is named with the reason."""
+    """A voxd that outlived terminate() is named with the reason."""
     world = FakeWorld()
     world.spawn(200, survives=True)
     report = lifecycle(world).stop()
@@ -502,7 +496,7 @@ def _probes_break_after_the_wait(
 def test_probe_failure_after_a_signal_names_every_signalled_pid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """djb B1: exited() and service_owned(201) fail after 200 was terminated.
+    """``exited()`` and ``service_owned(201)`` fail after 200 was terminated.
 
     The failure is backend_failed, never a traceback, and its detail names
     200 -- the pid stop signalled -- from the record made when it signalled.
@@ -675,11 +669,8 @@ def test_manager_is_asked_again_before_each_signal() -> None:
     assert "killed unmanaged voxd pid 200" in report.detail
 
 
-# -- round 2 of the reporting mission ----------------------------------------
-
-
 def test_port_file_cleanup_declined_for_a_new_holder_is_retried() -> None:
-    """S3: a voxd that appears just before the clear defers it, not spends it.
+    """A voxd that appears just before the clear defers it, not spends it.
 
     The cleanup runs again on a later tick, after that voxd is killed and
     confirmed gone, and the file is removed then.
@@ -695,7 +686,7 @@ def test_port_file_cleanup_declined_for_a_new_holder_is_retried() -> None:
 
 
 def test_late_holder_given_sigterm_only_and_gone_next_tick_is_killed() -> None:
-    """S4: a voxd that took 8421 after stop observed is still followed.
+    """A voxd that took 8421 after stop observed is still followed.
 
     It is not among the captured handles; only the ledger's unconfirmed set
     brings it into the next tick's watch, where its exit is confirmed.
@@ -721,7 +712,7 @@ def test_late_holder_given_sigterm_only_and_gone_next_tick_is_killed() -> None:
 
 
 def test_a_terminate_that_fails_after_signalling_still_names_the_pid() -> None:
-    """S5: the ledger entry is written before terminate(), which then raises."""
+    """The ledger entry is written before terminate(), which then raises."""
     world = FakeWorld()
     world.spawn(200)
 
@@ -741,7 +732,7 @@ def test_a_terminate_that_fails_after_signalling_still_names_the_pid() -> None:
 
 
 def test_a_refused_signal_is_reported_as_refused() -> None:
-    """S9: permission denied is not "got SIGTERM only" nor "ignored"."""
+    """Permission denied is not "got SIGTERM only" nor "ignored"."""
     world = FakeWorld()
     world.spawn(200, refuses=True)
     report = lifecycle(world).stop()
@@ -752,11 +743,8 @@ def test_a_refused_signal_is_reported_as_refused() -> None:
     assert world.signalled == [200]
 
 
-# -- local review round 1 ----------------------------------------------------
-
-
 def test_a_refused_late_holder_that_releases_the_port_keeps_stop_waiting() -> None:
-    """L2: a voxd that refused the signal and left 8421 is still running.
+    """A voxd that refused the signal and left 8421 is still running.
 
     It took the port after stop observed, so it is not a captured handle;
     only the ledger keeps it watched, and stop must not call that stopped.
@@ -785,7 +773,7 @@ def test_a_refused_late_holder_that_releases_the_port_keeps_stop_waiting() -> No
 def test_a_cleanup_still_declined_when_the_port_is_free_is_named(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """L3: the confirming tick retries a declined cleanup, then says why it
+    """The confirming tick retries a declined cleanup, then says why it
     left serve.port -- a voxd seen only by the cleanup's own re-list."""
     world = FakeWorld(port_file=8421)
     world.spawn(200)

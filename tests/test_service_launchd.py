@@ -322,7 +322,7 @@ def test_launchd_uninstall_noop_when_plist_missing(
 
 
 # ---------------------------------------------------------------------------
-# round 2: every launchctl failure leaves the backend as BackendCommandError
+# Every launchctl failure leaves the backend as BackendCommandError
 # ---------------------------------------------------------------------------
 
 
@@ -336,7 +336,7 @@ def test_launchd_query_failure_is_backend_command_error(
     method: str,
     agent_call: str,
 ) -> None:
-    """A3: a failed launchctl query is the lifecycle's typed error, not raw."""
+    """A failed launchctl query is the lifecycle's typed error, not raw."""
     be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
     getattr(agent, agent_call).side_effect = LaunchctlError("query failed (exit 1)")
     with pytest.raises(BackendCommandError, match="query failed"):
@@ -347,7 +347,7 @@ def test_launchd_install_failure_is_backend_command_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B11: install's launchctl failure is typed, so install reports it."""
+    """Install's launchctl failure is typed, so install reports it."""
     agents_dir = tmp_path / "Library" / "LaunchAgents"
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
     be, agent = _backend_with_mock_agent(
@@ -375,7 +375,7 @@ def test_launchd_install_unwritable_plist_is_backend_command_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R7: a plist that cannot be written is typed, so install reports it."""
+    """A plist that cannot be written is typed, so install reports it."""
     blocker = tmp_path / "LaunchAgents"
     blocker.write_text("a file where the directory should be")
     be, agent = _backend_with_mock_agent(monkeypatch, blocker / "p.plist")
@@ -409,7 +409,7 @@ def test_launchd_uninstall_keeps_the_plist_when_bootout_is_unconfirmed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S1: a print that times out after bootout fails uninstall, plist kept."""
+    """A print that times out after bootout fails uninstall, plist kept."""
     plist = tmp_path / "com.punt-labs.voxd.plist"
     plist.write_text("<plist/>")
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
@@ -434,7 +434,7 @@ def test_launchd_uninstall_names_a_job_that_stayed_despite_a_last_sliver_timeout
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """L1: prints that said "registered", then one cut short at the end ->
+    """Prints that said "registered", then one cut short at the end ->
     the reason is "still registered", not "did not answer"."""
     plist = tmp_path / "com.punt-labs.voxd.plist"
     plist.write_text("<plist/>")
@@ -471,7 +471,7 @@ def test_launchd_uninstall_names_a_launchctl_that_answered_then_hung(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M2: a print said "registered", then later prints hung with a full budget."""
+    """A print said "registered", then later prints hung with a full budget."""
     plist = tmp_path / "com.punt-labs.voxd.plist"
     plist.write_text("<plist/>")
     monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)

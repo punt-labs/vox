@@ -54,5 +54,5 @@ def test_a_reused_pid_is_a_different_identity() -> None:
     ],
 )
 def test_is_voxd_matches_the_program_not_an_argument(command: str, voxd: bool) -> None:
-    """Only the program voxd matches: an argument named voxd does not (B4)."""
+    """Only the program voxd matches: an argument named voxd does not."""
     assert ProcessIdentity(_LSTART, command).is_voxd() is voxd

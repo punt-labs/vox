@@ -233,7 +233,7 @@ def test_installed_bind_empty_when_not_installed(unit: SystemdUnit) -> None:
 
 
 def test_installed_bind_unreadable_unit_is_typed(unit: SystemdUnit) -> None:
-    """A3: an unreadable unit is a backend failure, not a raw OSError."""
+    """An unreadable unit is a backend failure, not a raw OSError."""
     unit.path.mkdir()  # a directory where the file should be: read fails
     with pytest.raises(BackendCommandError, match=r"voxd\.service"):
         unit.installed_bind()
@@ -243,7 +243,7 @@ def test_installed_bind_unreadable_unit_is_typed(unit: SystemdUnit) -> None:
 def test_unsafe_bind_is_warned_not_dropped_silently(
     unit: SystemdUnit, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """B17: a VOXD_BIND the unit cannot carry is warned about."""
+    """A VOXD_BIND the unit cannot carry is warned about."""
     with caplog.at_level("WARNING", logger="punt_vox.service.systemd_unit"):
         content = unit.content("someone")
     assert "VOXD_BIND" not in content

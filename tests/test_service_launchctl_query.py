@@ -66,5 +66,5 @@ def test_a_launchctl_that_cannot_start_raises(_mock_run: MagicMock) -> None:
 
 
 def test_launchctl_error_has_one_home() -> None:
-    """L6: callers import LaunchctlError from launchctl_query; no second name."""
+    """Callers import LaunchctlError from launchctl_query; no second name."""
     assert "LaunchctlError" not in launchctl.__all__

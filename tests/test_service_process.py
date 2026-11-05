@@ -547,7 +547,7 @@ def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
 
 
 # ---------------------------------------------------------------------------
-# round 2: fail closed on stderr, listeners only, port file errors surface
+# Fail closed on stderr, listeners only, port file errors surface
 # ---------------------------------------------------------------------------
 
 
@@ -556,7 +556,7 @@ def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
 def test_find_pid_exit_1_with_stderr_raises(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    """Exit 1 is "found nothing" only when the tool also said nothing (B3)."""
+    """Exit 1 is "found nothing" only when the tool also said nothing."""
     mock_run.return_value = _ran(1, stderr="fuser: permission denied")
     with pytest.raises(PortProbeError, match="permission denied"):
         ProcessManager().find_pid_on_port(8421)
@@ -564,7 +564,7 @@ def test_find_pid_exit_1_with_stderr_raises(
 
 @patch("punt_vox.service.process.subprocess.run")
 def test_identity_exit_1_with_stderr_raises(mock_run: MagicMock) -> None:
-    """A ps error exiting 1 must not read as "gone" (B3)."""
+    """A ps error exiting 1 must not read as "gone"."""
     mock_run.return_value = _ran(1, stderr="ps: fatal error")
     with pytest.raises(PortProbeError, match="fatal error"):
         ProcessManager().identity(123)
@@ -572,7 +572,7 @@ def test_identity_exit_1_with_stderr_raises(mock_run: MagicMock) -> None:
 
 @patch("punt_vox.service.process.subprocess.run")
 def test_identity_unparseable_ps_line_is_port_probe_error(mock_run: MagicMock) -> None:
-    """A malformed ps line fails the probe, never escapes as ValueError (A3)."""
+    """A malformed ps line fails the probe, never escapes as ValueError."""
     mock_run.return_value = _ran(0, "garbage")
     with pytest.raises(PortProbeError, match="unparseable"):
         ProcessManager().identity(123)
@@ -583,7 +583,7 @@ def test_identity_unparseable_ps_line_is_port_probe_error(mock_run: MagicMock) -
 def test_find_pid_on_port_macos_lists_listeners_only(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    """lsof matches only the TCP listener, not clients whose peer is 8421 (B5)."""
+    """lsof matches only the TCP listener, not clients whose peer is 8421."""
     mock_run.return_value = _ran(0, "12345\n")
     ProcessManager().find_pid_on_port(8421)
     assert mock_run.call_args.args[0] == [
@@ -610,7 +610,7 @@ def test_read_port_file_unparseable_is_a_stale_hint(
     caplog: pytest.LogCaptureFixture,
     content: str,
 ) -> None:
-    """R8: a partial serve.port (a crash leftover) warns and reads as absent."""
+    """A partial serve.port (a crash leftover) warns and reads as absent."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
     (tmp_path / "serve.port").write_text(content)
     with caplog.at_level("WARNING", logger="punt_vox.service.process"):
@@ -625,7 +625,7 @@ def test_read_port_file_unparseable_is_a_stale_hint(
 def test_read_port_file_read_error_is_surfaced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B16/R8: a read error other than not-found still fails loudly."""
+    """A read error other than not-found still fails loudly."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
     (tmp_path / "serve.port").mkdir()
     with pytest.raises(PortProbeError, match=r"serve\.port"):
@@ -637,7 +637,7 @@ def test_remove_port_file_failure_does_not_claim_removal(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failed unlink is warned about, never followed by "Removed" (B16)."""
+    """A failed unlink is warned about, never followed by "Removed"."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
 
     def refuse(self: Path, missing_ok: bool = False) -> None:
