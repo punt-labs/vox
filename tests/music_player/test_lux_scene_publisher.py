@@ -13,15 +13,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast, final
 
 from punt_lux import HubUnavailableError, LuxClient, OpError, RenderRequest, SceneShown
 
+from punt_vox.voxd.music_player.album_display import AlbumDisplay
+from punt_vox.voxd.music_player.album_roster import AlbumRoster
 from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
+from punt_vox.voxd.music_player.player_view import PlayerView
+from punt_vox.voxd.music_player.scene import AlbumListScene
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import pytest
     from punt_lux.operations import UpdateRequest
+
+    from punt_vox.types_programs.status import ProgramStatus
+    from punt_vox.voxd.programs.catalog import Album
+
+    type AlbumFactory = Callable[..., Album]
+    type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 
 def _scene(scene_id: str, content: str = "") -> RenderRequest:
@@ -240,6 +253,58 @@ class TestRefreshDoesNotReinstall:
         await asyncio.gather(task, return_exceptions=True)
 
         assert len(client.scene.rendered) == 2
+
+
+class TestPlayPauseTopicReachesTheWire:
+    """The operator's sequence, observed at the update vox sends to luxd.
+
+    Idle -> album start -> pause: each refresh is a patch on the installed tree,
+    and the play/pause button's publish topic must ride that patch -- otherwise a
+    click on the playing widget still publishes the idle ``music.resume``.
+    """
+
+    @staticmethod
+    def _render(album: Album, status: ProgramStatus | None) -> RenderRequest:
+        """Render the real music scene for ``album``, idle when ``status`` is None."""
+        roster = AlbumRoster((AlbumDisplay(album, 12),))
+        view = (
+            PlayerView.idle()
+            if status is None
+            else PlayerView.from_status(status, (album,))
+        )
+        return AlbumListScene(roster, view).render_request()
+
+    @staticmethod
+    def _playpause_sets(patches: list[list[dict[str, object]]]) -> list[object]:
+        """Return the ``set`` the play/pause button received in each patch."""
+        return [
+            op["set"]
+            for batch in patches
+            for op in batch
+            if op["id"] == "music.transport.playpause"
+        ]
+
+    async def test_album_start_then_pause_flips_the_published_topic(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        playing = playing_of(album, 1, 12)
+        client = _FakeClient()
+        publisher = LuxScenePublisher(lambda: _as_client(client))
+        task = asyncio.create_task(publisher.run())
+
+        for status in (None, playing, replace(playing, paused=True)):
+            publisher.submit(self._render(album, status))
+            await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert len(client.scene.rendered) == 1  # idle installed; the rest patched
+        topics = [
+            cast("dict[str, object]", fields)["publish"]
+            for fields in self._playpause_sets(client.scene.patched)
+        ]
+        assert topics == [{"topic": "music.pause"}, {"topic": "music.resume"}]
 
 
 async def test_a_down_lux_is_dropped_then_reinstalls_on_the_new_connection() -> None:
