@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import socket
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -342,3 +344,56 @@ def test_health_sends_no_token_when_another_process_took_the_port() -> None:
     target = MagicMock()
     assert _probe(mgr, target).health(frozenset({held}), 5.0) is None
     target.client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The listener check never waits on a name lookup
+# ---------------------------------------------------------------------------
+
+
+def _stalling_resolver(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make every name lookup stall 6 s, as a hung DNS server would.
+
+    An IP literal is parsed locally, as getaddrinfo does, with no wait.
+    Returns the hosts that were looked up by name.
+    """
+    real = socket.getaddrinfo
+    looked_up: list[str] = []
+
+    def stalling(host: object, *args: object, **kwargs: object) -> object:
+        try:
+            ipaddress.ip_address(str(host))
+        except ValueError:
+            looked_up.append(str(host))
+            time.sleep(6.0)
+        return real(host, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket, "getaddrinfo", stalling)
+    return looked_up
+
+
+def test_a_stalling_resolver_cannot_push_status_past_its_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostname bind is refused at once; nothing is ever looked up."""
+    looked_up = _stalling_resolver(monkeypatch)
+    probe = DaemonProbe(
+        MagicMock(), lambda: HealthTarget("voxd.example"), Poll(FakeClock())
+    )
+    started = time.monotonic()
+    with pytest.raises(PortProbeError, match="not an IP"):
+        probe.within(Deadline(time.monotonic, 5.0)).port_listening()
+    assert time.monotonic() - started < 5.0
+    assert looked_up == []
+
+
+def test_an_ip_bind_is_checked_without_any_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    looked_up = _stalling_resolver(monkeypatch)
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        target = MagicMock(host="127.0.0.1", port=server.getsockname()[1])
+        assert _probe(MagicMock(), target).port_listening() is True
+    assert looked_up == []

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.service.process import DEFAULT_PORT
 
@@ -50,9 +51,20 @@ def test_health_target_concrete_bind_used_directly(bind: str) -> None:
     assert HealthTarget(bind).host == "192.168.1.50"
 
 
-def test_health_target_hostname_bind_used_directly() -> None:
-    """A non-IP bind value (hostname) is polled as given, not loopback."""
-    assert HealthTarget("voxd.internal").host == "voxd.internal"
+@pytest.mark.parametrize("bind", ["voxd.internal", "localhost"])
+def test_health_target_refuses_a_hostname_bind(bind: str) -> None:
+    """A name could resolve to an address voxd never bound (localhost to ::1
+    while voxd holds 127.0.0.1), where another local user would get the token;
+    and its lookup is not bounded by any deadline."""
+    with pytest.raises(PortProbeError, match=rf"VOXD_BIND {bind!r} is not an IP"):
+        HealthTarget(bind)
+
+
+@pytest.mark.parametrize(
+    ("bind", "host"), [("::1", "::1"), ("fe80::1%lo", "fe80::1%lo")]
+)
+def test_health_target_keeps_an_ipv6_bind(bind: str, host: str) -> None:
+    assert HealthTarget(bind).host == host
 
 
 def test_health_target_bind_comes_from_backend_not_shell(

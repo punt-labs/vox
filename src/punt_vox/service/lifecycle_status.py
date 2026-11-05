@@ -87,12 +87,19 @@ class StatusCheck:
                 f"the status deadline was spent probing port {self._port} "
                 f"before voxd could be asked ({left:.2f}s left)"
             )
-        probe = self._probe
-        health = probe.health(holders, left)
+        health = self._probe.health(holders, left)
         if health is not None:
             return DaemonStatus.running(health)
-        why = probe.health_miss() or "no reply"
+        return self._unanswered(holders)
+
+    def _unanswered(self, holders: frozenset[ProcessHandle]) -> DaemonStatus:
+        """Read why the visible voxd gave no answer.
+
+        A holder that left the port before it was asked was never asked:
+        nothing is known about the port now, so that is ``unknown``. Any other
+        miss -- a timeout, a rejected token -- is ``unresponsive``.
+        """
+        why = self._probe.health_miss() or "no reply"
         if isinstance(why, HolderGoneError):
-            # It left before it was asked: nothing is known about the port now.
             return DaemonStatus.unknown(str(why))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))

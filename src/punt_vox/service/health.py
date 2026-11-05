@@ -4,7 +4,8 @@ The health request carries the daemon's token in its URL, so every connection
 value is pinned to a trusted source and none comes from the calling shell:
 
 - **host** from the bind written into the installed unit or plist (the
-  backend reports it), mapped to a reachable address;
+  backend reports it): an IP address, never a name -- a name could resolve to
+  an address voxd never bound, and its lookup is bounded by no deadline;
 - **port** always ``DEFAULT_PORT``, the port every unit runs voxd on;
 - **token** only from voxd's ``serve.token`` run file. With no token file the
   client is never built, because a client built with no token falls back to
@@ -18,6 +19,7 @@ from typing import Self, final
 
 from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.process import DEFAULT_PORT
 
 __all__ = ["DaemonNotUpError", "HealthTarget", "HolderGoneError"]
@@ -58,22 +60,26 @@ class HealthTarget:
 
     @staticmethod
     def _resolve_host(bind: str) -> str:
-        """Map the unit's ``VOXD_BIND`` to a reachable health host.
+        """Map the unit's ``VOXD_BIND`` to the IP address health polls.
 
-        A wildcard bind (an unspecified address, or none) accepts loopback, so
-        poll ``127.0.0.1``. A concrete bind is the only address voxd listens
-        on -- poll it directly (loopback would false-fail). A non-IP value
-        (e.g. a hostname) is polled as given.
+        No bind, or a wildcard (an unspecified address), accepts loopback, so
+        poll ``127.0.0.1``. A concrete IP is the only address voxd listens on:
+        poll it exactly. A name is refused with ``PortProbeError``: it could
+        resolve to an address voxd never bound (``localhost`` to ``::1`` while
+        voxd holds ``127.0.0.1``), where another local user would receive the
+        token, and resolving it is bounded by no deadline.
         """
-        bind = bind.strip()
-        if not bind:
-            return "127.0.0.1"
+        bind = bind.strip() or "127.0.0.1"
         try:
-            if ipaddress.ip_address(bind).is_unspecified:  # 0.0.0.0, ::, ::0
-                return "127.0.0.1"
+            address = ipaddress.ip_address(bind)
         except ValueError:
-            pass
-        return bind
+            msg = (
+                f"the installed VOXD_BIND {bind!r} is not an IP address; vox "
+                "polls only the exact address voxd binds. Set VOXD_BIND to an "
+                "IP (e.g. 127.0.0.1) and run `vox daemon install`"
+            )
+            raise PortProbeError(msg) from None
+        return "127.0.0.1" if address.is_unspecified else bind
 
     @property
     def host(self) -> str:
