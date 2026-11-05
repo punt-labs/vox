@@ -3028,6 +3028,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/conversation_mode/call_agent_state.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.17,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.08,
+    "module_size": 102.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/conversation_mode/call_command.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -3269,6 +3282,19 @@
     "max_complexity": 2.0,
     "avg_complexity": 1.5,
     "module_size": 55.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/conversation_mode/secret_path_policy.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.44,
+    "module_size": 126.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
